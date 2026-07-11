@@ -806,17 +806,18 @@ impl PieceSeq {
     }
 
     /// Whether a **ruby base is anchored at current-coordinate offset `off`** —
-    /// the piece-local form of [`RegionIndex::ruby_base_anchored_at`], delegating
-    /// to the containing piece's shared index at the backing-local offset (mirror
-    /// of [`structurally_safe`](Self::structurally_safe)).
+    /// the piece-local form of the `RegionIndex` ruby-base query, delegating to
+    /// the containing piece's shared index at the backing-local offset (mirror of
+    /// [`structurally_safe`](Self::structurally_safe)).
     ///
     /// The region finder consults this only for a **region-end** candidate, and
-    /// the sole reachable ruby-base-anchored region-end is offset `0` (a
-    /// pure doc-start insertion; see the completeness argument in
-    /// [`minimal_balanced_region`]). `find_piece(0)` resolves to piece `0`
-    /// (`san_shift == 0`, since the first piece is never in a shifted suffix), so
-    /// the backing-local offset is exact — the boundary semantics `find_piece`
-    /// documents (the piece *ending* at a boundary backs it) hold here too.
+    /// the sole reachable ruby-base-anchored region-end is offset `0` (a pure
+    /// doc-start insertion; see the completeness argument in the
+    /// `minimal_balanced_region` region-end scan). `find_piece(0)` resolves to
+    /// piece `0` (`san_shift == 0`, since the first piece is never in a shifted
+    /// suffix), so the backing-local offset is exact — the boundary semantics
+    /// `find_piece` documents (the piece *ending* at a boundary backs it) hold
+    /// here too.
     #[must_use]
     pub fn ruby_base_anchored_at(&self, off: u32) -> bool {
         let piece = &self.pieces[self.find_piece(off)];
