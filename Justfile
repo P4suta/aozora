@@ -239,18 +239,31 @@ types-langs:
 types-langs-check:
     {{_dev}} cargo run -p aozora-xtask -q -- types langs-check
 
+# Regenerate the committed tree-sitter parser
+# (crates/tree-sitter-aozora/src/{parser.c,grammar.json,node-types.json})
+# from grammar.js via the pinned tree-sitter CLI. Run after an intentional
+# grammar.js edit; commit the diff so `grammar-check` (drift gate) stays green.
+grammar:
+    {{_dev}} cargo run -p aozora-xtask -q -- conformance grammar --update
+
+# Drift gate: fail if the committed tree-sitter parser has drifted from a
+# fresh `tree-sitter generate` of grammar.js. Wired into `drift-gate`.
+grammar-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- conformance grammar --check
+
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
-# job: schema + types in one shot. Use locally before pushing.
+# job: schema + types + tree-sitter grammar in one shot. Use locally
+# before pushing.
 #
 # Inlined as a single `docker compose run` rather than a recipe-deps
-# chain (`drift-gate: schema-check types-check`) so both checks share
-# one container start. The previous form burned a full container
-# bootstrap (rustup channel sync + components download, ~22 s) twice
-# per CI invocation; the bash -c form runs the second xtask invocation
-# against an already-warm container with the xtask binary cached in
-# `target/`.
+# chain (`drift-gate: schema-check types-check grammar-check`) so every
+# check shares one container start. The previous form burned a full
+# container bootstrap (rustup channel sync + components download, ~22 s)
+# per CI invocation for each check; the bash -c form runs the later xtask
+# invocations against an already-warm container with the xtask binary
+# cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a

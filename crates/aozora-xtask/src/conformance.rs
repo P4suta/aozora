@@ -36,6 +36,7 @@ use serde_json::Value;
 use crate::ConformanceArgs;
 use crate::ConformanceOp;
 use crate::Implementation;
+use crate::grammar;
 
 const FIXTURE_REL: &str = "crates/aozora-conformance/fixtures/render";
 const RESULTS_REL: &str = "crates/aozora-book/src/conformance-results.json";
@@ -243,6 +244,14 @@ pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
             Implementation::Rust => run_vectors(),
             Implementation::TreeSitter => run_vectors_tree_sitter(vec_args.update),
         },
+        ConformanceOp::Grammar(grammar_args) => {
+            // `--update` regenerates the committed parser; `--check` (or no
+            // flag, the default) runs the drift gate. clap's `conflicts_with`
+            // rejects both at once; the tuple reads both flags so neither is
+            // a dead field.
+            let regenerate = matches!((grammar_args.update, grammar_args.check), (true, _));
+            grammar::dispatch(regenerate)
+        }
     }
 }
 
