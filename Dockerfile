@@ -192,6 +192,27 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         --root /usr/local \
         "iai-callgrind-runner@${IAI_CALLGRIND_VERSION}"
 
+# tree-sitter CLI — regenerates crates/tree-sitter-aozora/src/{parser.c,
+# grammar.json,node-types.json} from grammar.js. Pinned to the SAME version
+# as the `tree-sitter` runtime crate (Cargo.lock: 0.26.10) so the generated
+# parse tables target the ABI that aozora-lsp links against, and so
+# `xtask conformance grammar --check` (the grammar regen drift gate) is
+# reproducible across machines.
+#
+# Built from source rather than binstalled: tree-sitter's prebuilt Linux
+# release binary is linked against glibc 2.39 and dies at runtime on this
+# bookworm base (glibc 2.36) with `GLIBC_2.39 not found` — the same
+# newer-glibc problem the `book` stage documents for lychee, and there is no
+# musl-static or quick-install-mirror build for 0.26.10. A source build links
+# against the image's own glibc and takes ~75 s (it embeds a QuickJS engine
+# via rquickjs to evaluate grammar.js, so no node is needed at generate time).
+# The `--locked` flag pins the crate's own dependency set for reproducibility.
+# Installs the `tree-sitter` binary into /usr/local/bin (copied into the dev
+# stage alongside the other tools).
+ARG TREE_SITTER_CLI_VERSION=0.26.10
+RUN cargo install "tree-sitter-cli@${TREE_SITTER_CLI_VERSION}" --locked --root /usr/local \
+    && tree-sitter --version
+
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
     | bash -s -- --to /usr/local/bin --tag 1.51.0

@@ -55,6 +55,7 @@ mod ci;
 mod conformance;
 mod corpus;
 mod deps;
+mod grammar;
 mod schema;
 mod trace;
 mod types;
@@ -215,6 +216,31 @@ enum ConformanceOp {
     /// gates on the `spec-vectors/tree-sitter-snapshot.json` S-expression
     /// snapshot. Any drift exits non-zero; `--update` regenerates it.
     Vectors(VectorsArgs),
+    /// Regenerate-drift gate for the committed tree-sitter parser.
+    ///
+    /// `crates/tree-sitter-aozora/grammar.js` is the source of truth; the
+    /// checked-in `src/parser.c` (+ `grammar.json` / `node-types.json`) is
+    /// `tree-sitter generate`'s output, compiled by `build.rs` into the
+    /// static parser `aozora-lsp` links against. `--check` (default,
+    /// wired into `drift-gate`) exits non-zero when those artefacts have
+    /// drifted from a fresh generate; `--update` regenerates them in place
+    /// via the pinned `tree-sitter` CLI. Commit the diff.
+    Grammar(GrammarArgs),
+}
+
+#[derive(Args)]
+struct GrammarArgs {
+    /// Regenerate the committed grammar artefacts
+    /// (`crates/tree-sitter-aozora/src/{parser.c,grammar.json,node-types.json}`)
+    /// in place from `grammar.js` via the pinned `tree-sitter` CLI, then
+    /// exit. Use after an intentional grammar edit; commit the diff.
+    #[arg(long)]
+    update: bool,
+    /// Verify the committed artefacts still match a fresh `tree-sitter
+    /// generate`; exit non-zero on drift. This is the default when neither
+    /// flag is given, and the form the `drift-gate` CI job runs.
+    #[arg(long, conflicts_with = "update")]
+    check: bool,
 }
 
 #[derive(Args)]
