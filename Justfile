@@ -638,6 +638,31 @@ throughput:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run --release -p aozora-bench --example throughput
 
+# Instruction-count perf gate (G6). Runs the iai-callgrind micro-benchmarks
+# (aozora-bench/benches/perf_gate) under Valgrind's Callgrind, which counts
+# CPU *instructions* — deterministic across runs and machines, unlike
+# wall-clock (too noisy on shared runners to gate on; see `throughput`).
+#
+# The FIRST run records a baseline named `perf_gate` and is always green.
+# Every later run compares against that baseline and exits non-zero on a
+# >10% `Ir` (instructions read) regression on any case (the soft limit is
+# baked into the bench's `main!` config). Corpus-free — the bench embeds a
+# few vendored 青空文庫 works plus a synthetic annotation-dense buffer — so
+# it needs no AOZORA_CORPUS_ROOT. Requires valgrind + iai-callgrind-runner,
+# both baked into the dev image.
+#
+# Runs nightly via .github/workflows/perf.yml (collecting stability data);
+# deliberately NOT in ci-parallel / pre-push yet — a per-PR promotion waits
+# on that stability data (see the workflow header).
+#
+# `--allow-aslr`: iai-callgrind otherwise disables ASLR via `setarch -R`,
+# whose `personality(2)` call the container's default seccomp profile blocks
+# ("Operation not permitted"). Instruction counts are ASLR-independent, so
+# leaving ASLR on is harmless here and keeps the recipe container-native (no
+# --privileged / seccomp=unconfined).
+perf-gate:
+    {{_dev}} cargo bench -p aozora-bench --bench perf_gate -- --save-baseline=perf_gate --allow-aslr=true
+
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as
@@ -1453,8 +1478,26 @@ smoke-go: extism-build
 # builds the abi3 wheel, installs it, then runs mypy --strict + pytest.
 # Kept out of `just ci` (the dev image can't run it); mirrored by the
 # ci.yml `python-wheel` job. Knobs: AOZORA_PY_PYTHON / AOZORA_PY_VENV.
+#
+# The cross-surface parity gate's Python channel (`tests/test_fixture_parity.py`)
+# rides on this pytest run and its `python-wheel` CI mirror — a DOCUMENTED
+# `ci-parallel` exception: the dev image ships no Python interpreter, so
+# there is no in-container lane for it (same rationale as smoke-ffi).
 smoke-py:
     bash scripts/smoke-py.sh
+
+# Cross-surface parity gate — wasm (Node) channel. Builds the wasm-pack
+# `--target nodejs` package and walks every render fixture through it,
+# asserting each surface (html / serialize / diagnostics / nodes / pairs /
+# container_pairs) is byte-identical to the committed golden — the same
+# golden the in-process `render_gate` pins. The `--target web` pkg the
+# playground consumes is a separate out-dir, so this leaves it untouched.
+# Wired into `ci-parallel` (foreground tail, right after `extism-build`)
+# and the CI `wasm-build` job (host mirror: two raw steps). The sibling
+# CLI / FFI / Python / Go walkers cover the other channels.
+parity-wasm:
+    {{_dev}} bash -euc 'wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs \
+        && node crates/aozora-wasm/tests/js/parity.mjs crates/aozora-wasm/pkg-nodejs'
 
 # --- changelog ---------------------------------------------------------------
 
@@ -1833,7 +1876,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
-        for gate in shear test-doc test-doc-all book-test extism-build smoke-go doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all book-test extism-build parity-wasm smoke-go doc corpus-sweep; do
             case "$gate" in
                 book-test) want book || { skip "$gate"; continue; } ;;
                 *) want code || { skip "$gate"; continue; } ;;

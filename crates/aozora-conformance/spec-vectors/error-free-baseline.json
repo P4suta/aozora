@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "fixtures": {
+    "total": 127,
+    "errorFree": 60,
+    "byLevel": {
+      "may": 3,
+      "must": 21,
+      "should": 36
+    }
+  },
+  "vectors": {
+    "total": 127,
+    "errorFree": 66,
+    "byLevel": {
+      "may": 3,
+      "must": 17,
+      "should": 46
+    }
+  }
+}

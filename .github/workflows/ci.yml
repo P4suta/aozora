@@ -506,6 +506,14 @@ jobs:
           version: 'v0.15.0'
       - name: Build wasm-pack package
         run: wasm-pack build --target web --release crates/aozora-wasm
+      # Cross-surface parity gate — wasm channel. Host mirror of
+      # `just parity-wasm`: build the `--target nodejs` package, then walk
+      # every render fixture through it asserting byte-identical output to
+      # the committed golden. Node is preinstalled on the runner.
+      - name: Build wasm-pack package (nodejs, parity walker)
+        run: wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs
+      - name: Cross-surface parity walk (wasm)
+        run: node crates/aozora-wasm/tests/js/parity.mjs crates/aozora-wasm/pkg-nodejs
 
   # Playground Playwright E2E (#335 D-5). Builds the WASM engine, installs bun
   # deps + chromium, and drives a prod `vite preview` build through a real

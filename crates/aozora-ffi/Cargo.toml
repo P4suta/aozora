@@ -34,6 +34,13 @@ missing_copy_implementations = "warn"
 # serde_json transitive-only via the `wire` feature.
 aozora = { workspace = true, features = ["json"] }
 
+[dev-dependencies]
+# Golden-fixture loader for the cross-surface parity gate
+# (`tests/fixture_parity.rs`). Path-only: aozora-conformance is a
+# dev-only, `publish = false` crate. (aozora-ffi is itself
+# `publish = false`, so this never reaches a published manifest either.)
+aozora-conformance = { path = "../aozora-conformance" }
+
 [build-dependencies]
 # Generates `aozora.h` from `#[no_mangle] extern "C"` items in
 # `src/lib.rs`. Output lands at `$OUT_DIR/aozora.h` and is copied to
