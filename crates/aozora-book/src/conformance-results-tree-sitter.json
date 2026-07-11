@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 127,
+  "total": 128,
   "passed": 60,
-  "failed": 67,
+  "failed": 68,
   "by_level": {
     "may": {
       "total": 3,
@@ -10,9 +10,9 @@
       "failed": 0
     },
     "must": {
-      "total": 30,
+      "total": 31,
       "passed": 21,
-      "failed": 9
+      "failed": 10
     },
     "should": {
       "total": 94,
@@ -844,6 +844,13 @@
       "case": "side_note_left",
       "feature": "kunten",
       "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "stray_bracket_line_scope",
+      "feature": "recovery",
+      "level": "must",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
     },

@@ -1,15 +1,15 @@
 {
-  "note": "Render-leak ratchet: per-marker (files, occurrences) of aozora notation control markers (《…》 / ｜ / ［＃…］) surviving into VISIBLE rendered HTML. Leaks may only SHRINK — any rise fails the gate; ratchet down on improvement with `--update`. Run `xtask corpus render-audit` to find WHICH document regressed. The residual is a documented long tail (2026-07-03, campaign #399): mixed kanji+gaiji ruby base (E2), ヵ/ヶ ateji declines, symbol/digit/Cyrillic/kanbun bases, and authorial 《…》 with no ruby base (a correct literal, not a leak) — irreducible or tracked follow-ups.",
+  "note": "Render-leak ratchet: per-marker (files, occurrences) of aozora notation control markers (《…》 / ｜ / ［＃…］) surviving into VISIBLE rendered HTML. Leaks may only SHRINK — any rise fails the gate; ratchet down on improvement with `--update`. Run `xtask corpus render-audit` to find WHICH document regressed. The 2026-07-12 drop (ruby 8710→1588, bar 1904→1604, directive 3103→1472) is the F21 fix (ADR-0030): a stray `［` crossing a line break is now line-scoped, so it no longer sinks the rest of the document to plain. The residual is a documented long tail (2026-07-03, campaign #399): mixed kanji+gaiji ruby base (E2), ヵ/ヶ ateji declines, symbol/digit/Cyrillic/kanbun bases, and authorial 《…》 with no ruby base (a correct literal, not a leak) — irreducible or tracked follow-ups.",
   "ruby": {
-    "files": 292,
-    "occurrences": 8710
+    "files": 288,
+    "occurrences": 1588
   },
   "bar": {
-    "files": 452,
-    "occurrences": 1904
+    "files": 447,
+    "occurrences": 1604
   },
   "directive": {
     "files": 61,
-    "occurrences": 3103
+    "occurrences": 1472
   }
 }
