@@ -1,10 +1,10 @@
 {
-  "note": "Catalogue-sweep coverage baseline: the Tier1 (`canonical_directive`) / Tier2 (`degraded_directive`) matched Unknown-shape sets and per-tier resolved-occurrence counts over the corpus. Ratchet: residue may only shrink and resolved occurrences may only rise; a newly-matched shape FAILS the gate until a human confirms it is a genuine near-miss (not an editorial false-positive) and re-baselines — the zero-false-positive guard from the corpus side. A lost match or grown residue is a catalogue regression (fix the rule, do not --update). Re-capture with `xtask corpus catalogue-sweep-gate --update`.",
+  "note": "Catalogue-sweep coverage baseline: the Tier1 (`canonical_directive`) / Tier2 (`degraded_directive`) matched Unknown-shape sets and per-tier resolved-occurrence counts over the corpus. Ratchet: residue may only shrink and resolved occurrences may only rise; a newly-matched shape FAILS the gate until a human confirms it is a genuine near-miss (not an editorial false-positive) and re-baselines — the zero-false-positive guard from the corpus side. A lost match or grown residue is a catalogue regression (fix the rule, do not --update). Re-capture with `xtask corpus catalogue-sweep-gate --update`. Deliberate raise: residue 2389→2410 / unknown_total 3794→3815 (2026-07-12, F21 / ADR-0030) is a one-time UNDERCOUNT CORRECTION, not a regression: a stray `［` crossing a line break is now line-scoped instead of sinking the rest of the document to plain, so `［＃…］` directives that previously never reached the Unknown counter (they were buried in the sink) now surface and count. Tier1 / Tier2 matched-shape sets are byte-for-byte unchanged (no rule regressed, no match lost); every corpus verbatim / round-trip invariant stays 0-diverged. The dual of ADR-0025's own 1884→1974 correction.",
   "files_analyzed": 17889,
-  "unknown_total": 3794,
+  "unknown_total": 3815,
   "tier1_occurrences": 487,
   "tier2_occurrences": 918,
-  "residue_occurrences": 2389,
+  "residue_occurrences": 2410,
   "tier1_shapes": {
     "［＃N回り大きな文字］": 4,
     "［＃N字下げて］": 1,

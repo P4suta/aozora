@@ -58,6 +58,15 @@
 //!   triggers it (the top *is* the bracket, matched directly). A `」`
 //!   still cannot cross a bracket downward — only `］` gets this scope.
 //!   See ADR-0025 (`docs/adr/`).
+//! * **A stray `［` is line-scoped** (the temporal dual of the hard scope):
+//!   a `［＃…］` body never spans a line break, so a `［` still open when a
+//!   `Newline` arrives is stray. The pair stage force-resolves the
+//!   contiguous top run of such brackets as [`PairEvent::Unclosed`]
+//!   (innermost-first) before the newline, so a lone trailing `［`
+//!   (江戸川乱歩『影男』L548) no longer keeps its classifier frame open to EOF
+//!   and sinks the rest of the document to plain. Ruby / angle-quote resolve
+//!   on their own delimiters and dialogue `「」` / kaeriten `〔〕` span lines,
+//!   so only `［` gets the line scope. See ADR-0030 (`docs/adr/`).
 
 use core::mem;
 
@@ -336,6 +345,47 @@ where
         // Trigger is neither open nor close (Bar / Hash / RefMark).
         PairEvent::Solo { kind, span }
     }
+
+    /// Emit a `Newline`, force-resolving any stray `［` bracket that is still
+    /// open when the line ends.
+    ///
+    /// A `［＃…］` directive body never spans a line break: a real directive
+    /// closes its `］` on the same line, so a `［` still on the stack at a
+    /// newline is *stray* — an unmatched open with no partner (江戸川乱歩
+    /// 『影男』L548's trailing `［` is the corpus archetype). Left on the stack
+    /// the bracket's classifier frame buffers the *entire rest of the document*
+    /// and, never closing, sinks it to plain at EOF, so every following ruby,
+    /// heading and directive renders as literal source — the F21 leak cascade.
+    ///
+    /// Force-resolve the contiguous top run of stray brackets as `Unclosed`
+    /// (innermost-first, mirroring the EOF drain and the ADR-0025 hard-scope
+    /// unwind order) *before* the newline, so the pair events after the line
+    /// break pair at a clean scope and classify normally on the live stream.
+    /// Ruby / angle-quote resolve on their own delimiters and dialogue `「」` /
+    /// kaeriten `〔〕` legitimately span lines, so only `［` gets this line
+    /// scope — the dual of ADR-0025's `］` hard scope.
+    fn newline_event(&mut self, pos: u32) -> PairEvent {
+        while self
+            .stack
+            .last()
+            .is_some_and(|&(kind, _)| kind == PairKind::Bracket)
+        {
+            let (kind, open_span) = self.stack.pop().expect("checked last is a Bracket");
+            self.diagnostics
+                .push(Diagnostic::unclosed_bracket(open_span, kind));
+            self.pending.push(PairEvent::Unclosed {
+                kind,
+                span: open_span,
+            });
+        }
+        if self.pending.is_empty() {
+            return PairEvent::Newline { pos };
+        }
+        // Surface the unwound `Unclosed` events first, then the newline; the
+        // head is returned now and `next` drains the tail in order.
+        self.pending.push(PairEvent::Newline { pos });
+        self.pending.remove(0)
+    }
 }
 
 impl<I> Iterator for PairStream<I>
@@ -369,7 +419,7 @@ where
 
         match self.tokens.next() {
             Some(Token::Text { range }) => Some(PairEvent::Text { range }),
-            Some(Token::Newline { pos }) => Some(PairEvent::Newline { pos }),
+            Some(Token::Newline { pos }) => Some(self.newline_event(pos)),
             Some(Token::Trigger { kind, span }) => Some(self.classify_trigger(kind, span)),
             None => {
                 // Upstream exhausted. Switch into EOF-drain mode and
@@ -617,6 +667,126 @@ mod tests {
             ]
         );
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    /// A `［＃…］` directive body never spans a line break, so a `［` still
+    /// open when the newline arrives is stray (F21). The pair stage
+    /// force-resolves it as `Unclosed` *before* the `Newline`, so the events
+    /// after the line break pair at a clean scope and the classifier does not
+    /// sink the rest of the document. Pins 江戸川乱歩『影男』L548's shape:
+    /// a trailing `［` followed by a line whose ruby must survive.
+    #[test]
+    fn stray_bracket_resolves_at_line_break() {
+        let (events, diagnostics) = run("［\n《か》");
+        assert_eq!(
+            pair_kinds(&events),
+            vec![
+                ("open", PairKind::Bracket),
+                ("unclosed", PairKind::Bracket),
+                ("open", PairKind::Ruby),
+                ("close", PairKind::Ruby),
+            ]
+        );
+        // The Unclosed sits between the open and the newline.
+        let idx = |pred: fn(&PairEvent) -> bool| events.iter().position(pred).unwrap();
+        let open = idx(|e| {
+            matches!(
+                e,
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
+                }
+            )
+        });
+        let unclosed = idx(|e| {
+            matches!(
+                e,
+                PairEvent::Unclosed {
+                    kind: PairKind::Bracket,
+                    ..
+                }
+            )
+        });
+        let newline = idx(|e| matches!(e, PairEvent::Newline { .. }));
+        assert!(
+            open < unclosed && unclosed < newline,
+            "Unclosed must sit between the open and the newline: {events:?}"
+        );
+        assert_eq!(diagnostics.len(), 1);
+        assert!(matches!(
+            diagnostics[0],
+            Diagnostic::UnclosedBracket {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+    }
+
+    /// After the stray `［` is line-scoped, a later `］` no longer closes it —
+    /// it is a stray `Unmatched`, so the bracket cannot capture the
+    /// intervening document (the F21 cascade). The dual of the ADR-0025 `］`
+    /// hard scope.
+    #[test]
+    fn line_scoped_bracket_does_not_capture_later_close() {
+        let (events, _) = run("［\n本文］");
+        assert_eq!(
+            pair_kinds(&events),
+            vec![
+                ("open", PairKind::Bracket),
+                ("unclosed", PairKind::Bracket),
+                ("unmatched", PairKind::Bracket),
+            ]
+        );
+    }
+
+    /// A nested run of stray `［` opens at a line break resolves innermost
+    /// first, matching the EOF-drain and hard-scope unwind order.
+    #[test]
+    fn nested_stray_brackets_resolve_innermost_first_at_line_break() {
+        let (events, _) = run("［＃［＃\ntail");
+        let unclosed: Vec<&PairEvent> = events
+            .iter()
+            .filter(|e| matches!(e, PairEvent::Unclosed { .. }))
+            .collect();
+        assert_eq!(unclosed.len(), 2, "both stray opens resolve: {events:?}");
+        let starts: Vec<u32> = unclosed
+            .iter()
+            .map(|e| e.span().expect("Unclosed has a span").start)
+            .collect();
+        assert!(
+            starts[0] > starts[1],
+            "innermost (later start) resolves first; got {starts:?}"
+        );
+    }
+
+    /// The line scope is additive: a never-closed `［` with NO line break
+    /// still drains as `Unclosed` at EOF, exactly as before.
+    #[test]
+    fn bracket_without_line_break_still_unclosed_at_eof() {
+        let (events, _) = run("［＃novel");
+        assert!(events.iter().any(|e| matches!(
+            e,
+            PairEvent::Unclosed {
+                kind: PairKind::Bracket,
+                ..
+            }
+        )));
+    }
+
+    /// Only `［` gets the line scope. A `《` reading legitimately never spans a
+    /// line, but resolving it at a newline would rewrite authorial `《…》`
+    /// pairing; dialogue `「」` spans lines outright. So a `《` open across a
+    /// line break is left to pair with its later `》` — unchanged behaviour.
+    #[test]
+    fn ruby_and_quote_are_not_line_scoped() {
+        assert_eq!(
+            pair_kinds(&run("《か\nに》").0),
+            vec![("open", PairKind::Ruby), ("close", PairKind::Ruby)]
+        );
+        assert_eq!(
+            pair_kinds(&run("「せりふ\nつづき」").0),
+            vec![("open", PairKind::Quote), ("close", PairKind::Quote)]
+        );
     }
 
     #[test]
