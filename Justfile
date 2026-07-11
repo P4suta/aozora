@@ -311,17 +311,20 @@ conformance:
 # Vendor the conformance vectors from the sibling aozora-notation-spec
 # repo into spec-vectors/ (the spec is the source of truth). Host-side —
 # reaches outside the /workspace bind mount, so it runs directly on the
-# host, not in the dev container. Re-run after the spec's vectors change
-# and commit the diff. Override the spec location with AOZORA_SPEC_REPO.
+# host (like `just deps-*` / `just ci`), not in the dev container. Re-run
+# after the spec's vectors change and commit the diff. Override the spec
+# location with AOZORA_SPEC_REPO.
 sync-spec-vectors:
-    scripts/sync-spec-vectors.sh
+    cargo run -q --release -p aozora-xtask -- spec-vectors sync
 
 # Fail if the vendored spec-vectors/ have drifted from the sibling spec
-# repo. Host-side; a no-op where the spec isn't checked out (cloud CI /
-# dev container), so the vendored copy is authoritative there. Wired into
-# pre-push so vendored drift is caught before publish.
+# repo. Host-side; `--allow-missing` makes it a no-op where the spec isn't
+# checked out (cloud CI / dev container), so the vendored copy is
+# authoritative there. Runs in `ci-parallel`'s background lane, so vendored
+# drift is caught before every push, and by the weekly spec-freshness
+# workflow.
 verify-spec-vectors:
-    scripts/verify-spec-vectors.sh
+    cargo run -q --release -p aozora-xtask -- spec-vectors check --allow-missing
 
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
@@ -1894,7 +1897,10 @@ ci-parallel:
     skip() { echo ":: [skip] $1 (AOZORA_CI_FAST: inputs untouched)"; }
 
     # Background lane — no /cargo/target build-lock contention.
-    for g in deny audit smoke-ffi; do want code && launch "$g" just "$g"; done
+    # verify-spec-vectors is host-side (like smoke-ffi): it drift-checks the
+    # vendored spec-vectors/ against the sibling spec repo, a no-op
+    # (--allow-missing) where the spec isn't checked out.
+    for g in deny audit smoke-ffi verify-spec-vectors; do want code && launch "$g" just "$g"; done
     want book && launch book-linkcheck just book-linkcheck
     # fmt-check / typos / strict-code / version-literal-gate / readme-gate are
     # cheap and apply to any file — always run. ci-fast-selftest guards the

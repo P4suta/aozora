@@ -1,0 +1,133 @@
+name: spec-freshness
+
+# Weekly drift audit of the vendored conformance vectors against the sibling
+# specification repo — the cloud half of the "spec is master" loop.
+#
+# The vendored copy under `crates/aozora-conformance/spec-vectors/` is a
+# snapshot of `P4suta/aozora-notation-spec`'s `conformance/` subtree. The
+# pre-push gate (`xtask spec-vectors check` in `ci-parallel`'s background
+# lane) enforces vendored==spec on a developer HOST that has the sibling
+# checked out; it is a no-op elsewhere. This workflow closes that gap: it
+# checks out a FRESH sibling and runs the same drift check against it, so a
+# spec change that landed without a matching `just sync-spec-vectors` here
+# is caught even if no developer pushed in the interim.
+#
+# Non-blocking by design (mirrors `link-audit.yml`): a drift is not a merge
+# gate — it opens (or updates) a tracking issue labelled `spec-freshness`,
+# and closes it again once the vendored copy is back in sync.
+#
+# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
+
+on:
+  schedule:
+    - cron: "31 5 * * 4"  # weekly, Thursday 05:31 UTC (offset from codeql/scorecard/link-audit/cross-os)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: spec-freshness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The parser repo at the workspace root (provides the Dockerfile /
+      # compose / xtask and the vendored spec-vectors/ we are checking).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      # Build / load the dev image and set COMPOSE_FILE + AOZORA_UID so the
+      # `docker compose run dev` steps below reuse it (no rebuild).
+      - uses: ./.github/actions/setup-dev-image
+
+      # The sibling spec — the source of truth. Checked out AFTER the image
+      # is loaded so it never enters the Docker build context. It lands
+      # inside the workspace, hence at /workspace/.spec-repo in the container.
+      - name: Check out the sibling specification
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          repository: P4suta/aozora-notation-spec
+          path: .spec-repo
+
+      # Compile the tool as a hard step: a build break is a real regression
+      # worth failing the weekly job loudly (not a soft drift issue). The
+      # /cargo/target volume caches it for the run step below.
+      - name: Build the xtask binary
+        run: docker compose run --rm dev cargo build -p aozora-xtask
+
+      # Drift check against the fresh sibling. `set +e` + PIPESTATUS captures
+      # the check's own exit code (the binary is already built, so this only
+      # reflects drift, not a compile error) for the issue reporter.
+      - name: Drift-check vendored vectors against the sibling spec
+        id: check
+        run: |
+          set +e
+          docker compose run --rm \
+            -e AOZORA_SPEC_REPO=/workspace/.spec-repo \
+            dev cargo run -p aozora-xtask -q -- spec-vectors check 2>&1 | tee spec-check.log
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "spec-vectors check exited with $code"
+
+      - name: Open / update / close tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_EXIT: ${{ steps.check.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="spec-freshness"
+          TITLE="Spec-vector drift: vendored copy differs from aozora-notation-spec"
+          REPORT="spec-check.log"
+
+          # Idempotent label (issues:write covers labels).
+          gh label create "$LABEL" -c 1D76DB \
+            -d "Vendored conformance vectors drifted from the sibling spec" 2>/dev/null || true
+
+          existing=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')
+
+          if [ "${CHECK_EXIT}" != "0" ]; then
+            {
+              echo "The weekly spec-freshness audit found the vendored conformance vectors"
+              echo "have drifted from the sibling \`aozora-notation-spec\` repository."
+              echo
+              echo "Workflow run: ${RUN_URL}"
+              echo
+              echo "The spec is the source of truth. Re-sync locally and commit the diff:"
+              echo
+              echo '```'
+              echo "just sync-spec-vectors   # xtask spec-vectors sync"
+              echo '```'
+              echo
+              echo "(This needs a \`../aozora-notation-spec\` checkout, or \`AOZORA_SPEC_REPO\` set.)"
+              echo
+              echo "<details><summary>drift report</summary>"
+              echo
+              echo '```'
+              if [ -f "$REPORT" ]; then sed -n '1,200p' "$REPORT"; else echo "(report file missing)"; fi
+              echo '```'
+              echo
+              echo "</details>"
+            } > issue-body.md
+
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file issue-body.md
+              gh issue comment "$existing" --body "Re-audited $(date -u +%Y-%m-%d): still drifting. See ${RUN_URL}"
+              echo "Updated issue #${existing}"
+            else
+              gh issue create --title "$TITLE" --label "$LABEL" --body-file issue-body.md
+              echo "Opened a new tracking issue"
+            fi
+          else
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "Vendored vectors are back in sync ($(date -u +%Y-%m-%d), ${RUN_URL}). Closing."
+              gh issue close "$existing"
+              echo "Closed issue #${existing}"
+            else
+              echo "Vendored vectors match the spec; no open issue to manage."
+            fi
+          fi

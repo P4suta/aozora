@@ -82,11 +82,11 @@ jobs:
               - 'docker-compose*.yml'
               - 'Justfile'
               - '.github/**'
-              # scripts/** hosts ci-classify.sh / verify-spec-vectors.sh /
-              # check-signed-commits.sh etc. Their only regression coverage
-              # (`ci-fast-selftest`) lives under `ci-parallel`, so a
-              # scripts-only PR must still run the Rust matrix — classify as
-              # `rust` (mirrors ci-classify.sh treating scripts/* as infra).
+              # scripts/** hosts ci-classify.sh / check-signed-commits.sh
+              # etc. Their only regression coverage (`ci-fast-selftest`)
+              # lives under `ci-parallel`, so a scripts-only PR must still run
+              # the Rust matrix — classify as `rust` (mirrors ci-classify.sh
+              # treating scripts/* as infra).
               - 'scripts/**'
             book:
               - 'crates/aozora-book/**'
