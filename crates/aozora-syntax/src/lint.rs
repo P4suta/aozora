@@ -396,8 +396,13 @@ pub const EDITORIAL_MUST_STAY_UNKNOWN: &[&str] = &[
     "「甲」は上に「乙」付き",
     "「甲」は上部に出ている",
     "「甲」は「乙」の下にポイントを下げて2行で",
-    // Multi-axis compounds — ADR-0027 declines these (dropping an axis is lossy).
-    "「甲」は縦中横、行右小書き",
+    // Multi-axis compounds with two independent targets / constructs — ADR-0027
+    // declines these and no layer serves them: each `、`-clause styles a
+    // *different* target (「乙」) or a *different* construct (返り点 / 分数), so
+    // there is no single faithful reduction. (The single-target
+    // `「X」は縦中横、行右/左小書き` compound is different — its secondary axis
+    // annotates the *same* 「X」 target — and IS served, render-only in Tier2,
+    // by dropping the small-script axis; see `crate::degraded` D7 / ADR-0027 A5.)
     "ここから3字下げ、「甲」は返り点",
     "「甲」は上付き小文字、「乙」は分数",
     "「甲」は縦中横、「乙」は上付き小書き",

@@ -101,6 +101,24 @@ pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
         }
     }
 
+    // D7 — 「X」は縦中横、行右/左小書き → 「X」は縦中横. LOSSY: a single-target
+    // compound whose primary 縦中横 axis renders faithfully while the secondary
+    // 行右/左小書き annotation is dropped. The parser declines the whole compound
+    // to a lossless Unknown rather than silently folding away the small-script
+    // axis — that silent drop was the pre-#435 data-loss bug (ADR-0027 A5) — so
+    // rendering it as bare 縦中横 is the faithful render-only approximation and
+    // lives here, never in fmt. Anchored on the exact tail plus a bare 「X」 head,
+    // so the two-target `…、「乙」は…` compounds (which style a *different* target
+    // and have no single faithful reduction) never match.
+    for tail in ["は縦中横、行右小書き", "は縦中横、行左小書き"] {
+        if let Some(head) = body.strip_suffix(tail)
+            && head.starts_with('「')
+            && head.ends_with('」')
+        {
+            return Some(Cow::Owned(format!("{head}は縦中横")));
+        }
+    }
+
     None
 }
 
@@ -119,6 +137,8 @@ pub const DEGRADED_SAMPLES: &[&str] = &[
     "下げて、地より3字あきで",
     "下げて、地より3字アキで",
     "下げて地より3字あきで",
+    "「甲」は縦中横、行右小書き",
+    "「乙」は縦中横、行左小書き",
 ];
 
 #[cfg(test)]
@@ -152,6 +172,15 @@ mod tests {
             degraded_directive("下げて地より2字あきで").as_deref(),
             Some("地から2字上げ")
         );
+        // D7 — single-target 縦中横 compound drops the 行右/左小書き axis.
+        assert_eq!(
+            degraded_directive("「１）」は縦中横、行右小書き").as_deref(),
+            Some("「１）」は縦中横")
+        );
+        assert_eq!(
+            degraded_directive("「甲」は縦中横、行左小書き").as_deref(),
+            Some("「甲」は縦中横")
+        );
     }
 
     #[test]
@@ -174,5 +203,13 @@ mod tests {
         assert_eq!(degraded_directive("「甲」は「乙」の誤記か"), None);
         assert_eq!(degraded_directive("ここから3字下げ"), None);
         assert_eq!(degraded_directive("字下げ終わり"), None);
+        // D7 refuses a two-target compound: `、「乙」は…` styles a different
+        // target, so there is no single faithful reduction (stays Unknown).
+        assert_eq!(
+            degraded_directive("「甲」は縦中横、「乙」は上付き小書き"),
+            None
+        );
+        // …and refuses a bare tail with no 「X」 head.
+        assert_eq!(degraded_directive("は縦中横、行右小書き"), None);
     }
 }
