@@ -6,6 +6,11 @@
 //! - `aozora check FILE [--strict]` — run the lexer over `FILE` and
 //!   report diagnostics. Exit 0 when no diagnostics; exit 1 otherwise
 //!   if `--strict`, else exit 0 with diagnostics on stderr.
+//! - `aozora lint FILE [--fix]` — report the advisory
+//!   notation-hygiene lints (`aozora::lint::*`) — non-canonical
+//!   directive near-misses. `--fix` rewrites the flagged near-misses
+//!   in place (the Tier1 autofix; same transform as `fmt --fix
+//!   --write`).
 //! - `aozora fmt FILE [--check | --write]` — round-trip
 //!   `parse ∘ to_source`. `--check` exits non-zero if the formatted
 //!   output differs from `FILE`; `--write` overwrites `FILE`. Default
@@ -16,6 +21,10 @@
 //!   `container-pairs` / `diagnostics` / `gaiji`), or the static
 //!   `slugs` catalogue. The data counterpart to `aozora schema
 //!   <kind>`, byte-identical to every binding's `*_json()` output.
+//! - `aozora pandoc FILE [--format FMT]` — project the parsed
+//!   document to a Pandoc AST. Without `--format`, prints Pandoc JSON
+//!   to stdout (consumable by `pandoc -f json -t FMT`); with
+//!   `--format`, spawns `pandoc` and pipes the JSON through it.
 //!
 //! Introspection (no input required, prints typed contracts):
 //! - `aozora kinds` — table of every `NodeKind` / `PairKind` /

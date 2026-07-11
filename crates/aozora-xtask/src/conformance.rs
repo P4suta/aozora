@@ -54,6 +54,186 @@ const TS_RESULTS_REL: &str = "crates/aozora-book/src/conformance-results-tree-si
 const TS_VECTORS_SNAPSHOT_REL: &str =
     "crates/aozora-conformance/spec-vectors/tree-sitter-snapshot.json";
 
+/// Ratchet floor (G2c) for how many fixtures / spec vectors the reference
+/// grammar parses with NO ERROR / MISSING nodes, bucketed by tier. Sits
+/// next to the sexp snapshots. Unlike those snapshots — which pin exact
+/// structure and are refreshed wholesale by `--update` — this records the
+/// *count* of clean parses per tier as a floor: a routine grammar change
+/// that quietly turns a must-tier fixture or a spec vector from clean to
+/// ERROR drops the count and fails the run, so the loss can't hide inside a
+/// large sexp diff. `--update` re-records the floor from the current run,
+/// making any drop a reviewable number in the committed diff.
+const ERROR_FREE_BASELINE_REL: &str =
+    "crates/aozora-conformance/spec-vectors/error-free-baseline.json";
+const ERROR_FREE_SCHEMA_VERSION: u32 = 1;
+
+/// Which section of [`ERROR_FREE_BASELINE_REL`] a run owns: the fixture
+/// runner writes `fixtures`, the spec-vector runner writes `vectors`.
+#[derive(Debug, Clone, Copy)]
+enum BaselineWhich {
+    Fixtures,
+    Vectors,
+}
+
+impl BaselineWhich {
+    /// `(unit label, the `--update` command that re-records this section)`.
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Fixtures => (
+                "fixtures",
+                "xtask conformance run --implementation tree-sitter --update",
+            ),
+            Self::Vectors => (
+                "vectors",
+                "xtask conformance vectors --implementation tree-sitter --update",
+            ),
+        }
+    }
+
+    /// Borrow this run's section out of a loaded baseline.
+    fn section(self, baseline: &ErrorFreeBaseline) -> Option<&ErrorFreeSection> {
+        match self {
+            Self::Fixtures => baseline.fixtures.as_ref(),
+            Self::Vectors => baseline.vectors.as_ref(),
+        }
+    }
+}
+
+/// The committed ERROR-free ratchet floor. Both sections are optional so
+/// the file can be bootstrapped one runner at a time (each `--update`
+/// preserves the other section).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ErrorFreeBaseline {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fixtures: Option<ErrorFreeSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vectors: Option<ErrorFreeSection>,
+}
+
+/// Per-tier ERROR-free counts for one corpus (fixtures or spec vectors).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ErrorFreeSection {
+    total: usize,
+    #[serde(rename = "errorFree")]
+    error_free: usize,
+    #[serde(rename = "byLevel")]
+    by_level: BTreeMap<String, usize>,
+}
+
+/// Project a tree-sitter [`Summary`] (whose `passed` field counts ERROR-free
+/// parses) into the ratchet section.
+fn error_free_section(summary: &Summary) -> ErrorFreeSection {
+    ErrorFreeSection {
+        total: summary.total,
+        error_free: summary.passed,
+        by_level: summary
+            .by_level
+            .iter()
+            .map(|(level, ls)| (level.clone(), ls.passed))
+            .collect(),
+    }
+}
+
+/// Read the committed ratchet floor. A missing file is a hard error in
+/// check mode — the baseline must be committed.
+fn load_error_free_baseline(root: &Path) -> Result<ErrorFreeBaseline, String> {
+    let path = root.join(ERROR_FREE_BASELINE_REL);
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|err| format!("parse {ERROR_FREE_BASELINE_REL}: {err}")),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Err(format!(
+            "conformance (tree-sitter): missing {ERROR_FREE_BASELINE_REL}; run \
+             `xtask conformance run --implementation tree-sitter --update` and \
+             `xtask conformance vectors --implementation tree-sitter --update` to create it"
+        )),
+        Err(err) => Err(format!("read {ERROR_FREE_BASELINE_REL}: {err}")),
+    }
+}
+
+/// Rewrite one section of the ratchet floor from the current run, preserving
+/// the other section (the two runners update independently).
+fn write_error_free_section(
+    root: &Path,
+    which: BaselineWhich,
+    section: ErrorFreeSection,
+) -> Result<(), String> {
+    let path = root.join(ERROR_FREE_BASELINE_REL);
+    let mut baseline = match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|err| format!("parse {ERROR_FREE_BASELINE_REL}: {err}"))?,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => ErrorFreeBaseline::default(),
+        Err(err) => return Err(format!("read {ERROR_FREE_BASELINE_REL}: {err}")),
+    };
+    baseline.schema_version = ERROR_FREE_SCHEMA_VERSION;
+    match which {
+        BaselineWhich::Fixtures => baseline.fixtures = Some(section),
+        BaselineWhich::Vectors => baseline.vectors = Some(section),
+    }
+    let json = serde_json::to_string_pretty(&baseline)
+        .map_err(|err| format!("serialize {ERROR_FREE_BASELINE_REL}: {err}"))?;
+    fs::write(&path, format!("{json}\n")).map_err(|err| format!("write {}: {err}", path.display()))
+}
+
+/// Enforce the ratchet: every tier's ERROR-free count (and the total) must
+/// be at least the committed floor. A drop fails the run; an improvement
+/// passes but nudges toward re-baselining.
+fn check_error_free_ratchet(
+    root: &Path,
+    which: BaselineWhich,
+    summary: &Summary,
+) -> Result<(), String> {
+    let (unit, update_cmd) = which.labels();
+    let current = error_free_section(summary);
+    let file = load_error_free_baseline(root)?;
+    let Some(baseline) = which.section(&file) else {
+        return Err(format!(
+            "conformance (tree-sitter): {ERROR_FREE_BASELINE_REL} has no `{unit}` section; \
+             run `{update_cmd}` to record the ERROR-free ratchet baseline"
+        ));
+    };
+    let regressions = error_free_regressions(&current, baseline);
+    if !regressions.is_empty() {
+        return Err(format!(
+            "conformance (tree-sitter): {unit} ERROR-free ratchet regressed ({}); a construct \
+             that used to parse without ERROR / MISSING nodes no longer does. Fix the grammar so \
+             it parses cleanly again, or — if the loss is intentional — re-baseline with \
+             `{update_cmd}` (the count drop is then reviewable in the committed diff).",
+            regressions.join(", "),
+        ));
+    }
+    if current.error_free > baseline.error_free {
+        eprintln!(
+            "  NOTE: {unit} ERROR-free improved {} -> {}; run `{update_cmd}` to ratchet the floor up.",
+            baseline.error_free, current.error_free,
+        );
+    }
+    Ok(())
+}
+
+/// Pure ratchet comparison. Returns the labels of the tiers (and/or the
+/// aggregate `total`) whose ERROR-free count fell below the committed floor;
+/// an empty vector means no regression. A tier the baseline records but the
+/// current run does not is treated as `0` (a regression against any positive
+/// floor).
+fn error_free_regressions(current: &ErrorFreeSection, baseline: &ErrorFreeSection) -> Vec<String> {
+    let mut regressions = Vec::new();
+    for (level, &floor) in &baseline.by_level {
+        let cur = current.by_level.get(level).copied().unwrap_or(0);
+        if cur < floor {
+            regressions.push(format!("{level} {cur} < {floor}"));
+        }
+    }
+    if current.error_free < baseline.error_free {
+        regressions.push(format!(
+            "total {} < {}",
+            current.error_free, baseline.error_free
+        ));
+    }
+    regressions
+}
+
 pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
     match &args.op {
         ConformanceOp::Run(run_args) => match run_args.implementation {
@@ -351,6 +531,12 @@ fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
     Ok((root.to_sexp(), root.has_error()))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear pass: read fixtures, parse each, then either refresh \
+              the sexp goldens + ERROR-free baseline or gate on drift + the \
+              ratchet — splitting the flow would fragment a single narrative"
+)]
 fn run_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let fixtures_dir = root.join(FIXTURE_REL);
@@ -421,8 +607,10 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
 
     if update {
         write_results(&root, &summary, TS_RESULTS_REL)?;
+        write_error_free_section(&root, BaselineWhich::Fixtures, error_free_section(&summary))?;
         eprintln!(
-            "xtask conformance run (tree-sitter): wrote {written} snapshot(s) + results artefact"
+            "xtask conformance run (tree-sitter): wrote {written} snapshot(s) + results + \
+             ERROR-free baseline"
         );
         return Ok(());
     }
@@ -444,6 +632,7 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
             cases = drifts.join(", "),
         ));
     }
+    check_error_free_ratchet(&root, BaselineWhich::Fixtures, &summary)?;
     Ok(())
 }
 
@@ -496,6 +685,12 @@ struct TsVectorSnapshot {
 /// per-tier pass rate report (no ERROR nodes) plus a single
 /// S-expression snapshot gate (`TS_VECTORS_SNAPSHOT_REL`). `--update`
 /// regenerates the snapshot after an intentional grammar change.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear pass: read every spec vector, parse each, then either \
+              refresh the sexp snapshot + ERROR-free baseline or gate on drift + \
+              the ratchet — splitting the flow would fragment a single narrative"
+)]
 fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);
@@ -548,9 +743,11 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
             .map_err(|err| format!("serialize snapshot: {err}"))?;
         fs::write(&snapshot_path, format!("{json}\n"))
             .map_err(|err| format!("write {}: {err}", snapshot_path.display()))?;
+        write_error_free_section(&root, BaselineWhich::Vectors, error_free_section(&summary))?;
         print_ts_summary(&summary, &[], "spec vectors");
         eprintln!(
-            "xtask conformance vectors (tree-sitter): wrote {} vector snapshot to {}",
+            "xtask conformance vectors (tree-sitter): wrote {} vector snapshot to {} + \
+             ERROR-free baseline",
             snapshot.vectors.len(),
             snapshot_path.display()
         );
@@ -581,6 +778,7 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
             cases = drifts.join(", "),
         ));
     }
+    check_error_free_ratchet(&root, BaselineWhich::Vectors, &summary)?;
     Ok(())
 }
 
@@ -958,6 +1156,113 @@ mod tests {
         assert_eq!(summary.passed, 0, "no passes");
         assert_eq!(summary.failed, 0, "no fails");
         assert!(summary.by_level.is_empty(), "no level buckets");
+    }
+
+    // ── ERROR-free ratchet (G2c) ────────────────────────────────────
+
+    fn efree(total: usize, must: usize, should: usize, may: usize) -> ErrorFreeSection {
+        let by_level = [("must", must), ("should", should), ("may", may)]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        ErrorFreeSection {
+            total,
+            error_free: must + should + may,
+            by_level,
+        }
+    }
+
+    #[test]
+    fn error_free_section_projects_summary_clean_counts() {
+        // A tree-sitter summary's `passed` field IS its ERROR-free count.
+        let summary = build_summary(
+            vec![
+                case(Level::Must, true),
+                case(Level::Must, false),
+                case(Level::Should, true),
+            ],
+            "tree-sitter",
+        );
+        let sec = error_free_section(&summary);
+        assert_eq!(sec.total, 3, "total cases");
+        assert_eq!(sec.error_free, 2, "two parsed clean");
+        assert_eq!(sec.by_level.get("must").copied(), Some(1), "one must clean");
+        assert_eq!(
+            sec.by_level.get("should").copied(),
+            Some(1),
+            "one should clean"
+        );
+    }
+
+    #[test]
+    fn ratchet_passes_when_counts_hold_or_improve() {
+        let floor = efree(127, 21, 36, 3);
+        assert!(
+            error_free_regressions(&efree(127, 21, 36, 3), &floor).is_empty(),
+            "equal to the floor is not a regression"
+        );
+        assert!(
+            error_free_regressions(&efree(127, 25, 40, 3), &floor).is_empty(),
+            "improving every tier is not a regression (the floor is a minimum)"
+        );
+    }
+
+    #[test]
+    fn ratchet_flags_a_dropped_tier() {
+        let floor = efree(127, 21, 36, 3);
+        // One must-tier fixture went from clean to ERROR.
+        let regressions = error_free_regressions(&efree(127, 20, 36, 3), &floor);
+        assert!(
+            regressions.iter().any(|m| m.contains("must 20 < 21")),
+            "names the tier and the drop: {regressions:?}"
+        );
+    }
+
+    #[test]
+    fn ratchet_flags_dropped_total_and_missing_tier() {
+        let floor = efree(127, 21, 36, 3); // error_free == 60
+        // A run that lost the whole `must` tier: absent tier counts as 0.
+        let by_level = [("should", 36), ("may", 3)]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        let current = ErrorFreeSection {
+            total: 127,
+            error_free: 39,
+            by_level,
+        };
+        let regressions = error_free_regressions(&current, &floor);
+        assert!(
+            regressions.iter().any(|m| m.contains("must 0 < 21")),
+            "an absent baseline tier is a regression: {regressions:?}"
+        );
+        assert!(
+            regressions.iter().any(|m| m.contains("total 39 < 60")),
+            "the aggregate drop is flagged too: {regressions:?}"
+        );
+    }
+
+    #[test]
+    fn baseline_which_selects_section_and_labels() {
+        let file = ErrorFreeBaseline {
+            schema_version: ERROR_FREE_SCHEMA_VERSION,
+            fixtures: Some(efree(1, 1, 0, 0)),
+            vectors: None,
+        };
+        assert!(
+            BaselineWhich::Fixtures.section(&file).is_some(),
+            "fixtures section present"
+        );
+        assert!(
+            BaselineWhich::Vectors.section(&file).is_none(),
+            "vectors section absent"
+        );
+        let (unit, cmd) = BaselineWhich::Vectors.labels();
+        assert_eq!(unit, "vectors", "vectors unit label");
+        assert!(
+            cmd.contains("conformance vectors"),
+            "update command targets the vectors runner: {cmd}"
+        );
     }
 
     #[test]
