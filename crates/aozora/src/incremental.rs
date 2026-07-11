@@ -30,7 +30,8 @@ use std::sync::Arc;
 
 use crate::splice::{RegionRole, classify_node_ref};
 use crate::{
-    CoupledKind, Diagnostic, Document, LexOutput, Node, NodeRef, PairLink, SourceNode, SpliceSafety,
+    CoupledKind, Diagnostic, Document, LexOutput, Node, NodeRef, PairKind, PairLink, SourceNode,
+    SpliceSafety,
 };
 
 /// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
@@ -239,6 +240,15 @@ pub(crate) struct RegionIndex {
     /// Running max of `span.end` over the start-sorted diagnostics — the
     /// straddle test for [`RegionIndex::diag_straddles`].
     diag_max_end_prefix: Vec<u32>,
+    /// Sorted start offsets at which a **ruby base is anchored**: every ruby
+    /// (`《…》`) `source_node`'s `source_span.start` (an attached ruby's node span
+    /// already begins at its true base left-edge, so this covers implicit / kana
+    /// / kanji / gaiji bases uniformly) ∪ every `PairKind::Ruby` pair's
+    /// `open.start` (a *bare* `《…》` with no base emits no node but still opens a
+    /// ruby pair). The search key for [`RegionIndex::ruby_base_anchored_at`],
+    /// which the region finder consults to reject a region-**end** cut on a ruby
+    /// base's left-edge (see [`minimal_balanced_region`]).
+    ruby_base_start: Vec<u32>,
 }
 
 impl RegionIndex {
@@ -287,6 +297,24 @@ impl RegionIndex {
             diag_max_end_prefix.push(diag_max_end);
         }
 
+        // Ruby-base anchors: an attached ruby's node span starts at its base
+        // left-edge; a bare `《…》` emits no node but a `PairKind::Ruby` pair
+        // whose `open.start` is that same edge. Node starts are already ascending
+        // (nodes are start-sorted), pair opens are appended, then the whole vec
+        // is sorted so the query is a plain `binary_search`.
+        let mut ruby_base_start: Vec<u32> = nodes
+            .iter()
+            .filter(|sn| is_ruby_node(sn.node))
+            .map(|sn| sn.source_span.start)
+            .chain(
+                pairs
+                    .iter()
+                    .filter(|p| p.kind == PairKind::Ruby)
+                    .map(|p| p.open.start),
+            )
+            .collect();
+        ruby_base_start.sort_unstable();
+
         Self {
             depth_prefix,
             max_end_prefix,
@@ -294,6 +322,7 @@ impl RegionIndex {
             pair_suffix_min_open,
             diag_start_sorted,
             diag_max_end_prefix,
+            ruby_base_start,
         }
     }
 
@@ -319,6 +348,18 @@ impl RegionIndex {
     fn diag_straddles(&self, b: u32) -> bool {
         let k = self.diag_start_sorted.partition_point(|&s| s < b);
         k > 0 && self.diag_max_end_prefix[k - 1] > b
+    }
+
+    /// Whether a **ruby base is anchored at `off`** — a ruby node starts there,
+    /// or a bare `《…》` ruby pair opens there. One `O(log n)` probe of the
+    /// sorted `ruby_base_start` key. The region finder uses this to decline a
+    /// region-**end** cut on a ruby base's left-edge, where an inserted
+    /// base-class character would attach to / grow the ruby in a full re-parse
+    /// but the reused suffix keeps its cached classification (see the region-end
+    /// scan in [`minimal_balanced_region`]).
+    #[must_use]
+    fn ruby_base_anchored_at(&self, off: u32) -> bool {
+        self.ruby_base_start.binary_search(&off).is_ok()
     }
 }
 
@@ -764,6 +805,27 @@ impl PieceSeq {
             .diag_straddles(to_backing(b, piece.san_shift))
     }
 
+    /// Whether a **ruby base is anchored at current-coordinate offset `off`** —
+    /// the piece-local form of [`RegionIndex::ruby_base_anchored_at`], delegating
+    /// to the containing piece's shared index at the backing-local offset (mirror
+    /// of [`structurally_safe`](Self::structurally_safe)).
+    ///
+    /// The region finder consults this only for a **region-end** candidate, and
+    /// the sole reachable ruby-base-anchored region-end is offset `0` (a
+    /// pure doc-start insertion; see the completeness argument in
+    /// [`minimal_balanced_region`]). `find_piece(0)` resolves to piece `0`
+    /// (`san_shift == 0`, since the first piece is never in a shifted suffix), so
+    /// the backing-local offset is exact — the boundary semantics `find_piece`
+    /// documents (the piece *ending* at a boundary backs it) hold here too.
+    #[must_use]
+    pub fn ruby_base_anchored_at(&self, off: u32) -> bool {
+        let piece = &self.pieces[self.find_piece(off)];
+        piece
+            .idx
+            .region
+            .ruby_base_anchored_at(to_backing(off, piece.san_shift))
+    }
+
     /// Whether any live piece carries a whole-document-scoped diagnostic.
     #[must_use]
     pub fn has_whole_doc_scoped_diag(&self) -> bool {
@@ -1151,14 +1213,51 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
         .rev()
         .find(|&j| is_cut(j))
         .expect("0 is always a cut");
+    // Region-END asymmetry (ruby base back-attachment). A cut that *ends* the
+    // reused prefix exposes a suffix head; if a ruby base is anchored there (a
+    // ruby node starts at the cut, or a bare `《…》` opens there), an inserted
+    // base-class character would, in a full re-parse, attach the bare ruby
+    // (bare→attached) or extend the base leftward — but the reused suffix keeps
+    // its cached classification, diverging. `structurally_safe`'s straddle test
+    // (`start < off < end`) cannot see this: the base's left-edge sits *exactly
+    // at* `off` (`start == off`), a leftward (backward) coupling that test
+    // excludes. So reject a ruby-base-anchored region END. Completeness:
+    //   - Region boundaries are only `{0, len}` or structurally-safe blank-line
+    //     cuts (`\n` at the suffix head). A blank-line cut can never anchor a
+    //     base (base chars are never `\n`, and an edit inserts *between* the two
+    //     newlines, isolated); `len` has no suffix. So this bites only at
+    //     `off == 0` (a pure doc-start insertion), where `find_piece(0)` backs
+    //     the query on piece 0 exactly.
+    //   - `region_start` is EXEMPT: a `《`/base at the region start is re-lexed
+    //     *inside* the region, so a prepended base attaches correctly there; an
+    //     in-context attachment reaching from the reused prefix would leave a
+    //     node straddling `region_start`, which `structurally_safe` already
+    //     rejects.
+    //   - Ruby is the *unique* gap: `≪…≫` (`AngleQuote`) always emits a
+    //     self-contained node whose span merely shifts under a prepended base;
+    //     `［＃…］` directives that pull back are either self-contained (span
+    //     shifts cleanly) or already declined by `node_forbids_region_reuse`
+    //     coupling. Only ruby has the node-free (bare) / node-left-edge shape.
     let region_end = (ee..=len)
-        .find(|&j| is_cut(j))
-        .expect("len is always a cut");
+        .find(|&j| is_cut(j) && !base.pieces.ruby_base_anchored_at(j))
+        .expect("len is a cut and never anchors a ruby base");
 
     if region_start == 0 && region_end == len {
         return None; // whole document — no benefit
     }
     Some(region_start..region_end)
+}
+
+/// Whether `node` is a ruby (`《…》`) source node — an `Inline` or `BlockLeaf`
+/// [`Node::Ruby`]. An attached ruby's `source_span.start` is its base
+/// left-edge, so the region finder uses this to detect a ruby base anchored at
+/// a candidate region-end cut (`RegionIndex::ruby_base_start` /
+/// [`RegionIndex::ruby_base_anchored_at`], and the test oracle's `anchors_ruby`).
+fn is_ruby_node(node: NodeRef) -> bool {
+    matches!(
+        node,
+        NodeRef::Inline(Node::Ruby(_)) | NodeRef::BlockLeaf(Node::Ruby(_))
+    )
 }
 
 /// Whether `node` makes the region unsafe to reuse incrementally, so the
@@ -2149,10 +2248,10 @@ mod oracle_proptests {
 
     use super::{
         DiagBaseRef, LexOutput, PieceSeq, Prologue, RegionIndex, candidate_boundaries,
-        is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse,
+        is_ruby_node, is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse,
         splice_prologue, structurally_safe,
     };
-    use crate::{Diagnostic, Document, PairLink, SourceNode};
+    use crate::{Diagnostic, Document, PairKind, PairLink, SourceNode};
 
     /// Parse a generated document to its owned lex output.
     fn output(src: &str) -> LexOutput {
@@ -2198,8 +2297,26 @@ mod oracle_proptests {
             }
         }
         cuts.push(len);
+        // Region-end ruby-base filter — byte-identical to production's
+        // `ruby_base_anchored_at` (see `minimal_balanced_region`): a ruby node
+        // starts at the cut, or a bare `《…》` pair opens there. `region_start` is
+        // exempt (re-lexed inside the region).
+        let anchors_ruby = |c: u32| -> bool {
+            cached
+                .source_nodes
+                .iter()
+                .any(|sn| is_ruby_node(sn.node) && sn.source_span.start == c)
+                || cached
+                    .pairs
+                    .iter()
+                    .any(|pl| pl.kind == PairKind::Ruby && pl.open.start == c)
+        };
         let region_start = cuts.iter().copied().filter(|&c| c <= es).max()?;
-        let region_end = cuts.iter().copied().filter(|&c| c >= ee).min()?;
+        let region_end = cuts
+            .iter()
+            .copied()
+            .filter(|&c| c >= ee && !anchors_ruby(c))
+            .min()?;
         if region_start == 0 && region_end == len {
             return None;
         }
