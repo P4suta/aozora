@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 127,
-  "passed": 127,
+  "total": 128,
+  "passed": 128,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,8 +10,8 @@
       "failed": 0
     },
     "must": {
-      "total": 30,
-      "passed": 30,
+      "total": 31,
+      "passed": 31,
       "failed": 0
     },
     "should": {
@@ -844,6 +844,13 @@
       "case": "side_note_left",
       "feature": "kunten",
       "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "stray_bracket_line_scope",
+      "feature": "recovery",
+      "level": "must",
       "passed": true,
       "message": null
     },

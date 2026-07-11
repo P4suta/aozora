@@ -458,6 +458,21 @@ struct Frame {
     gaiji_refmark: Option<Span>,
 }
 
+/// What [`ClassifyStream::append_to_frame`] tells its caller to do next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameOutcome {
+    /// The outermost pair is still open — keep buffering.
+    Open,
+    /// The outermost pair just closed on a real `PairClose` — run
+    /// recognition on the now-complete body buffer.
+    Closed,
+    /// The outermost open was force-resolved as `Unclosed` (a stray `［`
+    /// crossing a line break, or the EOF drain) — abandon the frame,
+    /// folding its buffered fragment to plain (F21). See
+    /// [`ClassifyStream::abandon_frame`].
+    Abandoned,
+}
+
 /// Span of the first ruby (`《…》`) opening *inside* the body
 /// event range `lo..hi`, if any. Used by [`ClassifyStream::try_ruby_emit`]
 /// to flag `nested_ruby` — `build_content_from_body` folds only nested
@@ -714,11 +729,10 @@ where
 
     /// Append an event to the current frame's body, updating the
     /// inner-stack and patching the parallel `links` side-table as
-    /// needed. Returns `true` if the appended event closed the
-    /// OUTERMOST pair (i.e. `inner_stack` became empty), signalling
-    /// that the caller should run recognition on the now-complete
-    /// buffer.
-    fn append_to_frame(&mut self, event: PairEvent) -> bool {
+    /// needed. The [`FrameOutcome`] tells the caller whether to keep
+    /// buffering, run recognition on the now-complete buffer, or
+    /// abandon the frame as a stray open (fold its fragment to plain).
+    fn append_to_frame(&mut self, event: PairEvent) -> FrameOutcome {
         #[cfg(feature = "classify-instrument")]
         let _classify_guard = SubsystemGuard::new(Subsystem::FrameAppend);
         let frame = self
@@ -758,26 +772,26 @@ where
                 }
             }
             PairEvent::Unclosed { kind, .. } => {
-                // The pair stage force-resolved a dangling open. When a
-                // hard-scope `］` unwinds a non-bracket open buried above the
-                // bracket (see `pair.rs`), drop its inner-stack entry so the
-                // buffer can still close on the following `PairClose(Bracket)`.
-                // The event stays in the body with no link (`u32::MAX`), so
-                // forward recognisers see an unresolved pair and decline —
-                // the body round-trips as raw bytes.
+                // The pair stage force-resolved an open. Two shapes reach here:
                 //
-                // Guard `pos > 0`: the frame's OUTERMOST open lives at
-                // inner-stack position 0 and may only be closed by a real
-                // `PairClose`. A hard-scope unwind never targets it (it pops
-                // opens stacked *above* the bracket), so a matching
-                // position-0 entry can only be that outermost open surfacing
-                // via the EOF drain — popping it would spuriously empty the
-                // inner stack and run recognition on a never-closed body. Not
-                // popping keeps the frame open for the replay-to-plain path,
-                // byte-identical to before.
-                if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind)
-                    && pos > 0
-                {
+                // * A hard-scope `］` (or a line break, see `pair.rs`) unwound a
+                //   NON-outermost open buried above a bracket. Drop its
+                //   inner-stack entry so the buffer can still close on the
+                //   following `PairClose(Bracket)`; the event stays in the body
+                //   with no link (`u32::MAX`) so forward recognisers see an
+                //   unresolved pair and decline — the body round-trips raw.
+                //
+                // * The frame's OUTERMOST open (inner-stack position 0) is being
+                //   force-resolved, because the pair stage crossed a line break
+                //   with a stray `［` still open (F21) or drained it at EOF. This
+                //   open may never be closed by a real `PairClose`, so the frame
+                //   is a stray delimiter, not an annotation body: abandon it —
+                //   fold the buffered fragment to plain and resume top-level
+                //   classification on the live stream (see `abandon_frame`).
+                if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind) {
+                    if pos == 0 {
+                        return FrameOutcome::Abandoned;
+                    }
                     frame.inner_stack.remove(pos);
                 }
                 frame.body.push(event);
@@ -789,7 +803,11 @@ where
             }
         }
 
-        frame.inner_stack.is_empty()
+        if frame.inner_stack.is_empty() {
+            FrameOutcome::Closed
+        } else {
+            FrameOutcome::Open
+        }
     }
 
     /// Run recognition on the current frame's body buffer and emit the
@@ -962,6 +980,35 @@ where
             }
             self.handle_top_level(ev, /*replay=*/ true);
         }
+    }
+
+    /// Abandon the current frame because its outermost open was force-resolved
+    /// as `Unclosed` — the pair stage either crossed a line break with a stray
+    /// `［` still open (F21, mid-stream) or drained the still-open outer at EOF.
+    /// Either way the open may never be closed by a real `PairClose`, so the
+    /// frame is a stray delimiter, not an annotation body (江戸川乱歩『影男』L548's
+    /// trailing `［` is the corpus archetype).
+    ///
+    /// The win over the old EOF-only drain is timing: resolving a stray `［` at
+    /// the line break — rather than buffering the entire remainder of the
+    /// document into its frame and sinking it to plain at EOF — folds only the
+    /// buffered *line fragment* to plain and clears the frame, so the pair
+    /// events after the newline classify normally on the *live* stream, exactly
+    /// as if the stray open were not there. That stops the leak cascade where
+    /// every following ruby, heading and directive rendered as literal source.
+    ///
+    /// This never re-classifies already-paired events (that is unsound: their
+    /// pairing reflects the stray open's stack context); the tail is processed
+    /// once, forward, off the real event stream. Byte coverage is unchanged —
+    /// the fragment folds to plain, identical to the EOF replay path — so the
+    /// verbatim / round-trip invariants hold; only the visible render improves.
+    fn abandon_frame(&mut self) {
+        let frame = self
+            .frame
+            .take()
+            .expect("abandon_frame requires an active frame");
+        let refmark = frame.gaiji_refmark;
+        self.replay_unrecognised_body(frame.body, refmark);
     }
 
     /// Handle a top-level event (no active frame) in either streaming
@@ -1696,9 +1743,10 @@ where
                 self.pending_refmark.is_none(),
                 "a pending refmark should have been absorbed or flushed before frame entry"
             );
-            let outer_closed = self.append_to_frame(event);
-            if outer_closed {
-                self.recognize_and_emit();
+            match self.append_to_frame(event) {
+                FrameOutcome::Closed => self.recognize_and_emit(),
+                FrameOutcome::Abandoned => self.abandon_frame(),
+                FrameOutcome::Open => {}
             }
             return;
         }
@@ -2405,6 +2453,37 @@ mod tests {
         };
         assert_eq!(out.plain(r.base), Some("青梅"));
         assert_eq!(out.plain(r.reading), Some("おうめ"));
+    }
+
+    /// F21: a stray `［` that the pair stage line-scopes must not sink the
+    /// ruby on the next line. The classifier abandons the never-closing frame
+    /// at the line break — folding the `［` to a literal Plain span — so the
+    /// following `｜…《…》` still classifies as a Ruby node instead of leaking as
+    /// literal source (江戸川乱歩『影男』L548's cascade). Pinned end-to-end by
+    /// `fixtures/render/stray_bracket_line_scope`.
+    #[test]
+    fn stray_bracket_does_not_sink_following_ruby() {
+        run!(out, "［\n｜漢字《かんじ》");
+        let Node::Ruby(r) = out.only_aozora() else {
+            panic!("post-stray ruby must survive, got {:?}", out.only_aozora());
+        };
+        assert_eq!(out.plain(r.base), Some("漢字"));
+        assert_eq!(out.plain(r.reading), Some("かんじ"));
+        // The stray `［` (U+FF3B, 3 bytes) folds to a literal Plain span.
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| s.kind == SpanKind::Plain && s.source_span == Span::new(0, 3)),
+            "stray `［` must fold to plain: {:?}",
+            out.spans
+        );
+        assert!(out.diagnostics.iter().any(|d| matches!(
+            d,
+            Diagnostic::UnclosedBracket {
+                kind: PairKind::Bracket,
+                ..
+            }
+        )));
     }
 
     #[test]
