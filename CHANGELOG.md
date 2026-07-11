@@ -33,6 +33,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now derives `Serialize` (camelCase fields, snake_case enum tags); `cache`
   ignores the flag. Closes the long-standing `TableRenderable` "structured
   serializable form (planned)" gap.
+- **cli**: a first-class **`aozora lint`** subcommand reports only the
+  authoring-hygiene diagnostics (the `aozora::lint::*` namespace, gated by a
+  single `Diagnostic::is_lint` authority), and `aozora lint --fix` applies the
+  zero-false-positive Tier1 autofix in place through the exact path
+  `fmt --fix --write` uses. `aozora fmt` reaches full parity with the standalone
+  `aozora-fmt` binary — `--diff` / `--list` / `--json` / `-E`/`--encoding` /
+  multi-file — by sharing one `aozora_fmt::run_engine`, so the canonical form
+  and the flag vocabulary can never drift. That vocabulary is now coherent:
+  source rewrite → `--fix`, read-only projection → `--normalize` / `--degraded`,
+  diagnostics → `--strict` / `--diagnostic-format`. See #453 and ADR-0022.
+- **cli**: a global `--color {auto,always,never}` flag (accepted after any
+  subcommand) drives colour across the whole CLI via a process-wide miette hook;
+  `auto` honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and stderr-TTY
+  detection. See #451.
+- **notation**: serve the single-target 縦中横 + 行小書き compound
+  (`「X」は縦中横、行右／左小書き`) — corpus residue form 5 (~886 occurrences) —
+  as a Tier2 `--degraded` (render-only) mapping that renders the primary 縦中横
+  axis faithfully while dropping the secondary small-script axis (ADR-0027 A5).
+  The **default parse path is unchanged** — the compound still declines to a
+  lossless `Unknown`, so byte output is invariant. See #467.
+- **playground**: the footer now shows the parser build identity, sourced from
+  an `aozora-wasm` `version()` export (`aozora-buildstamp::VERSION`,
+  wasm32-scoped) rather than a hard-coded literal (ADR-0009). See #468.
 
 ### Changed
 
@@ -45,7 +68,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `parse` + `serialize` phases into one `format` phase. Also corrects stale
   `aozora-fmt` module docs (the `aozora` CLI was never a `FmtArgs` consumer and
   there is no `xtask gen-assets`) and drops the leftover "planned" note from the
-  `--fix-notation` non-canonical-directive help now that the autofix ships.
+  `--fix` non-canonical-directive help now that the autofix ships.
 - **perf / pipeline**: the classifier's per-ruby synthetic event stream
   (`build_synth_ruby_view`) now lands in a `SmallVec<[_; 16]>` instead of two
   fresh heap `Vec`s. A ruby is ~5 events, so it stays inline — and since the
@@ -54,6 +77,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from **489.1 → 191.9 blocks/file (−61 %)** with byte-identical output and
   small-band throughput unchanged/slightly up (owned/borrowed 1.07). The
   `owned-alloc` ratchet baseline is lowered accordingly.
+- **api**: ⚠ BREAKING (source-only) — a pre-1.0 naming overhaul locks the
+  public and internal surface to industry conventions. Rust types drop the
+  `Aozora` stutter: `AozoraNode` → `Node`, `AozoraTree` → `Tree`,
+  `AozoraHeading*` → `Heading*`, `BorrowedLexOutput` → `LexOutput`; the
+  textual-criticism variants adopt TEI terms (`AsIs` → `Sic`, `TextualNote` →
+  `BaseTextVariant`). The JSON `kind` tags take a minimal-romaji policy —
+  `tateChuYoko` → `combineUpright`, `keigakomi` → `framed`, `sashie` →
+  `illustration`, `annotation` → `directive`, `sideNote` → `marginNote` (the
+  five terms with no 1:1 English mapping — `ruby` / `bouten` / `gaiji` /
+  `warichu` / `kaeriten` — stay romaji). The envelope field `schema_version`
+  becomes `schemaVersion`, and `Tree::serialize` becomes `Tree::to_source`
+  (resolving the `serialize`-vs-JSON-projection double meaning). The CLI
+  `aozora wire <kind>` becomes `aozora inspect <kind>`, and the `wire` feature
+  and module become `json`. Internally the numbered lexer phases are named
+  `sanitize` / `tokenize` / `pair` / `classify` and `lex_into_arena` → `lex`;
+  the arena-tuning surface (`ParseOptions::arena_capacity`,
+  `Document::with_arena_capacity`, `arena_bytes`) is removed along with the
+  borrowed/arena engine. Bindings follow: WASM methods are camelCase, and the
+  Python package imports as `aozora` (`from_sjis` → `from_bytes`). **The emitted
+  JSON changes only in the renamed `kind` tags** — source that names these
+  symbols needs updating; the `*Wire` type-suffix drop below completes the
+  `wire` → `json` migration.
 - **api**: ⚠ BREAKING (source-only) — complete the `wire` → `json` migration by
   dropping the `*Wire` type suffix. `aozora::json::{SpanWire, DiagnosticWire,
   NodeWire, PairWire, ContainerPairWire, OffsetWire, SlugWire, ByteSpanWire,
@@ -64,12 +109,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `DiagnosticSource`) become `as_json_tag` / `as_json_str`. Generated bindings
   follow: Go `wire_gen.go` → `json_gen.go` (top-level `AozoraWire` →
   `AozoraJSON`); TypeScript `WireEnvelope<T>` → `JsonEnvelope<T>`. **The emitted
-  JSON is unchanged** — field names, `kind` / `severity` tag strings, and
-  `schemaVersion` (= 1) are byte-identical, so JSON consumers are unaffected;
-  only source that *names* these symbols needs updating. Upgrading from 0.4.x
-  also picks up the earlier feature/module rename: Cargo feature `["wire"]` →
-  `["json"]` and module path `aozora::wire::` → `aozora::json::`. This is a 0.x
-  breaking change, so the next release is **0.5.0** (never 0.4.2). See #176.
+  JSON is unchanged by this rename** — field names, `kind` / `severity` tag
+  strings, and the `schemaVersion` value are all byte-identical across it, so
+  JSON consumers are unaffected; only source that *names* these symbols needs
+  updating. (The rename left `schemaVersion` untouched at `1`; the separate
+  Gothic core purification below bumps it **1 → 2** for the 0.5.0 wire schema —
+  see #437 — so a 0.5.0 envelope carries `schemaVersion: 2`.) Upgrading from
+  0.4.x also picks up the earlier feature/module rename: Cargo feature
+  `["wire"]` → `["json"]` and module path `aozora::wire::` → `aozora::json::`.
+  This is a 0.x breaking change, so the next release is **0.5.0** (never
+  0.4.2). See #176.
 - **notation**: ⚠ BREAKING — 二重山括弧 is now the `≪…≫` (U+226A/U+226B) input
   encoding, rendered as `《…》` (U+300A/U+300B) — correcting a model that was
   inverted and misnamed. The node / wire kind `DoubleRuby` / `doubleRuby` is
@@ -77,7 +126,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `aozora-angle-quote`; the pandoc `Span` class `double-ruby` → `angle-quote`.
   A literal `《《…》》` in source is now a `nested-ruby` diagnostic with plain
   recovery. See ADR-0011.
-
+- **parser / core**: ⚠ BREAKING — purify the Core notation vocabulary
+  (ADR-0027). The classifier stops lossily absorbing nine non-official
+  convention forms on the **default parse path**; each now declines to a
+  lossless verbatim `Unknown` and is still served by a Tier1 lint / `--degraded`
+  render, so nothing is dropped. **ゴシック体 is promoted to a first-class
+  `Gothic` weight** — a typeface, disjoint from 太字 across the corpus — in every
+  scope (`Format::Gothic` / `LineFormat::Gothic` / `NodeKind::LineGothic`; CSS
+  class `aozora-goshikku`; wire tag `gothic`). The wire schema bumps
+  **`schemaVersion` 1 → 2**: the tag `gothic` is added, `lineBold` is renamed
+  `lineGothic`, and the `combineUprightRange` container tag is removed (縦中横
+  has no paired-range form in the spec, so the dead `RegionFormat::CombineUpright`
+  surface is dropped). The TypeScript-types generator now derives the version
+  from `SCHEMA_VERSION` instead of a hardcoded `1`. `features = ["json"]`
+  consumers pin an immutable version and follow at this release. Over the
+  17,889-work corpus `unknown_total` rises 2,374 → 3,794 by design (documented
+  in `corpus/baseline.json`), with render-correctness and panic counts still
+  zero. Spec realigned in aozora-notation-spec#52. See ADR-0027 and #437.
+- **api**: ⚠ BREAKING (source-only) — curate the `aozora` umbrella
+  re-exports. The umbrella promised "insulation from internal decomposition" but
+  its glob re-exports (`pub use aozora_pipeline::*` and the `syntax` / `render`
+  / `encoding` / `cst` / `query` / `proptest` modules) instead leaked
+  no-contract internal surface (e.g. the deleted `borrowed` module) verbatim.
+  Every `pub use <crate>::*` glob is dropped in favour of named re-exports of
+  only the documented stable surface, and `pub mod pipeline` (explicitly "not
+  part of the stable surface") is withdrawn — its stable outputs (`LexOutput` /
+  `NodeRef` / `SourceNode` / `lex` / `prewarm`) already live at the crate root.
+  A consumer that needs a withdrawn internal surface should depend on the
+  internal crate directly with a pinned version (the workspace's own consumers
+  were switched this way). See #474.
 
 ### Removed
 
@@ -97,6 +174,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   change is the generated TypeScript `NodeKind` union dropping its dead `"framed"`
   member, so only source that *names* that member needs updating. The golden
   family universe shrinks 45 → 43. See ADR-0028 and #455.
+- **api**: ⚠ BREAKING (source-only) — remove the `#[deprecated]` +
+  `#[doc(hidden)]` `Tree::node_at_normalized` shim (formerly
+  `Document::node_at_normalized`); it had zero consumers across the workspace
+  and sibling repositories. Normalized-offset lookups use
+  `lex_output().registry.node_at()` directly, and source coordinates are served
+  by `node_at_source`. A clean-break removal in the 0.5.0 breaking window. See
+  #458.
 
 
 ### Fixed
@@ -158,12 +242,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   light/dark theme rather than a hardcoded page colour. A new CI `vscode` job
   (tsc + biome + esbuild bundle + tests; `just vscode-ci` locally) closes the
   gap that let the drift land unnoticed — the extension was previously ungated.
-
-
-### Build
-
-- **release**: Make internal crates publishable and bump to v0.4.1
-- **deps**: Bump the rust-deps group with 6 updates (#72) (#72)
+- **pipeline**: a stray unmatched `［` (an opening bracket whose `］` never
+  arrives) no longer desyncs the lexer and leaks every following valid ruby /
+  heading / directive into the visible HTML as a cascade. Because a `［＃…］`
+  directive body never spans a newline, the pair stage now force-resolves any
+  still-open top-run of `［` as `Unclosed` before emitting a `Newline`, and the
+  classifier abandons the frame and resumes normal classification on the live
+  stream. Already-paired events are never re-classified (that would corrupt
+  bytes), so `corpus verbatim` stays byte-identical — only the visible render
+  improves (ruby-leak occurrences 8,710 → 1,588 over the 17,889-work corpus).
+  Regression fixture: `stray_bracket_line_scope`. See ADR-0030 and #473.
+- **cli**: `aozora render big.txt | head` (any downstream reader that closes the
+  pipe early) no longer errors — the broken-pipe write is detected via
+  `aozora_fmt::is_broken_pipe` and the CLI exits quietly with success
+  (ripgrep / bat convention) instead of exit 1 (or exit 2 for `aozora-fmt`).
+  The `fmt --list` / `--write` `println!` paths move to `writeln!(io::stdout())`
+  so EPIPE no longer panics. See ADR-0029 and #460.
+- **cli**: oversize input (> `u32::MAX` bytes) is now rejected gracefully with a
+  usage error (exit 2) instead of reading the whole file and aborting with
+  SIGABRT (exit 134) at the `u32` span-boundary assertion. A shared guarded
+  reader checks `fs::metadata` size before reading a file, bounds stdin with a
+  capped read, and re-checks after SJIS→UTF-8 decode; the message matches the
+  existing Python / WASM guards. See #461.
 
 
 ### CI
@@ -176,8 +276,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **ci**: Gate the Go host SDK at runtime — add `smoke-go` (gofmt + go vet +
   go test against the freshly-built wasm) to `just ci` and the pre-push
   `ci-parallel`, alongside `smoke-ffi`. Previously CodeQL only compiled it.
-- **release**: Publish the whole workspace to crates.io in topological order
-- Harden release workflow (Node24 attest, pin windows-2025, cargo net retry) (#71) (#71)
+- **conformance**: cross-surface parity gates — one committed golden (127
+  render fixtures) is checked byte-identical by a thin walker on each surface
+  (CLI, C FFI, Python, WASM, Go/Extism), so a binding can no longer reframe,
+  re-order, or drop output undetected. See #464.
+- **corpus / notation**: the notation-hygiene framework is populated against the
+  17,889-work corpus. A Tier2 rule (D6) maps the count-less `下げて…字あきで`
+  head-indent spellings to `地から N 字上げ` in `--degraded` render, a
+  corpus-mined refuse-list keeps free-form spatial-layout decoys inert, and a
+  `catalogue-sweep-gate` pins the Tier1/Tier2-matched Unknown-shape set (residue
+  may only shrink; a newly matched shape fails until a human confirms a genuine
+  near-miss). Golden family coverage reaches 41/45, the remaining 4 documented
+  as structurally irreducible (two of them — the dead `framed` /
+  `invalidRubySpan` surfaces — are then removed per the Removed section,
+  shrinking the universe to 43). Default parser output stays byte-identical. See
+  #456.
+- **just**: repair the fuzz and semver gate recipes — the `fuzz-*` recipes
+  built against a musl target the nightly image lacks (never running a single
+  iteration) and referenced stale/renamed fuzz targets, and the semver recipe
+  aborted on crates not yet on crates.io. All seven fuzz targets now build and
+  run on the host gnu triple and the semver gate skips unpublished crates
+  cleanly. See #459.
+- **xtask**: a grammar regen drift gate (`conformance grammar --check`) fails
+  when the committed tree-sitter `parser.c` diverges from its grammar, pinning
+  `tree-sitter-cli` to 0.26.x to match the runtime dependency. See #463.
+- **bench**: an instruction-count perf gate (`just perf-gate`) using
+  iai-callgrind measures deterministic CPU instructions (`Ir`) over corpus-free
+  vendored works plus a synthetic pathological buffer, failing on a > 10 %
+  regression; wall-clock is too noisy on shared runners. Also lands a
+  tree-sitter ERROR-free ratchet. See #466.
+- **ci**: a weekly cross-OS behavioral test matrix runs the full test suite on
+  `macos-latest` and `windows-2025` (the release runners), so platforms that
+  were previously build-only are exercised at runtime. See #465.
+- **release**: release builds are now `cargo auditable` and ship a CycloneDX
+  SBOM (`aozora-<ver>.cdx.json`), attached to the GitHub Release and covered by
+  build-provenance attestation. See #470.
+- **ci**: a scheduled fuzz soak workflow runs all seven fuzz targets weekly
+  (600 s each, persisted corpus cache), uploading crash artifacts and opening a
+  deduplicated issue on failure. See #471.
+- **xtask**: `spec-vectors check` / `sync` replace the two spec-vendor bash
+  scripts, with a weekly spec-freshness workflow that opens an issue on drift.
+  See #472.
 
 
 ### Documentation
@@ -191,8 +330,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from `ref/api.md`, `bindings/python.md`, and the `contrib/release*.md` runbooks
   (link to install.md or use `vX.Y.Z` placeholders), leaving install.md the one
   canonical pin. ADR-0009's deferred grep-gate is now implemented.
-- **release**: Document crates.io / npm / PyPI publishing
-- **release**: Record the pre-1.0 code-signing deferral decision (#70) (#70)
+- **handbook**: regenerate the CLI quickstart from real command runs — replacing
+  a fabricated diagnostic example with actual `aozora check` output and
+  correcting the document-operation count and exit-code table. A new
+  `handbook_pins.rs` test asserts the fenced examples against the built binary.
+  See #462.
+- **crates**: add READMEs for the 14 publishable crates (three tiers: the
+  `aozora` umbrella, the internal "no stability contract, use `aozora`" crates,
+  and the user-facing `aozora-cli` / `aozora-pandoc`) so no crates.io page is
+  empty — using crates.io-absolute URLs, with a `readme-gate` enforcing their
+  presence. See #469.
+
+## [0.4.1] - 2026-06-15
+
+First tagged multi-channel publish (crates.io / npm / PyPI). The library API and
+CLI behaviour are unchanged from 0.4.0; this release makes the internal crates
+publishable and hardens the release pipeline.
+
+
+### Build
+
+- **release**: publish the whole workspace to crates.io / npm / PyPI in
+  dependency-topological order — the internal crates become publishable and the
+  workspace bumps to v0.4.1, with the publishing runbook documented (#74)
+- **deps**: bump the rust-deps group with 6 updates (#72)
+- **deps**: bump Rust 1.95.0 → 1.96.0 in the docker-base-images group (#76)
+
+
+### CI
+
+- **release**: harden the release workflow — Node24 attestation, pinned
+  windows-2025 runner, and cargo network retry (#71)
+
+
+### Documentation
+
+- **release**: record the pre-1.0 code-signing deferral decision (#70)
 
 ## [0.4.0] - 2026-06-14
 

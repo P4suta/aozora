@@ -73,6 +73,11 @@ changelog_include = [
 
 # --- changelog rendering (git-cliff syntax, ported from the retired cliff.toml)
 # Keep-a-Changelog body so CHANGELOG.md and the GitHub Release page agree.
+# A GitHub squash-merge subject already ends in " (#N)", and the template also
+# appends its own " (#N)" from commit.remote.pr_number — which doubled the
+# reference ("… (#72) (#72)"). When a PR number is known we strip the subject's
+# trailing " (#N)" (split on " (#", keep the head) and append the canonical one;
+# otherwise the subject is rendered verbatim so a bare reference is never lost.
 [changelog]
 protect_breaking_commits = true
 header = """
@@ -94,8 +99,7 @@ body = """
 ### {{ group | upper_first }}
 
 {% for commit in commits %}\
-- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}\
-{%- if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{% if commit.remote.pr_number %}{{ commit.message | upper_first | split(pat=" (#") | first }} (#{{ commit.remote.pr_number }}){% else %}{{ commit.message | upper_first }}{% endif %}
 {% endfor %}
 {% endfor %}
 """
