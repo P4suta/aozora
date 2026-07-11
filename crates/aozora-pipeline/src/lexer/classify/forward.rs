@@ -249,9 +249,12 @@ impl RecogniseCtx<'_, '_> {
     /// * editorial-note ≺ `Unknown` — the editorial kinds refine the
     ///   catch-all, which would otherwise claim every body. Pinned by
     ///   `editorial_notes_type_as_asis_and_textual_note`.
-    /// * 縦中横 compound ≺ small-script range — `「X」は縦中横、行右小書き`
-    ///   is 縦中横, not a small-script range nor `Unknown`. Pinned by
-    ///   `tcy_small_script_compound_recognised_as_tcy`.
+    /// * 縦中横 single-target compound → `Unknown` — `「X」は縦中横、行右小書き`
+    ///   matches neither the exact `は縦中横` tcy shape (the `、`-suffix declines
+    ///   at [`Self::classify_forward_tcy`]) nor any emphasis keyword, so it falls
+    ///   through to `Directive{Unknown}` (lossless verbatim), served render-only
+    ///   by Tier2 `--degraded` (drop the small-script axis; ADR-0027 A5). Pinned
+    ///   by `tcy_small_script_compound_declines_to_unknown`.
     /// * 縦中横 `ShapedNoTarget` diagnostic survives the fall-through —
     ///   when the target is absent the directive degrades to
     ///   `Directive{Unknown}`, but its `tcy_target_not_found` warning is
@@ -1882,6 +1885,22 @@ mod tests {
             None
         );
         assert_eq!(forward_attr_from_suffix("分数、縦中横"), None);
+    }
+
+    #[test]
+    fn tcy_small_script_compound_declines_to_unknown() {
+        // `「X」は縦中横、行右/左小書き` reaches this emphasis suffix mapper (after
+        // the exact-`は縦中横` tcy shape declines the `、`-suffix upstream) with a
+        // compound keyword that is not a claimable emphasis attribute, so it stays
+        // `Directive{Unknown}` rather than being misclaimed as a small-script —
+        // the dropped small-script axis is served render-only by Tier2 --degraded
+        // (ADR-0027 A5), never on the default parse path.
+        assert_eq!(forward_attr_from_suffix("縦中横、行右小書き"), None);
+        assert_eq!(forward_attr_from_suffix("縦中横、行左小書き"), None);
+        // The bare small-script words ARE claimable alone — proving the compound
+        // declines because of the leading `縦中横、`, not the small-script word.
+        assert!(forward_attr_from_suffix("行右小書き").is_some());
+        assert!(forward_attr_from_suffix("行左小書き").is_some());
     }
 
     #[test]

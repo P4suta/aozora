@@ -3,8 +3,8 @@
   "files_analyzed": 17889,
   "unknown_total": 3794,
   "tier1_occurrences": 487,
-  "tier2_occurrences": 32,
-  "residue_occurrences": 3275,
+  "tier2_occurrences": 918,
+  "residue_occurrences": 2389,
   "tier1_shapes": {
     "［＃N回り大きな文字］": 4,
     "［＃N字下げて］": 1,
@@ -68,6 +68,7 @@
     "［＃（四）は縦中横］": 1
   },
   "tier2_shapes": {
+    "［＃「」は縦中横、行右小書き］": 886,
     "［＃ここから最後までN字下げ］": 2,
     "［＃下げて、地よりN字あきで］": 11,
     "［＃下げて地よりN字あきで］": 6,
