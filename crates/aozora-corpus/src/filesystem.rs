@@ -267,9 +267,16 @@ mod tests {
         assert!(provenance.contains(&dir.path().display().to_string()));
     }
 
+    // Unix-only: the unreadable file is approximated with a `chmod 000`
+    // (`PermissionsExt::set_mode`), which exists only on Unix. Windows
+    // gates readability through ACLs / the read-only bit rather than mode
+    // bits, so this construction doesn't translate — the walk's
+    // inline-error contract is exercised on the Unix runners (macOS +
+    // Linux) and left uncompiled on the Windows cross-os lane.
+    #[cfg(unix)]
     #[test]
     fn io_error_on_unreadable_file_is_yielded_inline() {
-        // Approximate an unreadable file via a chmod 000 on Unix. If the
+        // Approximate an unreadable file via a chmod 000. If the
         // permission change isn't available (e.g. running as root), the
         // test still validates the walk completes without panicking.
         use std::os::unix::fs::PermissionsExt;
