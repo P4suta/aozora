@@ -37,6 +37,7 @@ back.
 | [0028](./adr/0028-remove-dead-framed-and-invalidrubyspan-core-surfaces.md)           | Remove dead Framed and InvalidRubySpan core surfaces                   | accepted |
 | [0029](./adr/0029-broken-pipe-exit-semantics.md)                                     | Broken-pipe exit semantics                                             | accepted |
 | [0030](./adr/0030-stray-bracket-is-line-scoped.md)                                   | A stray `［` is line-scoped in the pair stage                          | accepted |
+| [0031](./adr/0031-mutation-testing-for-assertion-strength.md)                        | Mutation testing as an assertion-strength gate                        | accepted |
 
 ## Authoring a new ADR
 

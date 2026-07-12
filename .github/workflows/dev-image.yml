@@ -3,10 +3,10 @@
 # This workflow exists so the main CI pipeline (ci.yml) can `docker
 # pull ghcr.io/p4suta/aozora-dev:latest` instead of rebuilding the
 # image from scratch on every commit. The image carries the Rust
-# toolchain, nightly toolchain (for cargo-fuzz / cargo-udeps), all
-# cargo dev tools (cargo-nextest, cargo-llvm-cov, cargo-deny,
-# cargo-audit, cargo-cliff, cargo-semver-checks, cargo-mutants, mold
-# linker, sccache, …) — building it from source on every CI run takes
+# toolchain, nightly toolchain (for cargo-fuzz), all cargo dev tools
+# (cargo-nextest, cargo-llvm-cov, cargo-deny, cargo-audit, cargo-shear,
+# cargo-semver-checks, cargo-mutants, git-cliff, …), the mold linker,
+# and sccache — building it from source on every CI run takes
 # 30-40 minutes which dominates total wall-clock.
 #
 # Trigger conditions are deliberately narrow: the image only needs

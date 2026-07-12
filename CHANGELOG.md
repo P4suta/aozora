@@ -56,6 +56,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **playground**: the footer now shows the parser build identity, sourced from
   an `aozora-wasm` `version()` export (`aozora-buildstamp::VERSION`,
   wasm32-scoped) rather than a hard-coded literal (ADR-0009). See #468.
+- **testing**: mutation-testing (assertion-strength) tooling — `just mutants`
+  drives [cargo-mutants](https://mutants.rs/) over the workspace in a dedicated
+  incremental target dir, configured by a root `mutants.toml` (nextest runner;
+  bench / fuzz excluded). It measures what region coverage cannot: whether a
+  *wrong* result would actually fail a test. Report-only today, introduced
+  report → reinforce → ratchet. See ADR-0031.
 
 ### Changed
 

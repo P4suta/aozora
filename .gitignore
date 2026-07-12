@@ -88,6 +88,12 @@ crates/*/fuzz/Cargo.lock
 # Criterion
 /target/criterion/
 
+# cargo-mutants run state (`just mutants`). The report is regenerated per
+# run; only the tracked config (mutants.toml) is source. See
+# docs/adr/0031-mutation-testing-for-assertion-strength.md.
+/mutants.out/
+/mutants.out.old/
+
 # dhat heap-profile output (written to the workspace root by `just dhat`)
 dhat-heap.json
 

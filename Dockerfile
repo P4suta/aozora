@@ -158,6 +158,15 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         sccache \
         wasm-pack
 
+# cargo-mutants (the `just mutants` assertion-strength gate, ADR-0031)
+# publishes only gnu prebuilt releases, and those link glibc 2.39 — newer
+# than the glibc 2.36 this bookworm base ships, so a binstalled binary
+# aborts with `GLIBC_2.39 not found` before it runs. No musl release
+# exists to sidestep it. Build from source instead: compiling against the
+# image's own glibc yields a compatible binary (the standard fallback when
+# no compatible prebuilt exists).
+RUN cargo install --locked --root /usr/local cargo-mutants
+
 # bacon and taplo-cli have no binstall-resolvable prebuilt for the pinned
 # version, so the fail-fast main batch above rejects them — they need the
 # `compile` backstop:
