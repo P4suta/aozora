@@ -34,7 +34,13 @@ minimum_test_timeout = 30.0
 # What remains to exclude is non-product source:
 #   - aozora-bench: performance benchmarks, not correctness assertions
 #   - **/fuzz:      libFuzzer harnesses (separate crates; belt-and-suspenders)
+#   - aozora-buildstamp: a compile-time build-identifier leaf (~20 lines,
+#     no tests) that only surfaces version/commit metadata; it carries no
+#     runtime logic an assertion could pin, so every mutant would be a
+#     vacuous survivor. Excluded rather than left as permanent report-only
+#     noise in the full-adoption matrix.
 exclude_globs = [
   "crates/aozora-bench/**",
   "**/fuzz/**",
+  "crates/aozora-buildstamp/**",
 ]
