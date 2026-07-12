@@ -891,6 +891,12 @@ fn bar(count: usize, total: usize, width: usize) -> String {
 /// Evict a path (file or directory tree) from the kernel page cache
 /// via `posix_fadvise(POSIX_FADV_DONTNEED)`. Safe-API rustix wrapper;
 /// works without sudo for files the caller can open.
+///
+/// Linux-only: `posix_fadvise(POSIX_FADV_DONTNEED)` exists only on Linux
+/// (`rustix::fs::fadvise` is configured out on Windows and macOS has no
+/// `Advice::DontNeed`), so the non-Linux build carries the stub below,
+/// which fails loudly rather than silently no-op'ing.
+#[cfg(target_os = "linux")]
 fn uncache(path: &Path) -> Result<(), String> {
     let total_start = Instant::now();
     let metadata =
@@ -930,6 +936,18 @@ fn uncache(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Non-Linux stub for `corpus uncache` (see the Linux definition above):
+/// `posix_fadvise(POSIX_FADV_DONTNEED)` has no portable counterpart, so
+/// the command is unsupported off Linux and says so rather than lying.
+#[cfg(not(target_os = "linux"))]
+fn uncache(_path: &Path) -> Result<(), String> {
+    Err("xtask corpus uncache evicts the page cache via \
+         posix_fadvise(POSIX_FADV_DONTNEED), which is Linux-only; \
+         it is unsupported on this platform"
+        .to_string())
+}
+
+#[cfg(target_os = "linux")]
 fn uncache_file(path: &Path) -> Result<u64, String> {
     use rustix::fs::{Advice, fadvise};
     let file = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
