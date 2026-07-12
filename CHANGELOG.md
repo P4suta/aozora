@@ -62,6 +62,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bench / fuzz excluded). It measures what region coverage cannot: whether a
   *wrong* result would actually fail a test. Report-only today, introduced
   report → reinforce → ratchet. See ADR-0031.
+- **ci / testing**: mutation testing is now wired into CI as an
+  assertion-strength ratchet (ADR-0031 stage 3). A PR-scoped `mutants-in-diff`
+  job runs `cargo mutants --in-diff` over each pull request's changed lines —
+  advisory, so a surviving mutant nudges review without blocking merge — and a
+  scheduled weekly `mutants` workflow sweeps `aozora-spec` (ratcheted against a
+  committed `mutants-baseline.json`, opening a tracking issue if survivors rise
+  above the baseline) and `aozora-syntax` (report-only until reinforced),
+  uploading the full report as an artifact. Local mirror:
+  `just mutants -p <crate>`.
 
 ### Changed
 

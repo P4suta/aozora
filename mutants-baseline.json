@@ -1,0 +1,7 @@
+{
+  "_doc": "Committed mutation-survivor ratchet for the weekly `mutants` workflow (.github/workflows/mutants.yml, ADR-0031). Each key below is a crate whose surviving-mutant count is FROZEN at `max_survivors`: the sweep fails and opens a tracking issue when `just mutants -p <crate>` reports MORE survivors than the committed number — i.e. a test that used to catch a mutant no longer does. A crate ABSENT from this file is swept report-only (never red) until it is reinforced and given an entry, mirroring ADR-0031's per-crate 'advisory, then blocking once the baseline is clean'. Lower an entry as survivors are killed to tighten the ratchet; never raise one to hide a real regression.",
+  "aozora-spec": {
+    "max_survivors": 2,
+    "reason": "Two provably-equivalent mutants in Span::shift_clamp — crates/aozora-spec/src/span.rs:105 (`<` -> `<=`) and :107 (`>` -> `>=`). They differ from the original only at `shifted == 0` and `shifted == u32::MAX` respectively, where both comparisons yield the identical clamp, so no input can distinguish them. Deliberately NOT `#[mutants::skip]`ped: skip is function-granular and would also silence the killable `>` -> `==` sibling on the same function. See PR #482."
+  }
+}

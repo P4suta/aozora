@@ -335,6 +335,44 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just drift-gate
 
+  # PR-scoped assertion-strength probe (ADR-0031 stage 3). Region coverage
+  # proves a changed line RAN; this proves a WRONG result on it would make a
+  # test FAIL. `cargo mutants --in-diff` mutates ONLY the source lines this
+  # PR's diff touches (cost-bounded — one bounded run regardless of repo size)
+  # and reports whether the suite catches each mutation. The weekly full sweep
+  # is the scheduled `mutants.yml`.
+  #
+  # ADVISORY during the report-only rollout: this job is deliberately NOT one
+  # of `ci-success`'s `needs`, so a surviving mutant shows a red X as a
+  # review-time nudge WITHOUT blocking the merge. It becomes blocking (added to
+  # `ci-success`) once the swept crates' baselines are clean (ADR-0031: "then
+  # blocking once a crate's baseline is clean"). Only runs on pull_request —
+  # `--in-diff` needs the PR base to diff against; a push to main has none.
+  mutants-in-diff:
+    needs: [changes, dev-image]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # fetch-depth 0 so the PR base commit is in history for the diff.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-dev-image
+      # Unified git diff of the PR's changes (base..head), written into the
+      # checkout so the dev container sees it at /workspace/pr.diff. `--in-diff`
+      # matches it against the code under test, not the tests, and tests only
+      # the mutants overlapping changed regions — so a docs/CI-only PR (no Rust
+      # source touched) yields zero mutants and passes trivially.
+      - name: Diff vs PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
+          echo "diff is $(wc -l < pr.diff) lines"
+      - name: Mutate the changed lines
+        run: just mutants --in-diff pr.diff
+
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
   conformance:
