@@ -73,5 +73,10 @@ jobs:
       # The workspace test suite as real binaries on the shipping platform.
       # Default per-OS shell (bash on macOS, pwsh on Windows) — this single
       # cargo line is shell-agnostic, so no `shell:` override is needed.
+      #
+      # `--no-fail-fast`: like the matrix's `fail-fast: false`, a backstop
+      # must report the FULL platform-divergence set in one run — stopping
+      # at the first failing test would mask the rest and drag out the
+      # fix-and-redispatch loop.
       - name: cargo nextest run (workspace)
-        run: cargo nextest run --workspace --exclude aozora-bench --all-targets
+        run: cargo nextest run --workspace --exclude aozora-bench --all-targets --no-fail-fast
