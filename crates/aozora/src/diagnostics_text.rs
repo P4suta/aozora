@@ -93,6 +93,32 @@ mod tests {
     }
 
     #[test]
+    fn renders_nonempty_report_for_guaranteed_diagnostic() {
+        // A PUA sentinel collision reliably fires a diagnostic (see
+        // `document::tests::diagnostics_populated_for_pua_collision`), so
+        // the report body MUST run and produce header output. A no-op
+        // `write_report` would leave the string empty.
+        let doc = Document::new("contains \u{E001} sentinel");
+        let tree = doc.parse();
+        let diagnostics = tree.diagnostics();
+        assert!(
+            !diagnostics.is_empty(),
+            "PUA sentinel must produce a diagnostic to anchor this test"
+        );
+        let text = super::diagnostics_text(doc.source(), diagnostics);
+        assert!(
+            !text.is_empty(),
+            "guaranteed diagnostic must render non-empty text"
+        );
+        let headers = text.lines().filter(|l| l.contains("] @ ")).count();
+        assert_eq!(
+            headers,
+            diagnostics.len(),
+            "every diagnostic must emit its header line: {text}"
+        );
+    }
+
+    #[test]
     fn one_block_per_diagnostic() {
         let doc = Document::new("｜《おうめ》");
         let tree = doc.parse();

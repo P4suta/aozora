@@ -650,6 +650,92 @@ mod tests {
     }
 
     #[test]
+    fn container_pair_entries_projects_indent_open_close_offsets() {
+        // `［＃ここから…字下げ］ … ［＃ここで字下げ終わり］` is a paired
+        // indent container — `container_pair_entries` must project it, not
+        // return an empty vec.
+        let doc = Document::new("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n");
+        let tree = doc.parse();
+        let entries = container_pair_entries(&tree);
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected exactly one indent container pair: {entries:?}"
+        );
+        let pair = &entries[0];
+        assert_eq!(pair.kind, "indent", "container kind: {pair:?}");
+        assert!(
+            pair.open.offset < pair.close.offset,
+            "open must precede close: {pair:?}"
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn schema_fns_return_titled_envelope_not_null() {
+        // Each `schema_*` fn must return its concrete JSON-Schema envelope
+        // (a Default::default() → `Value::Null` degrade would drop the
+        // title, the `schemaVersion` const, and the `data` array shape).
+        let cases: [(&str, serde_json::Value); 4] = [
+            ("AozoraDiagnosticsEnvelope", schema_diagnostics()),
+            ("AozoraNodesEnvelope", schema_nodes()),
+            ("AozoraPairsEnvelope", schema_pairs()),
+            ("AozoraContainerPairsEnvelope", schema_container_pairs()),
+        ];
+        for (title, value) in cases {
+            assert_eq!(
+                value["title"], title,
+                "schema envelope title mismatch: {value}"
+            );
+            assert_eq!(
+                value["type"], "object",
+                "schema envelope must be an object: {value}"
+            );
+            assert_eq!(
+                value["properties"]["schemaVersion"]["const"],
+                serde_json::json!(SCHEMA_VERSION),
+                "schemaVersion const must pin SCHEMA_VERSION: {value}"
+            );
+            assert_eq!(
+                value["properties"]["data"]["type"], "array",
+                "data property must be an array: {value}"
+            );
+        }
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn envelope_schema_wraps_item_in_versioned_envelope() {
+        // `envelope_schema` builds the shared `{schemaVersion, data:[…]}`
+        // wrapper; a Default::default() → `Value::Null` degrade would drop
+        // the passed title/description and the whole envelope structure.
+        let value = envelope_schema(
+            "CustomTitle",
+            "Custom description.",
+            schemars::schema_for!(Node),
+        );
+        assert_eq!(value["title"], "CustomTitle", "title: {value}");
+        assert_eq!(
+            value["description"], "Custom description.",
+            "description: {value}"
+        );
+        assert_eq!(
+            value["additionalProperties"], false,
+            "closed shape: {value}"
+        );
+        assert_eq!(
+            value["required"],
+            serde_json::json!(["schemaVersion", "data"]),
+            "required keys: {value}"
+        );
+        assert_eq!(
+            value["properties"]["schemaVersion"]["const"],
+            serde_json::json!(SCHEMA_VERSION),
+            "schemaVersion const: {value}"
+        );
+    }
+
+    #[test]
     fn container_kind_wire_tags_via_as_json_tag() {
         use aozora_syntax::{BoutenKind, BoutenPosition, RegionFormat};
         // `RegionFormat::as_json_tag` is the single authority on the

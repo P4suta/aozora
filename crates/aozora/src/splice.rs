@@ -1260,4 +1260,283 @@ mod tests {
             .is_none(),
         );
     }
+
+    /// The `Display` impl must emit a specific, non-empty diagnostic for each
+    /// variant — pins the whole `fmt` body against a `Ok(Default::default())`
+    /// (empty-string) replacement.
+    #[test]
+    fn splice_error_display_is_specific_and_nonempty() {
+        let unverifiable = SpliceError::Unverifiable {
+            role: RegionRole::ForwardReferenced,
+            kind: CoupledKind::ForwardReference,
+        };
+        let s = unverifiable.to_string();
+        assert!(s.contains("ForwardReferenced"), "got {s:?}");
+        assert!(s.contains("ForwardReference"), "got {s:?}");
+        assert!(s.contains("could not be verified"), "got {s:?}");
+
+        let opaque = SpliceError::Opaque {
+            role: RegionRole::Other,
+        };
+        let o = opaque.to_string();
+        assert!(o.contains("Other"), "got {o:?}");
+        assert!(o.contains("cannot be spliced"), "got {o:?}");
+    }
+
+    /// Pin the `(RegionRole, SpliceSafety)` `classify_node_ref` assigns to every
+    /// leaf variant. Deleting any arm reroutes that node to the catch-all
+    /// `(Other, Opaque)`, which this table catches. Built directly with the
+    /// allocator (independent of parser reachability) so each arm is isolated.
+    #[test]
+    fn classify_pins_every_leaf_variant() {
+        use aozora_syntax::alloc::Allocator;
+        use aozora_syntax::{
+            Container, DirectiveKind, HeadingKind, HeadingStyle, LineFormat, SectionKind,
+        };
+
+        let mut a = Allocator::new();
+        let heading_text = a.content_plain("章");
+        let heading = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, heading_text);
+        let upper = a.content_plain("上");
+        let lower = a.content_plain("下");
+        let warichu = a.warichu(upper, lower);
+        let aq = a.content_plain("重要");
+        let angle_quote = a.angle_quote(aq);
+        let kaeriten = a.kaeriten("（レ）");
+        let illustration = a.sashie_general("fig.png", "図", None);
+        let directive_payload = a.make_directive("［＃ママ］", DirectiveKind::Sic);
+        let directive = a.annotation(directive_payload);
+        let line = a.line(LineFormat::Indent {
+            amount: 2,
+            end_offset: None,
+        });
+        let section_break = a.section_break(SectionKind::Kaicho);
+        let page_break = a.page_break();
+        let body_end = a.body_end();
+        let forced_break = a.forced_break();
+        let container = a.container(Container {
+            kind: RegionFormat::Bold { padded: true },
+        });
+
+        let cases: [(Node, RegionRole, SpliceSafety); 12] = [
+            (
+                container,
+                RegionRole::Container,
+                SpliceSafety::Coupled(CoupledKind::Container),
+            ),
+            (heading, RegionRole::Heading, SpliceSafety::Direct),
+            (warichu, RegionRole::Warichu, SpliceSafety::Direct),
+            (angle_quote, RegionRole::AngleQuote, SpliceSafety::Direct),
+            (kaeriten, RegionRole::Kaeriten, SpliceSafety::Direct),
+            (illustration, RegionRole::Illustration, SpliceSafety::Direct),
+            (line, RegionRole::Line, SpliceSafety::Direct),
+            (page_break, RegionRole::PageBreak, SpliceSafety::Direct),
+            (
+                section_break,
+                RegionRole::SectionBreak,
+                SpliceSafety::Direct,
+            ),
+            (body_end, RegionRole::BodyEnd, SpliceSafety::Direct),
+            (forced_break, RegionRole::ForcedBreak, SpliceSafety::Direct),
+            (directive, RegionRole::Directive, SpliceSafety::Direct),
+        ];
+        for (node, role, safety) in cases {
+            assert_eq!(
+                classify_node_ref(NodeRef::Inline(node)),
+                (role, safety),
+                "classify mismatch for {role:?}",
+            );
+        }
+    }
+
+    /// A coupled heading hint re-forms as a referent-bearing hint **or** a
+    /// promoted heading — the `||` disjunct at line 368 (an `&&` here can never
+    /// hold, so both true cases would collapse to `false`).
+    #[test]
+    fn reparsed_in_family_heading_hint_accepts_hint_or_promoted_heading() {
+        use aozora_syntax::alloc::Allocator;
+        use aozora_syntax::{HeadingKind, HeadingStyle};
+
+        let mut a = Allocator::new();
+        let text = a.content_plain("章");
+        let promoted = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text);
+        let hint = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", false);
+        let hint_sc = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
+
+        // Promoted heading: the second (`Heading`) disjunct.
+        assert!(reparsed_in_family(
+            NodeRef::Inline(promoted),
+            CoupledKind::HeadingHint
+        ));
+        // Referent-bearing hint: the first disjunct.
+        assert!(reparsed_in_family(
+            NodeRef::Inline(hint),
+            CoupledKind::HeadingHint
+        ));
+        // A self-contained hint owns its target — not a re-formation.
+        assert!(!reparsed_in_family(
+            NodeRef::Inline(hint_sc),
+            CoupledKind::HeadingHint
+        ));
+    }
+
+    /// An interstitial gap region spans `(previous node end .. next node start)`.
+    /// Pins the `nodes[next_idx - 1]` index (line 451) against `+ 1` / `/ 1`,
+    /// which would read a different node's end. Three nodes so `next_idx + 1`
+    /// stays in bounds (an in-bounds wrong value, not a panic).
+    #[test]
+    fn region_at_gap_start_is_previous_node_end() {
+        let src = "あ｜青梅《おうめ》い｜里芋《さといも》う｜大豆《だいず》え";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let regions = tree.regions();
+        // Layout: [あ] [ruby] [い] [ruby] [う] [ruby] [え]; the gap between the
+        // first two rubies is regions[2].
+        let gap = regions[2];
+        assert_eq!(gap.role, RegionRole::Interstitial);
+        let got = tree.region_at(SourceOffset::new(gap.span.start)).unwrap();
+        assert_eq!(
+            got.span, gap.span,
+            "gap must span (prev node end .. next node start)",
+        );
+    }
+
+    /// A non-container coupled region (a forward reference) resolves its upstream
+    /// partner — pins the `Coupled(kind)` arm at line 477 (its deletion drops to
+    /// `_ => None`). The upstream `青空` begins after `まず` (offset 6), so this
+    /// also pins `at = from + rel` (line 742) against `from * rel` (which would
+    /// mislocate the occurrence to offset 0 and then read it as ambiguous).
+    #[test]
+    fn coupling_of_forward_reference_returns_upstream_partner() {
+        let src = "まず青空がひろがる、その［＃「青空」に傍点］";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let r = role_of(src, RegionRole::ForwardReferenced);
+        let c = tree.coupling(r).expect("forward reference is coupled");
+        assert_eq!(c.kind, CoupledKind::ForwardReference);
+        assert_eq!(c.primary, r.span);
+        assert_eq!(c.partner.start, 6, "partner starts after まず, not at 0");
+        let partner_text = &tree.sanitized()[c.partner.start as usize..c.partner.end as usize];
+        assert_eq!(partner_text, "青空");
+    }
+
+    /// A container **close** marker couples back to its **open** — pins the
+    /// `span == close_span` disjunct at line 561 (an `!=` there makes the close
+    /// query never match its own pair, returning `None`).
+    #[test]
+    fn coupling_of_container_close_returns_open_partner() {
+        let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let close = role_of(src, RegionRole::ContainerClose);
+        let c = tree.coupling(close).expect("close couples to its open");
+        assert_eq!(c.kind, CoupledKind::Container);
+        assert_eq!(c.primary, close.span);
+        let open = role_of(src, RegionRole::ContainerOpen);
+        assert_eq!(c.partner, open.span);
+        assert!(c.partner.start < c.primary.start, "open precedes close");
+    }
+
+    /// `block_open_format_at` recovers the open format only when the offset is
+    /// the node's exact start — pins the `sn.source_span.start == start` guard
+    /// (line 765) against `true`, which would accept an interior offset.
+    #[test]
+    fn block_open_format_at_requires_offset_at_node_start() {
+        let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let open = role_of(src, RegionRole::ContainerOpen);
+        assert!(block_open_format_at(&tree, open.span.start).is_some());
+        // Interior offset (past the leading `［`): node_at_source still returns
+        // the BlockOpen, but its span.start != off, so the guard must reject.
+        assert!(block_open_format_at(&tree, open.span.start + 3).is_none());
+    }
+
+    /// `lone_open_format` accepts a marker only when its first source node sits
+    /// at offset 0 — pins the `sn.source_span.start == 0` guard (line 778)
+    /// against `true`, which would accept a marker buried after leading text.
+    #[test]
+    fn lone_open_format_requires_first_node_at_offset_zero() {
+        assert!(lone_open_format("［＃ここから2字下げ］").is_some());
+        assert!(lone_open_format("前置き\n［＃ここから2字下げ］").is_none());
+    }
+
+    /// `marker_in_family` requires the first node to be at offset 0 **and** in
+    /// the family — pins the `-> true` body (line 790) and the `&&` (line 794,
+    /// which an `||` weakens). Leading text makes offset-0 false while family
+    /// stays true, isolating the conjunction.
+    #[test]
+    fn marker_in_family_needs_container_at_offset_zero() {
+        assert!(marker_in_family(
+            "［＃ここから2字下げ］",
+            CoupledKind::Container
+        ));
+        // start != 0 but family true → only the `&&` (not `||`) rejects it.
+        assert!(!marker_in_family(
+            "前\n［＃ここから2字下げ］",
+            CoupledKind::Container
+        ));
+        // No leading node at all.
+        assert!(!marker_in_family("ただの本文", CoupledKind::Container));
+    }
+
+    /// Pin every family arm and origin/self-contained guard of
+    /// `window_reforms_coupled`: each construct family must re-form only with a
+    /// matching target, and a `SelfContained` / `self_contained` re-parse must
+    /// **not** count.
+    #[test]
+    fn window_reforms_coupled_pins_families_and_guards() {
+        // Referent-bearing forward re-forms with the matching target.
+        assert!(window_reforms_coupled(
+            "海がひろがる、その［＃「海」に傍点］",
+            CoupledKind::ForwardReference,
+            "海",
+        ));
+        // A `SelfContained` forward (no upstream referent) is NOT a re-formation
+        // — kills the `f.origin != SelfContained` guard (line 829) -> true.
+        assert!(!window_reforms_coupled(
+            "［＃「海」に傍点］",
+            CoupledKind::ForwardReference,
+            "海",
+        ));
+        // Referent-bearing heading hint re-forms.
+        assert!(window_reforms_coupled(
+            "海、その［＃「海」は中見出し］",
+            CoupledKind::HeadingHint,
+            "海",
+        ));
+        // A `self_contained` hint is NOT a re-formation — kills the
+        // `!h.self_contained` guard (line 835) -> true.
+        assert!(!window_reforms_coupled(
+            "［＃「海」は中見出し］",
+            CoupledKind::HeadingHint,
+            "海",
+        ));
+        // A promoted heading is an equally valid re-formation — kills deletion of
+        // the `(HeadingHint, Heading)` arm (line 839).
+        assert!(window_reforms_coupled(
+            "海\n［＃「海」は中見出し］",
+            CoupledKind::HeadingHint,
+            "海",
+        ));
+        // A margin note re-forms on its base — kills deletion of the
+        // `(MarginNote, MarginNote)` arm (line 840).
+        assert!(window_reforms_coupled(
+            "青空［＃「青空」の左に「あお」の注記］",
+            CoupledKind::MarginNote,
+            "青空",
+        ));
+        // A non-matching window never re-forms — kills the `-> true` body (818).
+        assert!(!window_reforms_coupled(
+            "ただの本文",
+            CoupledKind::ForwardReference,
+            "海",
+        ));
+        // A right family but wrong target also fails.
+        assert!(!window_reforms_coupled(
+            "海がひろがる、その［＃「海」に傍点］",
+            CoupledKind::ForwardReference,
+            "山",
+        ));
+    }
 }

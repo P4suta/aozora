@@ -2829,3 +2829,570 @@ mod oracle_proptests {
         verify_seq_matches(&compacted, &state.cached);
     }
 }
+
+/// Fine-grained mutation-kill tests for the `SanitizedSrc` emptiness probes and
+/// the `Piece` / `PieceSeq` structure-sharing arithmetic (offsets, boundary
+/// comparisons, index recurrences). Each test pins a *concrete* decision the
+/// whole-tree differential gate cannot see: it hand-builds a table triple with
+/// entries placed exactly on a boundary a `<`/`<=`/`>`/`==`/`+`/`+=` mutation
+/// flips, then asserts the exact spliced/flattened result.
+#[cfg(test)]
+mod mut_tests_pieces {
+    use super::*;
+    use crate::{RegionFormat, Span};
+
+    // ---- builders (backing-table entries at controllable offsets) ----
+
+    fn sn(start: u32, end: u32, node: NodeRef) -> SourceNode {
+        SourceNode {
+            source_span: Span::new(start, end),
+            node,
+        }
+    }
+    /// A plain inline node (never a container, so it contributes no depth).
+    fn plain(start: u32, end: u32) -> SourceNode {
+        sn(start, end, NodeRef::Inline(Node::PageBreak))
+    }
+    /// A block-container open (raises the lenient LIFO depth by one).
+    fn open(start: u32, end: u32) -> SourceNode {
+        sn(
+            start,
+            end,
+            NodeRef::BlockOpen(RegionFormat::Bold { padded: true }),
+        )
+    }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test fixture builder for a paired source node"
+    )]
+    fn pair(
+        kind: PairKind,
+        open_start: u32,
+        open_end: u32,
+        close_start: u32,
+        close_end: u32,
+    ) -> PairLink {
+        PairLink {
+            kind,
+            open: Span::new(open_start, open_end),
+            close: Span::new(close_start, close_end),
+        }
+    }
+    /// A non-whole-document-scoped, non-delimiter diagnostic at a known span.
+    fn diag(start: u32, end: u32) -> Diagnostic {
+        Diagnostic::empty_ruby_reading(Span::new(start, end))
+    }
+
+    /// A backing source that does **not** override `is_empty`, so it exercises
+    /// the trait's default emptiness probe (`self.len() == 0`).
+    struct RawSrc(String);
+    impl SanitizedSrc for RawSrc {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+        fn byte(&self, i: usize) -> u8 {
+            self.0.as_bytes()[i]
+        }
+        fn slice(&self, range: Range<usize>) -> Option<Cow<'_, str>> {
+            self.0.get(range).map(Cow::Borrowed)
+        }
+    }
+
+    // ---- SanitizedSrc::is_empty (default impl, line 58) ----
+
+    #[test]
+    fn default_is_empty_true_and_false() {
+        // Empty → true (kills `-> false` and `== -> !=`).
+        assert!(SanitizedSrc::is_empty(&RawSrc(String::new())));
+        // Non-empty → false (kills `-> true` and `== -> !=`).
+        assert!(!SanitizedSrc::is_empty(&RawSrc("x".to_owned())));
+    }
+
+    // ---- <&str as SanitizedSrc>::is_empty (line 102) ----
+
+    #[test]
+    fn str_impl_is_empty_true_and_false() {
+        // Runtime-built (not literals) so `SanitizedSrc::is_empty` dispatches to
+        // the `&str` impl without the const-evaluation lint short-circuiting it.
+        let empty = String::new();
+        let filled = String::from("x");
+        assert!(SanitizedSrc::is_empty(&empty.as_str()));
+        assert!(!SanitizedSrc::is_empty(&filled.as_str()));
+    }
+
+    // ---- <&str as SanitizedSrc>::debug_assert_unchanged_outside (line 127) ----
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "outside edit_old")]
+    fn debug_assert_unchanged_outside_catches_prefix_drift() {
+        // Prefix `[0, 2)` differs ("ab" vs "aX") while `edit_old` is 2..3, so the
+        // precondition is violated: HEAD's `debug_assert!` fires; the arm-deletion
+        // mutant (body `()`) does not, so `should_panic` fails on it.
+        let old: &str = "abcd";
+        let new: &str = "aXcd";
+        SanitizedSrc::debug_assert_unchanged_outside(&old, &new, 2..3, 3);
+    }
+
+    // ---- RegionIndex::build ruby-pair filter (line 312, == -> !=) ----
+
+    #[test]
+    fn build_ruby_pair_filter_matches_ruby_kind() {
+        // One Ruby pair (open.start 10) and one Bracket pair (open.start 30); no
+        // ruby nodes, so `ruby_base_start` is exactly the Ruby pair opens.
+        let pairs = vec![
+            pair(PairKind::Ruby, 10, 13, 20, 23),
+            pair(PairKind::Bracket, 30, 33, 40, 43),
+        ];
+        let idx = RegionIndex::build(&[], &pairs, &[]);
+        assert!(
+            idx.ruby_base_anchored_at(10),
+            "a Ruby pair anchors a base at its open.start"
+        );
+        assert!(
+            !idx.ruby_base_anchored_at(30),
+            "a Bracket pair's open must not anchor a ruby base (== -> != flips both)"
+        );
+    }
+
+    // ---- Piece::narrow node/diag partitions (lines 509, 512, 515, 516) ----
+
+    /// A single whole-document piece with nodes and diagnostics landing exactly
+    /// on the splice endpoints, spliced at the interior region `40..60`. The
+    /// straddling piece is `narrow`ed on both sides, so its node/diag partition
+    /// offsets are pinned:
+    ///   - node/diag at `40` (== region.start) belongs to the region (dropped);
+    ///   - node/diag at `60` (== region.end) belongs to the suffix (kept).
+    fn narrow_spliced() -> PieceSeq {
+        let nodes = vec![plain(20, 21), plain(40, 41), plain(60, 61), plain(80, 81)];
+        let diags = vec![diag(20, 22), diag(40, 40), diag(60, 62), diag(80, 82)];
+        let seq = PieceSeq::from_contiguous(&nodes, &[], &diags, 100);
+        seq.splice(40..60, &[], &[], &[], 0)
+    }
+
+    #[test]
+    fn narrow_partitions_nodes_and_diags_at_exact_boundaries() {
+        let seq = narrow_spliced();
+        let (nodes, _pairs, diags) = seq.flatten();
+        let node_starts: Vec<u32> = nodes.iter().map(|n| n.source_span.start).collect();
+        // node@40 is in the region (dropped, kills line 512 `<=`); node@60 lands
+        // in the suffix (kept, kills line 509 `<=`).
+        assert_eq!(node_starts, vec![20, 60, 80]);
+        let diag_spans: Vec<(u32, u32)> = diags
+            .iter()
+            .map(|d| (d.span().start, d.span().end))
+            .collect();
+        // diag@40 dropped with the region (kills line 516); diag@60 kept in the
+        // suffix (kills line 515).
+        assert_eq!(diag_spans, vec![(20, 22), (60, 62), (80, 82)]);
+        assert_eq!(seq.node_count(), 3);
+    }
+
+    // ---- PieceSeq::splice endpoint guards (lines 728, 731) ----
+
+    #[test]
+    fn splice_left_boundary_uses_strict_lt() {
+        // Region begins at the document start (0): the straddling piece has
+        // `lo == region.start`, so no left prefix must be split off. `< -> <=`
+        // would append an empty prefix piece.
+        let seq = PieceSeq::from_contiguous(&[plain(10, 11), plain(70, 71)], &[], &[], 100);
+        let out = seq.splice(0..40, &[], &[], &[], 0);
+        assert_eq!(out.piece_count(), 2, "doc-start region: [relexed, suffix]");
+    }
+
+    #[test]
+    fn splice_right_boundary_uses_strict_gt() {
+        // Region ends at the document end (len 100): `hi == region.end`, so no
+        // right suffix must be split off. `> -> >=` would append an empty suffix.
+        let seq = PieceSeq::from_contiguous(&[plain(10, 11), plain(70, 71)], &[], &[], 100);
+        let out = seq.splice(60..100, &[], &[], &[], 0);
+        assert_eq!(out.piece_count(), 2, "doc-end region: [prefix, relexed]");
+    }
+
+    // ---- PieceSeq::container_depth_at (lines 773, 779) ----
+
+    #[test]
+    fn container_depth_at_reads_prefix_and_sums() {
+        // Two opens then a plain node → depth_prefix == [1, 2, 2].
+        let nodes = vec![open(0, 5), open(10, 15), plain(20, 21)];
+        let seq = PieceSeq::from_contiguous(&nodes, &[], &[], 30);
+        // node_count over a 3-node parse: kills node_count `-> 0`/`-> 1` and the
+        // finalize `+= -> *=` (product from 0 collapses to 0).
+        assert_eq!(seq.node_count(), 3);
+        // off exactly at the second open's start (10): the strict `<` excludes
+        // that open, so the prefix depth is 1 (line 773 `< -> <=` reads 2).
+        assert_eq!(seq.container_depth_at(10), 1);
+        // off past both opens (18): base_depth(0) + local(2) == 2; the `+ -> -`
+        // mutant (line 779) yields -2.
+        assert_eq!(seq.container_depth_at(18), 2);
+    }
+
+    // ---- PieceSeq::find_piece (lines 905, 906) ----
+
+    #[test]
+    fn find_piece_boundary_and_interior_index() {
+        // Splice a middle region into an empty single-piece doc → three pieces
+        // with boundaries at 0/30/60/90.
+        let seq = PieceSeq::from_contiguous(&[], &[], &[], 90);
+        let out = seq.splice(30..60, &[], &[], &[], 0);
+        assert_eq!(out.piece_count(), 3);
+        // At the boundary 30 the piece *ending* there is piece 0 (line 905 `<`;
+        // `<=` would select piece 1).
+        assert_eq!(out.find_piece(30), 0);
+        // Interior of the middle piece.
+        assert_eq!(out.find_piece(45), 1);
+        // Out-of-range `off` (past the document total) must still clamp to the
+        // last valid piece index via `.min(pieces.len() - 1)` (line 906): the
+        // `- 1` guarantees an in-bounds result. `/1` (→ `len`) or `+1` (→
+        // `len + 1`) would let `find_piece` return an out-of-bounds index.
+        assert_eq!(out.find_piece(10_000), out.piece_count() - 1);
+    }
+}
+
+/// Cut-point classification predicates over sanitized bytes: `sort_diags`,
+/// `carries_structure`, `inside_directive`, and `is_blank_line_boundary`. The
+/// whole-tree differential gate misses these fine-grained arm/offset/boundary
+/// decisions, so each is pinned here directly.
+#[cfg(test)]
+mod mut_tests_boundaries {
+    use super::*;
+    use crate::Span;
+
+    /// A position-only diagnostic with the given span (payload is irrelevant to
+    /// the ordering `sort_diags` imposes).
+    fn diag_at(start: u32, end: u32) -> Diagnostic {
+        Diagnostic::source_contains_pua(Span::new(start, end), '\u{E000}')
+    }
+
+    /// `sort_diags` must reorder a shuffled slice into ascending `(start, end)`
+    /// order. A body deletion (`-> ()`) leaves the shuffled order untouched, and
+    /// the `start=5` pair pins the `end` tiebreak.
+    #[test]
+    fn sort_diags_orders_by_start_then_end() {
+        let mut diags = vec![diag_at(10, 12), diag_at(5, 7), diag_at(5, 6), diag_at(1, 2)];
+        sort_diags(&mut diags);
+        let order: Vec<(u32, u32)> = diags
+            .iter()
+            .map(|d| {
+                let s = d.span();
+                (s.start, s.end)
+            })
+            .collect();
+        assert_eq!(order, vec![(1, 2), (5, 6), (5, 7), (10, 12)]);
+    }
+
+    /// `carries_structure` pins each disjunct: a lone `\n` or `\r` (the `any`
+    /// closure and the first two `||`), a lone `［`, a lone `］` (the last `||`),
+    /// and a plain-text false case (the `-> bool` body).
+    #[test]
+    fn carries_structure_pins_each_disjunct() {
+        // Line terminators (kills `-> false`, the `||`->`&&` in the closure, and
+        // the first table `||`->`&&`).
+        assert!(carries_structure("ab\ncd"));
+        assert!(carries_structure("ab\rcd"));
+        // Directive brackets, each alone (kills the second `||`->`&&`).
+        assert!(carries_structure("x［y"));
+        assert!(carries_structure("x］y"));
+        // Neither terminator nor bracket.
+        assert!(!carries_structure("abcd"));
+    }
+
+    /// `inside_directive` returns `true` only for an offset after an unterminated
+    /// `［` on its line.
+    #[test]
+    fn inside_directive_pins_open_close_and_linebreak() {
+        // Open with no close before `pos`.
+        assert!(inside_directive("前［＃注記", 12));
+        // Closed before `pos`.
+        assert!(!inside_directive("前［＃注記］後", 21));
+        // Line break after the open.
+        assert!(!inside_directive("前［＃注記\n後", 16));
+        // No open at all.
+        assert!(!inside_directive("ただの本文", 9));
+    }
+
+    /// `is_blank_line_boundary` pinned on both sides of every offset/byte
+    /// comparison it makes. Cases that a mutation turns into an out-of-bounds
+    /// `byte` probe fail by panic; cases it merely flips fail by value.
+    #[test]
+    fn blank_line_boundary_pins_both_sides() {
+        // (src, j, expected on HEAD)
+        let cases: &[(&str, usize, bool)] = &[
+            // j == len: past the buffer, never a boundary (`<` vs `<=` at 1106).
+            ("a\n", 2, false),
+            // LF then LF: a blank line (`==` at 1108, the `\n` alt).
+            ("a\n\nb", 2, true),
+            // LF then CRLF: a blank line (`==`/`<`/`+`/`==` across the CR branch).
+            ("abc\n\r\n", 4, true),
+            // LF then a bare CR at EOF: `j+1 < len` is false (`<`->`<=`, `+`->`-`,
+            // `+`->`*` all read byte(len) and panic).
+            ("abc\n\r", 4, false),
+            // LF then CR then a non-LF byte (`&&`->`||` at 1109:53, `+`->`-` index
+            // at 1109:67 reading the forced-`\n` byte(j-1)).
+            ("abc\n\rx", 4, false),
+            // LF then a non-CR, non-LF byte (`&&`->`||` at 1109:38).
+            ("\nx\n", 1, false),
+        ];
+        for &(s, j, want) in cases {
+            assert_eq!(is_blank_line_boundary(&s, j), want, "src={s:?} j={j}");
+        }
+    }
+}
+
+/// Fine-grained arm/offset/boundary decisions in the re-lex balance check
+/// (`is_ruby_node`, `relexed_is_balanced`) and the store-free splice prologue
+/// (`splice_prologue`). The whole-tree `corpus_incremental_merge` differential
+/// gate exercises the happy path but misses these single-decision flips, so each
+/// is pinned here directly against its concrete admit/decline outcome.
+#[cfg(test)]
+mod mut_tests_relex {
+    use super::*;
+    use crate::{RegionClose, RegionFormat, Span};
+
+    // ---- builders ---------------------------------------------------------
+
+    /// A source node carrying `node` (span irrelevant to the balance walk).
+    fn sn(node: NodeRef) -> SourceNode {
+        SourceNode {
+            source_span: Span::new(0, 1),
+            node,
+        }
+    }
+    /// A block-container open — raises the lenient LIFO depth by one.
+    fn open() -> SourceNode {
+        sn(NodeRef::BlockOpen(RegionFormat::Bold { padded: true }))
+    }
+    /// A block-container close — lowers the depth by one.
+    fn close() -> SourceNode {
+        sn(NodeRef::BlockClose(RegionClose::Bold { padded: true }))
+    }
+    /// A plain leaf — never touches the depth (the `_ => {}` arm).
+    fn leaf() -> SourceNode {
+        sn(NodeRef::Inline(Node::PageBreak))
+    }
+
+    /// A non-whole-document-scoped, non-delimiter diagnostic at a known span.
+    fn diag(start: u32, end: u32) -> Diagnostic {
+        Diagnostic::empty_ruby_reading(Span::new(start, end))
+    }
+
+    fn output(src: &str) -> LexOutput {
+        Document::new(src).lex()
+    }
+    fn pieces_of(cached: &LexOutput) -> PieceSeq {
+        PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        )
+    }
+    fn apply_edit(san: &str, edit: Range<usize>, repl: &str) -> String {
+        let mut out = String::with_capacity(san.len() + repl.len());
+        out.push_str(&san[..edit.start]);
+        out.push_str(repl);
+        out.push_str(&san[edit.end..]);
+        out
+    }
+
+    // ---- is_ruby_node (line 1258) -----------------------------------------
+
+    #[test]
+    fn is_ruby_node_true_for_ruby_false_otherwise() {
+        use aozora_syntax::alloc::Allocator;
+
+        let mut a = Allocator::new();
+        let base = a.content_plain("青梅");
+        let reading = a.content_plain("おうめ");
+        let Node::Ruby(r) = a.ruby(base, reading) else {
+            unreachable!("ruby() builds a Ruby node");
+        };
+        // Both ruby shapes are ruby nodes.
+        assert!(
+            is_ruby_node(NodeRef::Inline(Node::Ruby(r))),
+            "an inline ruby is a ruby node",
+        );
+        assert!(
+            is_ruby_node(NodeRef::BlockLeaf(Node::Ruby(r))),
+            "a block-leaf ruby is a ruby node",
+        );
+        // Non-ruby nodes are not — kills `-> true`.
+        assert!(
+            !is_ruby_node(NodeRef::Inline(Node::PageBreak)),
+            "a page break is not a ruby node",
+        );
+        assert!(
+            !is_ruby_node(NodeRef::BlockOpen(RegionFormat::Bold { padded: true })),
+            "a block open is not a ruby node",
+        );
+    }
+
+    // ---- relexed_is_balanced (lines 1359-1372) ----------------------------
+
+    #[test]
+    fn relexed_is_balanced_pins_arms_ops_and_boundary() {
+        // [open, close]: depth 0->1->0, never negative -> true. This single
+        // balanced case kills every arm-deletion and arithmetic mutation:
+        //   - delete BlockOpen arm  -> open ignored, close -> -1 < 0 -> false
+        //   - delete BlockClose arm -> close ignored, final depth 1 != 0 -> false
+        //   - `+= -> -=` (open)     -> -1 then close -2 < 0 -> false
+        //   - `+= -> *=` (open)     -> 0 then close -1 < 0 -> false
+        //   - `-= -> /=` (close)    -> depth stays 1, final 1 != 0 -> false
+        //   - `-= -> +=` (close)    -> depth 2, final 2 != 0 -> false
+        //   - `< -> ==` (boundary)  -> close lands on 0, 0 == 0 -> return false
+        //   - `< -> <=` (boundary)  -> close lands on 0, 0 <= 0 -> return false
+        assert!(
+            relexed_is_balanced(&[open(), close()]),
+            "one open then one close is balanced",
+        );
+        // Lone open: depth 1 != 0 -> false. Kills `-> true`.
+        assert!(
+            !relexed_is_balanced(&[open()]),
+            "a lone open leaves depth 1 (unbalanced)",
+        );
+        // Nested [open, open, close, close]: depths 1,2,1,0 -> true. The first
+        // close sits at depth 1, so `< -> >` (`1 > 0`) returns false there.
+        assert!(
+            relexed_is_balanced(&[open(), open(), close(), close()]),
+            "a nested open/close pair is balanced",
+        );
+        // Leading close: depth -1 < 0 -> early `return false`. Exercises the
+        // negative-depth early-out (the following open must not rescue it).
+        assert!(
+            !relexed_is_balanced(&[close(), open()]),
+            "a leading close drives depth negative",
+        );
+        // Plain leaves never move depth (the `_ => {}` arm).
+        assert!(
+            relexed_is_balanced(&[leaf(), leaf()]),
+            "leaves alone stay balanced",
+        );
+    }
+
+    // ---- splice_prologue: edit-bounds guard (line 1438) -------------------
+
+    #[test]
+    fn splice_prologue_admits_interior_replacement() {
+        // A plain-kana replacement inside paragraph 2 splices (Some). The edit is
+        // a proper range (start < end), so `> -> <` at 1438:23 would flip the
+        // out-of-bounds guard true and wrongly decline this valid edit.
+        let cached = output("あいうえお\n\nかきくけこ\n\nさしすせそ\n\nたちつてと\n");
+        let san = cached.sanitized.clone();
+        let at = san.find("く").expect("paragraph 2 kana");
+        let edit = at..at + "く".len();
+        assert!(
+            edit.start < edit.end,
+            "the edit is a proper (non-empty) range"
+        );
+        let new_san = apply_edit(&san, edit.clone(), "も");
+        let full = output(&new_san);
+        assert_eq!(
+            full.sanitized, new_san,
+            "the edit is a sanitize fixed point"
+        );
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        assert!(
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_some(),
+            "an interior plain replacement must splice",
+        );
+    }
+
+    #[test]
+    fn splice_prologue_admits_edit_ending_exactly_at_len() {
+        // Three plain paragraphs, NO trailing newline (len 49), so an edit can end
+        // exactly at the sanitized length. Replacing "せそ" (bytes 43..49) with
+        // "も" gives region 33..49 (interior). HEAD's guards are strict-greater
+        // (`end > len` at 1438:54; `new_edit_end > new_len` at 1444:21), so
+        // end == len (and new_edit_end == new_len) still admits (Some). Every
+        // `> -> ==` / `> -> >=` at either site fires at equality and declines.
+        let san = "あいうえお\n\nかきくけこ\n\nさしすせそ";
+        let san_len = u32::try_from(san.len()).expect("len fits u32");
+        assert_eq!(san.len(), 49, "byte layout the offsets below rely on");
+        let edit = 43..49; // "せそ", ending exactly at len
+        assert_eq!(edit.end, san.len(), "the edit ends exactly at len");
+        let new_san = apply_edit(san, edit.clone(), "も");
+        let new_str = new_san.as_str();
+        let pieces = PieceSeq::from_contiguous(&[], &[], &[], san_len);
+        let base = DiagBaseRef {
+            sanitized: san,
+            pieces: &pieces,
+        };
+        assert!(
+            splice_prologue(&base, &new_str, edit).is_some(),
+            "an edit ending exactly at len must still splice",
+        );
+    }
+
+    // ---- splice_prologue: carries_structure guard (line 1463) ------------
+
+    #[test]
+    fn splice_prologue_declines_when_only_old_slice_is_structural() {
+        // Deleting a `［＃改ページ］` directive: the OLD edit slice carries `［`/`］`
+        // structure (HEAD declines at 1463) while the NEW slice ("なかほど") is
+        // plain. `|| -> &&` requires BOTH slices to be structural, so it would
+        // proceed and splice the plain re-lex — admitting a structural edit HEAD
+        // must refuse.
+        let cached = output("前の段落\n\n［＃改ページ］\n\n後の段落\n");
+        assert!(
+            !cached.diagnostics.iter().any(is_whole_document_scoped),
+            "fixture is clean: {:?}",
+            cached.diagnostics,
+        );
+        let san = cached.sanitized.clone();
+        let at = san.find("［＃改ページ］").expect("page-break directive");
+        let edit = at..at + "［＃改ページ］".len();
+        let new_san = apply_edit(&san, edit.clone(), "なかほど");
+        let full = output(&new_san);
+        assert_eq!(
+            full.sanitized, new_san,
+            "the edit is a sanitize fixed point"
+        );
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        assert!(
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
+            "an edit whose old bytes carry `［］` structure must decline",
+        );
+    }
+
+    // ---- splice_prologue: diagnostic-straddle guard (line 1483) ----------
+
+    #[test]
+    fn splice_prologue_declines_diag_straddling_one_boundary() {
+        // Three plain paragraphs; the only structurally-safe interior cuts are the
+        // blank-line boundaries at 16 and 33. An edit inside paragraph 2 yields
+        // region 16..33. A cached diagnostic spanning 20..40 straddles the region
+        // END (20 < 33 < 40) but not the region START (20 < 16 is false), so HEAD
+        // declines at 1483 on the END probe alone. `|| -> &&` needs BOTH
+        // boundaries straddled, so it would proceed and admit.
+        let san = "あいうえお\n\nかきくけこ\n\nさしすせそ";
+        let san_len = u32::try_from(san.len()).expect("len fits u32");
+        let edit = 20..23; // the き in かきくけこ
+        let new_san = apply_edit(san, edit.clone(), "も");
+        let new_str = new_san.as_str();
+
+        // Positive control: with no straddling diagnostic the fixture admits
+        // (Some), proving the decline below is 1483's doing, not an earlier guard.
+        let clean = PieceSeq::from_contiguous(&[], &[], &[], san_len);
+        let clean_base = DiagBaseRef {
+            sanitized: san,
+            pieces: &clean,
+        };
+        assert!(
+            splice_prologue(&clean_base, &new_str, edit.clone()).is_some(),
+            "the plain fixture admits when no diagnostic straddles a boundary",
+        );
+
+        // With the straddling diagnostic present, HEAD declines.
+        let straddling = PieceSeq::from_contiguous(&[], &[], &[diag(20, 40)], san_len);
+        let base = DiagBaseRef {
+            sanitized: san,
+            pieces: &straddling,
+        };
+        assert!(
+            splice_prologue(&base, &new_str, edit).is_none(),
+            "a cached diagnostic straddling one region boundary must decline",
+        );
+    }
+}

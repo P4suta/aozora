@@ -839,4 +839,68 @@ mod tests {
         );
         assert_ne!(recovered, doc, "PUA neutralization is irreversible");
     }
+
+    #[test]
+    fn document_debug_pins_source_len_and_policy() {
+        // The `Debug` impl writes `source_len` (byte length) and the
+        // policy verbatim. `Ok(Default::default())` for the whole impl
+        // would emit the empty string; the `diagnostic_policy` builder
+        // returning `Default::default()` would flip `DropInternal` back
+        // to the default `CollectAll`. Pin both strings exactly.
+        let collect = Document::new("hello");
+        assert_eq!(
+            format!("{collect:?}"),
+            "Document { source_len: 5, diagnostic_policy: CollectAll }",
+        );
+        let dropped = Document::options()
+            .diagnostic_policy(DiagnosticPolicy::DropInternal)
+            .build("hi");
+        assert_eq!(
+            format!("{dropped:?}"),
+            "Document { source_len: 2, diagnostic_policy: DropInternal }",
+        );
+    }
+
+    #[test]
+    fn drop_internal_retains_source_origin_diagnostics() {
+        // A raw `U+E001` sentinel makes sanitize emit exactly one
+        // `SourceContainsPua` diagnostic whose origin is
+        // `DiagnosticSource::Source`. `DropInternal` filters *only*
+        // `Internal`-origin entries, so this one must survive the
+        // `retain`. Flipping the predicate `!= Internal` → `== Internal`
+        // would drop it (empty diagnostics), which this pins against.
+        let doc = Document::options()
+            .diagnostic_policy(DiagnosticPolicy::DropInternal)
+            .build("contains \u{E001} sentinel");
+        let t = doc.parse();
+        let diags = t.diagnostics();
+        assert_eq!(
+            diags.len(),
+            1,
+            "the Source-origin PUA diagnostic survives DropInternal",
+        );
+        assert_eq!(
+            diags[0].source(),
+            aozora_spec::DiagnosticSource::Source,
+            "retained diagnostic is Source-origin, not Internal",
+        );
+    }
+
+    #[test]
+    fn container_pairs_records_block_container() {
+        // A balanced ［＃ここから…］ / ［＃ここで…終わり］ pair yields one
+        // container pair entry. `Vec::leak(Vec::new())` would return an
+        // empty slice, so pin the non-empty length and the open→close
+        // ordering.
+        let d = Document::new(
+            "序\n［＃ここから２字下げ］\n本文の段落。\n［＃ここで字下げ終わり］\n了\n",
+        );
+        let t = d.parse();
+        let pairs = t.container_pairs();
+        assert_eq!(pairs.len(), 1, "one balanced container pair");
+        assert!(
+            pairs[0].open.0 < pairs[0].close.0,
+            "container open offset precedes its close offset",
+        );
+    }
 }
