@@ -581,4 +581,23 @@ mod tests {
     fn freeing_null_handle_is_safe_noop() {
         unsafe { aozora_document_free(core::ptr::null_mut()) };
     }
+
+    /// The [`AozoraStatus`] discriminants are a C ABI stability contract:
+    /// embedders hard-code these exact integers (`-1` = null input, `-5` =
+    /// oversize, …), so their numeric values must never drift silently. The
+    /// behavioural tests above all compare a returned code against
+    /// `AozoraStatus::Variant as c_int`, which *cannot* catch a change to the
+    /// discriminant itself — the function's return value and the expected
+    /// value move together, so the equality still holds. Pin every variant to
+    /// its literal wire value here so a drift (or an accidental sign flip)
+    /// fails the suite.
+    #[test]
+    fn status_discriminants_are_abi_stable() {
+        assert_eq!(AozoraStatus::Ok as i32, 0);
+        assert_eq!(AozoraStatus::NullInput as i32, -1);
+        assert_eq!(AozoraStatus::InvalidUtf8 as i32, -2);
+        assert_eq!(AozoraStatus::AllocFailed as i32, -3);
+        assert_eq!(AozoraStatus::SerializeFailed as i32, -4);
+        assert_eq!(AozoraStatus::SourceTooLarge as i32, -5);
+    }
 }
