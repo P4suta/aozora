@@ -1490,4 +1490,168 @@ mod tests {
             .unwrap();
         assert!(!GaijiCanonical::from_mencode(None).has_mencode());
     }
+
+    #[test]
+    fn parse_u_plus_length_guard_is_all_or_nothing() {
+        // 1..=6 hex digits after `U+` parse to the scalar.
+        assert_eq!(parse_u_plus("U+41"), Some('A'));
+        assert_eq!(parse_u_plus("U+10FFFF"), Some('\u{10FFFF}'));
+        // Empty hex is rejected.
+        assert_eq!(parse_u_plus("U+"), None);
+        // Seven hex digits are rejected even when the low bits name a valid
+        // scalar (`U+00010FF` would parse to U+10FF once the length guard is
+        // dropped). Pins `hex.is_empty() || hex.len() > 6` as an OR — an AND
+        // there would stop rejecting the over-long form.
+        assert_eq!(parse_u_plus("U+00010FF"), None);
+        // Not a `U+` token at all.
+        assert_eq!(parse_u_plus("第3水準1-85-54"), None);
+    }
+
+    #[test]
+    fn parse_gaiji_body_run_consuming_the_whole_body_keeps_it_as_description() {
+        // Every 、-token is mencode-shaped (here a single bare men-ku-ten), so
+        // the right-to-left run empties `tokens`: `run_start` reaches 0 and the
+        // whole body stays the description with no split. Pins the
+        // `run_start > 0` loop guard — a `>=` there indexes `tokens[-1]` (a
+        // usize underflow) once the run consumes everything.
+        assert_eq!(
+            parse_gaiji_body("1-2-3"),
+            GaijiBody {
+                description: "1-2-3",
+                mencode: None,
+                quoted: false,
+            }
+        );
+    }
+
+    #[test]
+    fn gaiji_description_serializable_rejects_leaky_and_unbalanced() {
+        // A plain description (no nested opener, no quotes) always serializes.
+        assert!(gaiji_description_serializable("木＋吶のつくり", false));
+        assert!(gaiji_description_serializable("木＋吶のつくり", true));
+        // A nested `［＃` opener would leak a bare bracket-hash: rejected
+        // regardless of the mencode anchor (kills the `-> true` stub).
+        assert!(!gaiji_description_serializable("外字［＃注記", false));
+        assert!(!gaiji_description_serializable("外字［＃注記", true));
+        // Balanced quotes are serializable ONLY with a mencode anchor;
+        // `balanced && has_mencode` is all-or-nothing.
+        // balanced but unanchored → false (kills `&&`→`||`).
+        assert!(!gaiji_description_serializable("「廰」の「广」", false));
+        // balanced and anchored → true.
+        assert!(gaiji_description_serializable("「廰」の「广」", true));
+        // Unbalanced quotes stay rejected even WITH a mencode anchor
+        // (kills `&&`→`||` on the other operand).
+        assert!(!gaiji_description_serializable("「廰", true));
+    }
+
+    #[test]
+    fn parse_menkuten_rejects_zero_coordinates() {
+        // A zero in any of the three men-ku-ten coordinates is outside the
+        // 1..=94 JIS range, so the clean-form parse must reject it. Each token
+        // round-trips through `Display`, so ONLY the
+        // `plane == 0 || ku == 0 || ten == 0` guard can reject it — this pins
+        // those three OR nodes (an `&&` fuses two coordinates and lets a single
+        // zero slip through).
+        assert!(parse_menkuten("第2水準0-1-1").is_none(), "plane 0 rejected");
+        assert!(parse_menkuten("第3水準1-0-1").is_none(), "ku 0 rejected");
+        assert!(parse_menkuten("第3水準1-1-0").is_none(), "ten 0 rejected");
+        // The all-nonzero canonical form still parses (guards do not
+        // over-reject).
+        assert_eq!(
+            parse_menkuten("第3水準1-1-1"),
+            Some(MenKuTen {
+                plane: 1,
+                ku: 1,
+                ten: 1
+            })
+        );
+    }
+
+    #[test]
+    fn gaiji_canonical_has_mencode_tracks_the_tail() {
+        // A structured tail (men-ku-ten / U+) means a mencode is present.
+        assert!(GaijiCanonical::from_mencode(Some("第3水準1-85-54")).has_mencode());
+        assert!(GaijiCanonical::from_mencode(Some("U+74FC")).has_mencode());
+        // A verbatim (unresolved) tail still counts as a present mencode.
+        assert!(GaijiCanonical::from_mencode(Some("1-2-23")).has_mencode());
+        // Only a truly absent tail is `false` (kills the `-> false` stub,
+        // which the None case alone cannot).
+        assert!(!GaijiCanonical::from_mencode(None).has_mencode());
+    }
+
+    #[test]
+    fn is_mencode_shaped_u_plus_branch_boundaries() {
+        // A well-formed U+ token with 1..=6 hex digits is mencode-shaped.
+        assert!(is_mencode_shaped("U+41"));
+        assert!(is_mencode_shaped("U+10FFFF"));
+        // Empty hex is NOT shaped: pins `!hex.is_empty()` (kills `delete !`
+        // and the first `&&`→`||`, both of which would admit the empty tail).
+        assert!(!is_mencode_shaped("U+"));
+        // 7+ hex digits exceed codepoint width: pins `hex.len() <= 6` on its
+        // false side (kills `<=`→`>`).
+        assert!(!is_mencode_shaped("U+1234567"));
+        // Non-hex digits after `U+` are NOT shaped: pins the trailing
+        // `all(is_ascii_hexdigit)` node (kills the second `&&`→`||`).
+        assert!(!is_mencode_shaped("U+GG12"));
+    }
+
+    #[test]
+    fn resolve_at_rejects_empty_body_span() {
+        // `※［＃］` with nothing between the opener and `］`: body_end ==
+        // body_start, so the `body_end <= body_start` guard fires and the span
+        // is not a gaiji. Pins that guard as the reachable half of the `||` —
+        // an `&&` there would admit the empty body as a hollow
+        // (empty-description) resolution.
+        let src = "※［＃］";
+        assert!(resolve_at(src, 0, src.len()).is_none());
+    }
+
+    #[test]
+    fn find_span_offset_arithmetic_adds_past_the_opener() {
+        // A `※［＃…］` starting at byte 0 (no leading text): the `［＃` opener
+        // sits at window byte 3, so `hash_in_win + ［＃.len()` must ADD to reach
+        // the body. A subtraction underflows (or, without overflow checks,
+        // indexes out of range and finds no `］`), losing the enclosing span.
+        let src = "※［＃「々」］";
+        let span = find_span(src, GAIJI_OPEN.len()).expect("cursor inside the span");
+        assert_eq!(&src[span.0..span.1], "※［＃「々」］");
+    }
+
+    #[test]
+    fn snap_left_finds_the_char_boundary_at_or_below() {
+        // "あい" = two 3-byte chars; char boundaries at 0, 3, 6.
+        let s = "あい";
+        // A valid boundary is returned unchanged (an off-by-one in the guard
+        // or a `delete !` would walk off it).
+        assert_eq!(snap_to_char_boundary_left(s, 3), 3);
+        assert_eq!(snap_to_char_boundary_left(s, 6), 6);
+        // Index 0 is always a boundary.
+        assert_eq!(snap_to_char_boundary_left(s, 0), 0);
+        // A mid-char index snaps DOWN to the start of its char. Pins the `-=`
+        // decrement (a `+=`/`/=` moves the wrong way or loops forever), the
+        // `> 0` guard (`==`/`<` would never enter the loop), the `&&` (an `||`
+        // would run past the boundary to 0), and the fn-body stub.
+        assert_eq!(snap_to_char_boundary_left(s, 4), 3);
+        assert_eq!(snap_to_char_boundary_left(s, 5), 3);
+        assert_eq!(snap_to_char_boundary_left(s, 1), 0);
+        assert_eq!(snap_to_char_boundary_left(s, 2), 0);
+    }
+
+    #[test]
+    fn snap_right_finds_the_char_boundary_at_or_above() {
+        // "あい" = two 3-byte chars; char boundaries at 0, 3, 6.
+        let s = "あい";
+        // A valid boundary is returned unchanged. Pins the `&&` (an `||` would
+        // run to `len`) and the `delete !`.
+        assert_eq!(snap_to_char_boundary_right(s, 3), 3);
+        assert_eq!(snap_to_char_boundary_right(s, 0), 0);
+        assert_eq!(snap_to_char_boundary_right(s, 6), 6);
+        // A mid-char index snaps UP to the next boundary. Pins the `+=`
+        // increment (a `-=`/`*=` moves the wrong way or loops forever) and the
+        // `< len` guard (`==`/`>` would never enter the loop).
+        assert_eq!(snap_to_char_boundary_right(s, 4), 6);
+        assert_eq!(snap_to_char_boundary_right(s, 5), 6);
+        assert_eq!(snap_to_char_boundary_right(s, 1), 3);
+        assert_eq!(snap_to_char_boundary_right(s, 2), 3);
+    }
 }
