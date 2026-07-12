@@ -237,6 +237,30 @@ mod tests {
     }
 
     #[test]
+    fn hunk_span_pins_exact_span_header() {
+        // A single-line change in the middle of a 10-line file. With three
+        // lines of context each side, the hunk covers old/new indices 2..9,
+        // so `hunk_span` must emit 1-based start 3 and length 7 on both sides:
+        // `@@ -3,7 +3,7 @@`. This pins every field of the returned tuple,
+        // and the operands (start 2, end 9) are chosen so `+1`/`*1` disagree
+        // and `end - start` differs from `end + start`.
+        let old = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
+        let new = "a\nb\nc\nd\ne\nX\ng\nh\ni\nj\n";
+        let mut out = Vec::new();
+        write_diff(&mut out, "f", old, new).expect("diff");
+        let text = String::from_utf8(out).expect("utf8");
+        assert_eq!(
+            text.matches("@@ -").count(),
+            1,
+            "one middle edit makes exactly one hunk: {text}",
+        );
+        assert!(
+            text.contains("@@ -3,7 +3,7 @@"),
+            "hunk header must pin start 3 and length 7 on both sides: {text}",
+        );
+    }
+
+    #[test]
     fn write_diff_empty_when_identical() {
         let mut out = Vec::new();
         write_diff(&mut out, "f", "same\n", "same\n").expect("diff");

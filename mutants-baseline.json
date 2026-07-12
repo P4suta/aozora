@@ -27,5 +27,21 @@
   "aozora-render": {
     "max_survivors": 3,
     "reason": "3 equivalent mutants confirmed after the crate's 188 killable survivors were killed (host: 190 -> 3 missed, including one caught->missed straggler `TrackingWriter::last -> None` that the fan-out missed and a direct assertion re-killed). (1,2) walk.rs:89 and :99 replace the WalkSink default methods on_newline / finish with `Ok(Default::default())`; both default bodies return `Ok(())` and `<() as Default>::default()` is `()`, so the payloads are bit-identical. (3) spelling/html.rs:271 `<` -> `<=` in escape_text_chunk: at cursor==pos (the only added case, since cursor is never > pos) the body writes chunk[pos..pos], an empty-slice write_str no-op. Deliberately NOT `#[mutants::skip]`ped: each enclosing fn also has killable siblings a function-granular skip would silence. See #485."
+  },
+  "aozora-fmt": {
+    "max_survivors": 0,
+    "reason": "Clean after reinforcement (30 killable survivors killed, host lane: 30 -> 0 missed). report.rs's unified-diff hunk_span is pinned by an exact `@@ -3,7 +3,7 @@` header assertion — one test kills all 15 return-tuple replacements plus the 4 line-101 arithmetic mutants because the real span (start 3, length 7) matches none of them; cli.rs's FmtArgs clap accessors (encoding / serialize_options) and source.rs's bounded-stdin read cap (extracted into a `stdin_read_cap` const fn so the previously-untestable `MAX_SOURCE_BYTES + 1` on the 4 GiB `.take()` boundary is pinned to its concrete value) are pinned by direct value asserts; lib.rs's broken-pipe -> exit-0 decision is unit-tested via an extracted `err_exit_code` helper fed synthetic BrokenPipe / other anyhow errors, and the stdout side-effect guards (`--write --list` path listing at :254, `--check --diff` header suppression on canonical stdin at :194) are pinned by subprocess integration tests driving the built binary. 0 survivors on the host lane. See #485."
+  },
+  "aozora-cst": {
+    "max_survivors": 0,
+    "reason": "Clean after reinforcement (10 killable survivors killed, host lane: 10 -> 0 missed). build.rs's Walker::dispatch_node arms (Inline/BlockLeaf, BlockOpen, BlockClose) and its matched-close `>` guard are pinned by structural assertions on the rowan tree (node kinds, and root-sibling vs nested placement of trailing text) — the pre-existing lossless byte round-trip tests missed them because every mutation preserves leaf bytes; kind.rs's from_raw_u16 arms (raw 1..=6) are pinned by a per-discriminant round-trip that panics on the `unreachable!` fall-through when an arm is deleted. 0 survivors on the host lane. See #485."
+  },
+  "aozora-query": {
+    "max_survivors": 0,
+    "reason": "Clean after reinforcement (5 killable survivors killed, host lane: 5 -> 0 missed). compile.rs's Parser::expect char guard (`c == want`), read_ident's char-class `||` (which admits `_`/`-` in identifiers, so the previously alnum-only tests missed the `&&` mutant), and parse_kind's name arms (Document / Plain / ConstructText) are pinned by parsing well-formed and malformed query patterns and asserting the exact error variant / SyntaxKind. 0 survivors on the host lane. See #485."
+  },
+  "aozora-pandoc": {
+    "max_survivors": 1,
+    "reason": "1 equivalent mutant confirmed after the crate's 15 killable survivors were killed (host lane: 16 -> 1 missed). project.rs:302 `plain_attr -> Attr with Default::default()`: `pandoc_ast::Attr` is the tuple alias `(String, Vec<String>, Vec<(String, String)>)` and `plain_attr` returns `(String::new(), Vec::new(), Vec::new())`, which is exactly the element-wise `Default::default()` for that tuple, so the two returns are byte-for-byte identical on every call and no input distinguishes them. The other 15 (close_container Div emission at mid-stream close, push_content_inlines Content/Segment arms, and the bouten_position_slug / annotation_kind_slug / container_attr enum arms) are killed by projecting documents containing each construct and asserting the exact Pandoc output. Frozen in the baseline rather than `#[mutants::skip]`ped so a future killable mutant introduced into `plain_attr` is still caught. See #485."
   }
 }

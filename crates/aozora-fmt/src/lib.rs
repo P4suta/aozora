@@ -138,13 +138,24 @@ pub fn run_engine(
     };
     match dispatch(args, ctx) {
         Ok(outcome) => outcome.exit_code(),
-        // A reader that closed our stdout pipe early (`aozora fmt … | head`) is
-        // a normal, silent success, not an error — see ADR-0029.
-        Err(err) if is_broken_pipe(&err) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("{program}: {err:#}");
-            ExitCode::from(2)
-        }
+        Err(err) => ExitCode::from(err_exit_code(&err, program)),
+    }
+}
+
+/// Map a failed dispatch to its numeric process exit code, applying the
+/// broken-pipe policy. Split out of the `ExitCode`-returning [`run_engine`] so
+/// the decision is unit-testable against a plain, comparable `u8`.
+///
+/// A reader that closed our stdout pipe early (`aozora fmt … | head`) is a
+/// normal, silent success — exit 0, not an error; see ADR-0029. Every other
+/// error is a genuine failure: logged to stderr (prefixed with `program`) and
+/// mapped to exit 2.
+fn err_exit_code(err: &anyhow::Error, program: &str) -> u8 {
+    if is_broken_pipe(err) {
+        0
+    } else {
+        eprintln!("{program}: {err:#}");
+        2
     }
 }
 
@@ -360,6 +371,35 @@ mod tests {
     }
 
     #[test]
+    fn err_exit_code_is_zero_for_broken_pipe() {
+        // ADR-0029: a reader that closed our stdout pipe early is a silent
+        // success, so `err_exit_code` must map a broken-pipe error to 0 — never
+        // the error code 2. With the `is_broken_pipe` guard forced false the
+        // pipe error would fall to the logging arm and return 2, so pinning 0
+        // kills that mutant (and the whole-body mutant that returns 1).
+        let pipe = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(
+            err_exit_code(&pipe, "aozora-fmt"),
+            0,
+            "a broken output pipe is a silent success (exit 0)",
+        );
+    }
+
+    #[test]
+    fn err_exit_code_is_two_for_other_errors() {
+        // Any non-pipe error is a genuine failure: logged to stderr and mapped
+        // to exit 2. With the `is_broken_pipe` guard forced true this would
+        // instead return 0, so pinning 2 kills that mutant (and the whole-body
+        // mutant that returns 0).
+        let other = anyhow::anyhow!("boom");
+        assert_eq!(
+            err_exit_code(&other, "aozora-fmt"),
+            2,
+            "a non-pipe error is a genuine failure (exit 2)",
+        );
+    }
+
+    #[test]
     fn plain_text_passes_through_unchanged() {
         let input = "hello world\n";
         assert_eq!(format_source(input), input);
@@ -412,5 +452,54 @@ mod tests {
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
             "fix must not touch genuine editorial Unknowns"
         );
+    }
+
+    /// The neutral engine context each `fold_files` test threads through.
+    fn ctx() -> Ctx {
+        Ctx {
+            encoding: Encoding::default(),
+            color: ColorChoice::Never,
+            program: "aozora-fmt",
+        }
+    }
+
+    #[test]
+    fn fold_files_propagates_broken_pipe_as_err() {
+        // A broken output pipe (`aozora fmt … | head`) is terminal for the whole
+        // run: `fold_files` must abort by returning the `Err` — which
+        // `run_engine` turns into a quiet exit 0 — never swallowing it into
+        // `Outcome::Error`. With the `is_broken_pipe` guard replaced by `false`
+        // the pipe error would instead fall to the logging arm and fold into
+        // `Ok(Outcome::Error)`, so pinning `Err`/broken-pipe kills that mutant.
+        let files = [PathBuf::from("first"), PathBuf::from("second")];
+        let mut calls = 0_u32;
+        let result = fold_files(ctx(), &files, |_path| {
+            calls += 1;
+            Err(anyhow::Error::new(io::Error::from(
+                io::ErrorKind::BrokenPipe,
+            )))
+        });
+        let err = result.expect_err("broken pipe must propagate as Err, not fold into an Outcome");
+        assert!(
+            is_broken_pipe(&err),
+            "the propagated error must still carry the broken pipe"
+        );
+        // It aborts on the first file rather than continuing the fold.
+        assert_eq!(calls, 1, "a broken pipe is terminal for the whole run");
+    }
+
+    #[test]
+    fn fold_files_downgrades_non_pipe_errors_to_outcome_error() {
+        // A per-file error that is *not* a broken pipe must be logged to stderr
+        // and downgraded to `Outcome::Error` without aborting the rest of the
+        // run — returned as `Ok(Outcome::Error)`, not `Err`. With the
+        // `is_broken_pipe` guard replaced by `true` every error would propagate
+        // as `Err`, so pinning the `Ok(Outcome::Error)` return kills that mutant.
+        let files = [PathBuf::from("only")];
+        let result = fold_files(ctx(), &files, |_path| {
+            Err(anyhow::anyhow!("permission denied or parse failure"))
+        });
+        let outcome = result.expect("a non-pipe error must be downgraded, not propagated");
+        assert_eq!(outcome, Outcome::Error);
     }
 }

@@ -177,3 +177,51 @@ impl FmtArgs {
 pub(crate) fn is_stdin(path: &Path) -> bool {
     path == Path::new("-")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `FmtArgs` with every flag off — the neutral base each test tweaks.
+    fn args() -> FmtArgs {
+        FmtArgs {
+            paths: Vec::new(),
+            check: false,
+            write: false,
+            diff: false,
+            list: false,
+            json: false,
+            encoding: None,
+            fix: false,
+        }
+    }
+
+    #[test]
+    fn encoding_passes_the_override_through() {
+        // No `-E`: defer to the caller (None), not a defaulted `Auto`.
+        assert_eq!(args().encoding(), None);
+        // An explicit override is surfaced verbatim — and `Sjis` is *not*
+        // `Encoding::default()` (`Auto`), so this also rejects a
+        // `Some(Default::default())` stand-in.
+        let mut a = args();
+        a.encoding = Some(Encoding::Sjis);
+        assert_eq!(a.encoding(), Some(Encoding::Sjis));
+    }
+
+    #[test]
+    fn serialize_options_opts_into_canonical_only_with_fix() {
+        // Without `--fix` directives round-trip verbatim (`Off` = the default).
+        assert_eq!(
+            args().serialize_options().directives,
+            DirectiveNormalization::Off
+        );
+        // `--fix` opts into the Tier1 canonical rewrite — distinct from the
+        // `SerializeOptions::default()` (`Off`) a body-drop would yield.
+        let mut a = args();
+        a.fix = true;
+        assert_eq!(
+            a.serialize_options().directives,
+            DirectiveNormalization::Canonical
+        );
+    }
+}
