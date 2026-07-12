@@ -3,5 +3,9 @@
   "aozora-spec": {
     "max_survivors": 2,
     "reason": "Two provably-equivalent mutants in Span::shift_clamp — crates/aozora-spec/src/span.rs:105 (`<` -> `<=`) and :107 (`>` -> `>=`). They differ from the original only at `shifted == 0` and `shifted == u32::MAX` respectively, where both comparisons yield the identical clamp, so no input can distinguish them. Deliberately NOT `#[mutants::skip]`ped: skip is function-granular and would also silence the killable `>` -> `==` sibling on the same function. See PR #482."
+  },
+  "aozora-syntax": {
+    "max_survivors": 3,
+    "reason": "Three provably-equivalent mutants, each a comparison the mutation cannot change on any reachable input. (1) crates/aozora-syntax/src/accent.rs:414 and (2) :463 turn `while i < bytes.len()` into `<=` in decompose_fragment / decompose_fragment_edits: the extra i==bytes.len() iteration calls try_match (None past the end), then `fragment.get(i..)` yields Some(\"\") whose `.chars().next()` is None, so the loop breaks immediately without pushing a char or an edit — output identical. (3) crates/aozora-syntax/src/format.rs:46 turns `self.0.get() > 0` into `>= 0` in FontShift::larger, but the field is NonZeroI8 so 0 is unconstructible and the two comparisons agree on every value. Deliberately NOT `#[mutants::skip]`ped: each enclosing fn also carries KILLABLE sibling mutants (e.g. larger()'s `>` -> `<` / `==`, already caught) that a function-granular skip would silence too. Confirmed 3-missed on both the container and host lanes. See #485."
   }
 }
