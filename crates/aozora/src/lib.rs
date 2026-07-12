@@ -349,4 +349,72 @@ mod tests {
         let html = tree.to_html();
         assert!(html.contains("hello"), "html: {html}");
     }
+
+    /// A three-paragraph document with ruby in the outer paragraphs and a plain
+    /// middle paragraph, plus a purely-local plain-text insertion into that
+    /// middle paragraph, and the cached region-find base over it. Such an edit
+    /// satisfies every splice precondition, so the diagnostics-only reparse must
+    /// accept it (return `Some`) rather than fall back — the input that separates
+    /// the live wrappers from a `-> None` mutation of their bodies.
+    fn local_edit_fixture() -> (LexOutput, String, usize) {
+        let cached = Document::new("｜青梅《おうめ》\n\nかきくけこ\n\n｜山川《やまかわ》\n").lex();
+        let san = cached.sanitized.clone();
+        let at = san.find("かき").expect("plain middle paragraph") + "かき".len();
+        let mut new_san = String::with_capacity(san.len() + 3);
+        new_san.push_str(&san[..at]);
+        new_san.push('が');
+        new_san.push_str(&san[at..]);
+        (cached, new_san, at)
+    }
+
+    #[test]
+    fn reparse_incremental_diagnostics_only_splices_a_local_edit() {
+        let (cached, new_san, at) = local_edit_fixture();
+        let pieces = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        );
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        let cached_nodes = u64::try_from(cached.source_nodes.len()).expect("node count fits u64");
+        // The outer ruby paragraphs must supply nodes for the reuse accounting
+        // below to be non-degenerate.
+        assert!(cached_nodes > 0, "fixture must carry ruby nodes to reuse");
+
+        // The `&str` wrapper takes the base by value and forwards it to the
+        // engine; a `-> None` mutation of the wrapper body would drop this
+        // successful splice on the floor.
+        let splice = reparse_incremental_diagnostics_only(base, new_san.as_str(), at..at)
+            .expect("a purely-local plain-text edit must splice, not fall back");
+        // The plain middle paragraph re-lexes to zero nodes, so every cached node
+        // is carried unchanged (prefix + shifted suffix).
+        assert_eq!(splice.relexed_nodes, 0);
+        assert_eq!(splice.reused_nodes, cached_nodes);
+        assert_eq!(splice.pieces.node_count(), cached_nodes);
+    }
+
+    #[test]
+    fn reparse_incremental_diagnostics_only_in_splices_a_local_edit() {
+        let (cached, new_san, at) = local_edit_fixture();
+        let pieces = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        );
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        let cached_nodes = u64::try_from(cached.source_nodes.len()).expect("node count fits u64");
+        assert!(cached_nodes > 0, "fixture must carry ruby nodes to reuse");
+
+        // The generic `_in` wrapper takes the base by reference (the rope-source
+        // entry) but forwards to the same engine; over the `&str` `SanitizedSrc`
+        // impl it must accept the identical local edit. A `-> None` mutation of
+        // the wrapper body would drop the splice.
+        let splice = reparse_incremental_diagnostics_only_in(&base, &new_san.as_str(), at..at)
+            .expect("a purely-local plain-text edit must splice, not fall back");
+        assert_eq!(splice.relexed_nodes, 0);
+        assert_eq!(splice.reused_nodes, cached_nodes);
+        assert_eq!(splice.pieces.node_count(), cached_nodes);
+    }
 }
