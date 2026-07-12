@@ -412,3 +412,230 @@ fn explain_diagnostic(arg: &str) -> Option<String> {
     }
     Some(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exact-label assertion per NodeKind variant — the exhaustiveness is the test"
+    )]
+    fn describe_node_labels_are_exact() {
+        assert_eq!(
+            describe_node(NodeKind::Ruby),
+            "Ruby annotation (｜base《reading》)."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Bouten),
+            "Bouten (傍点) — emphasis dots over a span."
+        );
+        assert_eq!(
+            describe_node(NodeKind::CombineUpright),
+            "縦中横 — horizontal text inside a vertical run."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Gaiji),
+            "外字 — non-Unicode character reference."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Indent),
+            "Inline indent (字下げ) marker."
+        );
+        assert_eq!(
+            describe_node(NodeKind::AlignEnd),
+            "Right-edge alignment (字上げ) marker."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Center),
+            "Centring (中央) marker — ページの左右中央 / 中央揃え."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Warichu),
+            "割注 — split-line annotation."
+        );
+        assert_eq!(
+            describe_node(NodeKind::LineGothic),
+            "ゴシック体 line marker — この行はゴシック体."
+        );
+        assert_eq!(
+            describe_node(NodeKind::LineFontSize),
+            "絶対サイズ line marker — ［＃大文字］ ほか."
+        );
+        assert_eq!(describe_node(NodeKind::PageBreak), "改ページ.");
+        assert_eq!(describe_node(NodeKind::SectionBreak), "Section break.");
+        assert_eq!(describe_node(NodeKind::Heading), "Aozora heading (見出し).");
+        assert_eq!(
+            describe_node(NodeKind::HeadingHint),
+            "Heading hint informing downstream rendering."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Illustration),
+            "挿絵 — illustration reference."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Kaeriten),
+            "返り点 — kanbun reading marker."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Directive),
+            "Generic annotation no specific recogniser claimed."
+        );
+        assert_eq!(
+            describe_node(NodeKind::AngleQuote),
+            "Double-angle quotation (≪…≫, displays as 《…》)."
+        );
+        assert_eq!(
+            describe_node(NodeKind::MarginNote),
+            "Side annotation (注記) — 「X」の左に「Y」の注記."
+        );
+        assert_eq!(
+            describe_node(NodeKind::Container),
+            "Inline-attached container (字下げ系の wrap)."
+        );
+        assert_eq!(
+            describe_node(NodeKind::ContainerOpen),
+            "NodeRef::BlockOpen — paired-container open sentinel."
+        );
+        assert_eq!(
+            describe_node(NodeKind::ContainerClose),
+            "NodeRef::BlockClose — paired-container close sentinel."
+        );
+    }
+
+    // NOTE: describe_node intentionally routes structural NodeKind variants
+    // (e.g. BodyEnd) to the wildcard `_` fallback — they are not user-facing
+    // `inspect` labels — so a "no variant hits the fallback" guard would be a
+    // false invariant here. The exact-label test above already kills every
+    // arm-deletion and whole-body survivor; that is the real coverage.
+
+    #[test]
+    fn describe_pair_labels_are_exact() {
+        assert_eq!(
+            describe_pair(PairKind::Bracket),
+            "［ … ］ — annotation body container."
+        );
+        assert_eq!(describe_pair(PairKind::Ruby), "《 … 》 — ruby reading.");
+        assert_eq!(
+            describe_pair(PairKind::AngleQuote),
+            "≪ … ≫ — double-angle quotation (displays as 《…》)."
+        );
+        assert_eq!(
+            describe_pair(PairKind::Tortoise),
+            "〔 … 〕 — accent-decomposition segment."
+        );
+        assert_eq!(
+            describe_pair(PairKind::Quote),
+            "「 … 」 — quoted literal inside annotation bodies."
+        );
+    }
+
+    #[test]
+    fn describe_pair_covers_every_variant_without_fallback() {
+        let fallback = "(unrecognised PairKind variant — handbook out of date).";
+        for k in PairKind::ALL {
+            assert_ne!(describe_pair(k), fallback, "{k:?} hit the fallback arm");
+        }
+    }
+
+    #[test]
+    fn describe_severity_labels_are_exact() {
+        assert_eq!(
+            describe_severity(Severity::Error),
+            "Hard failure; downstream cannot proceed."
+        );
+        assert_eq!(
+            describe_severity(Severity::Warning),
+            "Recoverable; output is still produced."
+        );
+        assert_eq!(
+            describe_severity(Severity::Note),
+            "Informational hint; never blocks compilation."
+        );
+    }
+
+    #[test]
+    fn describe_severity_covers_every_variant_without_fallback() {
+        let fallback = "(unrecognised Severity variant — handbook out of date).";
+        for s in Severity::ALL {
+            assert_ne!(describe_severity(s), fallback, "{s:?} hit the fallback arm");
+        }
+    }
+
+    #[test]
+    fn describe_source_labels_are_exact() {
+        assert_eq!(
+            describe_source(DiagnosticSource::Source),
+            "Issue rooted in user input."
+        );
+        assert_eq!(
+            describe_source(DiagnosticSource::Internal),
+            "Library-internal sanity-check failure (bug)."
+        );
+    }
+
+    #[test]
+    fn describe_source_covers_every_variant_without_fallback() {
+        let fallback = "(unrecognised DiagnosticSource variant — handbook out of date).";
+        for s in DiagnosticSource::ALL {
+            assert_ne!(describe_source(s), fallback, "{s:?} hit the fallback arm");
+        }
+    }
+
+    #[test]
+    fn describe_sentinel_labels_are_exact() {
+        assert_eq!(
+            describe_sentinel(Sentinel::Inline),
+            "U+E001 — inline registry entry."
+        );
+        assert_eq!(
+            describe_sentinel(Sentinel::BlockLeaf),
+            "U+E002 — single-line block leaf."
+        );
+        assert_eq!(
+            describe_sentinel(Sentinel::BlockOpen),
+            "U+E003 — paired container open boundary."
+        );
+        assert_eq!(
+            describe_sentinel(Sentinel::BlockClose),
+            "U+E004 — paired container close boundary."
+        );
+    }
+
+    #[test]
+    fn sentinel_label_values_are_exact() {
+        assert_eq!(sentinel_label(Sentinel::Inline), "inline");
+        assert_eq!(sentinel_label(Sentinel::BlockLeaf), "blockLeaf");
+        assert_eq!(sentinel_label(Sentinel::BlockOpen), "blockOpen");
+        assert_eq!(sentinel_label(Sentinel::BlockClose), "blockClose");
+    }
+
+    #[test]
+    fn describe_internal_labels_are_exact() {
+        assert_eq!(
+            describe_internal(InternalCheckCode::ResidualAnnotationMarker),
+            "［＃ digraph survived classification"
+        );
+        assert_eq!(
+            describe_internal(InternalCheckCode::UnregisteredSentinel),
+            "PUA sentinel without registry entry"
+        );
+        assert_eq!(
+            describe_internal(InternalCheckCode::RegistryOutOfOrder),
+            "registry vector not strictly position-sorted"
+        );
+        assert_eq!(
+            describe_internal(InternalCheckCode::RegistryPositionMismatch),
+            "registry entry position disagrees with sentinel kind"
+        );
+    }
+
+    #[test]
+    fn describe_internal_covers_every_variant_without_fallback() {
+        let fallback = "(unrecognised InternalCheckCode — handbook out of date)";
+        for c in InternalCheckCode::ALL {
+            assert_ne!(describe_internal(c), fallback, "{c:?} hit the fallback arm");
+        }
+    }
+}

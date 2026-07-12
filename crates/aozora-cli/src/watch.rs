@@ -46,7 +46,7 @@ pub(crate) fn watch(path: &Path, once: impl Fn() -> Result<ExitCode>) -> Result<
         .with_context(|| format!("failed to watch {}", parent.display()))?;
 
     while let Ok(event) = rx.recv() {
-        if !touches(&event, path) {
+        if should_skip(&event, path) {
             continue;
         }
         // Drain the debounce window so a rename+write burst is one re-run.
@@ -72,6 +72,13 @@ fn touches(event: &Event, path: &Path) -> bool {
     event.paths.iter().any(|p| p.file_name() == name)
 }
 
+/// Should this event be dropped without re-running? True for any event
+/// that does not concern the target file. Split from the watch loop so
+/// the negation is unit-testable.
+fn should_skip(event: &Event, path: &Path) -> bool {
+    !touches(event, path)
+}
+
 /// Run the command once, printing any error but swallowing the exit code
 /// so the watch keeps going.
 fn rerun(once: &impl Fn() -> Result<ExitCode>) {
@@ -83,9 +90,18 @@ fn rerun(once: &impl Fn() -> Result<ExitCode>) {
 /// A between-runs banner, TTY only so piped output stays clean.
 fn banner(path: &Path) {
     let mut stderr = io::stderr().lock();
-    if stderr.is_terminal() {
-        let _drop = writeln!(stderr, "── watching {} (Ctrl-C to stop) ──", path.display());
+    let is_tty = stderr.is_terminal();
+    let _drop = write_banner(&mut stderr, is_tty, path);
+}
+
+/// Emit the banner line to `out`, but only when writing to a terminal.
+/// Split from [`banner`] so the message text and the TTY gate can be
+/// exercised over a capturing writer without a real terminal.
+fn write_banner(out: &mut impl Write, is_terminal: bool, path: &Path) -> io::Result<()> {
+    if is_terminal {
+        writeln!(out, "── watching {} (Ctrl-C to stop) ──", path.display())?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -115,5 +131,49 @@ mod tests {
         assert!(touches(&event, Path::new("elsewhere/file.txt")));
         // A different file in the watched directory does not.
         assert!(!touches(&event, Path::new("other.txt")));
+    }
+
+    #[test]
+    fn should_skip_drops_unrelated_events() {
+        let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/other.txt"));
+        // The negation must hold: an unrelated event is skipped.
+        assert!(should_skip(&event, Path::new("file.txt")));
+    }
+
+    #[test]
+    fn should_skip_keeps_matching_events() {
+        let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/file.txt"));
+        // A matching event is *not* skipped — dropping the `!` would flip this.
+        assert!(!should_skip(&event, Path::new("file.txt")));
+    }
+
+    #[test]
+    fn rerun_invokes_the_command_exactly_once() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        rerun(&|| {
+            calls.set(calls.get() + 1);
+            Ok(ExitCode::SUCCESS)
+        });
+        // A body of `()` would never call `once`.
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn write_banner_emits_the_path_on_a_terminal() {
+        let mut out = Vec::new();
+        write_banner(&mut out, true, Path::new("doc.txt")).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "── watching doc.txt (Ctrl-C to stop) ──\n",
+        );
+    }
+
+    #[test]
+    fn write_banner_is_silent_off_a_terminal() {
+        let mut out = Vec::new();
+        write_banner(&mut out, false, Path::new("doc.txt")).unwrap();
+        // The TTY gate must hold: no bytes when stderr is not a terminal.
+        assert!(out.is_empty());
     }
 }
