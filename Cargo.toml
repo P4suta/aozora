@@ -338,6 +338,12 @@ proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 dhat = "0.3"
 pretty_assertions = "1.4.1"
+# cargo-mutants companion crate: provides the `#[mutants::skip]` no-op
+# attribute so genuinely-equivalent mutants (compile-time invariant guards,
+# allocation-capacity hints) can be excluded from the mutation sweep with an
+# in-source justification. Used only under `#[cfg_attr(test, …)]`, so it is a
+# dev-dependency at each use site. See https://mutants.rs/attrs.html.
+mutants = "0.0.3"
 
 # Instruction-count (Valgrind/Callgrind) micro-benchmarks — the G6 perf
 # gate (`aozora-bench/benches/perf_gate`). Wall-clock timing on shared GHA

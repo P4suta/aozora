@@ -71,6 +71,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   above the baseline) and `aozora-syntax` (report-only until reinforced),
   uploading the full report as an artifact. Local mirror:
   `just mutants -p <crate>`.
+- **testing**: `aozora-syntax` mutation-hardening (ADR-0031 stage "reinforce").
+  A full sweep of the property-test-free notation crate surfaced 99 surviving
+  mutants; 27 new assertion-strength unit tests close the gaps — the
+  `ruby_base_class` / `is_ruby_base_char` character-class table (every Unicode
+  range endpoint plus the deliberately-excluded small katakana), the
+  `MarginNoteKind` / `HeadingKind` / `FontShift` / `RegionFormat` /
+  `RegionClose` / `ForwardOrigin` / `Node` projections, the `accent.rs`
+  dotted-letter and digraph-edit arithmetic, the `StrInterner` probe-table
+  invariants (length-limit boundary, dedup-across-resize, `avg_probe_length`),
+  and the `node_at_source` binary search. The handful of genuinely-equivalent
+  mutants (a compile-time ASCII-pin guard, an allocation-capacity hint) carry an
+  in-source `#[cfg_attr(test, mutants::skip)]` with a justification.
 
 ### Changed
 

@@ -175,6 +175,29 @@ mod tests {
     }
 
     #[test]
+    fn non_empty_registry_reports_size_and_per_kind_counts() {
+        // Two inline entries + one open: len is the total, and `count_kind`
+        // returns the real per-kind tally — not a stubbed 0 / constant 1.
+        let r = Registry::from_sorted_slice(&[
+            (10u32, NodeRef::Inline(Node::PageBreak)),
+            (20u32, NodeRef::Inline(Node::BodyEnd)),
+            (
+                30u32,
+                NodeRef::BlockOpen(RegionFormat::Framed(EnclosureKind::Rule)),
+            ),
+        ]);
+        assert!(!r.is_empty(), "a populated registry is not empty");
+        assert_eq!(r.len(), 3, "len is the total entry count");
+        assert_eq!(r.count_kind(Sentinel::Inline), 2, "two inline entries");
+        assert_eq!(r.count_kind(Sentinel::BlockOpen), 1, "one open entry");
+        assert_eq!(
+            r.count_kind(Sentinel::BlockClose),
+            0,
+            "no close entries → zero, not a constant"
+        );
+    }
+
+    #[test]
     fn node_at_dispatches_to_variant() {
         let r = Registry::from_sorted_slice(&[
             (10u32, NodeRef::Inline(Node::PageBreak)),

@@ -298,6 +298,13 @@ impl StrInterner {
 mod tests {
     use super::*;
 
+    /// Exact-value float comparison for the (small, exactly-representable)
+    /// `avg_probe_length` results — avoids `clippy::float_cmp` while still
+    /// distinguishing 0.0 / 1.0 from a mutant's NaN or wrong constant.
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-12
+    }
+
     // UNIT TEST 2 (interner cluster).
     #[test]
     fn intern_dedups_and_resolves_round_trip() {
@@ -431,6 +438,94 @@ mod tests {
             i.avg_probe_length() < 2.0,
             "avg probe {} too high — hash function may be degenerate",
             i.avg_probe_length()
+        );
+    }
+
+    #[test]
+    fn length_limit_boundary_is_inclusive_of_the_table() {
+        // A string of *exactly* `INTERN_LENGTH_LIMIT` (64) bytes stays in the
+        // probe table (deduped); only strings strictly longer bypass. Pins the
+        // `>` boundary against a `>=` off-by-one.
+        let mut i = StrInterner::new();
+        let at_limit = "a".repeat(64);
+        let breaker = "b".repeat(4);
+        let id1 = i.intern(&at_limit);
+        let _ = i.intern(&breaker); // defeat the inline cache
+        let id2 = i.intern(&at_limit);
+        assert_eq!(id1, id2, "a 64-byte string is table-deduped, not bypassed");
+        assert_eq!(i.stats.long_bypass, 0, "64 bytes is within the table limit");
+    }
+
+    #[test]
+    fn stats_count_long_bypass_allocations_and_probe_steps() {
+        let mut i = StrInterner::new();
+        // A long string bypasses the table but still counts as an allocation.
+        let long = "x".repeat(100);
+        i.intern(&long);
+        assert_eq!(i.stats.long_bypass, 1);
+        assert_eq!(
+            i.stats.allocs, 1,
+            "a bypassed long string is still an alloc"
+        );
+        // A short string walks the probe table, so probe_steps accrues.
+        i.intern("短");
+        assert!(
+            i.stats.probe_steps >= 1,
+            "a short intern records at least one probe step"
+        );
+    }
+
+    #[test]
+    fn is_empty_is_false_after_interning() {
+        let mut i = StrInterner::new();
+        i.intern("あ");
+        assert!(!i.is_empty(), "an interner holding a string is not empty");
+    }
+
+    #[test]
+    fn avg_probe_length_is_defined_pointwise() {
+        // Empty interner: no probed lookups → 0.0 by contract (the `probed == 0`
+        // guard; without it this would divide 0/0 = NaN).
+        let empty = StrInterner::new();
+        assert!(
+            approx(empty.avg_probe_length(), 0.0),
+            "no probed lookups → 0.0, got {}",
+            empty.avg_probe_length()
+        );
+        // One short intern: exactly one probe step over one probed lookup → 1.0.
+        // This pins the true division (a `%` mutant would give 1 % 1 = 0.0) and
+        // the `-> 0.0` / `-> 1.0` / `-> -1.0` stubs jointly with the empty case.
+        let mut one = StrInterner::new();
+        one.intern("a");
+        assert!(
+            approx(one.avg_probe_length(), 1.0),
+            "one lookup, one probe step → 1.0, got {}",
+            one.avg_probe_length()
+        );
+    }
+
+    #[test]
+    fn dedup_survives_a_resize() {
+        // The probe table must rebuild with the *same* probe direction it looks
+        // up with; otherwise a collision-displaced entry becomes unfindable and
+        // re-interning it silently allocates a duplicate. Insert enough unique
+        // strings to force a resize, then re-intern every one (reversed, to
+        // defeat the inline cache) and require the original ids back.
+        let mut i = StrInterner::new();
+        let strings: Vec<String> = (0..300).map(|k| format!("entry-{k}")).collect();
+        let ids: Vec<StrId> = strings.iter().map(|s| i.intern(s)).collect();
+        assert!(
+            i.stats.resizes >= 1,
+            "300 unique strings must trigger a resize"
+        );
+        let unique_before = i.len();
+        for (s, id) in strings.iter().zip(&ids).rev() {
+            assert_eq!(i.intern(s), *id, "dedup must survive the resize for {s:?}");
+        }
+        assert_eq!(
+            i.len(),
+            unique_before,
+            "re-interning after a resize must allocate nothing new"
         );
     }
 

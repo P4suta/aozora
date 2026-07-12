@@ -124,3 +124,74 @@ const _: fn() = || {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<LexOutput>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::super::payload::Node;
+    use super::*;
+
+    /// Build a `LexOutput` whose only populated field is the source-node
+    /// side-table, for exercising `node_at_source`.
+    fn output_with(source_nodes: Vec<SourceNode>) -> LexOutput {
+        LexOutput::new(
+            String::new(),
+            String::new(),
+            Registry::empty(),
+            Vec::new(),
+            0,
+            Vec::new(),
+            source_nodes,
+            Vec::new(),
+            InternStats::default(),
+            NodeStore::new(),
+        )
+    }
+
+    #[test]
+    fn node_at_source_covers_ranges_and_gaps() {
+        // Two half-open spans with a gap between them: [2,5) → PageBreak and
+        // [10,20) → BodyEnd. The table below pins every branch of the binary
+        // search — the `idx == 0` (below all starts) guard, the `<= start`
+        // partition point, the `idx - 1` predecessor pick, and the half-open
+        // `raw < end` containment test (end-exclusive).
+        let sn = vec![
+            SourceNode {
+                source_span: Span::new(2, 5),
+                node: NodeRef::Inline(Node::PageBreak),
+            },
+            SourceNode {
+                source_span: Span::new(10, 20),
+                node: NodeRef::Inline(Node::BodyEnd),
+            },
+        ];
+        let out = output_with(sn);
+
+        let page = Some(NodeRef::Inline(Node::PageBreak));
+        let body = Some(NodeRef::Inline(Node::BodyEnd));
+        let cases: &[(u32, Option<NodeRef>)] = &[
+            (0, None),  // below every span start → idx 0
+            (1, None),  // still below the first start (2)
+            (2, page),  // first byte of span 0
+            (3, page),  // interior
+            (4, page),  // last byte inside [2,5)
+            (5, None),  // == end is outside (half-open)
+            (7, None),  // in the gap between spans
+            (10, body), // first byte of span 1
+            (15, body), // interior
+            (19, body), // last byte inside [10,20)
+            (20, None), // == end is outside
+            (25, None), // past every span
+        ];
+        for &(raw, expected) in cases {
+            let got = out.node_at_source(SourceOffset::new(raw)).map(|s| s.node);
+            assert_eq!(got, expected, "offset {raw} should map to {expected:?}");
+        }
+    }
+
+    #[test]
+    fn node_at_source_on_empty_table_is_none() {
+        let out = output_with(Vec::new());
+        assert!(out.node_at_source(SourceOffset::new(0)).is_none());
+        assert!(out.node_at_source(SourceOffset::new(42)).is_none());
+    }
+}
