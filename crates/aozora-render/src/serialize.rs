@@ -644,7 +644,12 @@ fn emit_aozora_heading<W: Write>(h: &Heading, store: &NodeStore, out: &mut W) ->
 
 #[cfg(test)]
 mod tests {
-    use crate::serialize::serialize;
+    use super::*;
+
+    use aozora_syntax::alloc::Allocator;
+    use aozora_syntax::{
+        BoutenKind, HeadingKind, HeadingStyle, MarginNoteKind, RegionClose, RegionFormat,
+    };
 
     /// `serialize ∘ parse` reaches a fixed point after one pass — the
     /// canonical round-trip contract (end-to-end byte-identity is pinned by the
@@ -701,7 +706,7 @@ mod tests {
         let store = a.into_store();
 
         let mut s = String::new();
-        super::emit_format(&f, &store, &mut s).expect("serialize into String is infallible");
+        emit_format(&f, &store, &mut s).expect("serialize into String is infallible");
         assert_eq!(s, "［＃「X」は太字］");
     }
 
@@ -722,7 +727,354 @@ mod tests {
         let store = a.into_store();
 
         let mut s = String::new();
-        super::emit_heading_hint(h, &store, &mut s).expect("serialize into String is infallible");
+        emit_heading_hint(h, &store, &mut s).expect("serialize into String is infallible");
         assert_eq!(s, "［＃「序章」は中見出し］");
+    }
+
+    // ------------------------------------------------------------------
+    // Direct-emitter mutation kills — each test pins the exact serialized
+    // bytes / boolean decision an emitter produces for a representative
+    // input, so a stubbed body / swapped operator / deleted arm diverges.
+    // ------------------------------------------------------------------
+
+    /// Run `emit_aozora` for a unit-leaf node through a `TrackingWriter` and
+    /// return the emitted source.
+    fn emit_via_tracking(node: Node, store: &NodeStore) -> String {
+        let mut buf = String::new();
+        let mut tw = TrackingWriter::new(&mut buf);
+        emit_aozora(node, store, &mut tw, DirectiveNormalization::Off)
+            .expect("serialize into String is infallible");
+        buf
+    }
+
+    /// Drive one `SerializeSink::on_node` dispatch and return the emitted
+    /// source, so the container-open / container-close arms are exercised.
+    fn on_node_via_sink(store: &NodeStore, kind: SentinelKind, node: NodeRef) -> String {
+        let mut buf = String::new();
+        let mut tw = TrackingWriter::new(&mut buf);
+        let mut sink = SerializeSink {
+            store,
+            out: &mut tw,
+            directives: DirectiveNormalization::Off,
+        };
+        sink.on_node(kind, node)
+            .expect("serialize into String is infallible");
+        buf
+    }
+
+    /// Serialize a single generic directive with the given normalization tier.
+    fn annotate(raw: &str, kind: DirectiveKind, directives: DirectiveNormalization) -> String {
+        let mut a = Allocator::new();
+        let d = a.make_directive(raw, kind);
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_annotation(d, &store, &mut buf, directives)
+            .expect("serialize into String is infallible");
+        buf
+    }
+
+    /// `serialize_into` must write the actually-walked source, not a stubbed
+    /// empty `Ok(())`.
+    #[test]
+    fn serialize_into_emits_the_walked_source() {
+        let out = aozora_pipeline::lex("あ");
+        let mut buf = String::new();
+        serialize_into(&out, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "あ");
+    }
+
+    /// The `on_node` container-open / container-close arms must dispatch to the
+    /// marker spellers, not fall through to the `_ => Ok(())` skip.
+    #[test]
+    fn on_node_emits_container_open_and_close() {
+        let store = Allocator::new().into_store();
+        assert_eq!(
+            on_node_via_sink(
+                &store,
+                SentinelKind::BlockOpen,
+                NodeRef::BlockOpen(RegionFormat::Bold { padded: true }),
+            ),
+            "［＃ここから太字］",
+        );
+        assert_eq!(
+            on_node_via_sink(
+                &store,
+                SentinelKind::BlockClose,
+                NodeRef::BlockClose(RegionClose::Bold { padded: true }),
+            ),
+            "［＃ここで太字終わり］",
+        );
+    }
+
+    /// The unit-leaf `emit_aozora` arms each spell their own directive.
+    #[test]
+    fn emit_aozora_unit_leaves() {
+        let a = Allocator::new();
+        let page = a.page_break();
+        let body_end = a.body_end();
+        let forced = a.forced_break();
+        let store = a.into_store();
+        assert_eq!(emit_via_tracking(page, &store), "［＃改ページ］");
+        assert_eq!(emit_via_tracking(body_end, &store), "［＃本文終わり］");
+        assert_eq!(emit_via_tracking(forced, &store), "［＃改行］");
+    }
+
+    /// `emit_content_one` writes a gaiji segment via its `※［＃…］` bracket form.
+    #[test]
+    fn emit_content_one_writes_gaiji_segment() {
+        let mut a = Allocator::new();
+        let t = a.seg_text("前");
+        let g = a.make_gaiji("ほげ", None, false);
+        let gseg = a.seg_gaiji(g);
+        let c = a.content_segments(&[t, gseg]);
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_content_one(c, &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "前※［＃「ほげ」］");
+    }
+
+    /// `emit_content_as_plain_one` walks a `Segments` content and writes each
+    /// arm — text verbatim, gaiji as its `hint`, directive as its raw bytes.
+    #[test]
+    fn emit_content_as_plain_one_writes_every_segment() {
+        let mut a = Allocator::new();
+        let text = a.seg_text("あ");
+        let gaiji = a.make_gaiji("げ", None, false);
+        let gseg = a.seg_gaiji(gaiji);
+        let directive = a.make_directive("［＃注記］", DirectiveKind::Unknown);
+        let dseg = a.seg_annotation(directive);
+        let content = a.content_segments(&[text, gseg, dseg]);
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_content_as_plain_one(content, &store, &mut buf)
+            .expect("serialize into String is infallible");
+        assert_eq!(buf, "あげ［＃注記］");
+    }
+
+    /// `ruby_needs_bar` at every boundary: a uniform single-class base and an
+    /// all-gaiji base both decline the explicit `｜`; a mixed (non-uniform)
+    /// base demands it.
+    #[test]
+    fn ruby_needs_bar_boundaries() {
+        let mut a = Allocator::new();
+        let uniform = a.content_plain("青梅");
+        let g = a.make_gaiji("ほげ", None, false);
+        let gseg = a.seg_gaiji(g);
+        let all_gaiji = a.content_segments(&[gseg]);
+        let t = a.seg_text("前");
+        let tail = a.make_gaiji("ふが", None, false);
+        let tail_seg = a.seg_gaiji(tail);
+        let mixed = a.content_segments(&[t, tail_seg]);
+        let store = a.into_store();
+
+        assert!(!ruby_needs_bar(&[uniform], None, &store));
+        assert!(!ruby_needs_bar(&[all_gaiji], None, &store));
+        assert!(ruby_needs_bar(&[mixed], None, &store));
+
+        // The predecessor clause (line 360) must be exercised deterministically,
+        // not left to the property suite: a SAME-class predecessor forces the bar
+        // even for a uniform base (kills `|| -> &&` and the `class == base`
+        // `== -> !=`), a bar predecessor forces it via the `c == '｜'` arm, and a
+        // DIFFERENT-class predecessor must not (the clause stays false).
+        assert!(ruby_needs_bar(&[uniform], Some('一'), &store));
+        assert!(ruby_needs_bar(&[uniform], Some('｜'), &store));
+        assert!(!ruby_needs_bar(&[uniform], Some('a'), &store));
+    }
+
+    /// The bouten position keyword: `の左に` / `の両側に` / bare `に`.
+    #[test]
+    fn emit_format_bouten_positions() {
+        for (position, expected) in [
+            (BoutenPosition::Left, "［＃「字」の左に傍点］"),
+            (BoutenPosition::Both, "［＃「字」の両側に傍点］"),
+            (BoutenPosition::Right, "［＃「字」に傍点］"),
+        ] {
+            let mut a = Allocator::new();
+            let target = a.content_plain("字");
+            let Node::Format(f) = a.bouten(
+                BoutenKind::Goma,
+                target,
+                position,
+                ForwardOrigin::Referenced,
+            ) else {
+                panic!("bouten must build a Format node");
+            };
+            let store = a.into_store();
+            let mut buf = String::new();
+            emit_format(&f, &store, &mut buf).expect("serialize into String is infallible");
+            assert_eq!(buf, expected, "position {position:?}");
+        }
+    }
+
+    /// The forward `AlignEnd` offset boundary: `0` → 地付き, `N` → 文末より…揃え.
+    #[test]
+    fn emit_format_align_end_offset() {
+        for (offset, expected) in [
+            (0u8, "［＃「末」は地付き］"),
+            (3u8, "［＃「末」は文末より3字上げ揃え］"),
+        ] {
+            let mut a = Allocator::new();
+            let target = a.content_plain("末");
+            let Node::Format(f) = a.forward_format(
+                ForwardAttr::AlignEnd { offset },
+                target,
+                ForwardOrigin::Referenced,
+            ) else {
+                panic!("forward_format must build a Format node");
+            };
+            let store = a.into_store();
+            let mut buf = String::new();
+            emit_format(&f, &store, &mut buf).expect("serialize into String is infallible");
+            assert_eq!(buf, expected, "offset {offset}");
+        }
+    }
+
+    /// Each accent suffix spells its bracketed mark symbol exactly.
+    #[test]
+    fn accent_suffix_exact() {
+        assert_eq!(accent_suffix(AccentMark::Acute), "アクサン（´）付き");
+        assert_eq!(accent_suffix(AccentMark::Grave), "アクサン（｀）付き");
+        assert_eq!(accent_suffix(AccentMark::Umlaut), "ウムラウト（¨）付き");
+    }
+
+    /// A single-`Plain` bouten target becomes one quoted `「…」` run.
+    #[test]
+    fn emit_bouten_targets_plain_run() {
+        let mut a = Allocator::new();
+        let c = a.content_plain("甲");
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_bouten_targets(&[c], &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "「甲」");
+    }
+
+    /// A segmented bouten target splits its text on `、` into one `「part」`
+    /// per non-empty piece (and emits nothing spurious when all parts are
+    /// present).
+    #[test]
+    fn emit_bouten_targets_splits_segmented_run() {
+        let mut a = Allocator::new();
+        let t = a.seg_text("甲、乙");
+        let g = a.make_gaiji("げ", None, false);
+        let gseg = a.seg_gaiji(g);
+        let c = a.content_segments(&[t, gseg]);
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_bouten_targets(&[c], &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "「甲」「乙」");
+    }
+
+    /// `gaiji_has_mencode` is false only for the mencode-less `Unresolved`.
+    #[test]
+    fn gaiji_has_mencode_reflects_mencode_presence() {
+        assert!(!gaiji_has_mencode(GaijiCanonicalOwned::Unresolved {
+            mencode: None
+        }));
+        assert!(gaiji_has_mencode(GaijiCanonicalOwned::Unicode('あ')));
+    }
+
+    /// A kaeriten mark round-trips to its `［＃<mark>］` bracket.
+    #[test]
+    fn emit_kaeriten_wraps_mark() {
+        let mut a = Allocator::new();
+        let Node::Kaeriten(k) = a.kaeriten("レ") else {
+            panic!("kaeriten must build a Kaeriten node");
+        };
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_kaeriten(k, &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "［＃レ］");
+    }
+
+    /// The directive-normalization gate: a Tier1 near-miss is rewritten only
+    /// for an `Unknown` directive at a non-`Off` tier; a Tier2 degraded body is
+    /// rewritten only at the `Degraded` tier.
+    #[test]
+    fn emit_annotation_directive_normalization() {
+        assert_eq!(
+            annotate(
+                "［＃ゴチック］",
+                DirectiveKind::Unknown,
+                DirectiveNormalization::Canonical,
+            ),
+            "［＃ゴシック体］",
+        );
+        assert_eq!(
+            annotate(
+                "［＃ゴチック］",
+                DirectiveKind::Sic,
+                DirectiveNormalization::Canonical,
+            ),
+            "［＃ゴチック］",
+        );
+        assert_eq!(
+            annotate(
+                "［＃ゴチック］",
+                DirectiveKind::Unknown,
+                DirectiveNormalization::Off,
+            ),
+            "［＃ゴチック］",
+        );
+        assert_eq!(
+            annotate(
+                "［＃ここから最後まで3字下げ］",
+                DirectiveKind::Unknown,
+                DirectiveNormalization::Degraded,
+            ),
+            "［＃ここから3字下げ］",
+        );
+        assert_eq!(
+            annotate(
+                "［＃ここから最後まで3字下げ］",
+                DirectiveKind::Unknown,
+                DirectiveNormalization::Canonical,
+            ),
+            "［＃ここから最後まで3字下げ］",
+        );
+    }
+
+    /// A gloss margin note round-trips its base / connector / note / suffix.
+    #[test]
+    fn emit_side_note_source() {
+        let mut a = Allocator::new();
+        let base = a.content_plain("未来");
+        let note = a.content_plain("みらい");
+        let Node::MarginNote(s) = a.side_note(MarginNoteKind::Gloss, base, note) else {
+            panic!("side_note must build a MarginNote node");
+        };
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_side_note(&s, &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "未来［＃「未来」の左に「みらい」の注記］");
+    }
+
+    /// A keyword-form illustration round-trips its 挿絵 / number / file /
+    /// dimensions.
+    #[test]
+    fn emit_sashie_source() {
+        let mut a = Allocator::new();
+        let Node::Illustration(s) = a.sashie("fig.png", Some("1"), Some("横100×縦200"), None)
+        else {
+            panic!("sashie must build an Illustration node");
+        };
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_sashie(&s, &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "［＃挿絵1（fig.png、横100×縦200）入る］");
+    }
+
+    /// An Aozora heading round-trips its referent line plus the level bracket.
+    #[test]
+    fn emit_aozora_heading_source() {
+        let mut a = Allocator::new();
+        let text = a.content_plain("第一章");
+        let Node::Heading(h) = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text)
+        else {
+            panic!("aozora_heading must build a Heading node");
+        };
+        let store = a.into_store();
+        let mut buf = String::new();
+        emit_aozora_heading(&h, &store, &mut buf).expect("serialize into String is infallible");
+        assert_eq!(buf, "第一章\n［＃「第一章」は大見出し］");
     }
 }

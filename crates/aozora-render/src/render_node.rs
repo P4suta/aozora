@@ -579,3 +579,205 @@ fn render_heading_hint<W: Write>(h: HeadingHint, store: &NodeStore, out: &mut W)
     escape_text(store.resolve_str(h.target), out)?;
     out.write_str(r#"" hidden></span>"#)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Byte-exact per-node render pins. Each test renders one owned node (or
+    //! calls a private emitter directly) and asserts the exact HTML, hitting
+    //! both sides of every node-kind / element decision so a deleted match arm
+    //! or stubbed emitter is observable.
+
+    use super::*;
+    use aozora_syntax::alloc::Allocator;
+    use aozora_syntax::{HeadingKind, HeadingStyle, MarginNoteKind};
+
+    /// Render a full owned node into a fresh `String` (`render` is infallible
+    /// over a `String` sink).
+    fn html(node: Node, store: &NodeStore) -> String {
+        let mut s = String::new();
+        render(node, store, &mut s).expect("render into String is infallible");
+        s
+    }
+
+    /// The pure-scalar `ForcedBreak` leaf emits `<br />`, not the
+    /// `<!-- name -->` fallback of an unhandled variant.
+    #[test]
+    fn forced_break_renders_br() {
+        let store = Allocator::new().into_store();
+        assert_eq!(html(Node::ForcedBreak, &store), "<br />");
+    }
+
+    /// A `Content::Segments` run walks its segments in order, emitting text,
+    /// gaiji, and nested-directive markup — each segment arm is load-bearing,
+    /// and the whole `Segments` arm is too (its deletion drops the run).
+    #[test]
+    fn content_segments_renders_each_segment_kind() {
+        let mut a = Allocator::new();
+        let text = a.seg_text("あ");
+        let g = a.make_gaiji("架空", None, false);
+        let gaiji = a.seg_gaiji(g);
+        let dir = a.make_directive("［＃ママ］", DirectiveKind::Sic);
+        let annot = a.seg_annotation(dir);
+        let content = a.content_segments(&[text, gaiji, annot]);
+        let store = a.into_store();
+
+        let mut out = String::new();
+        render_content_one(content, &store, &mut out).expect("render into String is infallible");
+        // Text segment (also proves the `Segments` arm did not collapse away).
+        assert!(out.contains("あ"), "text segment missing: {out}");
+        // Gaiji segment.
+        assert!(
+            out.contains(r#"class="aozora-gaiji"#),
+            "gaiji segment missing: {out}"
+        );
+        // Nested-directive segment.
+        assert!(
+            out.contains(r#"class="aozora-directive"#),
+            "directive segment missing: {out}"
+        );
+        // Order is preserved: text, then gaiji, then directive.
+        let t = out.find("あ").expect("text present");
+        let gi = out.find("aozora-gaiji").expect("gaiji present");
+        let di = out.find("aozora-directive").expect("directive present");
+        assert!(t < gi && gi < di, "segment order diverged: {out}");
+    }
+
+    /// A margin note renders a full `<ruby>` with the note carried in an
+    /// `aozora-margin-note` `<rt>` — the emitter writes real markup, not the
+    /// empty `Ok(())` of a stubbed body.
+    #[test]
+    fn side_note_renders_ruby_markup() {
+        let mut a = Allocator::new();
+        let base = a.content_plain("未来");
+        let gloss = a.content_plain("みらい");
+        let node = a.side_note(MarginNoteKind::Gloss, base, gloss);
+        let store = a.into_store();
+        assert_eq!(
+            html(node, &store),
+            r#"<ruby>未来<rp>(</rp><rt class="aozora-margin-note">みらい</rt><rp>)</rp></ruby>"#
+        );
+    }
+
+    /// The semantic fall-through picks the HTML element per attribute kind:
+    /// 斜体 → `<i>`, 上付き → `<sup>`, 下付き → `<sub>`, the span family (横組み /
+    /// 小書き / 枠 / …) → `<span>`, and the weight default → `<b>`. Deleting any
+    /// arm reroutes its attribute to the `<b>` default, changing the tag.
+    #[test]
+    fn forward_semantic_selects_element_per_attr() {
+        let mut a = Allocator::new();
+        let mut cases: Vec<(Node, &'static str)> = Vec::new();
+        for (attr, tag) in [
+            (ForwardAttr::Italic, "i"),
+            (ForwardAttr::SuperScript, "sup"),
+            (ForwardAttr::SubScript, "sub"),
+            (ForwardAttr::Horizontal, "span"),
+            (ForwardAttr::Bold, "b"),
+        ] {
+            let t = a.content_plain("字");
+            let node = a.forward_format(attr, t, ForwardOrigin::SelfContained);
+            cases.push((node, tag));
+        }
+        let store = a.into_store();
+        for (node, tag) in cases {
+            let out = html(node, &store);
+            let open = format!("<{tag} ");
+            let close = format!("</{tag}>");
+            assert!(out.starts_with(&open), "element open for {tag}: {out}");
+            assert!(out.ends_with(&close), "element close for {tag}: {out}");
+            assert!(out.contains("字"), "target text for {tag}: {out}");
+        }
+    }
+
+    /// A #331 dotted-letter forward composes its addressed letter into the
+    /// precomposed dotted glyph (`Sam` + `mは上ドット付き` → `Saṁ`), not the
+    /// verbatim run the fall-through would emit.
+    #[test]
+    fn accent_dot_composes_dotted_glyph() {
+        let mut a = Allocator::new();
+        let t = a.content_plain("Sam");
+        let node = a.accent_dot(t, "mは上ドット付き", ForwardOrigin::SelfContained);
+        let store = a.into_store();
+        // ṁ is U+1E41 (LATIN SMALL LETTER M WITH DOT ABOVE).
+        let expected = "<span class=\"aozora-accent-dot\">Sa\u{1e41}</span>";
+        assert_eq!(html(node, &store), expected);
+    }
+
+    /// An Aozora heading wraps its text in the shared `<hN>` open/close writers
+    /// — real markup, not the empty `Ok(())` of a stubbed body.
+    #[test]
+    fn aozora_heading_renders_hn_markup() {
+        let mut a = Allocator::new();
+        let text = a.content_plain("第一章");
+        let node = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text);
+        let store = a.into_store();
+        assert_eq!(
+            html(node, &store),
+            r#"<h1 class="aozora-heading aozora-heading-large">第一章</h1>"#
+        );
+    }
+
+    /// Every bespoke directive arm emits its own marker rather than the hidden
+    /// `aozora-directive` raw-echo of the fall-through — pins each arm's exact
+    /// bytes (including the `Y` recovered from the raw bracket, and the
+    /// `左に`-driven label split).
+    #[test]
+    fn directive_arms_render_exact_markup() {
+        let mut a = Allocator::new();
+        let cases: Vec<(Directive, &'static str)> = vec![
+            (
+                a.make_directive("》", DirectiveKind::WarichuClose),
+                "</span>",
+            ),
+            (
+                a.make_directive("［＃「振」のルビ「ふ」］", DirectiveKind::RubyAttached),
+                r#"<sup class="aozora-ruby-note">ルビ</sup>"#,
+            ),
+            (
+                a.make_directive("［＃「振」を「ふ」に置換］", DirectiveKind::RubyRetarget),
+                r#"<sup class="aozora-ruby-note">ルビ</sup>"#,
+            ),
+            (
+                a.make_directive("［＃左に「さ」のルビ付き］", DirectiveKind::RubyPairOpen),
+                r#"<sup class="aozora-ruby-note">左ルビ</sup>"#,
+            ),
+            (
+                a.make_directive(
+                    "［＃左に「さい」のルビ付き終わり］",
+                    DirectiveKind::RubyPairClose,
+                ),
+                r#"<sup class="aozora-ruby-note">左ルビ「さい」</sup>"#,
+            ),
+            (
+                a.make_directive("［＃注記付き］", DirectiveKind::MarginNotePairOpen),
+                r#"<sup class="aozora-margin-note">注記</sup>"#,
+            ),
+            (
+                a.make_directive("［＃左に注記付き］", DirectiveKind::MarginNotePairOpen),
+                r#"<sup class="aozora-margin-note">左注記</sup>"#,
+            ),
+            (
+                a.make_directive(
+                    "［＃「メモ」の注記付き終わり］",
+                    DirectiveKind::MarginNotePairClose,
+                ),
+                r#"<sup class="aozora-margin-note">注記「メモ」</sup>"#,
+            ),
+            (
+                a.make_directive(
+                    "［＃左に「メモ」の注記付き終わり］",
+                    DirectiveKind::MarginNotePairClose,
+                ),
+                r#"<sup class="aozora-margin-note">左注記「メモ」</sup>"#,
+            ),
+        ];
+        let store = a.into_store();
+        for (d, expected) in cases {
+            assert_eq!(
+                html(Node::Directive(d), &store),
+                expected,
+                "kind {:?}",
+                d.kind
+            );
+        }
+    }
+}
