@@ -1197,6 +1197,130 @@ mod tests {
         assert_eq!(Format::Center.as_json_tag(), "center");
     }
 
+    #[test]
+    fn font_shift_larger_and_magnitude() {
+        let up = FontShift(NonZeroI8::new(3).unwrap());
+        let down = FontShift(NonZeroI8::new(-2).unwrap());
+        // `larger`: sign of the shift. A single-step 大きな / 小さな pins both
+        // the `-> true` / `-> false` stubs and the `>`→`<`/`==` operator swaps.
+        assert!(up.larger(), "a positive shift enlarges");
+        assert!(!down.larger(), "a negative shift shrinks");
+        assert!(
+            FontShift(NonZeroI8::new(1).unwrap()).larger(),
+            "the smallest positive step still enlarges"
+        );
+        assert!(
+            !FontShift(NonZeroI8::new(-1).unwrap()).larger(),
+            "the smallest negative step still shrinks"
+        );
+        // `magnitude`: unsigned stage count, sign-independent.
+        assert_eq!(up.magnitude(), 3);
+        assert_eq!(down.magnitude(), 2, "magnitude drops the sign");
+        assert_eq!(FontShift(NonZeroI8::new(1).unwrap()).magnitude(), 1);
+    }
+
+    #[test]
+    fn block_styles_is_empty_and_iter_formats() {
+        // `is_empty` is true only for the all-default set; a single flag flips
+        // it (pins the `-> true`/`-> false` stubs and the `==`→`!=` swap).
+        assert!(BlockStyles::EMPTY.is_empty());
+        assert!(BlockStyles::default().is_empty());
+        let decorated = BlockStyles {
+            gothic: true,
+            horizontal: false,
+            framed: true,
+            font: Some(FontShift(NonZeroI8::new(-1).unwrap())),
+        };
+        assert!(!decorated.is_empty());
+        // `iter_formats` yields the set members in canonical order
+        // (gothic, horizontal, framed, font) — not an empty iterator.
+        assert_eq!(
+            decorated.iter_formats().collect::<Vec<_>>(),
+            vec![
+                Format::Gothic,
+                Format::Framed(EnclosureKind::Rule),
+                Format::FontSize(FontShift(NonZeroI8::new(-1).unwrap())),
+            ],
+            "iter_formats must project set members in canonical order"
+        );
+        // The empty set yields nothing (but the method is not the constant
+        // empty-iterator: the decorated case above proves it emits).
+        assert_eq!(BlockStyles::EMPTY.iter_formats().count(), 0);
+    }
+
+    #[test]
+    fn forward_origin_from_consume_pins_the_pullback_boundary() {
+        // Reclaimed iff the consume window was pulled back *before* the bracket;
+        // equal offsets (no pull-back) are Referenced — the exact `<` boundary.
+        assert_eq!(ForwardOrigin::from_consume(5, 10), ForwardOrigin::Reclaimed);
+        assert_eq!(
+            ForwardOrigin::from_consume(10, 10),
+            ForwardOrigin::Referenced,
+            "equal offsets mean no pull-back → Referenced"
+        );
+        assert_eq!(
+            ForwardOrigin::from_consume(15, 10),
+            ForwardOrigin::Referenced
+        );
+    }
+
+    #[test]
+    fn region_inline_and_phrasing_predicates() {
+        // `is_inline`: the 傍点 range and the bare (`!padded`) 太字 / 斜体 /
+        // キャプション forms, 小書き, and 縦中横 are inline; blocks are not.
+        assert!(
+            RegionFormat::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }
+            .is_inline()
+        );
+        assert!(RegionFormat::Bold { padded: false }.is_inline());
+        assert!(RegionFormat::SmallScript(BoutenPosition::Right).is_inline());
+        assert!(!RegionFormat::Bold { padded: true }.is_inline());
+        assert!(!RegionFormat::Table.is_inline());
+        assert!(!RegionFormat::Warichu.is_inline());
+        // `content_is_phrasing`: only 見出し.
+        assert!(
+            RegionFormat::Heading {
+                level: HeadingKind::Large,
+                style: HeadingStyle::Standard,
+                padded: true,
+            }
+            .content_is_phrasing()
+        );
+        assert!(!RegionFormat::Table.content_is_phrasing());
+        assert!(!RegionFormat::Bold { padded: false }.content_is_phrasing());
+    }
+
+    #[test]
+    fn region_close_inline_and_phrasing_predicates() {
+        // The close side mirrors the open side (so `\n\n` padding / `<p>`
+        // handling agree across the pair).
+        assert!(
+            RegionClose::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }
+            .is_inline()
+        );
+        assert!(RegionClose::Bold { padded: false }.is_inline());
+        assert!(RegionClose::SmallScript(BoutenPosition::Right).is_inline());
+        assert!(!RegionClose::Bold { padded: true }.is_inline());
+        assert!(!RegionClose::Table.is_inline());
+        assert!(!RegionClose::Warichu.is_inline());
+        assert!(
+            RegionClose::Heading {
+                level: Some(HeadingKind::Large),
+                style: HeadingStyle::Standard,
+                padded: true,
+            }
+            .content_is_phrasing()
+        );
+        assert!(!RegionClose::Table.content_is_phrasing());
+        assert!(!RegionClose::Bold { padded: false }.content_is_phrasing());
+    }
+
     /// Each scope sum projects onto a `Format` attribute (no panics / total).
     #[test]
     fn scope_projections_are_total() {

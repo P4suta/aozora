@@ -30,6 +30,7 @@ serde = ["dep:serde", "aozora-spec/serde"]
 
 [dev-dependencies]
 criterion = { workspace = true }
+mutants = { workspace = true }
 
 [[bench]]
 name = "accent_decompose"

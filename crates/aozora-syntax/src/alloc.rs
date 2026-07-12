@@ -44,6 +44,24 @@ fn is_empty_content(c: Content) -> bool {
     matches!(c, Content::Segments(r) if r.len == 0)
 }
 
+/// Summed byte length of the `Text` runs in `segs`, for pre-sizing the
+/// all-`Text` collapse buffer in [`Allocator::content_segments`].
+///
+/// `mutants::skip`: this value feeds only `String::with_capacity`, an advisory
+/// reservation. Any mutation here changes the reservation but never the bytes
+/// pushed, and the buffer is re-interned by value — so the resulting `StrId` is
+/// byte-identical regardless and no test can observe the difference
+/// (equivalent mutant).
+#[cfg_attr(test, mutants::skip)]
+fn text_run_len_hint(store: &NodeStore, segs: &[Segment]) -> usize {
+    segs.iter()
+        .map(|s| match s {
+            Segment::Text(id) => store.resolve_str(*id).len(),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Builder for [`Node`] and its payload types.
 ///
 /// Owns the [`NodeStore`] every produced handle resolves against; call
@@ -102,14 +120,7 @@ impl Allocator {
             // Resolve each text run, concatenate, and re-intern the all-`Text`
             // collapse. Pre-size the buffer from the resolved lengths to avoid
             // reallocation.
-            let total: usize = segs
-                .iter()
-                .map(|s| match s {
-                    Segment::Text(id) => self.store.resolve_str(*id).len(),
-                    _ => 0,
-                })
-                .sum();
-            let mut buf = String::with_capacity(total);
+            let mut buf = String::with_capacity(text_run_len_hint(&self.store, segs));
             for s in segs {
                 if let Segment::Text(id) = s {
                     buf.push_str(self.store.resolve_str(*id));
@@ -829,6 +840,22 @@ mod tests {
             panic!("all-text content_segments must collapse to Plain");
         };
         assert_eq!(a.store().resolve_str(id), "青空");
+    }
+
+    #[test]
+    fn into_store_hands_over_the_populated_store() {
+        // `into_store` must yield the *built* store (not a fresh default): a
+        // handle minted during the build has to still resolve against it.
+        let mut a = Allocator::new();
+        let Content::Plain(id) = a.content_plain("青梅") else {
+            panic!("plain content should intern to a Plain handle");
+        };
+        let store = a.into_store();
+        assert_eq!(
+            store.resolve_str(id),
+            "青梅",
+            "into_store must return the populated store, not Default::default()"
+        );
     }
 
     #[test]

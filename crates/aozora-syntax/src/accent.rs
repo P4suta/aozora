@@ -220,16 +220,25 @@ const ACCENT_MARKER_MASK: u128 = {
     m
 };
 
-const _: () = {
-    // Pin the marker set to ASCII; if a future spec edit adds a non-ASCII
-    // marker the bitmap shape must change (no longer fits in u128).
-    let bs = ACCENT_MARKERS;
+/// Compile-time invariant: every [`ACCENT_MARKERS`] byte is ASCII (`< 128`), so
+/// the [`ACCENT_MARKER_MASK`] `u128` bitmap can hold a bit for each. If a future
+/// spec edit adds a non-ASCII marker the bitmap shape must change.
+///
+/// `mutants::skip`: this runs only during const-eval over the fixed, all-ASCII
+/// `ACCENT_MARKERS`, so mutating the loop bound (`<` → `==` / `>`) merely skips
+/// iterations of an assertion that already holds for the real data — no compile
+/// error and no runtime behaviour, hence unobservable (equivalent mutant). A
+/// named `const fn` (not an anonymous `const _` block) because cargo-mutants
+/// only honours `mutants::skip` on named items.
+#[cfg_attr(test, mutants::skip)]
+const fn assert_markers_ascii(bs: &[u8]) {
     let mut i = 0;
     while i < bs.len() {
         assert!(bs[i] < 128, "ACCENT_MARKERS must stay ASCII-only");
         i += 1;
     }
-};
+}
+const _: () = assert_markers_ascii(ACCENT_MARKERS);
 
 /// Branchless membership test against [`ACCENT_MARKERS`].
 ///
@@ -1081,6 +1090,82 @@ mod tests {
         // 段目 table-row form.
         assert_eq!(
             compose_accent_dots("Sinha", "７段目、Sinhaのnは上ドット付き"),
+            None
+        );
+    }
+
+    #[test]
+    fn is_accent_marker_matches_spec_bytes_and_rejects_the_rest() {
+        // Every spec marker byte is a marker.
+        for &b in ACCENT_MARKERS {
+            assert!(is_accent_marker(b), "0x{b:02X} is a spec accent marker");
+        }
+        // Non-markers, including the exact ASCII boundary (128) and high bytes
+        // that appear as UTF-8 continuation/lead bytes in Japanese text: these
+        // must return `false` *without* shifting the u128 bitmap out of range
+        // (the `b < 128` guard, whose `<=` mutant would shift-overflow-panic).
+        for b in [0u8, b'a', b'Z', b'0', 127, 128, 129, 200, 255] {
+            assert!(!is_accent_marker(b), "0x{b:02X} is not an accent marker");
+        }
+    }
+
+    #[test]
+    fn decompose_fragment_edits_reports_exact_length_deltas() {
+        // The public edit list is `(in_off, in_len, out_len)` for every
+        // length-*changing* digraph only. Pinned exactly so the constant-vec
+        // stubs, the inverted early-out, the `!=`→`==` push guard, and the
+        // index-advance arithmetic are all caught.
+        // `ae&` (3 bytes) → æ (2 bytes): a −1 shift at offset 0.
+        assert_eq!(decompose_fragment_edits("ae&on"), vec![(0, 3, 2)]);
+        // `m'` (2 bytes) → ḿ (3 bytes): a +1 shift at offset 0.
+        assert_eq!(decompose_fragment_edits("m'a"), vec![(0, 2, 3)]);
+        // `s&` (2 bytes) → ß (2 bytes): length-preserving, so it is omitted.
+        assert!(decompose_fragment_edits("stras&e").is_empty());
+        // No marker byte at all → no edits (and the borrow-only fast path).
+        assert!(decompose_fragment_edits("plain 日本語").is_empty());
+        // Two length-changing digraphs report both, at their post-shift offsets
+        // (offsets are relative to the *input* fragment).
+        assert_eq!(
+            decompose_fragment_edits("ae&m'"),
+            vec![(0, 3, 2), (3, 2, 3)],
+        );
+    }
+
+    #[test]
+    fn accent_dot_ascii_ordinal_counts_like_fullwidth() {
+        // `parse_leading_number` accepts ASCII digits as well as fullwidth: an
+        // ASCII `2つめの` must behave exactly like the fullwidth `２つめの`,
+        // exercising the `'0'..='9'` arm and its `ch - '0'` value arithmetic.
+        assert_eq!(
+            compose_accent_dots("Sisa", "2つめのsは下ドット付き").as_deref(),
+            Some("Siṣa")
+        );
+        // A leading multi-digit ASCII ordinal parses to the whole value: `10`
+        // over a run with fewer than ten `s` occurrences declines (not `1`).
+        assert_eq!(compose_accent_dots("sss", "10つめのsは下ドット付き"), None);
+    }
+
+    #[test]
+    fn accent_dot_declines_empty_letter_clause_in_a_multi_clause_body() {
+        // A trailing clause whose selector consumes all its letters (`最後の`
+        // with nothing after) is malformed and must fail the *whole* body — the
+        // `letters.is_empty() || …` guard. If the `||` degraded to `&&`, the
+        // empty clause would silently contribute no ops and the first clause
+        // would still apply, so this pins the all-or-nothing contract.
+        assert_eq!(
+            compose_accent_dots("Sam", "mは上ドット付き、最後のは下ドット付き"),
+            None
+        );
+    }
+
+    #[test]
+    fn accent_dot_declines_ordinal_applied_to_a_letter_cluster() {
+        // An ordinal names a single occurrence, so it cannot pair with a
+        // multi-letter cluster (`chars.len() > 1 && !First`). `mnmn` has a
+        // composable 2nd `m` and 2nd `n`, so were the guard inverted the body
+        // would wrongly compose; the contract is that it declines.
+        assert_eq!(
+            compose_accent_dots("mnmn", "２つめのmnは上ドット付き"),
             None
         );
     }

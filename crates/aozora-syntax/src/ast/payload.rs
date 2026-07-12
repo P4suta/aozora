@@ -397,6 +397,95 @@ mod tests {
     }
 
     #[test]
+    fn gaiji_canonical_owned_has_mencode_tracks_the_tail() {
+        let mut store = NodeStore::new();
+        let id = store.intern("第3水準1-85-54");
+        // A tail is present for every arm except the bare `Unresolved{None}`.
+        assert!(
+            GaijiCanonicalOwned::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54
+            })
+            .has_mencode()
+        );
+        assert!(GaijiCanonicalOwned::Unicode('竜').has_mencode());
+        assert!(GaijiCanonicalOwned::Unresolved { mencode: Some(id) }.has_mencode());
+        assert!(
+            !GaijiCanonicalOwned::Unresolved { mencode: None }.has_mencode(),
+            "no tail means has_mencode is false"
+        );
+    }
+
+    #[test]
+    fn gaiji_canonical_owned_write_mencode_emits_the_token() {
+        let store = NodeStore::new();
+        // The structured arms reproduce their canonical token verbatim (not the
+        // empty `Default::default()` a stub would write).
+        let mut buf = String::new();
+        GaijiCanonicalOwned::MenKuTen(MenKuTen {
+            plane: 1,
+            ku: 85,
+            ten: 54,
+        })
+        .write_mencode(&store, &mut buf)
+        .unwrap();
+        assert_eq!(buf, "第3水準1-85-54");
+
+        let mut buf = String::new();
+        GaijiCanonicalOwned::Unicode('A')
+            .write_mencode(&store, &mut buf)
+            .unwrap();
+        assert_eq!(buf, "U+0041");
+    }
+
+    #[test]
+    fn node_kind_and_xml_name_distinguish_forward_attrs() {
+        // 傍点 / 縦中横 forward formats get their own `NodeKind` + XML name;
+        // every other forward attribute rides the Emphasis / emphasis default.
+        // Pins the two dedicated match arms (deleting either would collapse them
+        // into the default) and the non-empty XML-name stubs.
+        use crate::alloc::Allocator;
+        use crate::format::ForwardOrigin;
+        use crate::{BoutenKind, BoutenPosition};
+
+        let mut a = Allocator::new();
+        let t = a.content_plain("青");
+        let bouten = a.bouten(
+            BoutenKind::Goma,
+            t,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        );
+        assert_eq!(bouten.kind(), crate::NodeKind::Bouten);
+        assert_eq!(bouten.xml_node_name(), "aozora_bouten");
+
+        let t2 = a.content_plain("12");
+        let tcy = a.tate_chu_yoko(t2, ForwardOrigin::Referenced);
+        assert_eq!(tcy.kind(), crate::NodeKind::CombineUpright);
+        assert_eq!(tcy.xml_node_name(), "aozora_tcy");
+
+        // A non-bouten, non-tcy forward attribute falls to the default arm.
+        let t3 = a.content_plain("重");
+        let bold = a.forward_format(ForwardAttr::Bold, t3, ForwardOrigin::Reclaimed);
+        assert_eq!(bold.kind(), crate::NodeKind::Emphasis);
+        assert_eq!(bold.xml_node_name(), "aozora_emphasis");
+    }
+
+    #[test]
+    fn xml_node_name_is_stable_per_variant() {
+        // A spread of unit variants pins the `-> ""` / `-> "xyzzy"` whole-body
+        // stubs to their real, stable element names.
+        assert_eq!(Node::PageBreak.xml_node_name(), "aozora_page_break");
+        assert_eq!(Node::BodyEnd.xml_node_name(), "aozora_body_end");
+        assert_eq!(Node::ForcedBreak.xml_node_name(), "aozora_forced_break");
+        assert_eq!(
+            Node::SectionBreak(SectionKind::Kaicho).xml_node_name(),
+            "aozora_section_break"
+        );
+    }
+
+    #[test]
     fn gaiji_resolve_matches_canonical_authority() {
         // Build an owned `Gaiji` per canonical arm and confirm the on-demand
         // glyph resolution is byte-identical to the `aozora-encoding`

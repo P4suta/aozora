@@ -540,6 +540,125 @@ mod tests {
     }
 
     #[test]
+    fn ruby_base_class_maps_each_class_and_its_range_boundaries() {
+        use RubyBaseClass::{Greek, Hiragana, Kanji, Katakana, Latin};
+        // Table-driven: every class plus the *endpoint* char of each Unicode
+        // range it unions, so a shrunk/dropped range arm (or a `-> None`) is
+        // caught. Endpoints are written as `\u{..}` to pin the exact bounds.
+        let cases: &[(char, RubyBaseClass)] = &[
+            // Kanji — CJK Ext A / main / compat / Ext B..F endpoints + 々〆.
+            ('\u{3400}', Kanji),
+            ('\u{4DBF}', Kanji),
+            ('\u{4E00}', Kanji),
+            ('\u{9FFF}', Kanji),
+            ('\u{F900}', Kanji),
+            ('\u{FAFF}', Kanji),
+            ('\u{20000}', Kanji),
+            ('\u{2FFFF}', Kanji),
+            ('々', Kanji),
+            ('〆', Kanji),
+            ('漢', Kanji),
+            // Hiragana — letters ぁ..ゖ and ゝ / ゞ.
+            ('\u{3041}', Hiragana),
+            ('\u{3096}', Hiragana),
+            ('\u{309D}', Hiragana),
+            ('\u{309E}', Hiragana),
+            ('あ', Hiragana),
+            // Katakana — ァ..ヴ, ヷ..ヺ, and ー / ヽ / ヾ.
+            ('\u{30A1}', Katakana),
+            ('\u{30F4}', Katakana),
+            ('\u{30F7}', Katakana),
+            ('\u{30FA}', Katakana),
+            ('\u{30FC}', Katakana),
+            ('\u{30FE}', Katakana),
+            ('カ', Katakana),
+            // Latin — basic + fullwidth letters, both cases.
+            ('A', Latin),
+            ('Z', Latin),
+            ('a', Latin),
+            ('z', Latin),
+            ('Ａ', Latin),
+            ('Ｚ', Latin),
+            ('ａ', Latin),
+            ('ｚ', Latin),
+            // Greek — upper Α..Ω and lower α..ω.
+            ('\u{0391}', Greek),
+            ('\u{03A9}', Greek),
+            ('\u{03B1}', Greek),
+            ('\u{03C9}', Greek),
+        ];
+        for &(ch, class) in cases {
+            assert_eq!(
+                ruby_base_class(ch),
+                Some(class),
+                "U+{:04X} should classify as {class:?}",
+                ch as u32
+            );
+        }
+        // Chars that must NOT classify: the deliberately-excluded small
+        // katakana / middle-dot, and just-outside-range neighbours of every
+        // block, so no arm over-grows.
+        let none_cases: &[char] = &[
+            'ヵ',       // U+30F5 — deliberately excluded (see doc comment)
+            'ヶ',       // U+30F6 — deliberately excluded
+            '・',       // U+30FB — middle dot, excluded
+            '\u{33FF}', // just below Kanji Ext A
+            '\u{3040}', // just below Hiragana
+            '\u{3097}', // between the two Hiragana sub-ranges (unassigned)
+            '\u{30FF}', // just above Katakana
+            '\u{0390}', // just below Greek upper
+            '\u{03AA}', // between Greek upper and lower
+            '\u{03CA}', // just above Greek lower
+            ' ', '5', '。',
+        ];
+        for &ch in none_cases {
+            assert_eq!(
+                ruby_base_class(ch),
+                None,
+                "U+{:04X} must not classify as any base class",
+                ch as u32
+            );
+        }
+    }
+
+    #[test]
+    fn is_ruby_base_char_is_exactly_the_kanji_class() {
+        // The historical kanji predicate: true iff `ruby_base_class` is Kanji.
+        assert!(is_ruby_base_char('漢'));
+        assert!(is_ruby_base_char('々'));
+        assert!(is_ruby_base_char('\u{4E00}'));
+        // Every non-kanji base class, and a non-base char, are false.
+        assert!(!is_ruby_base_char('あ')); // hiragana
+        assert!(!is_ruby_base_char('カ')); // katakana
+        assert!(!is_ruby_base_char('A')); // latin
+        assert!(!is_ruby_base_char('\u{0391}')); // greek
+        assert!(!is_ruby_base_char(' ')); // not a base at all
+    }
+
+    #[test]
+    fn margin_note_kind_serialize_affixes_are_exact() {
+        // The `(connector, suffix)` literals that wrap a round-tripped note —
+        // pinned byte-exact so a stubbed `("", "")` / `("xyzzy", …)` is caught.
+        assert_eq!(
+            MarginNoteKind::Gloss.serialize_affixes(),
+            ("」の左に「", "」の注記］")
+        );
+        assert_eq!(
+            MarginNoteKind::Marginal.serialize_affixes(),
+            ("」に「", "」の傍記］")
+        );
+    }
+
+    #[test]
+    fn heading_kind_outline_level_maps_each_rank() {
+        // The 大/中/小 → 1/2/3 mapping; each rank pinned so a stubbed constant
+        // or a dropped Medium/Small arm is caught.
+        assert_eq!(HeadingKind::Large.outline_level(), 1);
+        assert_eq!(HeadingKind::Medium.outline_level(), 2);
+        assert_eq!(HeadingKind::Small.outline_level(), 3);
+    }
+
+    #[test]
     fn bouten_keyword_is_exhaustive_and_stable() {
         // Every named variant keys its canonical 青空文庫 keyword; the
         // bare 傍点 (Goma) flows through the `_` default arm.
@@ -599,6 +718,7 @@ mod tests {
         use core::num::NonZeroI8;
         let cases = [
             (ForwardAttr::Bold, "太字"),
+            (ForwardAttr::Gothic, "ゴシック体"),
             (ForwardAttr::Italic, "斜体"),
             (ForwardAttr::SuperScript, "上付き小文字"),
             (ForwardAttr::SubScript, "下付き小文字"),
