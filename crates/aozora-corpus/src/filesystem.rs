@@ -160,11 +160,21 @@ fn read_item(root: &Path, path: &Path) -> Result<CorpusItem, CorpusError> {
     // strip_prefix cannot fail here; the invariant is encoded as `expect`
     // rather than a defensive fallback branch that would never execute
     // (and would therefore drag coverage down with no behavioural value).
-    let label = path
+    let relative = path
         .strip_prefix(root)
-        .expect("walkdir yielded a path outside the corpus root")
-        .display()
-        .to_string();
+        .expect("walkdir yielded a path outside the corpus root");
+    // Labels are portable, POSIX-style identifiers: join the components
+    // with '/' rather than `Path::display`, which emits the platform
+    // separator ('\' on Windows). Without this, the same corpus would
+    // produce `nested\b.txt` on Windows and `nested/b.txt` elsewhere,
+    // making corpus digests and audit output platform-dependent. Joining
+    // components (not a `\`->`/` string replace) is separator-correct: a
+    // Unix filename may itself contain a literal backslash.
+    let label = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
     Ok(CorpusItem::new(label, bytes))
 }
 
