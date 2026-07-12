@@ -201,6 +201,70 @@ mod tests {
         lossless("［＃ここから2字下げ］\n途中で打ち切り");
     }
 
+    fn build(src: &str) -> SyntaxNode {
+        let sanitized = sanitize(src);
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        build_cst(&sanitized.text, tree.source_nodes())
+    }
+
+    fn count_kind(cst: &SyntaxNode, kind: SyntaxKind) -> usize {
+        cst.descendants_with_tokens()
+            .filter(|el| el.kind() == kind)
+            .count()
+    }
+
+    #[test]
+    fn inline_construct_emits_construct_node() {
+        // The `Inline`/`BlockLeaf` arm wraps a classified span in a
+        // `Construct` node carrying one `ConstructText` token.
+        // Deleting the arm degrades the ruby to a bare `Plain` token
+        // (bytes preserved, structure lost), so pin the node + token.
+        let cst = build("｜青梅《おうめ》");
+        assert_eq!(count_kind(&cst, SyntaxKind::Construct), 1);
+        assert_eq!(count_kind(&cst, SyntaxKind::ConstructText), 1);
+        assert_eq!(count_kind(&cst, SyntaxKind::Container), 0);
+    }
+
+    #[test]
+    fn container_structure_and_close_scope() {
+        let cst = build(
+            "前置き\n\
+             ［＃ここから2字下げ］\n\
+             本文\n\
+             ［＃ここで字下げ終わり］\n\
+             後書き",
+        );
+        // `BlockOpen` arm -> exactly one `Container` node + one
+        // `ContainerOpen` token. Deleting the arm drops both.
+        assert_eq!(count_kind(&cst, SyntaxKind::Container), 1);
+        assert_eq!(count_kind(&cst, SyntaxKind::ContainerOpen), 1);
+        // `BlockClose` arm -> exactly one `ContainerClose` token.
+        // Deleting the arm degrades it to a `Plain` token.
+        assert_eq!(count_kind(&cst, SyntaxKind::ContainerClose), 1);
+
+        // Line 106 `open_containers > 0`: on a matched close the
+        // `Container` finishes AT the close boundary, so the trailing
+        // "後書き" run lands at the `Document` root as a sibling of
+        // the closed `Container`. Under the `>`->`<` mutation the
+        // finish never fires (`usize < 0` is unsatisfiable), the
+        // container stays open, and the trailing text is nested
+        // inside it instead. Pin the trailing run as a direct root
+        // child.
+        let mut root_plain = Vec::new();
+        for el in cst.children_with_tokens() {
+            let Some(t) = el.as_token() else { continue };
+            if t.kind() == SyntaxKind::Plain {
+                root_plain.push(t.text().to_owned());
+            }
+        }
+        assert!(
+            root_plain.iter().any(|t| t.contains("後書き")),
+            "trailing text must be a Document-root sibling, not nested \
+             in the closed Container: {root_plain:?}"
+        );
+    }
+
     #[test]
     fn document_root_is_document_kind() {
         let sanitized = sanitize("hi");

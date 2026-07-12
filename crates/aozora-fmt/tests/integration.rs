@@ -271,6 +271,43 @@ fn list_and_write_combined_lists_and_rewrites() {
 }
 
 #[test]
+fn write_without_list_is_silent_but_with_list_prints_changed_path() {
+    // `run_write` prints a path only when BOTH `--list` is set AND the file
+    // changed — the `list && fmt.changed()` conjunction. A bare `--write` on a
+    // *changed* file has `list` off, so stdout must stay empty: the `&& → ||`
+    // mutant prints the path here (list off but changed) and is caught. The
+    // paired `--write --list` case must print it, pinning the conjunction from
+    // both sides.
+    let silent = temp_file("write-silent", DIRTY);
+    let out = aozora_fmt().arg("--write").arg(&silent).output().unwrap();
+    assert!(
+        out.status.success(),
+        "bare --write must succeed: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        String::from_utf8(out.stdout).unwrap().is_empty(),
+        "bare --write on a changed file must not print the path to stdout",
+    );
+    fs::remove_file(&silent).ok();
+
+    let listed = temp_file("write-list", DIRTY);
+    let out = aozora_fmt()
+        .args(["--write", "--list"])
+        .arg(&listed)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "--write --list must succeed");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let name = listed.file_name().unwrap().to_str().unwrap();
+    assert!(
+        stdout.contains(name),
+        "--write --list on a changed file must print the path {name:?}; got {stdout:?}",
+    );
+    fs::remove_file(&listed).ok();
+}
+
+#[test]
 fn check_json_reports_per_file_status() {
     let dir = temp_dir("json");
     write_in(&dir, "a.afm", DIRTY);
@@ -430,6 +467,25 @@ fn stdin_diff_prints_unified_diff() {
         String::from_utf8(out.stdout)
             .unwrap()
             .contains("+日本《にほん》")
+    );
+}
+
+#[test]
+fn stdin_check_diff_on_canonical_input_prints_nothing() {
+    // Already-canonical stdin under `--check --diff` is unchanged, so the
+    // `CheckReport::Diff if changed` guard is false and nothing is written to
+    // stdout. `write_diff` emits its `---` / `+++` headers unconditionally, so
+    // the guard-forced-`true` mutant prints those spurious headers for an
+    // already-clean input — asserting empty stdout catches it. Exit stays 0.
+    let out = run_with_stdin(&["--check", "--diff", "--color", "never"], CLEAN);
+    assert!(
+        out.status.success(),
+        "already-canonical stdin passes --check: {:?}",
+        out.status,
+    );
+    assert!(
+        String::from_utf8(out.stdout).unwrap().is_empty(),
+        "no diff must be printed for already-canonical stdin",
     );
 }
 

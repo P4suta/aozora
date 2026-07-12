@@ -223,4 +223,58 @@ mod tests {
         let err = compile("(Construct").unwrap_err();
         assert!(matches!(err, QueryError::UnexpectedEnd { .. }));
     }
+
+    #[test]
+    fn expect_rejects_wrong_open_char() {
+        // `expect('(')` must reject a leading non-`(`. If the match guard
+        // `c == want` is short-circuited to `true`, the parser would accept
+        // `C`, bump it, and then fail later with `UnknownKind` instead.
+        let err = compile("Construct)").unwrap_err();
+        match err {
+            QueryError::Unexpected { found, offset } => {
+                assert_eq!(found, 'C');
+                assert_eq!(offset, 0);
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_ident_accepts_underscore_and_dash() {
+        // The identifier char-class admits `_` and `-` via `||`. If the first
+        // `||` becomes `&&`, the class collapses to `is_ascii_alphanumeric()`
+        // and the capture is truncated at the first `_`, then `expect(')')`
+        // fails. Pin the full multi-punctuation capture to keep both `||`s.
+        let q = compile("(_ @a_b-c)").unwrap();
+        assert_eq!(q.patterns[0].capture.as_deref(), Some("a_b-c"));
+    }
+
+    #[test]
+    fn parse_kind_maps_each_name() {
+        // Pin every `parse_kind` arm so deleting any single arm (which would
+        // fall through to `None`) is observable.
+        assert!(matches!(parse_kind("Document"), Some(SyntaxKind::Document)));
+        assert!(matches!(
+            parse_kind("Container"),
+            Some(SyntaxKind::Container)
+        ));
+        assert!(matches!(
+            parse_kind("Construct"),
+            Some(SyntaxKind::Construct)
+        ));
+        assert!(matches!(parse_kind("Plain"), Some(SyntaxKind::Plain)));
+        assert!(matches!(
+            parse_kind("ConstructText"),
+            Some(SyntaxKind::ConstructText)
+        ));
+        assert!(matches!(
+            parse_kind("ContainerOpen"),
+            Some(SyntaxKind::ContainerOpen)
+        ));
+        assert!(matches!(
+            parse_kind("ContainerClose"),
+            Some(SyntaxKind::ContainerClose)
+        ));
+        assert!(parse_kind("Nope").is_none());
+    }
 }

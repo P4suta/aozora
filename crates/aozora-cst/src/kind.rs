@@ -87,3 +87,60 @@ pub type SyntaxNode = rowan::SyntaxNode<AozoraLanguage>;
 /// Typed alias for `rowan::SyntaxToken` parameterised on this CST's
 /// language.
 pub type SyntaxToken = rowan::SyntaxToken<AozoraLanguage>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every raw discriminant maps back to the exact variant it was
+    /// assigned. Deleting any `from_raw_u16` arm drops that raw value
+    /// to the `unreachable!` arm and panics here.
+    #[test]
+    fn from_raw_u16_maps_each_discriminant_to_its_variant() {
+        let expected = [
+            (0_u16, SyntaxKind::Document),
+            (1, SyntaxKind::Container),
+            (2, SyntaxKind::Construct),
+            (3, SyntaxKind::Plain),
+            (4, SyntaxKind::ConstructText),
+            (5, SyntaxKind::ContainerOpen),
+            (6, SyntaxKind::ContainerClose),
+        ];
+        for (raw, variant) in expected {
+            assert_eq!(
+                SyntaxKind::from_raw_u16(raw),
+                variant,
+                "raw {raw} must decode to its assigned variant",
+            );
+        }
+    }
+
+    /// `to_raw` -> `from_raw_u16` round-trips every variant to itself,
+    /// pinning the concrete raw discriminant each variant emits.
+    #[test]
+    fn kind_raw_round_trip_is_identity() {
+        let variants = [
+            SyntaxKind::Document,
+            SyntaxKind::Container,
+            SyntaxKind::Construct,
+            SyntaxKind::Plain,
+            SyntaxKind::ConstructText,
+            SyntaxKind::ContainerOpen,
+            SyntaxKind::ContainerClose,
+        ];
+        for (index, variant) in variants.into_iter().enumerate() {
+            let raw = AozoraLanguage::kind_to_raw(variant);
+            assert_eq!(
+                raw.0,
+                u16::try_from(index).unwrap(),
+                "variant at index {index} must emit its positional raw",
+            );
+            assert_eq!(
+                AozoraLanguage::kind_from_raw(raw),
+                variant,
+                "raw {} must round-trip back to its variant",
+                raw.0,
+            );
+        }
+    }
+}

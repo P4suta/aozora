@@ -103,12 +103,22 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).with_context(|| format!("reading {}", path.display()))
 }
 
+/// Byte cap for the bounded stdin read: one byte past [`MAX_SOURCE_BYTES`].
+///
+/// Reading a single byte beyond the inclusive limit is enough to tell "too big"
+/// from "exactly at the limit": input exactly at the limit is still read whole,
+/// and one byte over is still seen (then rejected by the length check) — all
+/// without materialising a multi-gigabyte buffer.
+const fn stdin_read_cap() -> u64 {
+    MAX_SOURCE_BYTES + 1
+}
+
 /// Read all of stdin, stopping once the input passes [`MAX_SOURCE_BYTES`]
 /// rather than buffering an unbounded amount only to reject it.
 ///
-/// The reader is capped at `MAX_SOURCE_BYTES + 1` bytes: one byte past the
-/// limit is enough to tell "too big" from "exactly at the limit" without
-/// materialising a multi-gigabyte buffer.
+/// The reader is capped at `stdin_read_cap` bytes: one byte past the limit is
+/// enough to tell "too big" from "exactly at the limit" without materialising a
+/// multi-gigabyte buffer.
 ///
 /// # Errors
 ///
@@ -117,7 +127,7 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>> {
 pub fn read_stdin() -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     io::stdin()
-        .take(MAX_SOURCE_BYTES + 1)
+        .take(stdin_read_cap())
         .read_to_end(&mut buf)
         .context("reading stdin")?;
     ensure_within_span_limit(buf.len() as u64)?;
@@ -180,6 +190,22 @@ mod tests {
         .context("decoding <stdin>")
         .expect_err("the guard error");
         assert!(is_oversize_input(&err));
+    }
+
+    #[test]
+    fn stdin_read_cap_is_exactly_one_byte_past_the_inclusive_limit() {
+        // The stdin reader must stop one byte past the inclusive `u32::MAX`
+        // bound: exactly-at-limit input is read whole, one byte over is still
+        // seen (then rejected). Pinning the concrete cap distinguishes the
+        // real `+ 1` from a `* 1` (== MAX) or `- 1` (== MAX - 1) miscap that
+        // would truncate an at-limit or over-limit read.
+        assert_eq!(stdin_read_cap(), 4_294_967_296);
+        assert_eq!(stdin_read_cap(), MAX_SOURCE_BYTES + 1);
+        // One strictly greater than the inclusive bound…
+        assert!(stdin_read_cap() > MAX_SOURCE_BYTES);
+        // …and exactly one, so an at-limit read is neither truncated nor
+        // padded.
+        assert_eq!(stdin_read_cap() - MAX_SOURCE_BYTES, 1);
     }
 
     #[test]

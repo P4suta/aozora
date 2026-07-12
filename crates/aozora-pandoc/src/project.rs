@@ -1460,16 +1460,34 @@ mod tests {
     fn bouten_position_slug_covers_left_and_unknown() {
         assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
         assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
+        // The `Both` arm is distinct from the `_ => "unknown"` fallthrough:
+        // deleting it must not collapse 両側 into `unknown`.
+        assert_eq!(bouten_position_slug(BoutenPosition::Both), "both");
     }
 
     #[test]
     fn annotation_kind_slug_covers_all_named_arms() {
-        assert_eq!(annotation_kind_slug(DirectiveKind::Unknown), "unknown");
-        assert_eq!(annotation_kind_slug(DirectiveKind::Sic), "sic");
-        assert_eq!(
-            annotation_kind_slug(DirectiveKind::BaseTextVariant),
-            "base-text-variant"
-        );
+        // Every named arm maps to its own slug; deleting any one arm would
+        // collapse that variant into the `_ => "other"` fallthrough. Pin each
+        // slug so no arm can silently drop out.
+        for (kind, slug) in [
+            (DirectiveKind::Unknown, "unknown"),
+            (DirectiveKind::Sic, "sic"),
+            (DirectiveKind::BaseTextVariant, "base-text-variant"),
+            (DirectiveKind::EditorNote, "editor-note"),
+            (DirectiveKind::RubyAttached, "ruby-attached"),
+            (DirectiveKind::RubyRetarget, "ruby-retarget"),
+            (DirectiveKind::RubyPairOpen, "ruby-pair-open"),
+            (DirectiveKind::RubyPairClose, "ruby-pair-close"),
+            (DirectiveKind::MarginNotePairOpen, "margin-note-pair-open"),
+            (DirectiveKind::MarginNotePairClose, "margin-note-pair-close"),
+        ] {
+            assert_eq!(
+                annotation_kind_slug(kind),
+                slug,
+                "{kind:?} must map to its own slug, not the `other` fallthrough"
+            );
+        }
     }
 
     #[test]
@@ -1521,5 +1539,142 @@ mod tests {
             }
             other => panic!("expected Header, got {other:?}"),
         }
+    }
+
+    /// A container close emits its `Div` mid-stream, so content that follows
+    /// the close is a *sibling* block at the enclosing level — not swallowed
+    /// into the container. A no-op `close_container` would keep the frame open
+    /// until EOF, folding the trailing content inside the Div.
+    #[test]
+    fn close_container_emits_div_before_trailing_content() {
+        let blocks = project("A\n\n［＃ここから2字下げ］\nB\n［＃ここで字下げ終わり］\n\nC\n");
+        let div_idx = blocks
+            .iter()
+            .position(|b| matches!(b, Block::Div(a, _) if has_class(a, "container-indent")))
+            .expect("indent div present");
+        let trailing_is_sibling = blocks[div_idx + 1..].iter().any(|b| {
+            matches!(
+                b,
+                Block::Para(inlines)
+                    if inlines.iter().any(|i| matches!(i, Inline::Str(s) if s == "C"))
+            )
+        });
+        assert!(
+            trailing_is_sibling,
+            "trailing content must be a sibling Para after the closed Div: {blocks:?}"
+        );
+    }
+
+    /// `push_content_inlines` dispatches a `Content::Segments` run element by
+    /// element: `Text` → `Str`, `Gaiji` → gaiji span, `Directive` → annotation
+    /// span. Deleting the `Segments` arm drops the whole run; deleting any
+    /// segment arm swaps that element for an empty placeholder `Str`.
+    #[test]
+    fn push_content_inlines_dispatches_each_segment_kind() {
+        use aozora::syntax::ast::GaijiCanonicalOwned;
+
+        let mut store = NodeStore::new();
+        let text_id = store.intern("字");
+        let gaiji_hint = store.intern("外字の説明");
+        let raw_id = store.intern("ママ");
+        let gaiji = Gaiji {
+            hint: gaiji_hint,
+            canonical: GaijiCanonicalOwned::Unicode('A'),
+            standalone: false,
+        };
+        let directive = Directive {
+            raw: raw_id,
+            kind: DirectiveKind::Sic,
+        };
+        let seg = store.push_segments(&[
+            Segment::Text(text_id),
+            Segment::Gaiji(gaiji),
+            Segment::Directive(directive),
+        ]);
+        let mut buf = Vec::new();
+        push_content_inlines(Content::Segments(seg), &store, &mut buf);
+
+        assert_eq!(buf.len(), 3, "one inline per segment: {buf:?}");
+        assert_eq!(
+            buf[0],
+            Inline::Str("字".to_owned()),
+            "Text segment projects to its interned Str"
+        );
+        match &buf[1] {
+            Inline::Span(attr, _) => assert!(
+                has_class(attr, "gaiji"),
+                "Gaiji segment projects to a gaiji span: {attr:?}"
+            ),
+            other => panic!("expected gaiji Span, got {other:?}"),
+        }
+        match &buf[2] {
+            Inline::Span(attr, _) => {
+                assert!(
+                    has_class(attr, "annotation"),
+                    "Directive segment projects to an annotation span: {attr:?}"
+                );
+                assert_eq!(
+                    kv(attr, "kind"),
+                    Some("sic"),
+                    "the directive's kind slug rides through"
+                );
+            }
+            other => panic!("expected annotation Span, got {other:?}"),
+        }
+    }
+
+    /// A `container-bouten` range with the `両側` (both-side) position emits a
+    /// `position=both` kv. Deleting the `Both` arm drops the kv entirely.
+    #[test]
+    fn container_attr_bouten_both_position_kv() {
+        let attr = container_attr(RegionFormat::Bouten {
+            kind: aozora::BoutenKind::Goma,
+            position: BoutenPosition::Both,
+        });
+        assert_eq!(
+            kv(&attr, "variant"),
+            Some("goma"),
+            "goma bouten variant slug"
+        );
+        assert_eq!(
+            kv(&attr, "position"),
+            Some("both"),
+            "both-side range emits the position=both kv"
+        );
+    }
+
+    /// Co-applied indent styles (#78) join into a space-separated `modifiers`
+    /// kv; a style-free indent emits none. Pins both sides of the
+    /// `if !modifiers.is_empty()` guard.
+    #[test]
+    fn container_attr_indent_modifiers_kv() {
+        let styled = container_attr(RegionFormat::Indent(IndentBlock {
+            amount: 3,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+            styles: aozora::BlockStyles {
+                gothic: true,
+                horizontal: true,
+                framed: false,
+                font: None,
+            },
+        }));
+        assert_eq!(
+            kv(&styled, "modifiers"),
+            Some("gothic horizontal"),
+            "co-applied styles join into a modifiers kv"
+        );
+        let plain = container_attr(RegionFormat::Indent(IndentBlock {
+            amount: 3,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+            styles: aozora::BlockStyles::EMPTY,
+        }));
+        assert!(
+            kv(&plain, "modifiers").is_none(),
+            "a style-free indent emits no modifiers kv"
+        );
     }
 }
