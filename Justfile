@@ -1007,6 +1007,26 @@ mutants *ARGS:
         -e RUSTC_WRAPPER= \
         dev cargo mutants --config mutants.toml {{ARGS}}
 
+# Host-native mutation sweep — the FAST inner loop for reinforcing a crate.
+# Same cargo-mutants (pinned 27.1.0 via mise) + nextest + rust 1.96.0 as the
+# Docker `just mutants` above, so it enumerates the identical mutant set and
+# the baseline it produces holds in CI (see ADR-0031 "host lane"). Docker
+# `just mutants` stays the authoritative CI/parity mirror; this trades the
+# container's locale-pinned reproducibility for wall-clock — it skips the
+# compose spin-up and drives cargo-mutants' own `-j` parallelism natively.
+#
+#   just mutants-host -p aozora-scan              # one crate, 4-way parallel
+#   MUTANTS_JOBS=6 just mutants-host -p aozora-pipeline   # override the fan-out
+#   just mutants-host --in-diff <(git diff origin/main)  # only changed lines
+#
+# A dedicated `target/mutants-host` keeps these serial-rebuild artefacts out
+# of the normal host `target/` (and never touches the Docker volume). The
+# machine-readable report still lands in the git-ignored repo-root
+# `mutants.out/`, identical in shape to the Docker lane's.
+mutants-host *ARGS:
+    CARGO_TARGET_DIR=target/mutants-host \
+        cargo mutants --config mutants.toml -j "${MUTANTS_JOBS:-4}" {{ARGS}}
+
 # --- lint / static analysis ---------------------------------------------------
 
 # Run all lints (fmt + clippy + typos + strict-code + doc)

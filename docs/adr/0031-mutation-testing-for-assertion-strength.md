@@ -68,6 +68,38 @@ Introduce it in **stages**, not as a day-1 blocking gate:
   main sccache'd `/cargo/target`, so the two build strategies never
   clobber each other.
 
+## Addendum (2026-07-12): host-native lane
+
+The staged rollout above reinforces one crate at a time, and each crate's
+sweep is the slow part — cargo-mutants rebuilds once per mutant. To make
+that inner loop fast enough to drive full adoption (every product crate,
+not just syntax + spec), a **host-native lane** runs the same sweep outside
+the container:
+
+- `just mutants-host [-p CRATE]` runs cargo-mutants directly on the host,
+  driving its `-j` parallelism. The dev image pins `CARGO_TARGET_DIR` to a
+  volume shared across containers, so the container lane cannot safely run
+  concurrent sweeps; a host target dir (`target/mutants-host`) can, and
+  cargo-mutants' own `-j` fans a single crate's mutants across cores.
+  cargo-mutants, nextest, and rust 1.96.0 all come from the existing mise
+  host inner-loop manifest (`.config/mise/config.toml`).
+- **Parity is the invariant that keeps this sound.** Mutant enumeration is
+  a deterministic function of (source AST × cargo-mutants version) and the
+  outcome is a function of the suite, so a baseline computed on the host
+  holds for the CI Docker sweep **iff both run the identical cargo-mutants
+  version**. cargo-mutants is therefore pinned to an exact version in *both*
+  the mise manifest and the Dockerfile, and the two must move together
+  (each carries a comment pointing at the other). The acceptance test is
+  that `just mutants-host -p aozora-scan` reports the same survivor set as
+  the container `just mutants -p aozora-scan`.
+
+The container lane stays authoritative: `mutants.yml` and the
+`mutants-in-diff` CI job run `just mutants` in the dev image (locale- and
+glibc-pinned); the host lane is a developer/campaign accelerator that must
+agree with it. This is scoped to the mutation loop — a broader
+"develop without Docker" migration is out of scope here; the mise inner
+loop already covers nextest/deny/llvm-cov/shear and this extends it.
+
 ## Alternatives considered
 
 **Push line/branch-coverage targets higher.** Raising the coverage floor

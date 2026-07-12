@@ -8,9 +8,18 @@
 # version mirrors rust-toolchain.toml. cargo-shear (stable) is the
 # unused-dependency gate — it runs both in the host inner loop and the
 # audit workflow, replacing the former nightly-only cargo-udeps.
+#
+# cargo-mutants is PINNED, not `latest`, unlike the tools above: the
+# mutation ratchet (mutants-baseline.json, ADR-0031) is only sound if the
+# host `just mutants-host` sweep enumerates the SAME mutants as the CI
+# Docker `just mutants` sweep. Mutant enumeration is a deterministic
+# function of (source AST × cargo-mutants version), so the two lanes agree
+# only while both run the identical version — the host mise pin here and
+# the Dockerfile `cargo install --version` must move together (grep both).
 [tools]
 rust = "1.96.0"
 "cargo:cargo-nextest" = "latest"
+"cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-shear" = "latest"

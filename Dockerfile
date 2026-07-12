@@ -165,7 +165,13 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
 # exists to sidestep it. Build from source instead: compiling against the
 # image's own glibc yields a compatible binary (the standard fallback when
 # no compatible prebuilt exists).
-RUN cargo install --locked --root /usr/local cargo-mutants
+#
+# PINNED to an exact version, not floating `--locked` latest: the host
+# `just mutants-host` lane installs cargo-mutants via mise
+# (.config/mise/config.toml) and the ratchet baseline (mutants-baseline.json)
+# only holds across both lanes while they enumerate the identical mutant
+# set. Bump this and the mise pin together.
+RUN cargo install --locked --version 27.1.0 --root /usr/local cargo-mutants
 
 # bacon and taplo-cli have no binstall-resolvable prebuilt for the pinned
 # version, so the fail-fast main batch above rejects them — they need the
