@@ -717,4 +717,378 @@ mod tests {
         let p = Pipeline::new(s);
         assert!(ptr::eq(p.source(), s));
     }
+
+    // -----------------------------------------------------------------
+    // Mutation-hardening unit tests (#488). Each pins an exact decision /
+    // offset / classification a recogniser makes, hitting both sides of
+    // every boundary so no branch/return/comparison mutant survives.
+    // -----------------------------------------------------------------
+
+    fn plain(start: u32, end: u32) -> ClassifiedSpan {
+        ClassifiedSpan {
+            kind: SpanKind::Plain,
+            source_span: Span::new(start, end),
+        }
+    }
+
+    fn newline(start: u32, end: u32) -> ClassifiedSpan {
+        ClassifiedSpan {
+            kind: SpanKind::Newline,
+            source_span: Span::new(start, end),
+        }
+    }
+
+    // find_heading_predecessor_position_at — every comparison / offset /
+    // return boundary. The positive case returns `Some(3)` (≥ 2 so it
+    // separates the whole-fn `Some(0)`/`Some(1)`/`None` stubs), and the
+    // `\n`-adjacency / length / match boundaries each get a `None` twin.
+    #[test]
+    fn heading_predecessor_recognises_bare_line_above_bracket() {
+        // "zz\nABC\nQ": the bare line `ABC` (bytes 3..6) sits directly above
+        // the bracket at byte 7, and is itself preceded by a `\n` at byte 2.
+        assert_eq!(
+            find_heading_predecessor_position_at("zz\nABC\nQ", 7, "ABC"),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn heading_predecessor_at_source_start_returns_start() {
+        // "AB\nQ": target `AB` at bytes 0..2, bracket at 3. candidate_start is
+        // 0 (start-of-source counts as a line boundary) — pins the `< len`
+        // equal case and the `candidate_start == 0` short-circuit.
+        assert_eq!(
+            find_heading_predecessor_position_at("AB\nQ", 3, "AB"),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn heading_predecessor_rejects_non_boundaries() {
+        // bracket at byte 0 → no predecessor (cutoff == 0 short-circuit).
+        assert_eq!(
+            find_heading_predecessor_position_at("whatever", 0, "AB"),
+            None
+        );
+        // target longer than the available text before the `\n`.
+        assert_eq!(find_heading_predecessor_position_at("\nQ", 1, "ABC"), None);
+        // the char before the byte offset is not `\n`, so no bare line.
+        assert_eq!(find_heading_predecessor_position_at("ABxQ", 4, "AB"), None);
+        // target matches but is not itself preceded by a line break
+        // (`x` sits before `AB`): candidate_start != 0 && byte != '\n'.
+        assert_eq!(
+            find_heading_predecessor_position_at("xAB\nQ", 4, "AB"),
+            None
+        );
+    }
+
+    // foldable_inline_attr — each foldable arm maps to its own attribute,
+    // and the non-inline / block variants fall through to `None`.
+    #[test]
+    fn foldable_inline_attr_maps_each_arm() {
+        let k = aozora_syntax::BoutenKind::Goma;
+        let p = aozora_syntax::BoutenPosition::Right;
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Bold { padded: false }),
+            Some(ForwardAttr::Bold)
+        );
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Gothic { padded: false }),
+            Some(ForwardAttr::Gothic)
+        );
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Italic { padded: false }),
+            Some(ForwardAttr::Italic)
+        );
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Caption { padded: false }),
+            Some(ForwardAttr::Caption)
+        );
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Bouten {
+                kind: k,
+                position: p
+            }),
+            Some(ForwardAttr::Bouten {
+                kind: k,
+                position: p
+            })
+        );
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::SmallScript(p)),
+            Some(ForwardAttr::SmallScript(p))
+        );
+        // Block-level (padded) and non-foldable variants decline.
+        assert_eq!(
+            foldable_inline_attr(RegionFormat::Bold { padded: true }),
+            None
+        );
+        assert_eq!(foldable_inline_attr(RegionFormat::Table), None);
+    }
+
+    // attr_decorates_ruby_base — a decoratable attribute returns true, a
+    // sub-character / target-splitting one returns false.
+    #[test]
+    fn attr_decorates_ruby_base_both_sides() {
+        assert!(attr_decorates_ruby_base(ForwardAttr::Bold));
+        assert!(attr_decorates_ruby_base(ForwardAttr::Italic));
+        assert!(!attr_decorates_ruby_base(ForwardAttr::AccentDot));
+        assert!(!attr_decorates_ruby_base(ForwardAttr::Fraction));
+    }
+
+    // lower_spans full-superset drop: when an incoming span is a *proper*
+    // superset of the committed `back`, `back` is dropped.
+    #[test]
+    fn lower_spans_superset_drop() {
+        let src = "x".repeat(40);
+        // Proper superset by left extension → back popped.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(5, 20)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source_span, Span::new(5, 20));
+        // Proper superset by right extension → back popped.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(10, 25)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source_span, Span::new(10, 25));
+        // Equal spans are NOT a proper superset → both retained.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(10, 20)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out.len(), 2);
+    }
+
+    // lower_spans partial-overlap truncation: a span pulling back into the
+    // tail of a committed *plain* run truncates that run's end to the pull
+    // point; every other geometry leaves the run untouched.
+    #[test]
+    fn lower_spans_partial_overlap_truncates_plain_tail() {
+        let src = "x".repeat(40);
+        // Tail overlap (bs < ss < be), back is plain → truncate end to ss.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(15, 30)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out[0].source_span.end, 15);
+        // back is NOT plain (Newline) → no truncation.
+        let (out, _) = lower_spans(
+            vec![newline(10, 20), plain(15, 30)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out[0].source_span.end, 20);
+        // no overlap (ss >= be) → no truncation.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(25, 30)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out[0].source_span.end, 20);
+        // bs == ss (not strictly inside) → no truncation.
+        let (out, _) = lower_spans(
+            vec![plain(10, 20), plain(10, 15)],
+            &src,
+            &mut Allocator::new(),
+        );
+        assert_eq!(out[0].source_span.end, 20);
+    }
+
+    // decorate_ruby_bases — a Referenced forward directive with a
+    // decoratable attribute whose target is a *unique* preceding ruby base
+    // sets that ruby's `base_emphasis` and reports the directive span.
+    #[test]
+    fn decorate_ruby_bases_unique_referent() {
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("青");
+        let reading = alloc.content_plain("あお");
+        let ruby = alloc.ruby(base, reading);
+        let tgt = alloc.content_plain("青");
+        let fmt = alloc.forward_format(ForwardAttr::Bold, tgt, ForwardOrigin::Referenced);
+        let mut out = vec![
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(0, 3),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(fmt),
+                source_span: Span::new(3, 20),
+            },
+        ];
+        let decorated = decorate_ruby_bases(&mut out, "青あお青", alloc.store());
+        assert_eq!(decorated, vec![Span::new(3, 20)]);
+        let SpanKind::Aozora(Node::Ruby(r)) = out[0].kind else {
+            panic!("expected ruby span");
+        };
+        assert_eq!(r.base_emphasis, Some(ForwardAttr::Bold));
+    }
+
+    // A Referenced directive with a non-decoratable attribute never fires,
+    // even when its target uniquely names a preceding ruby base.
+    #[test]
+    fn decorate_ruby_bases_declines_non_decoratable_attr() {
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("青");
+        let reading = alloc.content_plain("あお");
+        let ruby = alloc.ruby(base, reading);
+        let tgt = alloc.content_plain("青");
+        let fmt = alloc.forward_format(ForwardAttr::AccentDot, tgt, ForwardOrigin::Referenced);
+        let mut out = vec![
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(0, 3),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(fmt),
+                source_span: Span::new(3, 20),
+            },
+        ];
+        let decorated = decorate_ruby_bases(&mut out, "青あお", alloc.store());
+        assert!(decorated.is_empty());
+    }
+
+    // A preceding *plain* run carrying the target text is a competing
+    // referent that forces a decline (ambiguity).
+    #[test]
+    fn decorate_ruby_bases_declines_on_competing_plain() {
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("山茶花");
+        let reading = alloc.content_plain("さざんか");
+        let ruby = alloc.ruby(base, reading);
+        let tgt = alloc.content_plain("山茶花");
+        let fmt = alloc.forward_format(ForwardAttr::Bold, tgt, ForwardOrigin::Referenced);
+        let n = u32::try_from("山茶花".len()).unwrap(); // 9 bytes
+        let mut out = vec![
+            plain(0, n), // a plain copy of the target, before the ruby
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(n, n + n),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(fmt),
+                source_span: Span::new(100, 130),
+            },
+        ];
+        let decorated = decorate_ruby_bases(&mut out, "山茶花", alloc.store());
+        assert!(decorated.is_empty());
+    }
+
+    // try_fold_inline — a matched foldable pair over an all-plain body folds
+    // into a single forward-format leaf spanning open..close.
+    #[test]
+    fn try_fold_inline_folds_all_plain_body() {
+        let mut alloc = Allocator::new();
+        let source = "ABCDEF";
+        let frame = OpenFrame {
+            open: ClassifiedSpan {
+                kind: SpanKind::BlockOpen(RegionFormat::Bold { padded: false }),
+                source_span: Span::new(0, 1),
+            },
+            region: RegionFormat::Bold { padded: false },
+            collected: vec![plain(1, 4)],
+        };
+        let close = ClassifiedSpan {
+            kind: SpanKind::BlockClose(RegionClose::Bold { padded: false }),
+            source_span: Span::new(4, 5),
+        };
+        let folded = try_fold_inline(&frame, &close, source, &mut alloc).expect("pair folds");
+        assert!(matches!(folded.kind, SpanKind::Aozora(Node::Format(_))));
+        assert_eq!(folded.source_span, Span::new(0, 5));
+    }
+
+    // A body that is not entirely plain is not foldable → `None`.
+    #[test]
+    fn try_fold_inline_rejects_non_plain_body() {
+        let mut alloc = Allocator::new();
+        let source = "ABCDEF";
+        let frame = OpenFrame {
+            open: ClassifiedSpan {
+                kind: SpanKind::BlockOpen(RegionFormat::Bold { padded: false }),
+                source_span: Span::new(0, 1),
+            },
+            region: RegionFormat::Bold { padded: false },
+            collected: vec![plain(1, 3), newline(3, 4)],
+        };
+        let close = ClassifiedSpan {
+            kind: SpanKind::BlockClose(RegionClose::Bold { padded: false }),
+            source_span: Span::new(4, 5),
+        };
+        assert!(try_fold_inline(&frame, &close, source, &mut alloc).is_none());
+    }
+
+    // fold_inline_emphasis — a BlockOpen opens a frame whose matched close
+    // folds the enclosed plain run into one Aozora leaf.
+    #[test]
+    fn fold_inline_emphasis_collapses_matched_pair() {
+        let mut alloc = Allocator::new();
+        let source = "ABCDEF";
+        let spans = vec![
+            ClassifiedSpan {
+                kind: SpanKind::BlockOpen(RegionFormat::Bold { padded: false }),
+                source_span: Span::new(0, 1),
+            },
+            plain(1, 4),
+            ClassifiedSpan {
+                kind: SpanKind::BlockClose(RegionClose::Bold { padded: false }),
+                source_span: Span::new(4, 5),
+            },
+        ];
+        let out = fold_inline_emphasis(spans, source, &mut alloc);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0].kind, SpanKind::Aozora(Node::Format(_))));
+    }
+
+    // The Paired state's link side-table is materialised, not empty: a ruby
+    // reading `《…》` resolves to a `PairLink`.
+    #[test]
+    fn paired_links_side_table_is_populated() {
+        let p = Pipeline::new("｜青梅《おうめ》")
+            .sanitize()
+            .tokenize()
+            .pair();
+        assert!(!p.links().is_empty());
+        drop(p.build());
+    }
+
+    // build() suppresses the `forward_referent_not_stylable` warning for a
+    // directive the lowering pass decorated onto a unique ruby base (#384):
+    // `山茶花《さざんか》…［＃「山茶花」は罫囲み］` decorates and drops the warning.
+    #[test]
+    fn build_suppresses_decorated_ruby_base_warning() {
+        let out = Pipeline::run_to_completion("笠の山茶花《さざんか》［＃「山茶花」は罫囲み］");
+        assert_eq!(
+            out.diagnostics
+                .iter()
+                .filter(|d| matches!(d, Diagnostic::ForwardReferentNotStylable { .. }))
+                .count(),
+            0,
+            "decorated directive's warning must be dropped, got {:?}",
+            out.diagnostics
+        );
+    }
+
+    // build() keeps the warning for a directive that did NOT decorate (an
+    // ambiguous target). With a decoration also present in the document the
+    // retain closure must key on the exact span, not on any/every warning.
+    #[test]
+    fn build_keeps_undecorated_forward_warning() {
+        let out = Pipeline::run_to_completion(
+            "笠の山茶花《さざんか》［＃「山茶花」は罫囲み］\n｜青梅《おうめ》と｜青梅《せいばい》は［＃「青梅」に傍点］別。",
+        );
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::ForwardReferentNotStylable { .. })),
+            "ambiguous directive's warning must survive, got {:?}",
+            out.diagnostics
+        );
+    }
 }

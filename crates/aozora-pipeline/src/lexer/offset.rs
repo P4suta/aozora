@@ -366,6 +366,11 @@ mod tests {
         let source = "ab\n==========\ncd"; // 10 '=' rule after non-blank line
         let map = offset_map(source);
         // sanitized = "ab\n\n==========\ncd" (a blank line inserted)
+        // The inserted blank '\n' sits at sanitized 3; it must map to the
+        // rule start at source 3 — pinning the recorded insertion offset
+        // `line_start` (guards `line_start = nl + 1` against `nl * 1 = nl`,
+        // which would record the edit one byte early at source 2 = '\n').
+        assert_eq!(map.source_offset(3), 3);
         assert_eq!(map.source_offset(4), 3); // rule start in sanitized → source 3
         assert_eq!(map.source_offset(15), 14); // 'c'
         assert_map_invariants(source);
@@ -418,6 +423,77 @@ mod tests {
         let source = "tail 〔fune`bre no close";
         let map = offset_map(source);
         assert!(map.is_identity());
+        assert_map_invariants(source);
+    }
+
+    #[test]
+    fn single_pass_shift_makes_map_non_identity() {
+        // A CRLF-only source (no BOM, no rule, no accent) is non-identity
+        // *solely* because its `crlf` Piece has an anchor. Pins
+        // `Piece::is_identity` (guards against a `-> true` stub that would
+        // make every OffsetMap with `bom == 0` report identity).
+        let map = offset_map("a\r\nb");
+        assert!(!map.is_identity());
+    }
+
+    #[test]
+    fn tail_rule_without_trailing_newline_still_shifts() {
+        // A decorative rule as the final line (no trailing '\n') still gains
+        // its inserted blank, so the map must carry the +1 shift. Pins the
+        // tail guard `line_start < bytes.len()` (guards against `==` / `>`,
+        // which never fire for a real tail and would drop the edit — leaving
+        // the sanitized end mapping one byte past the source end).
+        let source = "ab\n==========";
+        let map = offset_map(source);
+        // sanitized = "ab\n\n==========" (blank inserted before the rule).
+        assert_eq!(map.source_offset(3), 3); // inserted blank '\n' → rule start
+        assert_eq!(map.source_offset(14), 13); // sanitized end → source end
+        assert_map_invariants(source);
+    }
+
+    #[test]
+    fn accent_span_not_at_document_start_maps_from_cursor() {
+        // With a leading char the '〔' opens at `open_rel == 1`, so
+        // `open_abs = cursor + open_rel` must add (not multiply): a `* `
+        // would place the span start at 0 and slice off a char boundary.
+        let source = "x〔m'a〕"; // m' (2 bytes) → ḿ (3 bytes)
+        let map = offset_map(source);
+        // sanitized = "x〔ḿa〕": ḿ at 4, source 'm' at 4.
+        assert_eq!(map.source_offset(4), 4);
+        assert_eq!(map.source_offset(11), 10); // end
+        assert_map_invariants(source);
+    }
+
+    #[test]
+    fn accent_digraph_deep_in_body_maps_exactly() {
+        // The growing digraph sits at body offset 3 (after a 3-byte 'あ'), so
+        // the recorded edit offset is `after_open + in_off`. A `- ` would
+        // record it 3 bytes early, mapping the 'あ' boundary onto a source
+        // continuation byte.
+        let source = "〔あm'〕"; // あ = 3 bytes, m' → ḿ (2→3)
+        let map = offset_map(source);
+        // sanitized = "〔あḿ〕": 'あ' at 3, ḿ (source 'm') at 6.
+        assert_eq!(map.source_offset(3), 3);
+        assert_eq!(map.source_offset(6), 6);
+        assert_eq!(map.source_offset(12), 11); // end
+        assert_map_invariants(source);
+    }
+
+    #[test]
+    fn second_accent_span_requires_cursor_past_close() {
+        // Two adjacent accent spans: after the first, the cursor must land
+        // exactly past '〕' (`close_abs + '〕'.len_utf8()`). A `- ` re-enters
+        // mid-char; a `* ` overshoots (both slice off a char boundary or
+        // skip the second span), so both digraphs must be mapped and the
+        // sanitized end must still map to the source end.
+        let source = "〔m'〕〔m'〕"; // two m' → ḿ growths, +1 byte each
+        let map = offset_map(source);
+        let sanitized = sanitize(source).text;
+        assert_eq!(sanitized.len(), source.len() + 2);
+        assert_eq!(
+            map.source_offset(u32::try_from(sanitized.len()).unwrap()) as usize,
+            source.len()
+        );
         assert_map_invariants(source);
     }
 }

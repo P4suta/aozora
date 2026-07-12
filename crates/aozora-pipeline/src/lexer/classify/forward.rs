@@ -1816,7 +1816,781 @@ fn parse_font_size_suffix(s: &str) -> Option<ForwardAttr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccentMark, EnclosureKind, ForwardAttr, forward_attr_from_suffix};
+    use core::fmt::Write;
+
+    use super::*;
+
+    // --- shared builders -------------------------------------------------
+
+    /// Build a `<prefix>［＃「t0」「t1」…<suffix>］` directive: the source, the
+    /// pair-event stream, the `links` side-table, and the `(open_idx,
+    /// close_idx)` the recognisers take. Each `targets` entry gets a real
+    /// `PairOpen(Quote)`/`PairClose(Quote)` pair (linked in `links`); the
+    /// suffix is raw source (no events) exactly as the recognisers see it.
+    fn build(
+        prefix: &str,
+        targets: &[&str],
+        suffix: &str,
+    ) -> (String, Vec<PairEvent>, Vec<u32>, usize, usize) {
+        let mut src = String::new();
+        let mut events: Vec<PairEvent> = Vec::new();
+        let mut links: Vec<u32> = Vec::new();
+
+        src.push_str(prefix);
+        let b_open_start = u32::try_from(src.len()).unwrap();
+        src.push('［');
+        let b_open_end = u32::try_from(src.len()).unwrap();
+        let open_idx = events.len();
+        events.push(PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            span: Span::new(b_open_start, b_open_end),
+        });
+        links.push(u32::MAX);
+
+        let h_start = u32::try_from(src.len()).unwrap();
+        src.push('＃');
+        let h_end = u32::try_from(src.len()).unwrap();
+        events.push(PairEvent::Solo {
+            kind: TriggerKind::Hash,
+            span: Span::new(h_start, h_end),
+        });
+        links.push(u32::MAX);
+
+        for t in targets {
+            let q_open_start = u32::try_from(src.len()).unwrap();
+            src.push('「');
+            let q_open_end = u32::try_from(src.len()).unwrap();
+            let q_open_idx = events.len();
+            events.push(PairEvent::PairOpen {
+                kind: PairKind::Quote,
+                span: Span::new(q_open_start, q_open_end),
+            });
+            links.push(u32::MAX);
+
+            src.push_str(t);
+            let q_close_start = u32::try_from(src.len()).unwrap();
+            src.push('」');
+            let q_close_end = u32::try_from(src.len()).unwrap();
+            let q_close_idx = events.len();
+            events.push(PairEvent::PairClose {
+                kind: PairKind::Quote,
+                span: Span::new(q_close_start, q_close_end),
+            });
+            links.push(u32::try_from(q_open_idx).unwrap());
+            links[q_open_idx] = u32::try_from(q_close_idx).unwrap();
+        }
+
+        src.push_str(suffix);
+        let b_close_start = u32::try_from(src.len()).unwrap();
+        src.push('］');
+        let b_close_end = u32::try_from(src.len()).unwrap();
+        let close_idx = events.len();
+        events.push(PairEvent::PairClose {
+            kind: PairKind::Bracket,
+            span: Span::new(b_close_start, b_close_end),
+        });
+        links.push(u32::try_from(open_idx).unwrap());
+        links[open_idx] = u32::try_from(close_idx).unwrap();
+
+        (src, events, links, open_idx, close_idx)
+    }
+
+    /// A single `PairOpen(Bracket)` whose `span.start` is `cutoff` — the only
+    /// event the position helpers (`find_immediate_predecessor_target_position`,
+    /// `resolve_forward_referent`, `forward_target_is_preceded`) read.
+    fn open_at(cutoff: u32) -> Vec<PairEvent> {
+        vec![PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            span: Span::new(cutoff, cutoff + 3),
+        }]
+    }
+
+    // --- forward-target source index (install / clear / lookup) ----------
+
+    #[test]
+    fn forward_index_install_uses_map_for_bare_predecessor() {
+        clear_forward_target_index();
+        // A *bare* (non-quoted) predecessor followed by 64 distinct quote
+        // bodies — enough to install the index.
+        let mut src = String::from("BAREPRED");
+        for i in 0..64u32 {
+            src.push('「');
+            write!(src, "q{i:02}").unwrap();
+            src.push('」');
+        }
+        install_forward_target_index_from_source(&src);
+        let ev = open_at(u32::try_from(src.len()).unwrap());
+        // Installed: the map has no `BAREPRED` key (it was never a quote body),
+        // so the target is NOT preceded. Any mutation that fails to install
+        // falls back to the substring scan, which *does* find `BAREPRED`.
+        assert!(!forward_target_is_preceded(&ev, &src, 0, "BAREPRED"));
+        clear_forward_target_index();
+    }
+
+    #[test]
+    fn forward_index_skips_install_when_few_distinct_bodies() {
+        clear_forward_target_index();
+        let mut src = String::from("BAREPRED");
+        for _ in 0..64 {
+            src.push_str("「dup」");
+        }
+        install_forward_target_index_from_source(&src);
+        let ev = open_at(u32::try_from(src.len()).unwrap());
+        // 64 opens but a single distinct body (< threshold) → NOT installed →
+        // the substring fallback finds `BAREPRED`. A mutant that installs the
+        // tiny map would miss the bare key and wrongly answer "not preceded".
+        assert!(forward_target_is_preceded(&ev, &src, 0, "BAREPRED"));
+        clear_forward_target_index();
+    }
+
+    #[test]
+    fn forward_index_records_quote_body_positions() {
+        clear_forward_target_index();
+        // ASCII prefix so the body slice offsets are on clean boundaries.
+        let mut src = String::from("start");
+        for i in 0..64u32 {
+            src.push('「');
+            write!(src, "q{i:02}").unwrap();
+            src.push('」');
+        }
+        install_forward_target_index_from_source(&src);
+        let ev = open_at(u32::try_from(src.len()).unwrap());
+        // The map keys are the exact quote bodies. A body-slice offset bug maps
+        // the wrong bytes and loses the real key.
+        assert!(forward_target_is_preceded(&ev, &src, 0, "q05"));
+        // A body absent from the source is not preceded.
+        assert!(!forward_target_is_preceded(&ev, &src, 0, "zz99"));
+        clear_forward_target_index();
+    }
+
+    #[test]
+    fn forward_index_cleared_after_dense_then_low_distinct_doc() {
+        clear_forward_target_index();
+        // Doc A installs (64 distinct bodies including `KEEPME`).
+        let mut a = String::from("「KEEPME」");
+        for i in 0..63u32 {
+            a.push('「');
+            write!(a, "a{i:02}").unwrap(); // a00..a62 — 63 more, 64 distinct total
+            a.push('」');
+        }
+        install_forward_target_index_from_source(&a);
+        // Doc B: 64 opens but 1 distinct body → the len-below-threshold tail
+        // (`clear_forward_target_index`) must reset the installed flag.
+        let mut b = String::from("bbb");
+        for _ in 0..64 {
+            b.push_str("「z」");
+        }
+        install_forward_target_index_from_source(&b);
+        let ev = open_at(u32::try_from(b.len()).unwrap());
+        // Cleared: `KEEPME` is absent from B's substring fallback. A stubbed
+        // clear leaves A's map installed and wrongly answers "preceded".
+        assert!(!forward_target_is_preceded(&ev, &b, 0, "KEEPME"));
+        clear_forward_target_index();
+    }
+
+    #[test]
+    fn forward_index_cleared_if_installed_after_small_doc() {
+        clear_forward_target_index();
+        let mut a = String::from("「KEEPME」");
+        for i in 0..63u32 {
+            a.push('「');
+            write!(a, "a{i:02}").unwrap();
+            a.push('」');
+        }
+        install_forward_target_index_from_source(&a);
+        // Doc B has fewer than threshold opens → the early
+        // `clear_forward_target_index_if_installed` branch must reset installed.
+        let b = String::from("bbb「x」「y」「z」");
+        install_forward_target_index_from_source(&b);
+        let ev = open_at(u32::try_from(b.len()).unwrap());
+        assert!(!forward_target_is_preceded(&ev, &b, 0, "KEEPME"));
+        clear_forward_target_index();
+    }
+
+    // --- predecessor position helpers ------------------------------------
+
+    #[test]
+    fn find_immediate_predecessor_pins_offset_and_boundaries() {
+        // cutoff > len, adjacent match → the byte where the target begins.
+        assert_eq!(
+            find_immediate_predecessor_target_position(&open_at(5), "aaaXY", 0, "XY"),
+            Some(3)
+        );
+        // cutoff == len, adjacent match → offset 0 (equal-boundary case).
+        assert_eq!(
+            find_immediate_predecessor_target_position(&open_at(2), "XY", 0, "XY"),
+            Some(0)
+        );
+        // cutoff > len, no match → None.
+        assert_eq!(
+            find_immediate_predecessor_target_position(&open_at(5), "aaaZZ", 0, "XY"),
+            None
+        );
+        // cutoff < len → no room, None.
+        assert_eq!(
+            find_immediate_predecessor_target_position(&open_at(1), "X", 0, "XY"),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_forward_referent_locates_interior_occurrence() {
+        // `XY` occurs at byte 5 inside the pending run [3, 9) but is not
+        // byte-adjacent to the bracket at cutoff 9, so it is an interior span.
+        match resolve_forward_referent(&open_at(9), "pppqqXYZZ", 0, "XY", Some(3)) {
+            ForwardReferent::Interior { start, end } => assert_eq!((start, end), (5, 7)),
+            _ => panic!("expected an interior referent"),
+        }
+    }
+
+    // --- quote extraction ------------------------------------------------
+
+    #[test]
+    fn extract_collects_every_consecutive_quote_target() {
+        let (src, ev, links, oi, ci) = build("", &["A", "B"], "に傍点");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let ex = extract_forward_quote_targets(view, &src, oi, ci).expect("two targets");
+        assert_eq!(ex.targets.to_vec(), vec!["A", "B"]);
+        assert_eq!(ex.suffix, "に傍点");
+    }
+
+    #[test]
+    fn build_bouten_target_glues_multi_targets_with_ideographic_comma() {
+        let mut alloc = Allocator::new();
+        let c = build_bouten_target(&["A", "B"], &mut alloc);
+        let Content::Plain(id) = c else {
+            panic!("all-text multi-target folds to a single Plain run");
+        };
+        assert_eq!(alloc.store().resolve_str(id), "A、B");
+    }
+
+    // --- range bouten ----------------------------------------------------
+
+    #[test]
+    fn range_bouten_reclaims_run_from_x_to_y() {
+        let (src, ev, links, oi, ci) = build("AqABB", &["A"], "～「BB」に傍点");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_bouten_range(view, oi, ci)
+                .expect("range bouten recognised")
+        };
+        // Run start is the last `A` before `BB` (byte 2), not byte 0.
+        assert_eq!(cs, 2);
+        let Node::Format(f) = node else {
+            panic!("expected a Format node, got {node:?}");
+        };
+        assert!(matches!(
+            f.attr,
+            ForwardAttr::Bouten {
+                position: BoutenPosition::Right,
+                ..
+            }
+        ));
+        assert_eq!(alloc.store().content_range_as_plain(f.target), Some("ABB"));
+    }
+
+    #[test]
+    fn range_bouten_declines_empty_end_target() {
+        let (src, ev, links, oi, ci) = build("AqA", &["A"], "～「」に傍点");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let is_none = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_bouten_range(view, oi, ci).is_none()
+        };
+        assert!(is_none, "an empty Y target declines the range");
+    }
+
+    // --- ruby-stripped heading gate --------------------------------------
+
+    #[test]
+    fn heading_ruby_stripped_gate_drops_readings_and_bars() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("A《x》B", "AB", true), // `《x》` reading stripped
+            ("A｜B", "AB", true),    // explicit-base `｜` stripped
+            ("AB", "AB", true),      // ruby-free run matches directly
+            ("XY", "AB", false),     // genuinely absent
+        ];
+        for (prefix, target, want) in cases {
+            let (src, ev, links, oi, _ci) = build(prefix, &["z"], "は大見出し");
+            let view = BodyView {
+                events: &ev,
+                links: &links,
+            };
+            assert_eq!(
+                forward_heading_target_is_preceded_ruby_stripped(view, &src, oi, target),
+                *want,
+                "prefix {prefix:?} target {target:?}"
+            );
+        }
+    }
+
+    // --- forward heading -------------------------------------------------
+
+    fn run_heading(prefix: &str, targets: &[&str]) -> Option<bool> {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build(prefix, targets, "は大見出し");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let node = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_heading(view, oi, ci).map(|(n, _)| n)
+        };
+        node.map(|n| match n {
+            Node::HeadingHint(h) => h.self_contained,
+            other => panic!("expected a HeadingHint, got {other:?}"),
+        })
+    }
+
+    #[test]
+    fn heading_preceded_ruby_stripped_target_is_not_self_contained() {
+        // Exact look-back misses (`両頭《り》の蛇《へ》` is not a substring of
+        // `両頭の蛇`) but the ruby-stripped look-back hits → preceded.
+        assert_eq!(
+            run_heading("両頭《り》の蛇《へ》", &["両頭の蛇"]),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn heading_missing_single_target_is_self_contained() {
+        assert_eq!(run_heading("", &["序章"]), Some(true));
+    }
+
+    #[test]
+    fn heading_multi_target_all_preceded_is_not_self_contained() {
+        assert_eq!(run_heading("甲乙", &["甲", "乙"]), Some(false));
+    }
+
+    #[test]
+    fn heading_multi_target_with_missing_referent_declines() {
+        assert_eq!(run_heading("甲", &["甲", "丙"]), None);
+    }
+
+    // --- left-side ruby / side note --------------------------------------
+
+    #[test]
+    fn left_ruby_pulls_back_preceded_target() {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("漢", &["漢"], "の左に「かん」のルビ");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_left_ruby(view, oi, ci)
+                .expect("left ruby recognised")
+        };
+        assert_eq!(cs, 0);
+        assert!(matches!(node, Node::Ruby(_)));
+    }
+
+    #[test]
+    fn side_note_pulls_back_preceded_target() {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("語", &["語"], "に「注」の注記");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_side_note(view, oi, ci)
+                .expect("side note recognised")
+        };
+        assert_eq!(cs, 0);
+        assert!(matches!(node, Node::MarginNote(_)));
+    }
+
+    // --- caption figure --------------------------------------------------
+
+    #[test]
+    fn caption_figure_captures_file_and_caption() {
+        let (src, ev, links, oi, ci) = build("", &["図一"], "のキャプション付きの図（f.png）入る");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let node = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_caption_figure(view, oi, ci)
+                .expect("caption figure recognised")
+        };
+        match node {
+            Node::Illustration(ill) => {
+                assert_eq!(alloc.store().resolve_str(ill.file), "f.png");
+                assert!(ill.caption.is_some());
+            }
+            other => panic!("expected an Illustration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caption_figure_declines_when_tail_is_not_iru() {
+        let (src, ev, links, oi, ci) = build("", &["図一"], "のキャプション付きの図（f.png）NG");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let is_none = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_caption_figure(view, oi, ci).is_none()
+        };
+        assert!(is_none, "a non-`入る` tail declines the caption figure");
+    }
+
+    // --- forward emphasis ------------------------------------------------
+
+    #[test]
+    fn emphasis_is_reclaimed_for_adjacent_bold_target() {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("太字", &["太字"], "は太字");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let (n, s, _d) = c
+                .classify_forward_emphasis(view, oi, ci)
+                .expect("は太字 recognised");
+            (n, s)
+        };
+        assert_eq!(cs, 0, "an adjacent target pulls the consume start back");
+        let Node::Format(f) = node else {
+            panic!("expected a Format node, got {node:?}");
+        };
+        assert_eq!(f.attr, ForwardAttr::Bold);
+        assert_eq!(f.origin, ForwardOrigin::Reclaimed);
+        assert_eq!(alloc.store().content_range_as_plain(f.target), Some("太字"));
+    }
+
+    #[test]
+    fn emphasis_accepts_framed_via_ni_particle() {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("枠", &["枠"], "に罫囲み");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let (n, s, _d) = c
+                .classify_forward_emphasis(view, oi, ci)
+                .expect("に罫囲み recognised as a frame");
+            (n, s)
+        };
+        assert_eq!(cs, 0);
+        let Node::Format(f) = node else {
+            panic!("expected a Format node, got {node:?}");
+        };
+        assert_eq!(f.attr, ForwardAttr::Framed(EnclosureKind::Rule));
+        assert_eq!(f.origin, ForwardOrigin::Reclaimed);
+    }
+
+    #[test]
+    fn emphasis_accent_needs_a_single_composable_letter() {
+        // A composable single Latin letter with no referent → self-contained.
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("", &["e"], "はアクサン（´）付き");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, _cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let (n, s, _d) = c
+                .classify_forward_emphasis(view, oi, ci)
+                .expect("composable accent recognised");
+            (n, s)
+        };
+        let Node::Format(f) = node else {
+            panic!("expected a Format node, got {node:?}");
+        };
+        assert_eq!(f.attr, ForwardAttr::Accent(AccentMark::Acute));
+        assert_eq!(f.origin, ForwardOrigin::SelfContained);
+
+        // A non-composable target declines to `Directive{Unknown}`.
+        clear_forward_target_index();
+        let (src2, ev2, links2, oi2, ci2) = build("", &["の"], "はアクサン（´）付き");
+        let view2 = BodyView {
+            events: &ev2,
+            links: &links2,
+        };
+        let mut alloc2 = Allocator::new();
+        let is_none = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc2,
+                source: &src2,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_forward_emphasis(view2, oi2, ci2).is_none()
+        };
+        assert!(is_none, "a non-composable accent letter declines");
+    }
+
+    // --- box enclosure ---------------------------------------------------
+
+    #[test]
+    fn box_enclosure_reclaims_adjacent_box_target() {
+        clear_forward_target_index();
+        let (src, ev, links, oi, ci) = build("四", &["四"], "は「□」囲み");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, cs) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let (n, s, _d) = c
+                .classify_forward_box_enclosure(view, oi, ci)
+                .expect("box enclosure recognised");
+            (n, s)
+        };
+        assert_eq!(cs, 0);
+        let Node::Format(f) = node else {
+            panic!("expected a Format node, got {node:?}");
+        };
+        assert_eq!(f.attr, ForwardAttr::Framed(EnclosureKind::Box));
+        assert_eq!(f.origin, ForwardOrigin::Reclaimed);
+    }
+
+    // --- standalone gaiji ------------------------------------------------
+
+    #[test]
+    fn standalone_gaiji_claims_unresolvable_mencode_form() {
+        // `未知の字形` is not in any table and the bogus `第3水準9-99-99`
+        // mencode neither parses (plane 9 ≠ level 3) nor resolves — so the
+        // gaiji stays claimed (has a mencode tail) but unresolved.
+        let (src, ev, links, oi, _ci) = build("", &[], "「未知の字形」、第3水準9-99-99");
+        let view = BodyView {
+            events: &ev,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let (node, unresolved) = {
+            let mut c = RecogniseCtx {
+                alloc: &mut alloc,
+                source: &src,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            c.classify_standalone_gaiji(view, oi)
+                .expect("standalone gaiji with a mencode tail is claimed")
+        };
+        assert!(matches!(node, Node::Gaiji(_)));
+        assert!(unresolved, "the bogus mencode does not resolve to a glyph");
+    }
+
+    // --- recognize_annotation empty / ellipsis catch ---------------------
+
+    #[test]
+    fn empty_and_ellipsis_bodies_type_as_empty_directive() {
+        clear_forward_target_index();
+        for body in ["", "…", "（…）"] {
+            let (src, ev, links, oi, ci) = build("", &[], body);
+            let view = BodyView {
+                events: &ev,
+                links: &links,
+            };
+            let mut alloc = Allocator::new();
+            let emit = {
+                let mut c = RecogniseCtx {
+                    alloc: &mut alloc,
+                    source: &src,
+                    diagnostics: Vec::new(),
+                    pending_plain_start: None,
+                    pending_decoration: None,
+                };
+                c.recognize_annotation(view, oi, ci)
+                    .expect("directive recognised")
+                    .emit
+            };
+            match emit {
+                EmitKind::Aozora(Node::Directive(d)) => {
+                    assert_eq!(d.kind, DirectiveKind::Empty, "body {body:?}");
+                }
+                _ => panic!("expected an Empty directive for body {body:?}"),
+            }
+        }
+    }
+
+    // --- pure suffix / char helpers --------------------------------------
+
+    #[test]
+    fn forward_attr_suffix_maps_each_styling_keyword() {
+        assert_eq!(forward_attr_from_suffix("太字"), Some(ForwardAttr::Bold));
+        assert_eq!(
+            forward_attr_from_suffix("ゴシック体"),
+            Some(ForwardAttr::Gothic)
+        );
+        assert_eq!(forward_attr_from_suffix("斜体"), Some(ForwardAttr::Italic));
+        assert_eq!(
+            forward_attr_from_suffix("上付き小文字"),
+            Some(ForwardAttr::SuperScript)
+        );
+        assert_eq!(
+            forward_attr_from_suffix("下付き小文字"),
+            Some(ForwardAttr::SubScript)
+        );
+        assert_eq!(
+            forward_attr_from_suffix("横組み"),
+            Some(ForwardAttr::Horizontal)
+        );
+        assert_eq!(
+            forward_attr_from_suffix("キャプション"),
+            Some(ForwardAttr::Caption)
+        );
+        assert_eq!(
+            forward_attr_from_suffix("特大文字"),
+            Some(ForwardAttr::FontSizeAbsolute(AbsoluteSize::ExtraLarge))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("大文字"),
+            Some(ForwardAttr::FontSizeAbsolute(AbsoluteSize::Large))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("中文字"),
+            Some(ForwardAttr::FontSizeAbsolute(AbsoluteSize::Medium))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("小文字"),
+            Some(ForwardAttr::FontSizeAbsolute(AbsoluteSize::Small))
+        );
+    }
+
+    #[test]
+    fn parse_font_size_suffix_signs_and_magnitude() {
+        assert_eq!(
+            parse_font_size_suffix("3段階大きな文字"),
+            Some(ForwardAttr::FontSize(FontShift(NonZeroI8::new(3).unwrap())))
+        );
+        assert_eq!(
+            parse_font_size_suffix("2段階小さな文字"),
+            Some(ForwardAttr::FontSize(FontShift(
+                NonZeroI8::new(-2).unwrap()
+            )))
+        );
+        assert_eq!(
+            parse_font_size_suffix("5段階小さな文字"),
+            Some(ForwardAttr::FontSize(FontShift(
+                NonZeroI8::new(-5).unwrap()
+            )))
+        );
+        assert_eq!(parse_font_size_suffix("nope"), None);
+    }
+
+    #[test]
+    fn is_latin_run_char_admits_latin_and_joiners() {
+        assert!(is_latin_run_char('a'));
+        assert!(is_latin_run_char('Z'));
+        assert!(is_latin_run_char('-'));
+        assert!(is_latin_run_char('\u{0101}')); // ā — Latin-Extended-A
+        assert!(is_latin_run_char('\u{1E41}')); // ṁ — Latin-Extended-Additional
+        assert!(!is_latin_run_char('あ'));
+        assert!(!is_latin_run_char('0'));
+        assert!(!is_latin_run_char('、'));
+    }
+
+    #[test]
+    fn reclaim_accent_run_start_finds_the_latin_run() {
+        assert_eq!(reclaim_accent_run_start("abc"), Some(0));
+        assert_eq!(reclaim_accent_run_start("あ"), None);
+        assert_eq!(reclaim_accent_run_start("あabc"), Some(3));
+        // A `〕`-terminated prefix reclaims the whole decomposed accent span.
+        assert_eq!(reclaim_accent_run_start("x〔y〕"), Some(1));
+    }
 
     #[test]
     fn accent_suffixes_map_to_their_marks() {

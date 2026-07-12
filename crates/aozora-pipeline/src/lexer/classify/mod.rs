@@ -2607,4 +2607,370 @@ mod tests {
             cursor = span.source_span.end;
         }
     }
+
+    // ---- mutation-survivor kills (classify/mod.rs) ----
+
+    impl TestClassifyOutput {
+        /// Count spans whose kind is `SpanKind::Plain`.
+        fn plain_count(&self) -> usize {
+            self.spans
+                .iter()
+                .filter(|s| s.kind == SpanKind::Plain)
+                .count()
+        }
+
+        /// The single `SpanKind::Aozora` span (its `source_span` + node),
+        /// panicking if not exactly one.
+        fn only_aozora_span(&self) -> &ClassifiedSpan {
+            let mut found: Option<&ClassifiedSpan> = None;
+            for span in &self.spans {
+                if matches!(span.kind, SpanKind::Aozora(_)) {
+                    assert!(
+                        found.is_none(),
+                        "more than one Aozora span: {:?}",
+                        self.spans
+                    );
+                    found = Some(span);
+                }
+            }
+            found.unwrap_or_else(|| panic!("no Aozora span in {:?}", self.spans))
+        }
+
+        fn aozora_count(&self) -> usize {
+            self.spans
+                .iter()
+                .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
+                .count()
+        }
+    }
+
+    /// A deferred gaiji is adopted as a ruby base (`※［＃…］《みは》`). Pins that
+    /// the result is a `Ruby` (not a standalone gaiji + plain `《…》`), that its
+    /// reading is `みは`, and that the ruby span starts at the held gaiji's `※`
+    /// (byte 3, after the leading `あ`) rather than at 0/1. Kills the
+    /// `PendingRubyBase::start`/`end` stubs, the gaiji-base applicability /
+    /// empty-reading comparisons, the `open_idx+1` reading-window offset, the
+    /// `try_gaiji_emit -> None` stub, and the `pending_ruby_base` continuation
+    /// arms in `process_event`.
+    #[test]
+    fn gaiji_base_ruby_pins_span_and_reading() {
+        run!(out, "あ※［＃「ほ」、第3水準1-85-54］《みは》");
+        let span = out.only_aozora_span();
+        assert_eq!(
+            span.source_span.start, 3,
+            "gaiji-base ruby must start at the `※` (byte 3): {:?}",
+            out.spans
+        );
+        let SpanKind::Aozora(node) = span.kind else {
+            unreachable!("filtered to Aozora above");
+        };
+        let Node::Ruby(r) = node else {
+            panic!("expected a gaiji-base Ruby, got {node:?}");
+        };
+        assert_eq!(out.plain(r.reading), Some("みは"));
+    }
+
+    /// A run of two adjacent deferred gaiji is adopted as ONE multi-segment
+    /// ruby base (`※…※…《かい》`). Under the mutations the run is split, so the
+    /// first gaiji leaks as its own standalone span alongside the ruby. Pins
+    /// that exactly one Aozora span (the ruby) is emitted. Kills the
+    /// `adjacent` equality and the two `pending_ruby_base` continuation arms /
+    /// their `== end` guards.
+    #[test]
+    fn adjacent_gaiji_run_forms_single_ruby() {
+        run!(
+            out,
+            "※［＃「ほ」、第3水準1-85-54］※［＃「ほ」、第3水準1-85-54］《かい》"
+        );
+        assert_eq!(
+            out.aozora_count(),
+            1,
+            "the two-gaiji ateji base must fold into a single ruby span: {:?}",
+            out.spans
+        );
+        assert!(
+            matches!(out.only_aozora(), Node::Ruby(_)),
+            "expected a Ruby, got {:?}",
+            out.only_aozora()
+        );
+    }
+
+    /// An explicit `｜base《reading》` at the very start of the source is a
+    /// single Ruby span covering `[0, end]` — no empty leading Plain, and the
+    /// explicit `｜` form must be taken (not the implicit trailing-kanji form,
+    /// which would drop the `｜` into a separate Plain span). Kills the
+    /// `flush_plain_up_to` `>`→`>=` empty-span mutation and the
+    /// `open_idx - 2` explicit-bar index mutations.
+    #[test]
+    fn explicit_ruby_is_a_single_span() {
+        run!(out, "｜青梅《おうめ》");
+        assert_eq!(
+            out.spans.len(),
+            1,
+            "explicit ruby must be one span (no stray `｜` plain / empty span): {:?}",
+            out.spans
+        );
+        let Node::Ruby(r) = out.only_aozora() else {
+            panic!("expected Ruby, got {:?}", out.only_aozora());
+        };
+        assert_eq!(out.plain(r.base), Some("青梅"));
+        assert_eq!(out.plain(r.reading), Some("おうめ"));
+    }
+
+    /// #333 interior forward-reference: the bouten target `青空` occurs at the
+    /// start of the pending plain run but is not byte-adjacent to the bracket
+    /// (`青空だ。［＃「青空」に傍点］`), so the classifier splices a `Detached`
+    /// decoration at `[0, 6)` into the middle of the plain run. Kills the
+    /// `splice_plain_around -> ()` stub and the two decoration-window
+    /// `<=`→`>` comparisons in `try_bracket_emit`.
+    #[test]
+    fn interior_forward_bouten_splices_detached_decoration() {
+        run!(out, "青空だ。［＃「青空」に傍点］");
+        let deco = out
+            .spans
+            .iter()
+            .find(|s| s.source_span == Span::new(0, 6))
+            .unwrap_or_else(|| panic!("no span at [0,6): {:?}", out.spans));
+        let SpanKind::Aozora(Node::Format(f)) = deco.kind else {
+            panic!(
+                "expected a spliced Format decoration at [0,6): {:?}",
+                deco.kind
+            );
+        };
+        assert_eq!(f.origin, ForwardOrigin::Detached);
+        assert_eq!(out.plain(f.target), Some("青空"));
+    }
+
+    /// A top-level `\n` covers exactly one byte at its own position (not zero
+    /// bytes). Kills the `pos + 1`→`pos * 1` Newline-span mutation.
+    #[test]
+    fn top_level_newline_span_covers_one_byte() {
+        run!(out, "a\nb");
+        assert_eq!(out.spans[1].kind, SpanKind::Newline);
+        assert_eq!(out.spans[1].source_span, Span::new(1, 2));
+    }
+
+    /// A `\n` inside a streamed top-level quote also covers exactly one byte.
+    /// Kills the streaming Newline-span `pos + 1`→`pos - 1`/`pos * 1`
+    /// mutations in `handle_stream_event`.
+    #[test]
+    fn streamed_newline_span_covers_one_byte() {
+        run!(out, "「a\nb」");
+        let nl = out
+            .spans
+            .iter()
+            .find(|s| s.kind == SpanKind::Newline)
+            .unwrap_or_else(|| panic!("no Newline span: {:?}", out.spans));
+        // 「 is 3 bytes, `a` 1 byte → the `\n` sits at byte 4.
+        assert_eq!(nl.source_span, Span::new(4, 5));
+    }
+
+    /// Nested same-kind quote opens/closes must track depth so the whole
+    /// `「A「B」「C」」` streams as ONE plain run. If the nested-open depth
+    /// increment is dropped, streaming exits early and re-enters on a later
+    /// open, splitting the plain run. Kills the `1193` `PairOpen` guard
+    /// (→false / `==`→`!=`).
+    #[test]
+    fn nested_quote_depth_keeps_single_plain_run() {
+        run!(out, "「A「B」「C」」");
+        assert_eq!(
+            out.plain_count(),
+            1,
+            "nested quotes must stream as one plain run: {:?}",
+            out.spans
+        );
+    }
+
+    /// Two SEPARATE top-level quotes (`「A」「B」`) each open a fresh stream,
+    /// flushing the plain run at the second open — so there are two plain
+    /// spans. If a same-kind close never decrements depth (or the
+    /// depth-zero exit is inverted), streaming never ends and the two runs
+    /// merge into one. Kills the `1199` `PairClose` guard (→false / `==`→`!=`)
+    /// and the `1204` `depth == 0` exit.
+    #[test]
+    fn separate_quotes_split_the_plain_run() {
+        run!(out, "「A」「B」");
+        assert_eq!(
+            out.plain_count(),
+            2,
+            "two separate quotes must produce two plain runs: {:?}",
+            out.spans
+        );
+    }
+
+    /// A Tortoise close inside a quote stream must NOT be treated as the
+    /// quote's own close. If the `PairClose` guard is forced true, the `〕`
+    /// exits streaming early and the following `「` re-enters, splitting the
+    /// run. Normal keeps one plain run. Kills the `1199` `PairClose`
+    /// guard-→true mutation.
+    #[test]
+    fn tortoise_close_does_not_end_quote_stream() {
+        run!(out, "「〔A〕「B」C」");
+        assert_eq!(
+            out.plain_count(),
+            1,
+            "a nested tortoise close must not end the quote stream: {:?}",
+            out.spans
+        );
+    }
+
+    /// A Tortoise open inside a quote stream must NOT bump the quote depth.
+    /// If the `PairOpen` guard is forced true, the `〔` over-increments depth so
+    /// the outer `」` no longer exits streaming, and the following top-level
+    /// `「C」` is swallowed instead of flushing — merging what should be two
+    /// plain runs. Kills the `1193` `PairOpen` guard-→true mutation.
+    #[test]
+    fn tortoise_open_does_not_bump_quote_depth() {
+        run!(out, "「A〔B〕」「C」");
+        assert_eq!(
+            out.plain_count(),
+            2,
+            "a nested tortoise open must not bump quote depth: {:?}",
+            out.spans
+        );
+    }
+
+    /// An explicit `｜` immediately before a gaiji is held out of the plain
+    /// run as its own span so a following ruby could drop it; with no ruby it
+    /// is re-emitted as its own Plain `[3, 6)`. Kills the `bar_start < len`
+    /// `<`→`>` / `<`→`==` mutations (which lose the bar and merge it into the
+    /// preceding run).
+    #[test]
+    fn held_bar_before_gaiji_is_its_own_plain_span() {
+        run!(out, "元｜※［＃「ほ」、第3水準1-85-54］");
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| s.kind == SpanKind::Plain && s.source_span == Span::new(3, 6)),
+            "the held `｜` must re-emit as its own Plain [3,6): {:?}",
+            out.spans
+        );
+    }
+
+    /// With NO `｜` before the gaiji there is no held bar, so no zero-length
+    /// span is ever emitted. Kills the `bar_start < len`→`==`/`<=` mutations,
+    /// which fabricate an empty `[3, 3)` bar span.
+    #[test]
+    fn no_bar_before_gaiji_emits_no_empty_span() {
+        run!(out, "元※［＃「ほ」、第3水準1-85-54］");
+        assert!(
+            out.spans
+                .iter()
+                .all(|s| s.source_span.start != s.source_span.end),
+            "no zero-length span should be emitted: {:?}",
+            out.spans
+        );
+    }
+
+    /// A `［＃…］` annotation nested inside a ruby reading is recognised as a
+    /// `Segment::Directive`, so the reading is a 3-segment run. Kills the
+    /// `try_emit_annotation_at` `close_link == MAX`→`!=` and
+    /// `close_idx >= end`→`<` bounds mutations (either declines the nested
+    /// annotation, collapsing the reading to plain).
+    #[test]
+    fn nested_annotation_in_reading_is_a_directive_segment() {
+        run!(out, "｜日本《に［＃ママ］ん》");
+        let Node::Ruby(r) = out.only_aozora() else {
+            panic!("expected Ruby, got {:?}", out.only_aozora());
+        };
+        let reading = out.contents(r.reading);
+        let [Content::Segments(seg_range)] = reading[..] else {
+            panic!("expected a Segments reading, got {reading:?}");
+        };
+        let segs = out.store.resolve_seg_range(seg_range).to_vec();
+        assert_eq!(segs.len(), 3, "expected Text/Directive/Text: {segs:?}");
+        assert!(
+            matches!(segs[1], Segment::Directive(_)),
+            "middle segment must be the nested annotation: {segs:?}"
+        );
+    }
+
+    /// Implicit ruby takes the trailing SAME-CLASS run of the preceding text
+    /// as its base: `お漢字《かんじ》` → base `漢字` (the `お` stays plain).
+    /// Kills the `trailing_ruby_base_start -> 0` stub (which would take the
+    /// whole `お漢字`) and the run-extension `==`→`!=` guard (which would find
+    /// no base and drop the ruby entirely).
+    #[test]
+    fn implicit_ruby_base_is_trailing_same_class_run() {
+        run!(out, "お漢字《かんじ》");
+        let Node::Ruby(r) = out.only_aozora() else {
+            panic!("expected Ruby, got {:?}", out.only_aozora());
+        };
+        assert_eq!(out.plain(r.base), Some("漢字"));
+        assert_eq!(out.plain(r.reading), Some("かんじ"));
+    }
+
+    /// An orphan `※` inside a quote stream, arriving after a ruby has reset
+    /// the pending plain run, must be folded to plain so the spans stay
+    /// gap-free. If `fold_held_refmark` is a no-op the `※` bytes are dropped,
+    /// leaving a tiling gap. Kills the `fold_held_refmark -> ()` stub.
+    #[test]
+    fn orphan_refmark_in_quote_keeps_tiling() {
+        run!(out, "「駄目《だめ》※あ」");
+        let mut cursor = 0u32;
+        for span in &out.spans {
+            assert_eq!(span.source_span.start, cursor, "tiling gap before {span:?}");
+            cursor = span.source_span.end;
+        }
+    }
+
+    /// A gaiji inside a quote (`「※［＃…］」`) must let the Bracket absorb the
+    /// held `※` (gaiji shape), so the gaiji span starts at the `※` (byte 3),
+    /// not at the `［` (byte 6). If the fold guard's `!` is dropped, the
+    /// refmark is folded away before the bracket and the gaiji degrades to a
+    /// standalone `#122` form. Kills the `fold_held_refmark` `delete !`.
+    #[test]
+    fn gaiji_in_quote_span_covers_refmark() {
+        run!(out, "「※［＃「ほ」、第3水準1-85-54］」");
+        let span = out.only_aozora_span();
+        assert!(
+            matches!(span.kind, SpanKind::Aozora(Node::Gaiji(_))),
+            "expected a Gaiji, got {:?}",
+            span.kind
+        );
+        assert_eq!(
+            span.source_span.start, 3,
+            "the gaiji must consume the held `※` (byte 3): {:?}",
+            out.spans
+        );
+    }
+
+    /// A top-level `※［＃…］` gaiji is a SINGLE span covering the `※`. If the
+    /// top-level `RefMark` hold-arm is disabled, the `※` folds to plain first
+    /// and the bracket degrades to a standalone gaiji, yielding two spans.
+    /// Kills the `1030` `!replay` guard (→false / `delete !`).
+    #[test]
+    fn top_level_gaiji_is_a_single_span() {
+        run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
+        assert_eq!(
+            out.spans.len(),
+            1,
+            "top-level gaiji must consume its `※` into one span: {:?}",
+            out.spans
+        );
+        assert!(matches!(out.only_aozora(), Node::Gaiji(_)));
+    }
+
+    /// A `※` replayed out of a declined bracket body must NOT be held across
+    /// to the next real bracket (which would wrongly absorb it as a gaiji
+    /// refmark). In `［※］［＃…］` the second bracket is a standalone gaiji
+    /// starting at byte 9; if the replayed `※` is held (guard forced true) it
+    /// is absorbed and the gaiji wrongly starts at byte 3. Kills the `1030`
+    /// `!replay` guard-→true mutation.
+    #[test]
+    fn replayed_refmark_is_not_held_for_next_bracket() {
+        run!(out, "［※］［＃「ほ」、第3水準1-85-54］");
+        let span = out.only_aozora_span();
+        assert!(
+            matches!(span.kind, SpanKind::Aozora(Node::Gaiji(_))),
+            "expected a standalone Gaiji, got {:?}",
+            span.kind
+        );
+        assert_eq!(
+            span.source_span.start, 9,
+            "the second bracket's gaiji must start at byte 9, not absorb the \
+             earlier replayed `※`: {:?}",
+            out.spans
+        );
+    }
 }
