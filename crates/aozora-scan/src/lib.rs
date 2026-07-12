@@ -92,6 +92,11 @@ fn automaton() -> &'static aho_corasick::AhoCorasick {
 ///
 /// `no_std` builds scan with [`NaiveScanner`] and have nothing to warm,
 /// so this is a documented no-op there.
+// mutants::skip — deleting the body only defers the idempotent one-time
+// automaton build to the first `scan_into`; it produces no observable
+// output difference (the automaton is identical whenever it is built), so
+// there is nothing an assertion can pin.
+#[cfg_attr(test, mutants::skip)]
 #[cfg(feature = "std")]
 pub fn prewarm() {
     let _ = automaton();
@@ -113,6 +118,11 @@ fn scan_into<S: OffsetSink>(source: &str, sink: &mut S) {
 
 /// `no_std` scan: the safe naive walker (no packed backend without
 /// runtime CPU detection).
+// mutants::skip — cfg-dead under the default (`std`) feature set this sweep
+// builds, so cargo-mutants cannot exercise it here; the `no_std` naive path
+// is covered by aozora-scan's own no_std build and would need a separate
+// `--no-default-features` mutation pass to reinforce (tracked in #485).
+#[cfg_attr(test, mutants::skip)]
 #[cfg(not(feature = "std"))]
 fn scan_into<S: OffsetSink>(source: &str, sink: &mut S) {
     NaiveScanner.scan(source, sink);

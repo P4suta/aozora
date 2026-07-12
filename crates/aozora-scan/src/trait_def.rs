@@ -145,6 +145,34 @@ mod tests {
         assert_eq!(sink.count(), 0);
     }
 
+    #[test]
+    fn vec_sink_reserve_actually_reserves_capacity() {
+        // `OffsetSink::reserve` must forward to `Vec::reserve`; stubbing its
+        // body (a cargo-mutants `-> ()`) would leave a zero-capacity Vec,
+        // which the order-only test above cannot see. UFCS to exercise the
+        // trait impl rather than the intrinsic `Vec::reserve`.
+        let mut sink: Vec<u32> = Vec::new();
+        OffsetSink::reserve(&mut sink, 64);
+        assert!(
+            sink.capacity() >= 64,
+            "reserve(64) must yield capacity >= 64, got {}",
+            sink.capacity()
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn bumpvec_sink_reserve_actually_reserves_capacity() {
+        let arena = Bump::new();
+        let mut sink: BumpVec<'_, u32> = BumpVec::new_in(&arena);
+        OffsetSink::reserve(&mut sink, 64);
+        assert!(
+            sink.capacity() >= 64,
+            "reserve(64) must yield capacity >= 64, got {}",
+            sink.capacity()
+        );
+    }
+
     #[cfg(feature = "std")]
     use bumpalo::Bump;
 }

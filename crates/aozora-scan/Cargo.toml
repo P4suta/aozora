@@ -37,6 +37,9 @@ bumpalo = { workspace = true }
 proptest = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
 criterion = { workspace = true }
+# `#[cfg_attr(test, mutants::skip)]` markers on the perf-only `prewarm` and
+# the cfg-dead no_std `scan_into` (ADR-0031); a no-op outside `cargo mutants`.
+mutants = { workspace = true }
 
 [[bench]]
 name = "scanner_bakeoff"

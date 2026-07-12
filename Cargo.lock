@@ -401,6 +401,7 @@ dependencies = [
  "aozora-spec",
  "bumpalo",
  "criterion",
+ "mutants",
  "proptest",
 ]
 
