@@ -180,6 +180,13 @@ The CI gate is region coverage; branch coverage is informational
 (it requires the nightly compiler, which the workspace doesn't pin
 on the hot path).
 
+Region coverage measures *reach*, not *catch*: it proves a line ran,
+not that a wrong result on it would fail a test. Mutation testing
+closes that gap — `just mutants` (cargo-mutants) deliberately breaks
+the source and checks the suite goes red, surfacing the missing
+assertions coverage is blind to. See
+[ADR-0031](https://github.com/P4suta/aozora/blob/main/docs/adr/0031-mutation-testing-for-assertion-strength.md).
+
 ## Test naming and structure
 
 - Unit tests in `mod tests {}` at the bottom of each module.

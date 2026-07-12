@@ -1,0 +1,40 @@
+# cargo-mutants configuration — assertion-strength (mutation) testing.
+#
+# Mutation testing complements region coverage: coverage proves a line
+# RAN, mutation testing proves a WRONG result would FAIL a test. See
+# docs/adr/0031-mutation-testing-for-assertion-strength.md and the
+# `just mutants` recipe. Key reference: https://mutants.rs/config-file.html
+#
+# Lives at the repository root (not the tool's default `.cargo/mutants.toml`)
+# because `.gitignore` excludes `/.cargo/`; `just mutants` passes it via
+# `--config`.
+
+# Run the suite through cargo-nextest — the workspace's standard runner
+# (`just test`, coverage, and the whole pre-push pipeline use it) — rather
+# than plain `cargo test`.
+test_tool = "nextest"
+
+# Kill a hung mutant at 5x the baseline test time, floored at 30s. A
+# mutation that turns a bounded parser loop into an unbounded one would
+# otherwise hang the run; 5x still clears the warm ~1.3s suite with a wide
+# margin, and the floor absorbs cold-cache jitter.
+timeout_multiplier = 5.0
+minimum_test_timeout = 30.0
+
+# Files cargo-mutants must not mutate.
+#
+# Generated code is deliberately NOT listed: none is checked in. The
+# encoding tables (aozora-encoding/build.rs) and the TypeScript `.d.ts`
+# (xtask `types`) are emitted into OUT_DIR / build artifacts — never the
+# source tree — so cargo-mutants never parses them, and the tree-sitter
+# `parser.c` is C. Test code is skipped automatically (cargo-mutants does
+# not mutate `#[cfg(test)]` / test functions), so no `exclude_re` is
+# needed for the proptest oracles either.
+#
+# What remains to exclude is non-product source:
+#   - aozora-bench: performance benchmarks, not correctness assertions
+#   - **/fuzz:      libFuzzer harnesses (separate crates; belt-and-suspenders)
+exclude_globs = [
+  "crates/aozora-bench/**",
+  "**/fuzz/**",
+]

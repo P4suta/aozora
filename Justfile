@@ -979,6 +979,34 @@ coverage-branch:
         --workspace --exclude aozora-bench \
         --ignore-filename-regex '{{_COV_IGNORE}}'
 
+# --- mutation testing --------------------------------------------------------
+
+# Assertion-strength gate (cargo-mutants). Mutates the source and checks
+# the suite CATCHES each change — the complement region coverage can't
+# give: coverage proves a line ran, mutation proves a wrong result would
+# fail a test (ADR-0031). Report-only today: read `mutants.out/`, write
+# tests to kill surviving mutants, and `#[mutants::skip]` (with a reason)
+# the equivalent / unreachable ones.
+#
+#   just mutants -p aozora-cst                          # one crate (fast)
+#   just mutants --in-diff <(git diff origin/main)      # only changed lines
+#
+# Runs in a DEDICATED target dir on the persistent cargo-target volume
+# with CARGO_INCREMENTAL=1: the compose file pins it to 0 so sccache can
+# cache, but mutation rebuilds every mutant serially in one scratch tree,
+# so incremental reuse is the win and sccache (which cannot cache
+# incremental builds) is dropped via RUSTC_WRAPPER=. The `/mutants`
+# subdir keeps these incremental artefacts isolated from the main
+# sccache'd `/cargo/target/debug`, so neither build clobbers the other.
+# Config: repo-root `mutants.toml` via --config (`.gitignore` hides the
+# tool's default `.cargo/` location).
+mutants *ARGS:
+    docker compose run --rm \
+        -e CARGO_TARGET_DIR=/cargo/target/mutants \
+        -e CARGO_INCREMENTAL=1 \
+        -e RUSTC_WRAPPER= \
+        dev cargo mutants --config mutants.toml {{ARGS}}
+
 # --- lint / static analysis ---------------------------------------------------
 
 # Run all lints (fmt + clippy + typos + strict-code + doc)
