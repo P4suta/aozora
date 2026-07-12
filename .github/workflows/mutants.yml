@@ -21,7 +21,8 @@
 #     deduped tracking issue when the sweep reports MORE survivors than the
 #     baseline — the class of regression where a test silently stopped catching
 #     a mutant. At or below baseline is green.
-#   - A crate WITHOUT an entry (e.g. aozora-syntax, not yet reinforced) is swept
+#   - A crate WITHOUT an entry (one added to the matrix while its survivors are
+#     still being triaged, or one that genuinely cannot be swept clean) is swept
 #     REPORT-ONLY: never red, count written to the run summary + the full
 #     mutants.out uploaded as an artifact, so the reinforcement work (kill the
 #     survivors, then commit a baseline) has data to start from. This mirrors
@@ -69,7 +70,7 @@ jobs:
       fail-fast: false
       matrix:
         crate:
-          - aozora-syntax  # report-only (not yet reinforced — no baseline entry)
+          - aozora-syntax  # ratcheted at mutants-baseline.json (3 equivalent survivors)
           - aozora-spec    # ratcheted at mutants-baseline.json (2 equivalent survivors)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
