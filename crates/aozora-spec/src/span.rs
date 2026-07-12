@@ -85,6 +85,16 @@ impl Span {
 
 /// Add `by` to `endpoint`, saturating into the `u32` range. `const`-safe
 /// (no `Ord::clamp`, which is not yet const-stable).
+///
+/// Mutation note: the two boundary comparisons carry a pair of *equivalent*
+/// mutants that no test can distinguish, so they are documented here rather
+/// than chased. `<` → `<=` on the lower guard differs only at `shifted == 0`,
+/// where both the `<= 0` branch (`0`) and the fall-through (`0 as u32`) yield
+/// `0`; `>` → `>=` on the upper guard differs only at `shifted == u32::MAX`,
+/// where both the `>=` branch and the fall-through (`u32::MAX as u32`) yield
+/// `u32::MAX`. The killable `>` → `==` variant (which would truncate instead of
+/// saturating past the top of the range) is pinned by
+/// `tests::shifted_clamps_at_u32_max_on_overflow`.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -160,6 +170,17 @@ mod tests {
         // A negative shift larger than `start` clamps both endpoints at 0
         // rather than wrapping the `u32`.
         assert_eq!(Span::new(2, 5).shifted(-100), Span::new(0, 0));
+    }
+
+    #[test]
+    fn shifted_clamps_at_u32_max_on_overflow() {
+        // A positive shift that pushes an endpoint past `u32::MAX`
+        // saturates at the top of the range rather than truncating the
+        // `i64` sum back into `u32` (which would wrap to a small value).
+        assert_eq!(
+            Span::new(u32::MAX - 1, u32::MAX).shifted(100),
+            Span::new(u32::MAX, u32::MAX)
+        );
     }
 
     #[test]

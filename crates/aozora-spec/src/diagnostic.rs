@@ -2002,6 +2002,48 @@ mod tests {
     }
 
     #[test]
+    fn severity_as_json_str_is_stable_per_variant() {
+        // The lowercase wire spelling emitted in the `severity` field —
+        // pin each variant so a body-stubbing regression is caught rather
+        // than silently drifting the JSON envelope.
+        assert_eq!(Severity::Error.as_json_str(), "error");
+        assert_eq!(Severity::Warning.as_json_str(), "warning");
+        assert_eq!(Severity::Note.as_json_str(), "note");
+    }
+
+    #[test]
+    fn diagnostic_source_as_json_str_is_stable_per_variant() {
+        assert_eq!(DiagnosticSource::Source.as_json_str(), "source");
+        assert_eq!(DiagnosticSource::Internal.as_json_str(), "internal");
+    }
+
+    #[test]
+    fn pair_example_is_the_canonical_form_per_family() {
+        // The example woven into the unclosed-bracket body — pin the
+        // per-family literal so it is a real, resolvable construct and
+        // never degrades to a stub string.
+        assert_eq!(pair_example(PairKind::Ruby), "｜青空《あおぞら》");
+        assert_eq!(pair_example(PairKind::AngleQuote), "≪重要≫");
+        assert_eq!(pair_example(PairKind::Tortoise), "〔Crevez chiens〕");
+        assert_eq!(pair_example(PairKind::Quote), "［＃「青空」に傍点］");
+        assert_eq!(pair_example(PairKind::Bracket), "［＃改ページ］");
+    }
+
+    #[test]
+    fn doc_for_returns_the_entry_matching_the_requested_code() {
+        // doc_for must return the DOCS entry whose `code` *equals* the
+        // query — not merely some entry — so pin the identity of the
+        // resolved doc rather than only its presence.
+        for &code in &Diagnostic::ALL_CODES {
+            assert_eq!(
+                doc_for(code).expect("every catalogued code has a doc").code,
+                code,
+            );
+        }
+        assert!(doc_for("aozora::lex::does_not_exist").is_none());
+    }
+
+    #[test]
     fn docs_table_has_one_entry_per_code_in_order() {
         assert_eq!(
             DOCS.len(),

@@ -148,6 +148,23 @@ mod tests {
     }
 
     #[test]
+    fn as_json_tag_is_stable_per_pair_kind() {
+        // The wire spelling every driver agrees on — pin each variant's
+        // tag so a rename (or a body-stubbing regression) is caught here
+        // rather than silently drifting the JSON envelope.
+        let cases = [
+            (PairKind::Bracket, "bracket"),
+            (PairKind::Ruby, "ruby"),
+            (PairKind::AngleQuote, "angleQuote"),
+            (PairKind::Tortoise, "tortoise"),
+            (PairKind::Quote, "quote"),
+        ];
+        for (kind, tag) in cases {
+            assert_eq!(kind.as_json_tag(), tag, "as_json_tag for {kind:?}");
+        }
+    }
+
+    #[test]
     fn open_and_close_str_cover_every_pair_kind() {
         let cases = [
             (PairKind::Bracket, "［", "］"),
