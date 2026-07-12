@@ -988,4 +988,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn rewrite_accent_spans_direct_call_returns_decomposed_body() {
+        // The public, diagnostic-free entry point is pinned by a direct
+        // call so its `-> String` body cannot be stubbed to a constant.
+        // The exact decomposed output distinguishes the real function from
+        // both a `String::new()` and a `"xyzzy".into()` return.
+        assert_eq!(
+            rewrite_accent_spans("〔oraison fune`bre〕"),
+            "〔oraison funèbre〕"
+        );
+        // Text with no span is copied verbatim — non-empty and not the
+        // stub sentinel, so it kills the constant-return mutants too.
+        assert_eq!(rewrite_accent_spans("plain text"), "plain text");
+    }
+
+    #[test]
+    fn tail_rule_line_without_trailing_newline_is_isolated() {
+        // The decorative rule is the FINAL line and there is no trailing
+        // '\n', so the loop never sees a newline after it — only the tail
+        // branch (`if line_start < bytes.len()`) can isolate it. The
+        // preceding non-blank line keeps `prev_nonblank` true. This pins
+        // both halves of the tail guard's boundary: replacing `<` with
+        // `==` or `>` makes the guard false (line_start=10 < len=20), the
+        // tail is skipped, and the rule stays glued to the paragraph.
+        let input = "前置き\n----------";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), "前置き\n\n----------");
+    }
 }

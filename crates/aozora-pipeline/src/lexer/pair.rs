@@ -915,6 +915,80 @@ mod tests {
         assert!(diagnostics.is_empty());
     }
 
+    /// `links()` borrows the resolved `(open, close)` side-table in
+    /// place. A single balanced ruby pair must record exactly one
+    /// `PairLink` carrying the open and close spans — pinning the
+    /// non-empty, correctly-populated return so a stub that always
+    /// hands back an empty slice is caught.
+    #[test]
+    fn pair_stream_links_records_resolved_pair() {
+        // 《=0..3, かんじ=3..12, 》=12..15.
+        let mut stream = pair(tokenize("《かんじ》"));
+        // Drive to exhaustion so the close resolves and pushes a link.
+        while stream.next().is_some() {}
+        assert_eq!(
+            stream.links(),
+            &[PairLink::new(
+                PairKind::Ruby,
+                Span::new(0, 3),
+                Span::new(12, 15),
+            )],
+            "one resolved Ruby link with open/close spans, got {:?}",
+            stream.links()
+        );
+    }
+
+    /// `take_links()` drains the resolved side-table: the first call on
+    /// an exhausted stream yields the populated links, and — because it
+    /// is a drain — a second immediate call yields empty. A stub that
+    /// always returns `vec![]` fails the first assertion.
+    #[test]
+    fn pair_stream_take_links_drains_resolved_pairs() {
+        // ［=0..3, ＃=3..6, body=6..12, ］=12..15. The bracket pairs;
+        // ＃ is Solo, body is Text — only the bracket produces a link.
+        let mut stream = pair(tokenize("［＃青空］"));
+        while stream.next().is_some() {}
+        let links = stream.take_links();
+        assert_eq!(
+            links,
+            vec![PairLink::new(
+                PairKind::Bracket,
+                Span::new(0, 3),
+                Span::new(12, 15),
+            )],
+            "take_links must yield the resolved bracket link, got {links:?}"
+        );
+        // Drain semantics: the buffer is now empty.
+        assert!(
+            stream.take_links().is_empty(),
+            "second take_links must be empty after the prior drain"
+        );
+    }
+
+    /// `diagnostics()` borrows the accumulated diagnostics in place
+    /// (distinct from the draining `take_diagnostics`). After an
+    /// unclosed `［＃` reaches EOF, the borrow must expose the one
+    /// synthesised `UnclosedBracket` — a stub returning an empty slice
+    /// is caught here.
+    #[test]
+    fn pair_stream_diagnostics_borrows_accumulated() {
+        let mut stream = pair(tokenize("［＃unclosed"));
+        while stream.next().is_some() {}
+        let diags = stream.diagnostics();
+        assert_eq!(
+            diags.len(),
+            1,
+            "one unclosed-bracket diagnostic, got {diags:?}"
+        );
+        assert!(matches!(
+            diags[0],
+            Diagnostic::UnclosedBracket {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+    }
+
     proptest! {
         /// Output is a pure function of input — running the same source
         /// twice must produce identical event sequences.

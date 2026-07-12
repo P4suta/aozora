@@ -2000,3 +2000,798 @@ mod both_margin_tests {
         assert_eq!(parse_both_margin_tail(2, "字下げ、地より2字上げでX"), None);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Body-keyword classifier unit tests — one keyword-family boundary per
+    //! assertion, driving the private per-family parsers directly (via
+    //! `super::*`) and the `classify_annotation_body` dispatcher through a fresh
+    //! `Allocator`. Each recogniser's *actual* classification (variant, offset,
+    //! open/close, decision flag) is pinned, not merely that parsing succeeds.
+
+    use super::*;
+    use aozora_syntax::ast::Node;
+
+    // --- helpers over the classify dispatcher (payloads are Copy + 'static) ---
+
+    /// Whether `classify_annotation_body` claims `body` at all.
+    fn recognized(body: &str) -> bool {
+        let mut alloc = Allocator::new();
+        classify_annotation_body(body, &mut alloc).is_some()
+    }
+
+    /// The `EmitKind::Aozora` leaf node `body` classifies to (else `None`).
+    fn line_node(body: &str) -> Option<Node> {
+        let mut alloc = Allocator::new();
+        match classify_annotation_body(body, &mut alloc) {
+            Some((EmitKind::Aozora(node), _)) => Some(node),
+            _ => None,
+        }
+    }
+
+    /// The `RegionFormat` of the block opener `body` classifies to (else `None`).
+    fn block_open(body: &str) -> Option<RegionFormat> {
+        let mut alloc = Allocator::new();
+        match classify_annotation_body(body, &mut alloc) {
+            Some((EmitKind::BlockOpen(region), _)) => Some(region),
+            _ => None,
+        }
+    }
+
+    /// The `RegionClose` of the block closer `body` classifies to (else `None`).
+    fn block_close(body: &str) -> Option<RegionClose> {
+        let mut alloc = Allocator::new();
+        match classify_annotation_body(body, &mut alloc) {
+            Some((EmitKind::BlockClose(close), _)) => Some(close),
+            _ => None,
+        }
+    }
+
+    /// Resolved 挿絵 fields: `(file, number, dimensions, has_caption)`.
+    fn sashie(body: &str) -> Option<(String, Option<String>, Option<String>, bool)> {
+        let mut alloc = Allocator::new();
+        let emit = classify_sashie_body(body, &mut alloc)?;
+        let EmitKind::Aozora(node) = emit else {
+            panic!("sashie must classify to an Aozora leaf")
+        };
+        let Node::Illustration(ill) = node else {
+            panic!("sashie must classify to an Illustration, got {node:?}");
+        };
+        let store = alloc.store();
+        Some((
+            store.resolve_str(ill.file).to_owned(),
+            ill.number.map(|s| store.resolve_str(s).to_owned()),
+            ill.dimensions.map(|s| store.resolve_str(s).to_owned()),
+            ill.caption.is_some(),
+        ))
+    }
+
+    /// Resolved general-image fields: `(description, file, dimensions)`.
+    fn general(body: &str) -> Option<(String, String, Option<String>)> {
+        let mut alloc = Allocator::new();
+        let emit = classify_general_image_body(body, &mut alloc)?;
+        let EmitKind::Aozora(node) = emit else {
+            panic!("general image must classify to an Aozora leaf")
+        };
+        let Node::Illustration(ill) = node else {
+            panic!("general image must classify to an Illustration, got {node:?}");
+        };
+        let store = alloc.store();
+        Some((
+            store
+                .resolve_str(
+                    ill.description
+                        .expect("general image carries a description"),
+                )
+                .to_owned(),
+            store.resolve_str(ill.file).to_owned(),
+            ill.dimensions.map(|s| store.resolve_str(s).to_owned()),
+        ))
+    }
+
+    /// A comparable projection of `parse_emphasis_body` (the weight axis has no
+    /// `PartialEq`): `(weight_tag, padded, is_close)` with `0=Bold 1=Gothic 2=Italic`.
+    fn emphasis(body: &str) -> Option<(u8, bool, bool)> {
+        parse_emphasis_body(body).map(|(weight, padded, is_close)| {
+            let tag = match weight {
+                EmphasisWeight::Bold => 0,
+                EmphasisWeight::Gothic => 1,
+                EmphasisWeight::Italic => 2,
+            };
+            (tag, padded, is_close)
+        })
+    }
+
+    /// A pristine indent block for `resolve_indent_segment` folds.
+    fn empty_indent_block() -> IndentBlock {
+        IndentBlock {
+            amount: 1,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
+        }
+    }
+
+    // ================= editorial_note_kind =================
+
+    #[test]
+    fn editorial_note_sic_family() {
+        // Each `||` clause of the Sic guard on its own (kills the `||`->`&&`
+        // swaps at 856): only the matching disjunct is true for each input.
+        assert_eq!(editorial_note_kind("ママ"), Some(DirectiveKind::Sic));
+        assert_eq!(editorial_note_kind("犬はママ"), Some(DirectiveKind::Sic));
+        assert_eq!(editorial_note_kind("底本のまま"), Some(DirectiveKind::Sic));
+    }
+
+    #[test]
+    fn editorial_note_base_text_variant() {
+        // 底本では / 初出では each alone (kills the `||`->`&&` swap at 858).
+        assert_eq!(
+            editorial_note_kind("「犬」は底本では「猫」"),
+            Some(DirectiveKind::BaseTextVariant)
+        );
+        assert_eq!(
+            editorial_note_kind("初出では脱落"),
+            Some(DirectiveKind::BaseTextVariant)
+        );
+    }
+
+    #[test]
+    fn editorial_note_pairs_and_editor() {
+        assert_eq!(
+            editorial_note_kind("入力者注(6)"),
+            Some(DirectiveKind::EditorNote)
+        );
+        assert_eq!(
+            editorial_note_kind("「犬」にルビ"),
+            Some(DirectiveKind::RubyAttached)
+        );
+        assert_eq!(
+            editorial_note_kind("ルビは「犬」にかかる"),
+            Some(DirectiveKind::RubyRetarget)
+        );
+        assert_eq!(
+            editorial_note_kind("左にルビ付き"),
+            Some(DirectiveKind::RubyPairOpen)
+        );
+        assert_eq!(
+            editorial_note_kind("左に「かい」のルビ付き終わり"),
+            Some(DirectiveKind::RubyPairClose)
+        );
+        // Each 注記付き disjunct alone (kills the `||`->`&&` swap at 872).
+        assert_eq!(
+            editorial_note_kind("注記付き"),
+            Some(DirectiveKind::MarginNotePairOpen)
+        );
+        assert_eq!(
+            editorial_note_kind("左に注記付き"),
+            Some(DirectiveKind::MarginNotePairOpen)
+        );
+        assert_eq!(
+            editorial_note_kind("「かい」の注記付き終わり"),
+            Some(DirectiveKind::MarginNotePairClose)
+        );
+        // A plain run is no editorial note.
+        assert_eq!(editorial_note_kind("ただの文"), None);
+    }
+
+    // ================= ruby / editor note body predicates =================
+
+    #[test]
+    fn ruby_attached_body_boundary() {
+        // true case (kills `-> false` and the deleted `!`) + empty-target false
+        // case (kills the deleted `!` in the other direction).
+        assert!(is_ruby_attached_body("「犬」にルビ"));
+        assert!(!is_ruby_attached_body("「」にルビ"));
+        assert!(!is_ruby_attached_body("にルビ"));
+    }
+
+    #[test]
+    fn ruby_retarget_body_boundary() {
+        assert!(is_ruby_retarget_body("ルビは「犬」にかかる"));
+        assert!(!is_ruby_retarget_body("ルビは「」にかかる"));
+        assert!(!is_ruby_retarget_body("犬にかかる"));
+    }
+
+    #[test]
+    fn ruby_pair_close_body_boundary() {
+        assert!(is_ruby_pair_close_body("左に「かい」のルビ付き終わり"));
+        assert!(!is_ruby_pair_close_body("左に「」のルビ付き終わり"));
+        assert!(!is_ruby_pair_close_body("「かい」のルビ付き終わり"));
+    }
+
+    #[test]
+    fn margin_note_pair_close_body_boundary() {
+        assert!(is_margin_note_pair_close_body("「かい」の注記付き終わり"));
+        assert!(is_margin_note_pair_close_body(
+            "左に「かい」の注記付き終わり"
+        ));
+        assert!(!is_margin_note_pair_close_body("「」の注記付き終わり"));
+        assert!(!is_margin_note_pair_close_body("かいの注記付き終わり"));
+    }
+
+    #[test]
+    fn editor_note_body_boundary() {
+        // true (kills `-> false` and the deleted `!`).
+        assert!(is_editor_note_body("入力者注(6)"));
+        assert!(is_editor_note_body("入力者注(12)"));
+        // empty digits (kills the `&&`->`||` swap: `||` would accept the
+        // vacuous all-digit on an empty run).
+        assert!(!is_editor_note_body("入力者注()"));
+        // non-digit index and missing prefix decline.
+        assert!(!is_editor_note_body("入力者注(a)"));
+        assert!(!is_editor_note_body("他の注(6)"));
+    }
+
+    // ================= CenterMarker (classify_annotation_body) =================
+
+    #[test]
+    fn center_marker_page_flag() {
+        // `page` distinguishes ページの左右中央 (true) from 中央揃え (false);
+        // kills the `==`->`!=` swap at 992.
+        assert_eq!(
+            line_node("ページの左右中央"),
+            Some(Node::Line(LineFormat::Center { page: true }))
+        );
+        assert_eq!(
+            line_node("中央揃え"),
+            Some(Node::Line(LineFormat::Center { page: false }))
+        );
+    }
+
+    // ================= block-close tail validations =================
+
+    #[test]
+    fn indent_block_end_tail() {
+        // Bare close is a generic Indent close.
+        assert_eq!(
+            block_close("ここで字下げ終わり"),
+            Some(RegionClose::Indent { kumi_width: None })
+        );
+        // A `、`-tail that does NOT end in 終わり must decline (kills the
+        // `&&`->`||` swap at 1051, which would accept it).
+        assert!(!recognized("ここで字下げ終わり、活字"));
+    }
+
+    #[test]
+    fn indent_kumi_block_end_width() {
+        // The 字組み compound close carries its own width (kills the `==`->`!=`
+        // swap at 1070, which would reject the exact tail).
+        assert_eq!(
+            block_close("ここで字下げ、20字組み終わり"),
+            Some(RegionClose::Indent {
+                kumi_width: Some(LineWidth(NonZeroU8::new(20).unwrap())),
+            })
+        );
+    }
+
+    #[test]
+    fn font_size_block_end_direction() {
+        // `larger` is derived from the 小さな substring (kills the deleted `!`
+        // at 1094): 大きな -> true, 小さな -> false.
+        assert_eq!(
+            block_close("ここで大きな文字終わり"),
+            Some(RegionClose::FontSize { larger: true })
+        );
+        assert_eq!(
+            block_close("ここで小さな文字終わり"),
+            Some(RegionClose::FontSize { larger: false })
+        );
+    }
+
+    #[test]
+    fn columns_block_end_tail() {
+        // Both 段組 and 段組み close markers claim (kills the `||`->`&&` at 1105
+        // — which accepts neither — and both `==`->`!=` swaps, each of which
+        // rejects one spelling).
+        assert_eq!(block_close("ここで2段組終わり"), Some(RegionClose::Columns));
+        assert_eq!(
+            block_close("ここで2段組み終わり"),
+            Some(RegionClose::Columns)
+        );
+    }
+
+    // ================= prefix-parameter families =================
+
+    #[test]
+    fn align_end_param_prefix_offset() {
+        // 地から3字上げ -> AlignEnd{offset:3}; kills the `>=`->`<` swap at 1136.
+        assert_eq!(
+            line_node("地から3字上げ"),
+            Some(Node::Line(LineFormat::AlignEnd { offset: 3 }))
+        );
+        // 0字上げ must decline: the `&&`->`||` swap (1136) and the `>=`->`<`
+        // swap both wrongly accept it.
+        assert!(!recognized("地から0字上げ"));
+    }
+
+    #[test]
+    fn top_indent_prefix() {
+        // 天から3字下げ -> Indent{amount:3}; kills the `==`->`!=` swap at 1152.
+        assert_eq!(
+            line_node("天から3字下げ"),
+            Some(Node::Line(LineFormat::Indent {
+                amount: 3,
+                end_offset: None,
+            }))
+        );
+        // 天から0字下げ declines: the `&&`->`||` and `>=`->`<` swaps (1152) both
+        // wrongly accept the zero head-indent.
+        assert!(!recognized("天から0字下げ"));
+    }
+
+    #[test]
+    fn kaigyou_tentsuki_prefix() {
+        // 改行天付き、折り返して3字下げ -> hanging indent (amount 0 + wrap 3);
+        // kills the `==`->`!=` swap at 1171.
+        assert_eq!(
+            block_open("改行天付き、折り返して3字下げ"),
+            Some(RegionFormat::Indent(IndentBlock {
+                amount: 0,
+                wrap: Some(3),
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
+            }))
+        );
+    }
+
+    #[test]
+    fn indent_block_param_prefix_forms() {
+        // ここから改行天付き、折り返して3字下げ (kills the `==`->`!=` swap at 1198).
+        assert_eq!(
+            block_open("ここから改行天付き、折り返して3字下げ"),
+            Some(RegionFormat::Indent(IndentBlock {
+                amount: 0,
+                wrap: Some(3),
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
+            }))
+        );
+        // ここから20字詰め -> LineWidth (kills the `==`->`!=` swap at 1233).
+        assert_eq!(
+            block_open("ここから20字詰め"),
+            Some(RegionFormat::LineWidth(LineWidth(
+                NonZeroU8::new(20).unwrap()
+            )))
+        );
+        // ここから3段組 / ここから3段組み -> Columns (kills the `||`->`&&` at
+        // 1244 and both `==`->`!=` swaps there).
+        assert_eq!(
+            block_open("ここから3段組"),
+            Some(RegionFormat::Columns(ColumnCount(
+                NonZeroU8::new(3).unwrap()
+            )))
+        );
+        assert_eq!(
+            block_open("ここから3段組み"),
+            Some(RegionFormat::Columns(ColumnCount(
+                NonZeroU8::new(3).unwrap()
+            )))
+        );
+    }
+
+    #[test]
+    fn indent_param_prefix_line_form() {
+        // 3字下げ -> line Indent{amount:3}.
+        assert_eq!(
+            line_node("3字下げ"),
+            Some(Node::Line(LineFormat::Indent {
+                amount: 3,
+                end_offset: None,
+            }))
+        );
+        // 0字下げ declines: the `&&`->`||` swap at 1287 wrongly accepts it.
+        assert!(!recognized("0字下げ"));
+    }
+
+    // ================= is_okurigana_body / is_okurigana_char =================
+
+    #[test]
+    fn okurigana_body_length_and_class_boundary() {
+        // A short kana run is okurigana.
+        assert!(is_okurigana_body("（あ）"));
+        // Exactly 6 chars still passes; the count check must be `> 6`, not
+        // `== 6` or `>= 6` (kills both comparison swaps at 1397).
+        assert!(is_okurigana_body("（あいうえおか）"));
+        // A non-kana glyph inside makes it decline; the guard is
+        // `count > 6 || !is_char`, not `&&` (kills the `||`->`&&` at 1397).
+        assert!(!is_okurigana_body("（Ａ）"));
+        // Non-parenthesised body is never okurigana.
+        assert!(!is_okurigana_body("あ"));
+    }
+
+    #[test]
+    fn okurigana_char_class() {
+        // hiragana / katakana / CJK accepted; ASCII + fullwidth latin rejected
+        // (kills the `-> true` stub at 1409).
+        assert!(is_okurigana_char('あ'));
+        assert!(is_okurigana_char('ア'));
+        assert!(is_okurigana_char('漢'));
+        assert!(!is_okurigana_char('A'));
+        assert!(!is_okurigana_char('Ａ'));
+    }
+
+    // ================= classify_sashie_body =================
+
+    #[test]
+    fn sashie_plain_bare() {
+        // Bare 挿絵（file）入る (kills `-> None` at 1434, the `+`->`-` offset at
+        // 1464, and the `==`->`!=` 入る check at 1467).
+        assert_eq!(
+            sashie("挿絵（fig.png）入る"),
+            Some(("fig.png".to_owned(), None, None, false))
+        );
+    }
+
+    #[test]
+    fn sashie_numbered() {
+        // 挿絵1（…）入る: the ASCII figure number survives (kills the `==`->`!=`
+        // paren-position swap at 1436 and the `+`->`*` offset at 1449).
+        assert_eq!(
+            sashie("挿絵1（fig.png）入る"),
+            Some(("fig.png".to_owned(), Some("1".to_owned()), None, false))
+        );
+        // Fullwidth digit number (kills the `||`->`&&` digit-class swap at 1442).
+        assert_eq!(
+            sashie("挿絵１（fig.png）入る"),
+            Some(("fig.png".to_owned(), Some("１".to_owned()), None, false))
+        );
+    }
+
+    #[test]
+    fn sashie_dimensions_split() {
+        // file + dims split (kills the guard->true/false and both deleted `!`
+        // at 1458: any of those would fold 、dims into the filename or drop dims).
+        assert_eq!(
+            sashie("挿絵（fig.png、横100×縦200）入る"),
+            Some((
+                "fig.png".to_owned(),
+                None,
+                Some("横100×縦200".to_owned()),
+                false,
+            ))
+        );
+        // Empty dims after 、 keeps the whole inner as the file, no dims (kills
+        // the guard->true swap and the `&&`->`||` at 1458).
+        assert_eq!(
+            sashie("挿絵（fig.png、）入る"),
+            Some(("fig.png、".to_owned(), None, None, false))
+        );
+    }
+
+    // ================= classify_general_image_body =================
+
+    #[test]
+    fn general_image_plain() {
+        // 地図（file）入る (kills `-> None` at 1499, the `+`->`-`/`+`->`*`
+        // offset at 1510, and the `!=`->`==` / `+`->`-` / `+`->`*` tail-length
+        // check at 1514 — each of which returns None or the wrong file here).
+        assert_eq!(
+            general("地図（map.png）入る"),
+            Some(("地図".to_owned(), "map.png".to_owned(), None))
+        );
+    }
+
+    #[test]
+    fn general_image_dimensions_split() {
+        // file + dims (kills the guard->false and both deleted `!` at 1519).
+        assert_eq!(
+            general("地図（map.png、横10×縦20）入る"),
+            Some((
+                "地図".to_owned(),
+                "map.png".to_owned(),
+                Some("横10×縦20".to_owned()),
+            ))
+        );
+        // Empty dims after 、 keeps the whole inner as the file (kills the
+        // guard->true swap and the `&&`->`||` at 1519).
+        assert_eq!(
+            general("地図（map.png、）入る"),
+            Some(("地図".to_owned(), "map.png、".to_owned(), None))
+        );
+    }
+
+    // ================= heading keyword parsers =================
+
+    #[test]
+    fn parse_heading_keyword_levels_and_styles() {
+        // Each level arm (kills `-> None` at 1542 and the three deleted arms).
+        assert_eq!(
+            parse_heading_keyword("大見出し"),
+            Some((HeadingStyle::Standard, HeadingKind::Large))
+        );
+        assert_eq!(
+            parse_heading_keyword("中見出し"),
+            Some((HeadingStyle::Standard, HeadingKind::Medium))
+        );
+        assert_eq!(
+            parse_heading_keyword("小見出し"),
+            Some((HeadingStyle::Standard, HeadingKind::Small))
+        );
+        // Style prefixes cross with levels.
+        assert_eq!(
+            parse_heading_keyword("同行中見出し"),
+            Some((HeadingStyle::SameLine, HeadingKind::Medium))
+        );
+        assert_eq!(
+            parse_heading_keyword("窓小見出し"),
+            Some((HeadingStyle::Window, HeadingKind::Small))
+        );
+        // 副見出し is not a heading.
+        assert_eq!(parse_heading_keyword("副見出し"), None);
+    }
+
+    #[test]
+    fn strip_heading_style_prefixes() {
+        // The returned stem must survive verbatim (kills both `-> (Default, "")`
+        // and `-> (Default, "xyzzy")` stubs at 1556).
+        assert_eq!(
+            strip_heading_style("同行大見出し"),
+            (HeadingStyle::SameLine, "大見出し")
+        );
+        assert_eq!(
+            strip_heading_style("窓大見出し"),
+            (HeadingStyle::Window, "大見出し")
+        );
+        assert_eq!(
+            strip_heading_style("大見出し"),
+            (HeadingStyle::Standard, "大見出し")
+        );
+    }
+
+    #[test]
+    fn parse_heading_close_levels() {
+        // Leveled closes (kills `-> None` at 1577 and the three deleted arms).
+        assert_eq!(
+            parse_heading_close_level("大見出し"),
+            Some((HeadingStyle::Standard, Some(HeadingKind::Large)))
+        );
+        assert_eq!(
+            parse_heading_close_level("中見出し"),
+            Some((HeadingStyle::Standard, Some(HeadingKind::Medium)))
+        );
+        assert_eq!(
+            parse_heading_close_level("小見出し"),
+            Some((HeadingStyle::Standard, Some(HeadingKind::Small)))
+        );
+        // Bare, style-less close: the guard must hold (kills the `-> false`
+        // guard swap at 1584, which would decline it).
+        assert_eq!(
+            parse_heading_close_level("見出し"),
+            Some((HeadingStyle::Standard, None))
+        );
+        // A styled bare close is NOT admitted (kills the `-> true` guard swap at
+        // 1584, which would accept it).
+        assert_eq!(parse_heading_close_level("窓見出し"), None);
+    }
+
+    // ================= font_size_block_open_steps =================
+
+    #[test]
+    fn font_size_block_open_steps_sign_and_zero() {
+        // 大きな -> +N, 小さな -> -N (kills the two deleted arms, the deleted `-`
+        // sign at 1653, and every `-> Some(_)/None` return stub).
+        assert_eq!(font_size_block_open_steps("段階大きな文字", 3), Some(3));
+        assert_eq!(font_size_block_open_steps("段階小さな文字", 3), Some(-3));
+        // A zero magnitude declines; a non-zero one does not (kills the
+        // `==`->`!=` swap at 1648).
+        assert_eq!(font_size_block_open_steps("段階大きな文字", 0), None);
+        // Unknown tail declines.
+        assert_eq!(font_size_block_open_steps("段階中くらいな文字", 3), None);
+    }
+
+    // ================= resolve_indent_segment =================
+
+    #[test]
+    fn resolve_indent_wrap_clause() {
+        // 折り返して{M}字下げ sets wrap.
+        let mut block = empty_indent_block();
+        assert_eq!(
+            resolve_indent_segment("折り返して3字下げ", &mut block),
+            Some(())
+        );
+        assert_eq!(block.wrap, Some(3));
+        // A non-字下げ wrap tail declines (kills the `!=`->`==` swap at 1697 —
+        // which would accept it — and, on a fresh block, the `||`->`&&` swap
+        // there, which would also accept it).
+        let mut fresh = empty_indent_block();
+        assert_eq!(
+            resolve_indent_segment("折り返して3字あき", &mut fresh),
+            None
+        );
+        assert_eq!(fresh.wrap, None);
+    }
+
+    #[test]
+    fn resolve_indent_layout_clause() {
+        // {W}字詰め sets the line-width layout (kills the deleted `!` at 1716,
+        // which would decline a first, un-set layout).
+        let mut block = empty_indent_block();
+        assert_eq!(resolve_indent_segment("5字詰め", &mut block), Some(()));
+        assert_eq!(
+            block.layout,
+            IndentLayout::LineWidth(LineWidth(NonZeroU8::new(5).unwrap()))
+        );
+    }
+
+    #[test]
+    fn resolve_indent_style_clauses() {
+        // Each decorative style folds once on a fresh block (kills the
+        // guard->false swaps and the deleted `!`s: all would decline a first
+        // application).
+        let mut gothic = empty_indent_block();
+        assert_eq!(resolve_indent_segment("ゴシック体", &mut gothic), Some(()));
+        assert!(gothic.styles.gothic);
+
+        let mut horizontal = empty_indent_block();
+        assert_eq!(resolve_indent_segment("横書き", &mut horizontal), Some(()));
+        assert!(horizontal.styles.horizontal);
+
+        let mut framed = empty_indent_block();
+        assert_eq!(resolve_indent_segment("罫囲み", &mut framed), Some(()));
+        assert!(framed.styles.framed);
+
+        // 小さい活字 = FontShift(-1); the sign must survive (kills the deleted
+        // `-` at 1730 and the guard->false swap at 1729).
+        let mut font = empty_indent_block();
+        assert_eq!(resolve_indent_segment("小さい活字", &mut font), Some(()));
+        assert_eq!(
+            font.styles.font,
+            Some(FontShift(NonZeroI8::new(-1).unwrap()))
+        );
+    }
+
+    #[test]
+    fn resolve_indent_repeated_style_declines() {
+        // A repeated decoration conflicts and declines (kills the guard->true
+        // swaps at 1725/1726/1727/1729, which would silently re-accept).
+        let mut gothic = empty_indent_block();
+        gothic.styles.gothic = true;
+        assert_eq!(resolve_indent_segment("ゴシック体", &mut gothic), None);
+
+        let mut horizontal = empty_indent_block();
+        horizontal.styles.horizontal = true;
+        assert_eq!(resolve_indent_segment("横書き", &mut horizontal), None);
+
+        let mut framed = empty_indent_block();
+        framed.styles.framed = true;
+        assert_eq!(resolve_indent_segment("罫囲み", &mut framed), None);
+
+        let mut font = empty_indent_block();
+        font.styles.font = Some(FontShift(NonZeroI8::new(1).unwrap()));
+        assert_eq!(resolve_indent_segment("小さい活字", &mut font), None);
+    }
+
+    // ================= parse_indent_line_layout =================
+
+    #[test]
+    fn parse_indent_line_layout_forms() {
+        // {W}字詰め (kills `-> None` at 1777 and the `==`->`!=` swap at 1779).
+        assert_eq!(
+            parse_indent_line_layout("5字詰め"),
+            Some(IndentLayout::LineWidth(LineWidth(
+                NonZeroU8::new(5).unwrap()
+            )))
+        );
+        // {L}行{W}字組み for coverage of the second branch.
+        assert_eq!(
+            parse_indent_line_layout("3行20字組み"),
+            Some(IndentLayout::Kumi(Kumi {
+                lines: NonZeroU8::new(3).unwrap(),
+                width: NonZeroU8::new(20).unwrap(),
+            }))
+        );
+        assert_eq!(parse_indent_line_layout("字詰め"), None);
+    }
+
+    // ================= parse_small_script_range_body =================
+
+    #[test]
+    fn parse_small_script_range_forms() {
+        // Each side + open/close (kills `-> None`, the two `Some(Default, _)`
+        // stubs, and both deleted arms at 1834-1839).
+        assert_eq!(
+            parse_small_script_range_body("行右小書き"),
+            Some((BoutenPosition::Right, false))
+        );
+        assert_eq!(
+            parse_small_script_range_body("行右小書き終わり"),
+            Some((BoutenPosition::Right, true))
+        );
+        assert_eq!(
+            parse_small_script_range_body("行左小書き"),
+            Some((BoutenPosition::Left, false))
+        );
+        assert_eq!(
+            parse_small_script_range_body("行左小書き終わり"),
+            Some((BoutenPosition::Left, true))
+        );
+        assert_eq!(parse_small_script_range_body("行右小書きほげ"), None);
+    }
+
+    // ================= parse_caption_body =================
+
+    #[test]
+    fn parse_caption_forms() {
+        // All four (block, close) combinations (kills `-> None`, every
+        // `Some((_, _))` stub, and all four deleted arms at 1853-1857).
+        assert_eq!(parse_caption_body("キャプション"), Some((false, false)));
+        assert_eq!(
+            parse_caption_body("キャプション終わり"),
+            Some((false, true))
+        );
+        assert_eq!(
+            parse_caption_body("ここからキャプション"),
+            Some((true, false))
+        );
+        assert_eq!(
+            parse_caption_body("ここでキャプション終わり"),
+            Some((true, true))
+        );
+        assert_eq!(parse_caption_body("ほげ"), None);
+    }
+
+    // ================= parse_line_font_size =================
+
+    #[test]
+    fn parse_line_font_size_forms() {
+        // Size + optional 、太字 (kills `-> None` at 1874 and the two deleted
+        // bold-match arms at 1886/1887).
+        assert_eq!(
+            parse_line_font_size("大文字"),
+            Some((AbsoluteSize::Large, false))
+        );
+        assert_eq!(
+            parse_line_font_size("大文字、太字"),
+            Some((AbsoluteSize::Large, true))
+        );
+        assert_eq!(
+            parse_line_font_size("特大文字"),
+            Some((AbsoluteSize::ExtraLarge, false))
+        );
+        assert_eq!(
+            parse_line_font_size("小文字、太字"),
+            Some((AbsoluteSize::Small, true))
+        );
+        // A trailing run that is neither "" nor 、太字 declines.
+        assert_eq!(parse_line_font_size("大文字げ"), None);
+    }
+
+    // ================= parse_emphasis_body =================
+
+    #[test]
+    fn parse_emphasis_all_arms() {
+        // Every (weight, padded, is_close) arm (kills all twelve deleted arms at
+        // 1913-1924).
+        assert_eq!(emphasis("太字"), Some((0, false, false)));
+        assert_eq!(emphasis("太字終わり"), Some((0, false, true)));
+        assert_eq!(emphasis("ここから太字"), Some((0, true, false)));
+        assert_eq!(emphasis("ここで太字終わり"), Some((0, true, true)));
+        assert_eq!(emphasis("ゴシック体"), Some((1, false, false)));
+        assert_eq!(emphasis("ゴシック体終わり"), Some((1, false, true)));
+        assert_eq!(emphasis("ここからゴシック体"), Some((1, true, false)));
+        assert_eq!(emphasis("ここでゴシック体終わり"), Some((1, true, true)));
+        assert_eq!(emphasis("斜体"), Some((2, false, false)));
+        assert_eq!(emphasis("斜体終わり"), Some((2, false, true)));
+        assert_eq!(emphasis("ここから斜体"), Some((2, true, false)));
+        assert_eq!(emphasis("ここで斜体終わり"), Some((2, true, true)));
+        assert_eq!(emphasis("ほげ"), None);
+    }
+
+    // ================= parse_decimal_u8_prefix =================
+
+    #[test]
+    fn parse_decimal_u8_prefix_fullwidth_digit_value() {
+        // A fullwidth multi-digit run decodes by subtraction of '０', not
+        // division (kills the `-`->`/` swap at 1943): 34, not 11.
+        assert_eq!(parse_decimal_u8_prefix("３４字下げ"), Some((34, "字下げ")));
+        // ASCII sibling for coverage.
+        assert_eq!(parse_decimal_u8_prefix("34字下げ"), Some((34, "字下げ")));
+        // Non-digit lead and overflow both decline.
+        assert_eq!(parse_decimal_u8_prefix("字下げ"), None);
+        assert_eq!(parse_decimal_u8_prefix("300字下げ"), None);
+    }
+}

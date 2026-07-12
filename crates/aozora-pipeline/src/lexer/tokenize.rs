@@ -382,6 +382,22 @@ mod tests {
     }
 
     #[test]
+    fn size_hint_upper_bound_is_exact_at_construction() {
+        // "｜《》" has exactly 3 triggers (Bar, RubyOpen, RubyClose) and
+        // 0 newlines. Fresh from `tokenize`, before any `next()`:
+        //   triggers_left = 3, newlines_left = 0, pending = None
+        //   upper = (3 + 0) * 2 + 0 + 1 = 7
+        // The exact `(0, Some(7))` pins the lower bound at 0, forbids a
+        // `None` upper, and picks operands so every arithmetic mutation
+        // (+↔*, *↔+, *↔/) yields a value other than 7:
+        //   (3*0)*2+0+1 = 1, (3+0)+2+0+1 = 6, (3+0)/2+0+1 = 2,
+        //   ((3+0)*2)*0+1 = 1, ((3+0)*2+0)*1 = 6.
+        let tk = tokenize("｜《》");
+        assert_eq!(tk.size_hint(), (0, Some(7)));
+        assert_eq!(triggers(&tk.collect::<Vec<_>>()).len(), 3);
+    }
+
+    #[test]
     fn trigger_span_covers_all_constituent_bytes() {
         let toks = collect("≪ab≫");
         let open_span = toks

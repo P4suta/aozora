@@ -299,7 +299,76 @@ mod tests {
     use super::*;
     use aozora_spec::{NormalizedOffset, Sentinel};
     use aozora_syntax::IndentBlock;
-    use aozora_syntax::ast::Content;
+    use aozora_syntax::ast::{Content, Directive, StrId};
+
+    #[test]
+    fn recorder_with_capacity_preallocates_both_tables() {
+        // Kills the `with_capacity -> Default::default()` mutant: the hinted
+        // constructor must reserve capacity in both side tables, whereas
+        // `Default` yields empty (capacity-0) vecs.
+        let r = Recorder::with_capacity(64);
+        assert!(
+            r.entries.capacity() >= 64,
+            "entries should be preallocated to the hint, got {}",
+            r.entries.capacity()
+        );
+        assert!(
+            r.source_nodes.capacity() >= 64,
+            "source_nodes should be preallocated to the hint, got {}",
+            r.source_nodes.capacity()
+        );
+    }
+
+    #[test]
+    fn track_single_line_break_sets_family_tag_per_line_format() {
+        // Kills the deleted `Center { .. }` and `Gothic` match arms (and pins
+        // the sibling indent / align-end arms): each single-line layout node
+        // must stamp its own family tag onto `pending_single_line`.
+        let cases: &[(Node, &'static str)] = &[
+            (
+                Node::Line(LineFormat::Indent {
+                    amount: 1,
+                    end_offset: None,
+                }),
+                "indent",
+            ),
+            (Node::Line(LineFormat::AlignEnd { offset: 0 }), "align-end"),
+            (Node::Line(LineFormat::Center { page: false }), "center"),
+            (Node::Line(LineFormat::Gothic), "line-gothic"),
+        ];
+        for &(node, expected) in cases {
+            let mut norm = Normalizer::new("", 0);
+            norm.track_single_line_break(node, Span::new(0, 0));
+            assert_eq!(
+                norm.pending_single_line,
+                Some(expected),
+                "node {node:?} should flag single-line family {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn track_single_line_break_warichu_close_decrements_depth() {
+        // Kills the deleted `DirectiveKind::WarichuClose` match arm: after an
+        // open then a close the nesting depth must return to zero. With the
+        // arm gone the close is a no-op and the depth stays at 1.
+        let mut norm = Normalizer::new("", 0);
+        let open = Node::Directive(Directive {
+            raw: StrId(0),
+            kind: DirectiveKind::WarichuOpen,
+        });
+        let close = Node::Directive(Directive {
+            raw: StrId(0),
+            kind: DirectiveKind::WarichuClose,
+        });
+        norm.track_single_line_break(open, Span::new(0, 0));
+        assert_eq!(norm.warichu_depth, 1, "open should increment warichu depth");
+        norm.track_single_line_break(close, Span::new(0, 0));
+        assert_eq!(
+            norm.warichu_depth, 0,
+            "close should decrement warichu depth back to zero"
+        );
+    }
 
     #[test]
     fn lex_materialises_ruby_resolving_back_to_source_text() {
