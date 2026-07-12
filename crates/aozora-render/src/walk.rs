@@ -169,3 +169,115 @@ pub(crate) fn walk<S: WalkSink>(out: &LexOutput, sink: &mut S) -> fmt::Result {
     }
     sink.finish()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aozora_syntax::ast::{InternStats, Node, NodeStore, Registry};
+
+    /// A [`WalkSink`] that records exactly what the scan emits: the concatenated
+    /// plain-text runs and a per-hook event log. Pins the *bytes* the walk
+    /// surfaces, not merely that it succeeds.
+    #[derive(Default)]
+    struct CollectSink {
+        text: String,
+        nodes: usize,
+        finished: usize,
+    }
+
+    impl WalkSink for CollectSink {
+        const WANTS_NEWLINES: bool = false;
+
+        fn on_text(&mut self, text: &str) -> fmt::Result {
+            assert!(
+                !text.is_empty(),
+                "on_text is never called with an empty run"
+            );
+            self.text.push_str(text);
+            Ok(())
+        }
+
+        fn on_node(&mut self, _kind: SentinelKind, _node: NodeRef) -> fmt::Result {
+            self.nodes += 1;
+            Ok(())
+        }
+
+        fn finish(&mut self) -> fmt::Result {
+            self.finished += 1;
+            Ok(())
+        }
+    }
+
+    /// Assemble a `LexOutput` whose only populated fields are the normalized
+    /// text and the registry — the two the scan reads.
+    fn output_with(normalized: &str, registry: Registry) -> LexOutput {
+        LexOutput::new(
+            normalized.to_owned(),
+            String::new(),
+            registry,
+            Vec::new(),
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            InternStats::default(),
+            NodeStore::new(),
+        )
+    }
+
+    /// U+E041 (`0xEE 0x81 0x81`) shares the `0xEE` lead byte of a PUA sentinel,
+    /// and its third byte `0x81` equals `INLINE_SENTINEL_TAIL` — but its second
+    /// byte is `0x81`, not the `0x80` (`SENTINEL_MID_BYTE`) every sentinel
+    /// carries. The mid-byte guard must reject it so the char flows through
+    /// verbatim as plain text.
+    ///
+    /// Swapping the guard's `||` to `&&` (line 114) makes
+    /// `cand + 2 >= len (false) && mid != 0x80` short-circuit to `false`, so the
+    /// early return is skipped, the collision decodes as an inline sentinel, the
+    /// run is split at the char, and the char is dropped from the output. Pins
+    /// the exact surfaced bytes on both sides of the guard.
+    #[test]
+    fn non_sentinel_pua_collision_flows_through_as_plain_text() {
+        let out = output_with("ab\u{E041}cd", Registry::empty());
+        let mut sink = CollectSink::default();
+        walk(&out, &mut sink).expect("walk into a collector is infallible");
+        assert_eq!(
+            sink.text, "ab\u{E041}cd",
+            "the collision char must stay a plain-text byte run, not split it"
+        );
+        assert_eq!(sink.nodes, 0, "a collision dispatches no sentinel node");
+    }
+
+    /// The mirror case: a genuine inline sentinel (`0xEE 0x80 0x81`) with a
+    /// matching registry entry *is* dispatched — the guard's `||` false-arm
+    /// (mid byte `== 0x80`) falls through to the tail decode. Confirms the walk
+    /// splits the surrounding text and fires `on_node` exactly once, so the
+    /// collision test above is pinning a real behavioural boundary.
+    #[test]
+    fn genuine_inline_sentinel_is_dispatched_and_splits_the_run() {
+        let normalized = "ab\u{E001}cd";
+        let cand = "ab".len();
+        let byte_pos = u32::try_from(cand).unwrap();
+        let registry = Registry::from_sorted_slice(&[(byte_pos, NodeRef::Inline(Node::PageBreak))]);
+        let out = output_with(normalized, registry);
+        let mut sink = CollectSink::default();
+        walk(&out, &mut sink).expect("walk into a collector is infallible");
+        assert_eq!(
+            sink.text, "abcd",
+            "the sentinel is consumed; only the flanking runs surface"
+        );
+        assert_eq!(sink.nodes, 1, "exactly one inline node is dispatched");
+    }
+
+    /// Plain text with no `0xEE` byte is copied whole through the single final
+    /// flush, and `finish` runs exactly once at the end.
+    #[test]
+    fn plain_text_is_copied_verbatim_and_finished_once() {
+        let out = output_with("hello world", Registry::empty());
+        let mut sink = CollectSink::default();
+        walk(&out, &mut sink).expect("walk into a collector is infallible");
+        assert_eq!(sink.text, "hello world");
+        assert_eq!(sink.nodes, 0);
+        assert_eq!(sink.finished, 1, "finish fires exactly once");
+    }
+}

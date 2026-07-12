@@ -651,8 +651,36 @@ mod tests {
     use crate::render_html;
     use pretty_assertions::assert_eq;
 
+    use super::{
+        RenderState, escape_text, heading_tag, html_entity, parse_sashie_dimensions,
+        render_container_close, render_container_open, render_line,
+    };
+    use aozora_syntax::{
+        BoutenKind, BoutenPosition, EnclosureKind, HeadingKind, HeadingStyle, LineFormat,
+        LineWidth, RegionFormat,
+    };
+    use core::num::NonZeroU8;
+
     fn render(src: &str) -> String {
         render_html(&aozora_pipeline::lex(src))
+    }
+
+    fn open_tag(kind: RegionFormat) -> String {
+        let mut s = String::new();
+        render_container_open(kind, &mut s).expect("render into String is infallible");
+        s
+    }
+
+    fn close_tag(kind: RegionFormat) -> String {
+        let mut s = String::new();
+        render_container_close(kind, &mut s).expect("render into String is infallible");
+        s
+    }
+
+    fn line_tag(lf: LineFormat) -> String {
+        let mut s = String::new();
+        render_line(lf, &mut s).expect("render into String is infallible");
+        s
     }
 
     #[test]
@@ -1016,5 +1044,186 @@ mod tests {
             html,
             "<p><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青空</em>を見上げる。</p>\n"
         );
+    }
+
+    /// A block emit routed through [`RenderState::before_block_emit`] must close
+    /// the open paragraph (and its trailing newline) before the block markup —
+    /// stubbing the method to a no-op would leave `<p>X` dangling.
+    #[test]
+    fn before_block_emit_closes_open_paragraph() {
+        let mut st = RenderState::default();
+        let mut out = String::new();
+        st.ensure_in_paragraph(&mut out).expect("infallible");
+        out.push('X');
+        st.before_block_emit(&mut out).expect("infallible");
+        assert_eq!(out, "<p>X</p>\n");
+    }
+
+    /// Pin the exact opening markup of every `RegionFormat` container arm whose
+    /// byte spelling no other test fixes. Deleting an arm falls through to a
+    /// sibling / the generic `<div class="aozora-container">`, so each expected
+    /// string must be unique.
+    #[test]
+    fn container_open_pins_each_region_markup() {
+        let cases = [
+            (
+                RegionFormat::LineWidth(LineWidth(NonZeroU8::new(7).unwrap())),
+                r#"<div class="aozora-container aozora-container-line-width" data-width="7">"#,
+            ),
+            (
+                RegionFormat::Framed(EnclosureKind::Rule),
+                r#"<div class="aozora-container aozora-container-keigakomi">"#,
+            ),
+            (
+                RegionFormat::Gothic { padded: true },
+                r#"<div class="aozora-container aozora-container-goshikku">"#,
+            ),
+            (
+                RegionFormat::Horizontal,
+                r#"<div class="aozora-container aozora-container-yokogumi">"#,
+            ),
+            (
+                RegionFormat::SmallScript(BoutenPosition::Left),
+                r#"<span class="aozora-kogaki-left">"#,
+            ),
+            (
+                RegionFormat::SmallScript(BoutenPosition::Right),
+                r#"<span class="aozora-kogaki-right">"#,
+            ),
+            (
+                RegionFormat::Caption { padded: false },
+                r#"<span class="aozora-caption">"#,
+            ),
+            (
+                RegionFormat::Caption { padded: true },
+                r#"<div class="aozora-container aozora-caption">"#,
+            ),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(open_tag(kind), expected, "open {kind:?}");
+        }
+    }
+
+    /// Pin the exact closing markup of the `RegionFormat` container arms whose
+    /// close tag is not `</div>`. Deleting either arm falls through to the
+    /// generic `</div>`, so `</em>` / `</span>` must be observed.
+    #[test]
+    fn container_close_pins_each_region_markup() {
+        let cases = [
+            (
+                RegionFormat::Bouten {
+                    kind: BoutenKind::Goma,
+                    position: BoutenPosition::Right,
+                },
+                "</em>",
+            ),
+            (RegionFormat::SmallScript(BoutenPosition::Right), "</span>"),
+            (RegionFormat::SmallScript(BoutenPosition::Left), "</span>"),
+            (RegionFormat::Caption { padded: false }, "</span>"),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(close_tag(kind), expected, "close {kind:?}");
+        }
+    }
+
+    /// The 大 / 中 / 小 outline levels map to `<h1>`/`<h2>`/`<h3>`; the 窓 style
+    /// is an inset block (`<div>`) at any level. Deleting the Medium / Small arm
+    /// wrongly collapses them to the `h1` default.
+    #[test]
+    fn heading_tag_maps_level_and_window_style() {
+        assert_eq!(
+            heading_tag(HeadingKind::Large, HeadingStyle::Standard),
+            "h1"
+        );
+        assert_eq!(
+            heading_tag(HeadingKind::Medium, HeadingStyle::Standard),
+            "h2"
+        );
+        assert_eq!(
+            heading_tag(HeadingKind::Small, HeadingStyle::Standard),
+            "h3"
+        );
+        assert_eq!(
+            heading_tag(HeadingKind::Medium, HeadingStyle::Window),
+            "div"
+        );
+    }
+
+    /// Pin the exact hook-span markup of each `LineFormat` arm. The plain indent
+    /// and the both-margin compound differ; the flush `AlignEnd { offset: 0 }`
+    /// (no `-0` class) differs from the general `AlignEnd { offset }`. Deleting
+    /// any arm yields a different (or empty) span.
+    #[test]
+    fn render_line_pins_each_line_directive_markup() {
+        let cases = [
+            (
+                LineFormat::Indent {
+                    amount: 2,
+                    end_offset: None,
+                },
+                r#"<span class="aozora-indent aozora-indent-2" data-amount="2"></span>"#,
+            ),
+            (
+                LineFormat::Indent {
+                    amount: 2,
+                    end_offset: Some(3),
+                },
+                r#"<span class="aozora-indent aozora-indent-2 aozora-align-end aozora-align-end-3" data-amount="2" data-offset="3"></span>"#,
+            ),
+            (
+                LineFormat::AlignEnd { offset: 0 },
+                r#"<span class="aozora-align-end" data-offset="0"></span>"#,
+            ),
+            (
+                LineFormat::AlignEnd { offset: 5 },
+                r#"<span class="aozora-align-end aozora-align-end-5" data-offset="5"></span>"#,
+            ),
+        ];
+        for (lf, expected) in cases {
+            assert_eq!(line_tag(lf), expected, "line {lf:?}");
+        }
+    }
+
+    /// `parse_sashie_dimensions` returns the two digit runs only for a
+    /// well-formed `横W×縦H` note. Every malformed shape (missing separator /
+    /// prefix, non-digit run, empty run) returns `None`. Pins the return value,
+    /// the `!s.is_empty()` guard, and both `&&` conjunctions.
+    #[test]
+    fn parse_sashie_dimensions_pins_digit_pairs() {
+        assert_eq!(parse_sashie_dimensions("横100×縦200"), Some(("100", "200")));
+        // Missing `×` separator.
+        assert_eq!(parse_sashie_dimensions("横100縦200"), None);
+        // Missing `横` prefix.
+        assert_eq!(parse_sashie_dimensions("100×縦200"), None);
+        // Missing `縦` prefix.
+        assert_eq!(parse_sashie_dimensions("横100×200"), None);
+        // Non-digit width run: digits(w) is false, digits(h) true — pins the
+        // per-run `!is_empty && all_digit` and the joining `digits(w) && digits(h)`.
+        assert_eq!(parse_sashie_dimensions("横10a×縦200"), None);
+        // Non-digit height run: the mirror of the above.
+        assert_eq!(parse_sashie_dimensions("横100×縦20b"), None);
+        // Empty width run: pins `!s.is_empty()` (an empty run is not all-digit).
+        assert_eq!(parse_sashie_dimensions("横×縦200"), None);
+    }
+
+    /// `escape_text` must advance the cursor one byte *past* an escaped char
+    /// (`pos + len`, not `pos * len`) so the following text is emitted once.
+    #[test]
+    fn escape_text_advances_cursor_past_escaped_char() {
+        let mut out = String::new();
+        escape_text("a<b", &mut out).expect("infallible");
+        assert_eq!(out, "a&lt;b");
+    }
+
+    /// Every one of the five HTML-unsafe ASCII characters maps to its exact
+    /// entity; apostrophe uses the hex form `&#x27;`. Pins each match arm and
+    /// rules out the `""` / `"xyzzy"` return stubs.
+    #[test]
+    fn html_entity_pins_each_escape() {
+        assert_eq!(html_entity('<'), "&lt;");
+        assert_eq!(html_entity('>'), "&gt;");
+        assert_eq!(html_entity('&'), "&amp;");
+        assert_eq!(html_entity('"'), "&quot;");
+        assert_eq!(html_entity('\''), "&#x27;");
     }
 }

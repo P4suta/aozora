@@ -175,3 +175,35 @@ impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
         self.state.close_paragraph(self.out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`render_html_normalized`] returns the *actual* rendered HTML of the
+    /// (formatter-rewritten, re-parsed) tree — not an empty string nor a
+    /// placeholder. Plain text has no catalogue entry, so `Canonical` leaves it
+    /// verbatim and it renders as an ordinary paragraph.
+    #[test]
+    fn normalized_render_emits_actual_paragraph_html() {
+        let out = aozora_pipeline::lex("Hello.");
+        assert_eq!(
+            render_html_normalized(&out, DirectiveNormalization::Canonical),
+            "<p>Hello.</p>\n",
+        );
+    }
+
+    /// A non-warichu inline directive (`［＃入力者注(5)］`) must fall through to the
+    /// per-node emitter: the `WarichuClose` match guard is a genuine equality
+    /// test, not an unconditional `true`. Were the guard always true, this
+    /// editor note would be routed to `close_warichu` (a no-op with no open
+    /// warichu) and its visible `注5` superscript would vanish.
+    #[test]
+    fn non_warichu_inline_directive_renders_via_emitter_not_close_warichu() {
+        let out = aozora_pipeline::lex("本文［＃入力者注(5)］続き");
+        assert_eq!(
+            render_html(&out),
+            "<p>本文<sup class=\"aozora-editor-note\">注5</sup>続き</p>\n",
+        );
+    }
+}

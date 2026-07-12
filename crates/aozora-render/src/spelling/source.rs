@@ -460,3 +460,786 @@ impl Write for NewlineCappedWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aozora_syntax::{
+        AbsoluteSize, BoutenKind, ColumnCount, EnclosureKind, FontShift, Kumi, LineWidth,
+    };
+    use core::num::{NonZeroI8, NonZeroU8};
+    use pretty_assertions::assert_eq;
+
+    // --- small typed-scalar builders (NonZero payloads) ---------------------
+
+    fn fs(n: i8) -> FontShift {
+        FontShift(NonZeroI8::new(n).expect("nonzero shift"))
+    }
+
+    fn lw(n: u8) -> LineWidth {
+        LineWidth(NonZeroU8::new(n).expect("nonzero width"))
+    }
+
+    fn cc(n: u8) -> ColumnCount {
+        ColumnCount(NonZeroU8::new(n).expect("nonzero count"))
+    }
+
+    fn kumi(lines: u8, width: u8) -> Kumi {
+        Kumi {
+            lines: NonZeroU8::new(lines).expect("nonzero lines"),
+            width: NonZeroU8::new(width).expect("nonzero width"),
+        }
+    }
+
+    #[allow(
+        clippy::fn_params_excessive_bools,
+        reason = "test-only BlockStyles constructor mirroring the struct's fields"
+    )]
+    fn styles(
+        gothic: bool,
+        horizontal: bool,
+        framed: bool,
+        font: Option<FontShift>,
+    ) -> BlockStyles {
+        BlockStyles {
+            gothic,
+            horizontal,
+            framed,
+            font,
+        }
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test-only IndentBlock constructor mirroring the struct's fields"
+    )]
+    fn ib(
+        amount: u8,
+        wrap: Option<u8>,
+        center: bool,
+        layout: IndentLayout,
+        styles: BlockStyles,
+    ) -> IndentBlock {
+        IndentBlock {
+            amount,
+            wrap,
+            center,
+            layout,
+            styles,
+        }
+    }
+
+    // --- direct call helpers for the private / `pub(crate)` emitters --------
+
+    fn close_src(close: RegionClose) -> String {
+        let mut s = String::new();
+        emit_container_close(close, &mut s).expect("String write is infallible");
+        s
+    }
+
+    fn line_src(lf: LineFormat) -> String {
+        let mut s = String::new();
+        emit_line(lf, &mut s).expect("String write is infallible");
+        s
+    }
+
+    fn section_src(kind: SectionKind) -> String {
+        let mut s = String::new();
+        emit_section_break(kind, &mut s).expect("String write is infallible");
+        s
+    }
+
+    // ---------------------------------------------------------------------
+    // Public marker spellers — the exact serialized bytes.
+    // ---------------------------------------------------------------------
+
+    /// `container_open_source` / `container_close_source` must return the real
+    /// marker bytes, not an empty / placeholder `String` (kills the two
+    /// return-value stubs on each fn).
+    #[test]
+    fn public_marker_spellers_return_exact_bytes() {
+        assert_eq!(
+            container_open_source(RegionFormat::Bold { padded: false }),
+            "［＃太字］"
+        );
+        assert_eq!(
+            container_open_source(RegionFormat::Bold { padded: true }),
+            "［＃ここから太字］"
+        );
+        // `container_close_source` derives the close via `RegionClose::of`.
+        assert_eq!(
+            container_close_source(RegionFormat::Bold { padded: false }),
+            "［＃太字終わり］"
+        );
+        assert_eq!(
+            container_close_source(RegionFormat::Italic { padded: true }),
+            "［＃ここで斜体終わり］"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_section_break
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn section_break_spells_each_kind() {
+        assert_eq!(section_src(SectionKind::Kaicho), "［＃改丁］");
+        assert_eq!(section_src(SectionKind::Kaidan), "［＃改段］");
+        assert_eq!(section_src(SectionKind::Kaimihiraki), "［＃改見開き］");
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_line — every arm's exact spelling + both sides of the boundaries.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn line_format_spells_every_arm() {
+        // Both-margin compound (amount + foot-edge lift).
+        assert_eq!(
+            line_src(LineFormat::Indent {
+                amount: 2,
+                end_offset: Some(3),
+            }),
+            "［＃2字下げ、地より3字上げで］"
+        );
+        // The idiomatic no-number single-char indent — distinct from the
+        // numbered `1字下げ` form the arm below would otherwise emit.
+        assert_eq!(
+            line_src(LineFormat::Indent {
+                amount: 1,
+                end_offset: None,
+            }),
+            "［＃字下げ］"
+        );
+        assert_eq!(
+            line_src(LineFormat::Indent {
+                amount: 3,
+                end_offset: None,
+            }),
+            "［＃3字下げ］"
+        );
+        // 地付き (offset 0) vs 地から N字上げ (offset > 0).
+        assert_eq!(line_src(LineFormat::AlignEnd { offset: 0 }), "［＃地付き］");
+        assert_eq!(
+            line_src(LineFormat::AlignEnd { offset: 4 }),
+            "［＃地から4字上げ］"
+        );
+        // Page-centre vs plain centre.
+        assert_eq!(
+            line_src(LineFormat::Center { page: true }),
+            "［＃ページの左右中央］"
+        );
+        assert_eq!(
+            line_src(LineFormat::Center { page: false }),
+            "［＃中央揃え］"
+        );
+        assert_eq!(line_src(LineFormat::Gothic), "［＃この行はゴシック体］");
+        // Absolute font size — both the plain and `、太字` compound forms.
+        assert_eq!(
+            line_src(LineFormat::FontSizeAbsolute {
+                size: AbsoluteSize::Large,
+                bold: false,
+            }),
+            "［＃大文字］"
+        );
+        assert_eq!(
+            line_src(LineFormat::FontSizeAbsolute {
+                size: AbsoluteSize::ExtraLarge,
+                bold: true,
+            }),
+            "［＃特大文字、太字］"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Heading / bouten / small-script keyword helpers.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn heading_style_keyword_prefixes() {
+        assert_eq!(heading_style_keyword(HeadingStyle::Standard), "");
+        assert_eq!(heading_style_keyword(HeadingStyle::SameLine), "同行");
+        assert_eq!(heading_style_keyword(HeadingStyle::Window), "窓");
+    }
+
+    #[test]
+    fn heading_level_word_per_level() {
+        assert_eq!(heading_level_word(HeadingKind::Large), "大見出し");
+        assert_eq!(heading_level_word(HeadingKind::Medium), "中見出し");
+        assert_eq!(heading_level_word(HeadingKind::Small), "小見出し");
+    }
+
+    #[test]
+    fn bouten_left_prefix_per_position() {
+        assert_eq!(bouten_left_prefix(BoutenPosition::Right), "");
+        assert_eq!(bouten_left_prefix(BoutenPosition::Left), "左に");
+        assert_eq!(bouten_left_prefix(BoutenPosition::Both), "両側に");
+    }
+
+    #[test]
+    fn small_script_side_word_per_side() {
+        assert_eq!(small_script_side_word(BoutenPosition::Right), "右");
+        assert_eq!(small_script_side_word(BoutenPosition::Left), "左");
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_container_open — every family's exact opener.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "exhaustive per-family container-open assertion table"
+    )]
+    fn container_open_spells_every_family() {
+        let open = container_open_source;
+        assert_eq!(
+            open(RegionFormat::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }),
+            "［＃傍点］"
+        );
+        assert_eq!(
+            open(RegionFormat::Bouten {
+                kind: BoutenKind::UnderLine,
+                position: BoutenPosition::Left,
+            }),
+            "［＃左に傍線］"
+        );
+        assert_eq!(open(RegionFormat::Bold { padded: false }), "［＃太字］");
+        assert_eq!(
+            open(RegionFormat::Bold { padded: true }),
+            "［＃ここから太字］"
+        );
+        assert_eq!(
+            open(RegionFormat::Gothic { padded: false }),
+            "［＃ゴシック体］"
+        );
+        assert_eq!(
+            open(RegionFormat::Gothic { padded: true }),
+            "［＃ここからゴシック体］"
+        );
+        assert_eq!(open(RegionFormat::Italic { padded: false }), "［＃斜体］");
+        assert_eq!(
+            open(RegionFormat::Italic { padded: true }),
+            "［＃ここから斜体］"
+        );
+        assert_eq!(
+            open(RegionFormat::AlignEnd { offset: 0 }),
+            "［＃ここから地付き］"
+        );
+        assert_eq!(
+            open(RegionFormat::AlignEnd { offset: 2 }),
+            "［＃ここから地から2字上げ］"
+        );
+        assert_eq!(
+            open(RegionFormat::LineWidth(lw(20))),
+            "［＃ここから20字詰め］"
+        );
+        assert_eq!(
+            open(RegionFormat::Heading {
+                level: HeadingKind::Large,
+                style: HeadingStyle::Standard,
+                padded: true,
+            }),
+            "［＃ここから大見出し］"
+        );
+        assert_eq!(
+            open(RegionFormat::Heading {
+                level: HeadingKind::Medium,
+                style: HeadingStyle::SameLine,
+                padded: false,
+            }),
+            "［＃同行中見出し］"
+        );
+        assert_eq!(open(RegionFormat::Columns(cc(2))), "［＃ここから2段組み］");
+        assert_eq!(open(RegionFormat::Table), "［＃ここから表］");
+        assert_eq!(open(RegionFormat::Horizontal), "［＃ここから横組み］");
+        assert_eq!(
+            open(RegionFormat::FontSize(fs(2))),
+            "［＃ここから2段階大きな文字］"
+        );
+        assert_eq!(
+            open(RegionFormat::FontSize(fs(-3))),
+            "［＃ここから3段階小さな文字］"
+        );
+        assert_eq!(
+            open(RegionFormat::SmallScript(BoutenPosition::Right)),
+            "［＃行右小書き］"
+        );
+        assert_eq!(
+            open(RegionFormat::SmallScript(BoutenPosition::Left)),
+            "［＃行左小書き］"
+        );
+        assert_eq!(
+            open(RegionFormat::Caption { padded: true }),
+            "［＃ここからキャプション］"
+        );
+        assert_eq!(
+            open(RegionFormat::Caption { padded: false }),
+            "［＃キャプション］"
+        );
+        assert_eq!(open(RegionFormat::Warichu), "［＃ここから割り注］");
+        assert_eq!(
+            open(RegionFormat::Framed(EnclosureKind::Rule)),
+            "［＃罫囲み］"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_indent_open — the two boolean guards + the numbered compound.
+    //
+    // Each row targets a specific mutation site. `container_open_source`
+    // routes `RegionFormat::Indent` straight into `emit_indent_open`.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn indent_open_page_centre_short_form() {
+        // Pure page-centred block: amount 0 + center + no other clause is the
+        // short `ページの左右中央` opener. Pins the `amount == 0` equality and the
+        // three `!gothic` / `!horizontal` / `!framed` negations (drop any and the
+        // guard fails, falling back to the numbered `…、ページの左右中央に` form).
+        assert_eq!(
+            container_open_source(RegionFormat::Indent(ib(
+                0,
+                None,
+                true,
+                IndentLayout::None,
+                BlockStyles::EMPTY,
+            ))),
+            "［＃ここからページの左右中央］"
+        );
+    }
+
+    #[test]
+    fn indent_open_page_centre_guard_needs_every_clause() {
+        // For every `&&` in the page-centre guard, an input where exactly the
+        // clause *after* that operator is false: the numbered form is emitted, so
+        // flipping that `&&` to `||` (which would wrongly emit the short
+        // page-centre opener) is caught.
+        let cases: &[(IndentBlock, &str)] = &[
+            // center false (256:9)
+            (
+                ib(0, None, false, IndentLayout::None, BlockStyles::EMPTY),
+                "［＃ここから0字下げ］",
+            ),
+            // wrap present (257:9)
+            (
+                ib(0, Some(2), true, IndentLayout::None, BlockStyles::EMPTY),
+                "［＃ここから0字下げ、折り返して2字下げ、ページの左右中央に］",
+            ),
+            // secondary layout present (258:9)
+            (
+                ib(
+                    0,
+                    None,
+                    true,
+                    IndentLayout::LineWidth(lw(3)),
+                    BlockStyles::EMPTY,
+                ),
+                "［＃ここから0字下げ、ページの左右中央に、3字詰め］",
+            ),
+            // gothic set (259:9)
+            (
+                ib(
+                    0,
+                    None,
+                    true,
+                    IndentLayout::None,
+                    styles(true, false, false, None),
+                ),
+                "［＃ここから0字下げ、ページの左右中央に、ゴシック体］",
+            ),
+            // horizontal set (260:9)
+            (
+                ib(
+                    0,
+                    None,
+                    true,
+                    IndentLayout::None,
+                    styles(false, true, false, None),
+                ),
+                "［＃ここから0字下げ、ページの左右中央に、横書き］",
+            ),
+            // framed set (261:9)
+            (
+                ib(
+                    0,
+                    None,
+                    true,
+                    IndentLayout::None,
+                    styles(false, false, true, None),
+                ),
+                "［＃ここから0字下げ、ページの左右中央に、罫囲み］",
+            ),
+            // font set (262:9)
+            (
+                ib(
+                    0,
+                    None,
+                    true,
+                    IndentLayout::None,
+                    styles(false, false, false, Some(fs(2))),
+                ),
+                "［＃ここから0字下げ、ページの左右中央に、2段階大きな文字］",
+            ),
+        ];
+        for (block, expected) in cases {
+            assert_eq!(
+                container_open_source(RegionFormat::Indent(*block)),
+                *expected,
+                "page-centre guard row: {block:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn indent_open_bare_single_char_short_form() {
+        // The no-number `字下げ` opener is reserved for a bare single-char indent.
+        // Pins the `!center` / `!gothic` / `!horizontal` / `!framed` negations in
+        // the `bare` computation (all false here, so `!x` = true; deleting a `!`
+        // makes `bare` false and forces the numbered form).
+        assert_eq!(
+            container_open_source(RegionFormat::Indent(ib(
+                1,
+                None,
+                false,
+                IndentLayout::None,
+                BlockStyles::EMPTY,
+            ))),
+            "［＃ここから字下げ］"
+        );
+    }
+
+    #[test]
+    fn indent_open_bare_guard_needs_every_clause() {
+        // For every `&&` in the `bare` guard (and the `amount == 1 && bare`
+        // join), an input with amount 1 where exactly one bare clause is false:
+        // the numbered form is emitted, so flipping the operator to `||` (which
+        // would wrongly emit the short `字下げ` opener) is caught.
+        let cases: &[(IndentBlock, &str)] = &[
+            // center set (270:9)
+            (
+                ib(1, None, true, IndentLayout::None, BlockStyles::EMPTY),
+                "［＃ここから1字下げ、ページの左右中央に］",
+            ),
+            // secondary layout present (271:9)
+            (
+                ib(
+                    1,
+                    None,
+                    false,
+                    IndentLayout::LineWidth(lw(3)),
+                    BlockStyles::EMPTY,
+                ),
+                "［＃ここから1字下げ、3字詰め］",
+            ),
+            // gothic set (272:9 + the `amount == 1 && bare` join at 276:20)
+            (
+                ib(
+                    1,
+                    None,
+                    false,
+                    IndentLayout::None,
+                    styles(true, false, false, None),
+                ),
+                "［＃ここから1字下げ、ゴシック体］",
+            ),
+            // horizontal set (273:9)
+            (
+                ib(
+                    1,
+                    None,
+                    false,
+                    IndentLayout::None,
+                    styles(false, true, false, None),
+                ),
+                "［＃ここから1字下げ、横書き］",
+            ),
+            // framed set (274:9)
+            (
+                ib(
+                    1,
+                    None,
+                    false,
+                    IndentLayout::None,
+                    styles(false, false, true, None),
+                ),
+                "［＃ここから1字下げ、罫囲み］",
+            ),
+            // font set (275:9)
+            (
+                ib(
+                    1,
+                    None,
+                    false,
+                    IndentLayout::None,
+                    styles(false, false, false, Some(fs(-2))),
+                ),
+                "［＃ここから1字下げ、2段階小さな文字］",
+            ),
+        ];
+        for (block, expected) in cases {
+            assert_eq!(
+                container_open_source(RegionFormat::Indent(*block)),
+                *expected,
+                "bare guard row: {block:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn indent_open_numbered_compound_clauses() {
+        // The numbered compound's secondary clauses and the font special-case.
+        // `小さい活字` is the canonical one-stage-smaller spelling — pins the
+        // `shift.0.get() == -1` guard (both the `==` and the `-1` literal:
+        // FontShift(-1) must take the `小さい活字` arm, not the `N段階小さな文字`
+        // fall-through).
+        assert_eq!(
+            container_open_source(RegionFormat::Indent(ib(
+                2,
+                None,
+                false,
+                IndentLayout::None,
+                styles(false, false, false, Some(fs(-1))),
+            ))),
+            "［＃ここから2字下げ、小さい活字］"
+        );
+        // A general shift keeps the `N段階…文字` form.
+        assert_eq!(
+            container_open_source(RegionFormat::Indent(ib(
+                2,
+                None,
+                false,
+                IndentLayout::None,
+                styles(false, false, false, Some(fs(-2))),
+            ))),
+            "［＃ここから2字下げ、2段階小さな文字］"
+        );
+        // 字組み secondary layout clause.
+        assert_eq!(
+            container_open_source(RegionFormat::Indent(ib(
+                2,
+                None,
+                false,
+                IndentLayout::Kumi(kumi(5, 3)),
+                BlockStyles::EMPTY,
+            ))),
+            "［＃ここから2字下げ、5行3字組みで］"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_container_close — every family's exact close marker.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "exhaustive per-family container-close assertion table"
+    )]
+    fn container_close_spells_every_family() {
+        assert_eq!(
+            close_src(RegionClose::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }),
+            "［＃傍点終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Bouten {
+                kind: BoutenKind::UnderLine,
+                position: BoutenPosition::Left,
+            }),
+            "［＃左に傍線終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Bold { padded: false }),
+            "［＃太字終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Bold { padded: true }),
+            "［＃ここで太字終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Gothic { padded: false }),
+            "［＃ゴシック体終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Gothic { padded: true }),
+            "［＃ここでゴシック体終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Italic { padded: false }),
+            "［＃斜体終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Italic { padded: true }),
+            "［＃ここで斜体終わり］"
+        );
+        // 字組み compound close keeps its own width; the generic close is the
+        // `kumi_width: None` fall-through.
+        assert_eq!(
+            close_src(RegionClose::Indent {
+                kumi_width: Some(lw(5)),
+            }),
+            "［＃ここで字下げ、5字組み終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Indent { kumi_width: None }),
+            "［＃ここで字下げ終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::LineWidth),
+            "［＃ここで字詰め終わり］"
+        );
+        // Level-less bare close — both the padded and unpadded spellings.
+        assert_eq!(
+            close_src(RegionClose::Heading {
+                level: None,
+                style: HeadingStyle::Standard,
+                padded: true,
+            }),
+            "［＃ここで見出し終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Heading {
+                level: None,
+                style: HeadingStyle::Standard,
+                padded: false,
+            }),
+            "［＃見出し終わり］"
+        );
+        // Leveled close carries the level word (and style prefix).
+        assert_eq!(
+            close_src(RegionClose::Heading {
+                level: Some(HeadingKind::Medium),
+                style: HeadingStyle::Standard,
+                padded: false,
+            }),
+            "［＃中見出し終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Heading {
+                level: Some(HeadingKind::Small),
+                style: HeadingStyle::Window,
+                padded: true,
+            }),
+            "［＃ここで窓小見出し終わり］"
+        );
+        assert_eq!(close_src(RegionClose::Columns), "［＃ここで段組み終わり］");
+        assert_eq!(close_src(RegionClose::Table), "［＃ここで表終わり］");
+        assert_eq!(
+            close_src(RegionClose::Horizontal),
+            "［＃ここで横組み終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::FontSize { larger: true }),
+            "［＃ここで大きな文字終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::FontSize { larger: false }),
+            "［＃ここで小さな文字終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::SmallScript(BoutenPosition::Right)),
+            "［＃行右小書き終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::SmallScript(BoutenPosition::Left)),
+            "［＃行左小書き終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Caption { padded: true }),
+            "［＃ここでキャプション終わり］"
+        );
+        assert_eq!(
+            close_src(RegionClose::Caption { padded: false }),
+            "［＃キャプション終わり］"
+        );
+        assert_eq!(close_src(RegionClose::Warichu), "［＃ここで割り注終わり］");
+        assert_eq!(
+            close_src(RegionClose::Framed(EnclosureKind::Rule)),
+            "［＃罫囲み終わり］"
+        );
+        assert_eq!(close_src(RegionClose::AlignEnd), "［＃ここで地付き終わり］");
+    }
+
+    // ---------------------------------------------------------------------
+    // NewlineCappedWriter — blank-line-run cap invariants.
+    // ---------------------------------------------------------------------
+
+    /// `write_str` caps consecutive `\n` at two *across* writes: the trailing
+    /// newline count must persist past a chunk that ends in `\n`. Pins the
+    /// `cursor < s.len()` bound in `push_str_internal` — a `<=` would spuriously
+    /// reset the trailing count to 0 when a chunk ends exactly on a newline,
+    /// un-capping the following run.
+    #[test]
+    fn newline_cap_persists_across_writes() {
+        let mut w = NewlineCappedWriter::with_capacity(16);
+        w.write_str("a\n\n").expect("infallible");
+        w.write_str("\n\n").expect("infallible");
+        assert_eq!(w.into_string(), "a\n\n");
+    }
+
+    /// A single `write_str` run of five newlines caps at two.
+    #[test]
+    fn newline_cap_within_one_write() {
+        let mut w = NewlineCappedWriter::with_capacity(16);
+        w.write_str("x\n\n\n\n\ny").expect("infallible");
+        assert_eq!(w.into_string(), "x\n\ny");
+    }
+
+    /// `TrackingWriter::last` must remember the final char written — `emit_ruby`
+    /// reads it to decide whether a bare `《reading》` drops the explicit `｜`
+    /// (ADR 0002), so a `-> None` stub would silently keep every bar. UFCS
+    /// `write_str` to hit the `Write` impl without importing the trait.
+    #[test]
+    fn tracking_writer_last_remembers_final_char() {
+        let mut buf = String::new();
+        let mut tw = TrackingWriter::new(&mut buf);
+        assert_eq!(tw.last(), None);
+        tw.write_str("あい").expect("String write is infallible");
+        assert_eq!(
+            tw.last(),
+            Some('い'),
+            "last() must return the final char written"
+        );
+    }
+
+    /// `write_char` copies a non-newline char through verbatim (kills the
+    /// `write_char` stub) and routes a newline to the capping branch (kills the
+    /// `c == '\n'` discriminant swap: a non-newline would otherwise be treated
+    /// as a newline and drop through the cap counter).
+    #[test]
+    fn write_char_copies_plain_char() {
+        let mut w = NewlineCappedWriter::with_capacity(4);
+        w.write_char('x').expect("infallible");
+        assert_eq!(w.into_string(), "x");
+    }
+
+    /// `write_char` caps a run of newlines at two. Pins the `+= 1` increment
+    /// (a `-=` underflows the `usize` counter and panics; a `*=` freezes it at
+    /// zero, un-capping the run) and the `c == '\n'` discriminant.
+    #[test]
+    fn write_char_caps_newline_run() {
+        let mut w = NewlineCappedWriter::with_capacity(8);
+        for _ in 0..4 {
+            w.write_char('\n').expect("infallible");
+        }
+        assert_eq!(w.into_string(), "\n\n");
+    }
+
+    /// The very first `write_char('\n')` must be emitted. Pins the
+    /// `trailing_newlines <= 2` bound: a `>` would suppress the first two
+    /// newlines and only emit from the third on, so a lone leading newline
+    /// before a plain char would vanish.
+    #[test]
+    fn write_char_emits_first_newline() {
+        let mut w = NewlineCappedWriter::with_capacity(4);
+        w.write_char('\n').expect("infallible");
+        w.write_char('x').expect("infallible");
+        assert_eq!(w.into_string(), "\nx");
+    }
+}
