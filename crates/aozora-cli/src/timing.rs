@@ -122,3 +122,38 @@ fn ms(d: Duration) -> f64 {
 fn nanos(d: Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact f64 pin — the expected values are exactly representable and every mutation (constant swap or * -> + / /) yields a value far from them"
+    )]
+    fn ms_is_secs_times_1000() {
+        // 1500 ms -> 1.5 s -> 1.5 * 1000.0 == 1500.0 exactly.
+        // Kills body->0.0/1.0/-1.0 (all differ from 1500.0) and
+        // `*`->`+` (1.5 + 1000.0 == 1001.5) / `*`->`/` (1.5 / 1000.0 == 0.0015).
+        assert_eq!(ms(Duration::from_millis(1500)), 1500.0);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact f64 pin — the expected values are exactly representable and every mutation yields a value far from them"
+    )]
+    fn ms_scales_with_input() {
+        // A second fixed point pins the operator: 250 ms -> 250.0.
+        assert_eq!(ms(Duration::from_millis(250)), 250.0);
+        assert_eq!(ms(Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn nanos_is_exact_nanoseconds() {
+        // Kills body->0 and body->1: 2500 differs from both.
+        assert_eq!(nanos(Duration::from_nanos(2500)), 2500);
+        assert_eq!(nanos(Duration::from_millis(1)), 1_000_000);
+    }
+}

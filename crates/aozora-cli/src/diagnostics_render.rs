@@ -39,8 +39,15 @@ pub(crate) enum DiagFormat {
 impl DiagFormat {
     /// Collapse `Auto` to a concrete view based on whether stderr is a TTY.
     fn resolved(self) -> Self {
+        self.resolve(io::stderr().is_terminal())
+    }
+
+    /// Pure decision seam for [`resolved`](Self::resolved): `Auto` becomes
+    /// `Human` on a terminal and `Json` otherwise; concrete formats pass
+    /// through unchanged.
+    fn resolve(self, is_terminal: bool) -> Self {
         match self {
-            Self::Auto if io::stderr().is_terminal() => Self::Human,
+            Self::Auto if is_terminal => Self::Human,
             Self::Auto => Self::Json,
             other => other,
         }
@@ -89,25 +96,40 @@ fn render_human(path: &str, doc: &Document, diagnostics: &[aozora::Diagnostic]) 
 /// noisy input does not bury the reports. A no-op when `diagnostics` is
 /// empty.
 fn write_explain_hint(w: &mut impl Write, diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {
+    if let Some(hint) = explain_hint(diagnostics.iter().map(aozora::Diagnostic::code)) {
+        w.write_all(hint.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Pure formatting seam for [`write_explain_hint`]: build the hint text
+/// for the distinct short codes among `codes` (first-seen order, capped at
+/// `MAX_HINTS` with an `… and N more` tail), or `None` when there are none.
+fn explain_hint(codes: impl Iterator<Item = &'static str>) -> Option<String> {
+    use std::fmt::Write as _;
+
     const MAX_HINTS: usize = 3;
     let mut seen: Vec<&'static str> = Vec::new();
-    for diag in diagnostics {
-        let short = short_code(diag.code());
+    for code in codes {
+        let short = short_code(code);
         if !seen.contains(&short) {
             seen.push(short);
         }
     }
     if seen.is_empty() {
-        return Ok(());
+        return None;
     }
-    writeln!(w, "help: run `aozora explain <code>` for details, e.g.")?;
+    let mut out = String::new();
+    writeln!(out, "help: run `aozora explain <code>` for details, e.g.")
+        .expect("writing to a String is infallible");
     for code in seen.iter().take(MAX_HINTS) {
-        writeln!(w, "      aozora explain {code}")?;
+        writeln!(out, "      aozora explain {code}").expect("writing to a String is infallible");
     }
     if seen.len() > MAX_HINTS {
-        writeln!(w, "      … and {} more", seen.len() - MAX_HINTS)?;
+        writeln!(out, "      … and {} more", seen.len() - MAX_HINTS)
+            .expect("writing to a String is infallible");
     }
-    Ok(())
+    Some(out)
 }
 
 /// The terminal segment of a `::`-qualified diagnostic code —
@@ -134,4 +156,100 @@ fn render_short(path: &str, diagnostics: &[aozora::Diagnostic]) -> io::Result<()
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `resolve` is the pure TTY-decision seam behind `resolved()`. On a
+    // terminal `Auto` renders `Human`; piped, it renders `Json`. Driving
+    // both branches kills the `is_terminal` guard being pinned to `false`.
+    #[test]
+    fn resolve_auto_on_terminal_is_human() {
+        assert!(matches!(DiagFormat::Auto.resolve(true), DiagFormat::Human));
+    }
+
+    #[test]
+    fn resolve_auto_when_piped_is_json() {
+        assert!(matches!(DiagFormat::Auto.resolve(false), DiagFormat::Json));
+    }
+
+    // Concrete formats ignore the terminal flag and pass straight through,
+    // regardless of which side of the guard we are on.
+    #[test]
+    fn resolve_concrete_formats_pass_through() {
+        assert!(matches!(DiagFormat::Human.resolve(true), DiagFormat::Human));
+        assert!(matches!(
+            DiagFormat::Human.resolve(false),
+            DiagFormat::Human
+        ));
+        assert!(matches!(DiagFormat::Json.resolve(true), DiagFormat::Json));
+        assert!(matches!(DiagFormat::Json.resolve(false), DiagFormat::Json));
+        assert!(matches!(DiagFormat::Short.resolve(true), DiagFormat::Short));
+        assert!(matches!(
+            DiagFormat::Short.resolve(false),
+            DiagFormat::Short
+        ));
+    }
+
+    #[test]
+    fn explain_hint_empty_is_none() {
+        use std::iter::empty;
+        assert_eq!(explain_hint(empty()), None);
+    }
+
+    // Deduped to distinct short codes, in first-seen order.
+    #[test]
+    fn explain_hint_dedups_by_short_code() {
+        let codes = ["aozora::lex::foo", "aozora::parse::foo", "aozora::lex::bar"];
+        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        assert_eq!(
+            hint,
+            "help: run `aozora explain <code>` for details, e.g.\n\
+             \u{20}     aozora explain foo\n\
+             \u{20}     aozora explain bar\n",
+        );
+    }
+
+    // Exactly `MAX_HINTS` (3) distinct codes: every code is listed and there
+    // is NO `… and N more` tail. `seen.len() > MAX_HINTS` is `3 > 3` == false;
+    // mutating `>` to `==` or `>=` would make `3 <op> 3` true and emit a
+    // spurious `… and 0 more`, so asserting the tail's absence kills both.
+    #[test]
+    fn explain_hint_exactly_max_has_no_more_tail() {
+        let codes = ["aozora::a::x", "aozora::b::y", "aozora::c::z"];
+        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        assert_eq!(
+            hint,
+            "help: run `aozora explain <code>` for details, e.g.\n\
+             \u{20}     aozora explain x\n\
+             \u{20}     aozora explain y\n\
+             \u{20}     aozora explain z\n",
+        );
+        assert!(!hint.contains("more"));
+    }
+
+    // One over the cap (4 distinct codes): only the first three are listed
+    // and a `… and 1 more` tail appears. `seen.len() > MAX_HINTS` is
+    // `4 > 3` == true; mutating `>` to `<` or `==` makes `4 <op> 3` false and
+    // drops the tail, so asserting the tail's presence kills both.
+    #[test]
+    fn explain_hint_over_max_shows_more_tail() {
+        let codes = [
+            "aozora::a::x",
+            "aozora::b::y",
+            "aozora::c::z",
+            "aozora::d::w",
+        ];
+        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        assert_eq!(
+            hint,
+            "help: run `aozora explain <code>` for details, e.g.\n\
+             \u{20}     aozora explain x\n\
+             \u{20}     aozora explain y\n\
+             \u{20}     aozora explain z\n\
+             \u{20}     … and 1 more\n",
+        );
+    }
 }

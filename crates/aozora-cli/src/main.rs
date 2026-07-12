@@ -408,20 +408,47 @@ fn main() -> ExitCode {
 
     match result {
         Ok(code) => code,
-        // A reader that closed our stdout pipe early (`aozora render … | head`)
-        // is a normal, silent success, not an error — see ADR-0029.
-        Err(err) if aozora_fmt::is_broken_pipe(&err) => ExitCode::SUCCESS,
-        // Input past the parser core's u32 span limit is a usage error (2), not
-        // the generic failure (1): the graceful rejection the py/wasm bindings
-        // already give, instead of the lexer assert's SIGABRT.
-        Err(err) if aozora_fmt::is_oversize_input(&err) => {
-            let _drop = writeln!(io::stderr(), "aozora: {err:#}");
-            ExitCode::from(2)
-        }
-        Err(err) => {
-            let _drop = writeln!(io::stderr(), "aozora: {err:#}");
-            ExitCode::FAILURE
-        }
+        Err(err) => match classify_err(&err) {
+            // A reader that closed our stdout pipe early (`aozora render … |
+            // head`) is a normal, silent success, not an error — see ADR-0029.
+            ErrDisposition::SilentSuccess => ExitCode::SUCCESS,
+            // Input past the parser core's u32 span limit is a usage error (2),
+            // not the generic failure (1): the graceful rejection the py/wasm
+            // bindings already give, instead of the lexer assert's SIGABRT.
+            ErrDisposition::Usage => {
+                let _drop = writeln!(io::stderr(), "aozora: {err:#}");
+                ExitCode::from(2)
+            }
+            ErrDisposition::Failure => {
+                let _drop = writeln!(io::stderr(), "aozora: {err:#}");
+                ExitCode::FAILURE
+            }
+        },
+    }
+}
+
+/// How a top-level error maps to the process's disposition — the pure decision
+/// behind `main`'s final `match`, split out so both boundaries are unit-testable
+/// without a real broken pipe or a 4 GiB input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrDisposition {
+    /// Broken pipe: exit 0 with nothing on stderr (ADR-0029).
+    SilentSuccess,
+    /// Oversize input: usage error, exit 2, message on stderr.
+    Usage,
+    /// Anything else: generic failure, exit 1, message on stderr.
+    Failure,
+}
+
+/// Classify a top-level `err` into its [`ErrDisposition`]. Broken pipe wins over
+/// oversize wins over the generic failure, matching `main`'s arm order.
+fn classify_err(err: &anyhow::Error) -> ErrDisposition {
+    if aozora_fmt::is_broken_pipe(err) {
+        ErrDisposition::SilentSuccess
+    } else if aozora_fmt::is_oversize_input(err) {
+        ErrDisposition::Usage
+    } else {
+        ErrDisposition::Failure
     }
 }
 
@@ -598,18 +625,20 @@ fn run_fmt(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
     fmt_watched(args, || run_fmt_once(args, color))
 }
 
+/// The concrete file paths among fmt's PATHs — every path that is not the `-`
+/// stdin marker. `--watch` needs exactly one; split out so the stdin filter is
+/// unit-testable.
+fn watch_target_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
+    paths.iter().filter(|p| p.as_os_str() != "-").collect()
+}
+
 /// `--watch` for `fmt`: re-run on every change to the single input file.
 /// fmt takes many PATHs, so watch requires exactly one non-stdin path.
 fn fmt_watched(args: &FmtCmd, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
     if !args.cross.watch {
         return once();
     }
-    let files: Vec<&PathBuf> = args
-        .fmt
-        .paths()
-        .iter()
-        .filter(|p| p.as_os_str() != "-")
-        .collect();
+    let files = watch_target_paths(args.fmt.paths());
     let [path] = files.as_slice() else {
         let _drop = writeln!(
             io::stderr(),
@@ -673,13 +702,19 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
 fn run_inspect(args: &InspectArgs) -> Result<ExitCode> {
     // `slugs` is a static catalogue that reads no input, so it must stay
     // usable on a bare terminal — guard only the kinds that read stdin.
-    if !matches!(args.which, InspectKind::Slugs) {
+    if inspect_reads_stdin(args.which) {
         let cmd = inspect_cmd(args.which);
         if let Some(code) = input::guard_stdin(&args.common.input.file, &cmd) {
             return Ok(code);
         }
     }
     run_watched(&args.common, || run_inspect_once(args))
+}
+
+/// Does this `inspect` kind read document input from stdin? Every kind but the
+/// static `slugs` catalogue does — split out so the guard predicate is testable.
+fn inspect_reads_stdin(kind: InspectKind) -> bool {
+    !matches!(kind, InspectKind::Slugs)
 }
 
 /// The stdin-hint command string for an `inspect` kind, e.g.
@@ -806,5 +841,110 @@ fn display_path(path: &Path) -> String {
         String::from("<stdin>")
     } else {
         path.display().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- classify_err: main's final error disposition (main.rs:417 guard) ---
+
+    #[test]
+    fn classify_err_maps_broken_pipe_to_silent_success() {
+        let err = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(classify_err(&err), ErrDisposition::SilentSuccess);
+    }
+
+    #[test]
+    fn classify_err_maps_oversize_input_to_usage() {
+        // is_broken_pipe is false, is_oversize_input true -> Usage (exit 2).
+        // Forcing the oversize guard false would misroute this to Failure.
+        let err = anyhow::Error::new(aozora_fmt::OversizeInput {
+            bytes: aozora_fmt::MAX_SOURCE_BYTES + 1,
+        });
+        assert_eq!(classify_err(&err), ErrDisposition::Usage);
+    }
+
+    #[test]
+    fn classify_err_maps_other_errors_to_failure() {
+        // Neither guard matches -> Failure (exit 1). Forcing the oversize guard
+        // true would misroute this to Usage.
+        let err = anyhow::anyhow!("some unrelated failure");
+        assert_eq!(classify_err(&err), ErrDisposition::Failure);
+    }
+
+    // --- watch_target_paths: fmt --watch stdin filter (main.rs:611 `!=`) ---
+
+    #[test]
+    fn watch_target_paths_drops_stdin_marker() {
+        let paths = vec![PathBuf::from("-"), PathBuf::from("a.txt")];
+        let targets = watch_target_paths(&paths);
+        // With `==` instead of `!=` this would keep only "-" and drop "a.txt".
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].as_os_str(), "a.txt");
+    }
+
+    #[test]
+    fn watch_target_paths_keeps_all_concrete_paths() {
+        let paths = vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")];
+        let targets = watch_target_paths(&paths);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].as_os_str(), "a.txt");
+        assert_eq!(targets[1].as_os_str(), "b.txt");
+    }
+
+    #[test]
+    fn watch_target_paths_drops_a_lone_stdin_marker() {
+        let paths = vec![PathBuf::from("-")];
+        // With `==` this would keep the single "-" entry.
+        assert!(watch_target_paths(&paths).is_empty());
+    }
+
+    // --- inspect_reads_stdin: run_inspect guard predicate (main.rs:676 `!`) ---
+
+    #[test]
+    fn inspect_reads_stdin_true_for_document_kinds() {
+        assert!(inspect_reads_stdin(InspectKind::Nodes));
+        assert!(inspect_reads_stdin(InspectKind::Pairs));
+        assert!(inspect_reads_stdin(InspectKind::ContainerPairs));
+        assert!(inspect_reads_stdin(InspectKind::Diagnostics));
+        assert!(inspect_reads_stdin(InspectKind::GaijiResolutions));
+    }
+
+    #[test]
+    fn inspect_reads_stdin_false_for_the_static_slugs_catalogue() {
+        // Deleting the `!` would flip both this and the document-kind cases.
+        assert!(!inspect_reads_stdin(InspectKind::Slugs));
+    }
+
+    // --- inspect_cmd: the copy-pasteable stdin hint (main.rs:689 body) ---
+
+    #[test]
+    fn inspect_cmd_returns_exact_command_strings() {
+        // Pins every value-enum tag, killing both String::new() and
+        // "xyzzy".into() whole-body replacements.
+        assert_eq!(inspect_cmd(InspectKind::Nodes), "inspect nodes");
+        assert_eq!(inspect_cmd(InspectKind::Pairs), "inspect pairs");
+        assert_eq!(
+            inspect_cmd(InspectKind::ContainerPairs),
+            "inspect container-pairs"
+        );
+        assert_eq!(inspect_cmd(InspectKind::Diagnostics), "inspect diagnostics");
+        assert_eq!(inspect_cmd(InspectKind::GaijiResolutions), "inspect gaiji");
+        assert_eq!(inspect_cmd(InspectKind::Slugs), "inspect slugs");
+    }
+
+    // --- run_pandoc_once: real return differs from the default (main.rs:742) ---
+
+    #[test]
+    fn run_pandoc_once_propagates_read_errors() {
+        // A nonexistent input file makes the read fail before any output, so the
+        // real function returns Err — distinguishing it from the mutant body
+        // `Ok(Default::default())`, i.e. `Ok(ExitCode::SUCCESS)`.
+        let args =
+            PandocArgs::try_parse_from(["pandoc", "/nonexistent/aozora-pandoc-missing-9c1f2a.txt"])
+                .expect("pandoc args parse");
+        run_pandoc_once(&args).unwrap_err();
     }
 }

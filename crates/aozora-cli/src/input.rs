@@ -15,11 +15,20 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+/// The pure decision behind [`stdin_is_interactive`], split out so both
+/// outcomes are unit-testable without a real TTY: it is `true` only when
+/// `path` is the stdin sentinel `-` *and* `is_terminal` says stdin is a
+/// terminal. `stdin_is_interactive` is the thin wrapper that supplies the
+/// live terminal probe.
+fn is_interactive_decision(path: &Path, is_terminal: bool) -> bool {
+    path.as_os_str() == "-" && is_terminal
+}
+
 /// True when `path` is the stdin sentinel `-` *and* stdin is an interactive
 /// terminal — i.e. reading it would block on human input. Piped or
 /// redirected stdin is not a TTY, so this is `false` there.
 fn stdin_is_interactive(path: &Path) -> bool {
-    path.as_os_str() == "-" && io::stdin().is_terminal()
+    is_interactive_decision(path, io::stdin().is_terminal())
 }
 
 /// Write the four-line "empty stdin on a terminal" hint for `cmd` to `w`.
@@ -69,6 +78,39 @@ mod tests {
             "  全機能:  aozora --help\n",
         );
         assert_eq!(String::from_utf8(buf).unwrap(), expected);
+    }
+
+    #[test]
+    fn decision_is_true_only_for_dash_sentinel_on_a_terminal() {
+        // The `-` sentinel on a terminal is the one interactive case: this is
+        // the outcome a real TTY would produce and the only value that kills a
+        // `-> false` whole-body mutation of the decision.
+        assert!(
+            is_interactive_decision(Path::new("-"), true),
+            "`-` on a terminal must be interactive"
+        );
+    }
+
+    #[test]
+    fn decision_is_false_off_a_terminal_even_for_the_sentinel() {
+        // Same `-` sentinel, non-terminal stdin: the `&& is_terminal` conjunct
+        // must gate the result to false (a pipe or redirect).
+        assert!(
+            !is_interactive_decision(Path::new("-"), false),
+            "`-` off a terminal must not be interactive"
+        );
+    }
+
+    #[test]
+    fn decision_is_false_for_a_file_path_on_a_terminal() {
+        // A non-`-` path even on a terminal is false. With `==` mutated to
+        // `!=`, `"file.txt" != "-"` would be true and, combined under `&&`
+        // with the terminal flag, would wrongly report interactive — so this
+        // pins the `==`.
+        assert!(
+            !is_interactive_decision(Path::new("some/file.txt"), true),
+            "a file path is never the stdin sentinel"
+        );
     }
 
     #[test]
