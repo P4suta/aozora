@@ -45,9 +45,17 @@ minimum_test_timeout = 30.0
 #     default build and read only by the aozora-bench profiler, not a
 #     correctness surface. Under the default-feature sweep its ~80 mutants
 #     are all cfg-dead vacuous survivors, so it is excluded like the bench.
+#   - aozora-extism plugin exports: `plugin.rs` is the whole
+#     `#[cfg(target_arch = "wasm32")]` plugin module — seven thin
+#     `#[plugin_fn]` wrappers that delegate to the host-testable `logic`
+#     module in the same crate. On a host (non-wasm32) sweep it is cfg-dead,
+#     so its ~49 mutants are all vacuous survivors. It was split out of
+#     `lib.rs` into its own file precisely so this glob excludes only the
+#     wrappers while `logic` (swept normally) keeps carrying the assertions.
 exclude_globs = [
   "crates/aozora-bench/**",
   "**/fuzz/**",
   "crates/aozora-buildstamp/**",
   "crates/aozora-pipeline/src/lexer/instrumentation.rs",
+  "crates/aozora-extism/src/plugin.rs",
 ]

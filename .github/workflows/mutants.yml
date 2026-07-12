@@ -91,6 +91,8 @@ jobs:
             # cst::from_tree are feature-gated; without these the sweep would see
             # cfg-dead vacuous survivors instead of the real product surface.
             features: --features schema,query
+          - crate: aozora-ffi       # ratcheted at mutants-baseline.json (0 survivors)
+          - crate: aozora-extism    # ratcheted at mutants-baseline.json (0 survivors; wasm-only plugin.rs excluded in mutants.toml)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
