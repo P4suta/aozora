@@ -30,7 +30,7 @@ use crate::half_width_emmet::emmet_completions;
 use crate::hover::hover_at;
 use crate::linked_editing::linked_editing_at;
 use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};
-use crate::parse_cache::MAX_DOCUMENT_BYTES;
+use crate::parse_cache::{MAX_DOCUMENT_BYTES, exceeds_document_cap};
 use crate::rename::{prepare_rename_at, rename_edit};
 use crate::state::OpenDocument;
 use crate::structured_snippets::snippet_completions;
@@ -142,7 +142,7 @@ impl AozoraLanguageServer {
             // diagnostics so the absence of squiggles is explained.
             // (`len_bytes()` off the rope avoids materialising `doc_text()`
             // solely for the size check.)
-            if rope.len_bytes() > MAX_DOCUMENT_BYTES {
+            if exceeds_document_cap(rope.len_bytes()) {
                 return vec![oversize_notice(rope.len_bytes())];
             }
             // Map diagnostic spans against the doc-level rope (O(log n) line
@@ -215,7 +215,7 @@ impl AozoraLanguageServer {
         // `reparse_pending` (empty diagnostics); surface the notice based
         // on the text that was actually parsed, not a possibly-stale
         // snapshot length.
-        let publish_diags = if raw.len_bytes() > MAX_DOCUMENT_BYTES {
+        let publish_diags = if exceeds_document_cap(raw.len_bytes()) {
             vec![oversize_notice(raw.len_bytes())]
         } else {
             // Map spans against the parsed rope directly — the per-keystroke
@@ -259,7 +259,7 @@ impl AozoraLanguageServer {
         let text = state.snapshot().doc_text().to_string();
         // The preview drives the same O(n) renderer; skip it for
         // oversized documents and return a short inert notice instead.
-        if text.len() > MAX_DOCUMENT_BYTES {
+        if exceeds_document_cap(text.len()) {
             return Ok(RenderHtmlResult {
                 html: oversize_html_notice(text.len()),
             });
@@ -1316,6 +1316,59 @@ mod tests {
         assert_eq!(with_rebuild, no_rebuild);
         assert_eq!(with_rebuild, "aXc");
     }
+
+    // ---------------------------------------------------------------
+    // 6. Byte-length → MiB helper + oversize notice construction
+    // ---------------------------------------------------------------
+
+    /// Pin `as_mib` to exact whole-MiB integer division. The single
+    /// `2 MiB → 2` assertion alone distinguishes the correct
+    /// `bytes / (1024 * 1024)` from every mutation cargo-mutants
+    /// applies to it:
+    ///
+    /// * `-> 0` and `-> 1` constant returns (2 ≠ 0, 2 ≠ 1),
+    /// * `/` → `%` (`2 MiB % 1 MiB == 0`),
+    /// * `/` → `*` (a value in the trillions),
+    /// * `1024 * 1024` divisor with `*` → `+` (divisor `2048` → `1024`),
+    /// * `1024 * 1024` divisor with `*` → `/` (divisor `1` → `2 MiB`).
+    #[test]
+    fn as_mib_is_whole_mebibyte_floor_division() {
+        assert_eq!(as_mib(2 * 1024 * 1024), 2);
+        // A second, larger reference point rules out any accidental
+        // affine relationship that happens to pass at 2 MiB.
+        assert_eq!(as_mib(48 * 1024 * 1024), 48);
+        // Whole-MiB floor: one byte under a MiB truncates to zero, and
+        // exactly one MiB is one.
+        assert_eq!(as_mib(1024 * 1024 - 1), 0);
+        assert_eq!(as_mib(1024 * 1024), 1);
+    }
+
+    /// Pin the mutable fields of the oversize notice `Diagnostic`.
+    /// Deleting the `source` field defaults it to `None`; deleting the
+    /// `message` field defaults it to the empty string — both are
+    /// caught here. The `severity` and `range` are pinned for the
+    /// contract even though they are not the mutation targets.
+    ///
+    /// (Deleting the `range` field is an *equivalent* mutation:
+    /// `Range::default()` is byte-identical to the explicit
+    /// `Range::new(Position::new(0, 0), Position::new(0, 0))`, so no
+    /// test can observe the difference — this assertion documents the
+    /// anchor but cannot kill that mutant.)
+    #[test]
+    fn oversize_notice_pins_source_severity_and_message() {
+        let diag = oversize_notice(20 * 1024 * 1024);
+        assert_eq!(diag.source.as_deref(), Some("aozora-lsp"));
+        assert!(
+            diag.message.contains("20 MiB") && diag.message.contains("above the"),
+            "message must quote the document size and the limit: {}",
+            diag.message,
+        );
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(
+            diag.range,
+            Range::new(Position::new(0, 0), Position::new(0, 0)),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1500,6 +1553,48 @@ mod e2e {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// True when `diag` is the single informational oversize notice
+    /// (`oversize_notice`) rather than a real analysis diagnostic. Used
+    /// by the boundary tests to tell "analysed normally" apart from
+    /// "replaced by the oversize notice".
+    fn is_oversize_notice(diag: &Value) -> bool {
+        diag["severity"] == json!(3 /* INFORMATION */)
+            && diag["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("above the"))
+    }
+
+    /// Fetch a document's rendered HTML body (custom `aozora/renderHtml`).
+    /// A read-back probe for tests that need to inspect the settled
+    /// buffer text after a `did_change`.
+    #[allow(
+        clippy::future_not_send,
+        reason = "test-only helper driven by block_on in #[tokio::test]; never spawned, so Send is not required"
+    )]
+    async fn rendered_html(server: &mut TestServer) -> String {
+        let resp = server
+            .request("aozora/renderHtml", json!({ "uri": URI }))
+            .await;
+        resp["html"].as_str().unwrap_or_default().to_owned()
+    }
+
+    /// Wait until at least `n` `publishDiagnostics` have been observed,
+    /// returning the `n`-th (1-indexed) one.
+    #[allow(
+        clippy::future_not_send,
+        reason = "test-only helper driven by block_on in #[tokio::test]; never spawned, so Send is not required"
+    )]
+    async fn nth_publish(server: &TestServer, n: usize) -> Request {
+        server
+            .wait_until(|reqs| {
+                reqs.iter()
+                    .filter(|r| r.method() == PUBLISH)
+                    .nth(n - 1)
+                    .cloned()
+            })
+            .await
     }
 
     // -----------------------------------------------------------------
@@ -2098,5 +2193,344 @@ mod e2e {
         server.handshake().await;
         let resp = server.request("shutdown", json!(null)).await;
         assert!(resp.is_null());
+    }
+
+    // -----------------------------------------------------------------
+    // Capability advertisement — pin every field a "delete struct
+    // field" mutation could silently drop from `initialize`.
+    // -----------------------------------------------------------------
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn initialize_pins_deletable_capability_fields() {
+        let mut server = TestServer::new();
+        let caps = server.handshake().await;
+        let c = &caps["capabilities"];
+        // text_document_sync = INCREMENTAL (2).
+        assert_eq!(c["textDocumentSync"], json!(2), "{c}");
+        // linked_editing_range_provider = Simple(true).
+        assert_eq!(c["linkedEditingRangeProvider"], json!(true), "{c}");
+        // folding_range_provider = Simple(true).
+        assert_eq!(c["foldingRangeProvider"], json!(true), "{c}");
+        // document_on_type_formatting_provider — object with a first trigger.
+        assert!(
+            c["documentOnTypeFormattingProvider"]["firstTriggerCharacter"].is_string(),
+            "onType formatting provider must be advertised: {c}",
+        );
+        // code_action_provider — present, carrying its code_action_kinds.
+        assert!(
+            c["codeActionProvider"].is_object(),
+            "code action provider must be advertised as options: {c}",
+        );
+        assert!(
+            c["codeActionProvider"]["codeActionKinds"]
+                .as_array()
+                .is_some_and(|k| !k.is_empty()),
+            "code_action_kinds list must be advertised: {c}",
+        );
+        // completion_provider — trigger_characters non-empty AND
+        // resolve_provider explicitly false (not merely absent).
+        assert!(
+            c["completionProvider"]["triggerCharacters"]
+                .as_array()
+                .is_some_and(|t| !t.is_empty()),
+            "completion trigger_characters must be advertised: {c}",
+        );
+        assert_eq!(
+            c["completionProvider"]["resolveProvider"],
+            json!(false),
+            "{c}"
+        );
+    }
+
+    /// The `initialized` handler logs a readiness line to the client.
+    /// Replacing its body with `()` drops that message.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn initialized_logs_ready_message() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        let log = server
+            .wait_until(|reqs| {
+                reqs.iter()
+                    .find(|r| {
+                        r.method() == "window/logMessage"
+                            && r.params()
+                                .and_then(|p| p.get("message"))
+                                .and_then(Value::as_str)
+                                == Some("aozora-lsp ready")
+                    })
+                    .cloned()
+            })
+            .await;
+        assert_eq!(log.method(), "window/logMessage");
+    }
+
+    // -----------------------------------------------------------------
+    // did_change match-arm + multi-change semantics
+    // -----------------------------------------------------------------
+
+    /// A content change with no `range` is a whole-document replacement,
+    /// routed through the `None if change.range.is_none()` arm to
+    /// `replace_text`. Forcing that guard to `false` would drop the
+    /// change and leave the buffer stale.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn did_change_full_replacement_replaces_buffer() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("hello").await;
+        nth_publish(&server, 1).await;
+
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [{ "text": "REPLACEDBODY" }],
+                }),
+            )
+            .await;
+        nth_publish(&server, 2).await;
+
+        let body = rendered_html(&mut server).await;
+        assert!(
+            body.contains("REPLACEDBODY"),
+            "range-less change must fully replace the buffer: {body}",
+        );
+    }
+
+    /// An inverted range (`end < start`) makes `lsp_change_to_edit`
+    /// return `None` while `change.range.is_some()`, so the correct
+    /// guard `change.range.is_none()` is false and the change is
+    /// skipped. Forcing the guard to `true` would wrongly call
+    /// `replace_text(change.text)` and clobber the buffer.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn did_change_inverted_range_is_skipped_not_applied() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("hello world").await;
+        nth_publish(&server, 1).await;
+
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [{
+                        "range": {
+                            "start": { "line": 0, "character": 5 },
+                            "end":   { "line": 0, "character": 2 },
+                        },
+                        "text": "ZZCLOBBERZZ",
+                    }],
+                }),
+            )
+            .await;
+        nth_publish(&server, 2).await;
+
+        let body = rendered_html(&mut server).await;
+        assert!(
+            !body.contains("ZZCLOBBERZZ"),
+            "an unresolvable-range change must be dropped, not applied: {body}",
+        );
+        assert!(
+            body.contains("hello"),
+            "the original text must survive: {body}"
+        );
+    }
+
+    /// A two-change batch whose SECOND change addresses a column that
+    /// only exists after the FIRST change is applied. `multi =
+    /// content_changes.len() > 1` must be TRUE so the in-loop
+    /// `rebuild_snapshot_now()` refreshes the snapshot between the
+    /// changes; mutating `> 1` to `== 1` or `< 1` makes `multi` false
+    /// for a 2-change batch, so change 1 resolves column 4 against the
+    /// pre-batch 3-char text and the buffer is corrupted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn did_change_multi_dependent_batch_rebuilds_between_changes() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("abc").await;
+        nth_publish(&server, 1).await;
+
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end":   { "line": 0, "character": 0 },
+                            },
+                            "text": "X",
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 4 },
+                                "end":   { "line": 0, "character": 4 },
+                            },
+                            "text": "Y",
+                        },
+                    ],
+                }),
+            )
+            .await;
+        nth_publish(&server, 2).await;
+
+        let body = rendered_html(&mut server).await;
+        assert!(
+            body.contains("XabcY"),
+            "change 1 must apply against post-change-0 text (expected XabcY): {body}",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Handlers whose whole body a "-> Ok(None)" mutation could stub out
+    // -----------------------------------------------------------------
+
+    /// `linkedEditingRange` on a ruby-open delimiter must return the
+    /// paired open/close ranges — a bare `Ok(None)` stub would drop them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn linked_editing_returns_pair_on_ruby_delimiter() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("｜青空《あおぞら》").await;
+        // 《 sits at UTF-16 column 3; 》 at column 8.
+        let linked = server
+            .request(
+                "textDocument/linkedEditingRange",
+                json!({
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 0, "character": 3 },
+                }),
+            )
+            .await;
+        let ranges = linked["ranges"].as_array().expect("linked ranges array");
+        assert_eq!(ranges.len(), 2, "open+close endpoints: {linked}");
+        assert_eq!(ranges[1]["start"]["character"], json!(8), "{linked}");
+    }
+
+    /// `completion` right after a half-width `[` must surface the emmet
+    /// full-width `［` item — a bare `Ok(None)` stub would drop it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completion_returns_emmet_item_on_half_width_bracket() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("[").await;
+        let resp = server
+            .request(
+                "textDocument/completion",
+                json!({
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 0, "character": 1 },
+                }),
+            )
+            .await;
+        let items = resp.as_array().expect("completion array response");
+        assert!(!items.is_empty(), "expected completion items: {resp}");
+        assert!(
+            items.iter().any(|it| it["label"] == json!("［")),
+            "expected the full-width bracket emmet item: {resp}",
+        );
+    }
+
+    /// `foldingRange` over a `ここから … 終わり` block returns exactly one
+    /// fold with a specific span. Pins the whole handler against the
+    /// `Ok(None)`, `Ok(Some(vec![]))`, and `Ok(Some(vec![Default::default()]))`
+    /// stubs: `None` → null, empty vec → wrong length, and the default
+    /// fold has `startLine`/`endLine` 0, not the real 1..3.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn folding_range_returns_exact_block_fold() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server
+            .did_open("本文\n［＃ここから字下げ］\n字下げ内\n［＃ここで字下げ終わり］\n後")
+            .await;
+        let folding = server
+            .request(
+                "textDocument/foldingRange",
+                json!({ "textDocument": { "uri": URI } }),
+            )
+            .await;
+        let ranges = folding.as_array().expect("folding array");
+        assert_eq!(ranges.len(), 1, "one block fold expected: {folding}");
+        assert_eq!(ranges[0]["startLine"], json!(1), "{folding}");
+        assert_eq!(ranges[0]["endLine"], json!(3), "{folding}");
+    }
+
+    /// `documentSymbol` over a heading returns exactly that heading — a
+    /// bare `Ok(None)` stub would drop the outline.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn document_symbol_returns_heading_symbol() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃「序章」は大見出し］\n本文").await;
+        let symbols = server
+            .request(
+                "textDocument/documentSymbol",
+                json!({ "textDocument": { "uri": URI } }),
+            )
+            .await;
+        let arr = symbols.as_array().expect("nested document-symbol array");
+        assert_eq!(arr.len(), 1, "one heading symbol expected: {symbols}");
+        assert_eq!(arr[0]["name"], json!("序章"), "{symbols}");
+    }
+
+    // -----------------------------------------------------------------
+    // The `exceeds_document_cap` size gate — behavioural side.
+    //
+    // The exclusive boundary itself (`len > cap`) is pinned cheaply on the
+    // pure predicate in `parse_cache::tests` (integer lengths, no fixture),
+    // which kills every `>`→`>=`/`==`/`<` mutant at all five call sites. What
+    // still needs a real over-limit buffer is the BEHAVIOUR on the oversize
+    // side: the debounced reparse must post the notice instead of analysing.
+    // -----------------------------------------------------------------
+
+    /// A document one byte ABOVE the limit must always take the oversize
+    /// branch in the debounced reparse. `raw.len_bytes() > MAX` mutated
+    /// to `<` would push an over-limit buffer into full analysis. This
+    /// stays cheap on the correct path — an over-limit buffer skips the
+    /// parse entirely, so only the mutant does real work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn over_limit_reparse_posts_oversize_notice() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        // One byte over MAX, as moderate-length lines (see
+        // `exact_max_document_is_analysed_not_noticed`): the correct path
+        // skips analysis entirely, and only the mutant that flips the gate
+        // parses, so keep even that off any per-line quadratic path.
+        let line: String = "a".repeat(63) + "\n";
+        let mut big = line.repeat(MAX_DOCUMENT_BYTES / 64);
+        big.push('a');
+        assert_eq!(big.len(), MAX_DOCUMENT_BYTES + 1);
+        server.did_open(&big).await;
+        nth_publish(&server, 1).await;
+
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 1 },
+                        },
+                        "text": "b",
+                    }],
+                }),
+            )
+            .await;
+        let second = nth_publish(&server, 2).await;
+        let diags = published_diagnostics(&second);
+        assert_eq!(
+            diags.len(),
+            1,
+            "over-limit reparse posts exactly the oversize notice: {diags:?}",
+        );
+        assert!(
+            is_oversize_notice(&diags[0]),
+            "the sole diagnostic must be the oversize notice: {diags:?}",
+        );
     }
 }

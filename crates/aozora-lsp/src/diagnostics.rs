@@ -215,6 +215,9 @@ fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic) -> Diagnostic {
 
 #[cfg(test)]
 mod tests {
+    use aozora::Span;
+    use tower_lsp::lsp_types::Position;
+
     use super::*;
 
     fn code_of(d: &Diagnostic) -> Option<&str> {
@@ -330,6 +333,86 @@ mod tests {
         assert_eq!(
             to_lsp_severity(Severity::Note),
             DiagnosticSeverity::INFORMATION
+        );
+    }
+
+    #[test]
+    fn serializable_pair_kind_open_and_close_str_match_authority() {
+        // Each wire tag stringifies to the exact `PairKind` glyph via the
+        // spec authority; a stubbed body (`""` / `"xyzzy"`) is caught per
+        // variant for both `open_str` and `close_str`.
+        let cases = [
+            (SerializablePairKind::Bracket, "［", "］"),
+            (SerializablePairKind::Ruby, "《", "》"),
+            (SerializablePairKind::AngleQuote, "≪", "≫"),
+            (SerializablePairKind::Tortoise, "〔", "〕"),
+            (SerializablePairKind::Quote, "「", "」"),
+        ];
+        for (kind, open, close) in cases {
+            assert_eq!(kind.open_str(), open, "open_str for {kind:?}");
+            assert_eq!(kind.close_str(), close, "close_str for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn quick_fix_payload_maps_unmatched_close_to_its_pair_kind() {
+        // Deleting the `UnmatchedClose` arm drops the payload to `None`
+        // via the `_` fallthrough; pin both presence and the carried kind.
+        let d = AozoraDiagnostic::unmatched_close(Span::new(3, 6), PairKind::Ruby);
+        let payload = quick_fix_payload(&d);
+        assert!(
+            matches!(
+                payload,
+                Some(DiagnosticPayload::UnmatchedClose {
+                    pair_kind: SerializablePairKind::Ruby
+                })
+            ),
+            "UnmatchedClose must yield a quick-fix payload carrying its pair kind, got {payload:?}",
+        );
+    }
+
+    #[test]
+    fn quick_fix_payload_carries_canonical_for_non_canonical_directive() {
+        // Deleting the `NonCanonicalDirective` arm drops the payload to
+        // `None`; the canonical spelling must round-trip into the payload.
+        let d = AozoraDiagnostic::non_canonical_directive(Span::new(0, 9), "中央揃え");
+        let payload = quick_fix_payload(&d);
+        let Some(DiagnosticPayload::NonCanonicalDirective { canonical }) = payload else {
+            panic!("NonCanonicalDirective must yield a NonCanonicalDirective quick-fix payload");
+        };
+        assert_eq!(canonical, "中央揃え");
+    }
+
+    #[test]
+    fn quick_fix_payload_maps_residual_annotation_marker() {
+        // Deleting the `Internal { ResidualAnnotationMarker }` arm drops the
+        // payload to `None`; pin that this internal check gets its payload.
+        let d = AozoraDiagnostic::internal(
+            Span::new(0, 1),
+            InternalCheckCode::ResidualAnnotationMarker,
+        );
+        let payload = quick_fix_payload(&d);
+        assert!(
+            matches!(payload, Some(DiagnosticPayload::ResidualAnnotationMarker)),
+            "ResidualAnnotationMarker internal check must yield its payload, got {payload:?}",
+        );
+    }
+
+    #[test]
+    fn to_lsp_range_reflects_diagnostic_span_not_default() {
+        // `𠮷` is astral (4 bytes, 2 UTF-16 units); `文` is BMP (3 bytes,
+        // 1 unit). The stray close `］` occupies bytes 7..10, i.e. UTF-16
+        // columns 3..4 — distinct from any byte-offset reading and from
+        // `Range::default()` = (0,0)-(0,0), so dropping the `range` field
+        // from the built `Diagnostic` is caught.
+        let source = "𠮷文］";
+        let view = DocLineView::from_source(source);
+        let d = AozoraDiagnostic::unmatched_close(Span::new(7, 10), PairKind::Bracket);
+        let lsp = to_lsp(&view, &d);
+        assert_eq!(
+            lsp.range,
+            Range::new(Position::new(0, 3), Position::new(0, 4)),
+            "range must reflect the diagnostic span, not Range::default()",
         );
     }
 

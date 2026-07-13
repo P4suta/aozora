@@ -358,6 +358,47 @@ mod tests {
     }
 
     #[test]
+    fn apply_edit_rope_actually_updates_the_tree() {
+        // Regression guard for a dropped `apply_edit_rope` body. The
+        // sibling `apply_edit_rope_matches_byte_apply_edit` test edits
+        // *within* a ruby reading, so the pre- and post-edit trees share
+        // an identical KIND sequence — `collect_kinds` can't tell a
+        // reparsed tree from the stale one, and a no-op `apply_edit_rope`
+        // survives. Here the edit crosses a structural boundary (plain
+        // text -> explicit ruby) so the kind sequence genuinely changes,
+        // and a dropped edit leaves the tree reflecting the pre-edit
+        // shape.
+        let initial = "そら";
+        let after = "｜青空《あおぞら》";
+
+        // Ground truth: a 1-shot parse of the post-edit text.
+        let want_doc = TreeSitterDoc::new();
+        want_doc.parse_full(after);
+        let want_kinds = want_doc.with_tree(collect_kinds).expect("tree");
+
+        // Setup validity: the pre-edit text must parse to a *different*
+        // kind sequence, otherwise the test couldn't observe a dropped
+        // edit at all.
+        let stale_doc = TreeSitterDoc::new();
+        stale_doc.parse_full(initial);
+        let stale_kinds = stale_doc.with_tree(collect_kinds).expect("tree");
+        assert_ne!(
+            stale_kinds, want_kinds,
+            "setup: pre/post-edit shapes must differ"
+        );
+
+        // Rope path under test: parse `initial`, then full-replace it.
+        let doc = TreeSitterDoc::new();
+        doc.parse_full_rope(&Rope::from_str(initial));
+        let edit = input_edit(0, initial.len(), after.len());
+        doc.apply_edit_rope(&Rope::from_str(after), edit);
+        let got_kinds = doc.with_tree(collect_kinds).expect("tree");
+
+        // A no-op `apply_edit_rope` would leave `got_kinds == stale_kinds`.
+        assert_eq!(got_kinds, want_kinds);
+    }
+
+    #[test]
     fn chunk_callback_returns_empty_past_end_of_rope() {
         // `chunk_callback` is internal but exercised only via the
         // rope-parse path, which never asks for an offset >= len in

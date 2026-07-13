@@ -175,6 +175,35 @@ mod tests {
         assert!(matches!(err, EditError::NonCharBoundary { .. }));
     }
 
+    /// `start` sits on a valid boundary but `end` does not — exactly
+    /// one operand of the char-boundary guard is true. `「あ」` is 3
+    /// bytes (boundaries at 0 and 3); `0..1` has `start == 0` (boundary)
+    /// and `end == 1` (mid-char). The unmodified `||` rejects because
+    /// `end` is off-boundary; a `&&` mutant would require BOTH endpoints
+    /// off-boundary and so would not reject here.
+    #[test]
+    fn end_only_off_char_boundary_fails() {
+        let err = apply_edits("あ", &[ByteEdit::new(0..1, String::new())]).unwrap_err();
+        assert!(matches!(
+            err,
+            EditError::NonCharBoundary { start: 0, end: 1 }
+        ));
+    }
+
+    /// `end` sits on a valid boundary but `start` does not — the mirror
+    /// of the case above, pinning the other operand of the `||`. For
+    /// `「あ」`, `1..3` has `start == 1` (mid-char) and `end == 3` (the
+    /// trailing boundary, equal to `source.len()`). The unmodified `||`
+    /// rejects because `start` is off-boundary; a `&&` mutant would not.
+    #[test]
+    fn start_only_off_char_boundary_fails() {
+        let err = apply_edits("あ", &[ByteEdit::new(1..3, String::new())]).unwrap_err();
+        assert!(matches!(
+            err,
+            EditError::NonCharBoundary { start: 1, end: 3 }
+        ));
+    }
+
     #[test]
     fn inverted_range_fail() {
         // Construct an inverted range explicitly — `5..2` would

@@ -547,4 +547,105 @@ mod tests {
         let off = src.rfind('［').unwrap();
         assert_round_trip(src, off, "［＃「青空」に傍線］");
     }
+
+    // ---- minimal_diff_edit (direct) ------------------------------------
+    //
+    // The minimal-diff fallback only fires when the two-region arithmetic
+    // is out of bounds, so these exercise it directly. Each pins the exact
+    // prefix/suffix trim offsets and the differing-middle replacement.
+
+    /// Byte-offset span + replacement text of a `TextEdit`, reconstructed
+    /// against `text` via the same `LineIndex` the edit was built from.
+    fn edit_bytes(text: &str, li: &LineIndex, e: &TextEdit) -> (usize, usize, String) {
+        let start = li.byte_offset(text, e.range.start).expect("start in range");
+        let end = li.byte_offset(text, e.range.end).expect("end in range");
+        (start, end, e.new_text.clone())
+    }
+
+    #[test]
+    fn minimal_diff_ascii_middle_replacement() {
+        // Common prefix "abc" (3 bytes), common suffix "fgh" (3 bytes): the
+        // minimal edit replaces the differing middle bytes 3..6 with "QW".
+        let text = "abcXYZfgh";
+        let new_source = "abcQWfgh";
+        let li = LineIndex::new(text);
+        let edit = minimal_diff_edit(&li, text, new_source);
+        let (start, end, new_text) = edit_bytes(text, &li, &edit);
+        assert_eq!(start, 3, "prefix trimmed to byte 3");
+        assert_eq!(end, 6, "old suffix trimmed to byte 6");
+        assert_eq!(new_text, "QW", "only the differing middle is emitted");
+    }
+
+    #[test]
+    fn minimal_diff_pure_insertion_at_end() {
+        // `text` is a proper prefix of `new_source`: the prefix walk must
+        // stop *at* max_pre without reading past the shorter buffer, and the
+        // edit is a pure insertion of "XY" at byte 3 (empty replaced span).
+        let text = "abc";
+        let new_source = "abcXY";
+        let li = LineIndex::new(text);
+        let edit = minimal_diff_edit(&li, text, new_source);
+        let (start, end, new_text) = edit_bytes(text, &li, &edit);
+        assert_eq!(start, 3, "insertion point after the shared prefix");
+        assert_eq!(end, 3, "nothing is deleted");
+        assert_eq!(new_text, "XY");
+    }
+
+    #[test]
+    fn minimal_diff_snaps_across_multibyte_boundaries() {
+        // "あ" = E3 81 82 and "も" = E3 82 82 share their lead byte (after the
+        // ASCII 'X') and their trailing byte, so a naive byte diff cuts the
+        // prefix inside the kana (byte 2) and the suffix inside it (byte 1).
+        // Both must snap to char boundaries: replace the whole "あ" (bytes
+        // 1..4) with "も". Catches byte-vs-char-boundary confusion.
+        let text = "Xあ";
+        let new_source = "Xも";
+        let li = LineIndex::new(text);
+        let edit = minimal_diff_edit(&li, text, new_source);
+        let (start, end, new_text) = edit_bytes(text, &li, &edit);
+        assert_eq!(start, 1, "prefix snapped back to the 'あ' boundary");
+        assert_eq!(end, 4, "suffix snapped forward to the end");
+        assert_eq!(new_text, "も");
+    }
+
+    // ---- recover_two_edits (direct) ------------------------------------
+
+    #[test]
+    fn recover_partner_at_same_start_does_not_shift() {
+        // q.start == p.start: the partner sits *at* the primary, not strictly
+        // after it, so it must keep its start (the `>` branch is false). Under
+        // `>=` the partner would shift by the primary delta (-1) to a negative
+        // start and the recovery would bail to None.
+        let text = "0123456789";
+        let new_source = "abcdefghij"; // same length → total_delta 0
+        let li = LineIndex::new(text);
+        let p = Span::new(0, 2);
+        let q = Span::new(0, 4);
+        // primary_delta = 1 - 2 = -1; `>` → q_new_start = 0 (valid) → Some.
+        // `>=` → q_new_start = 0 + (-1) = -1 → guard returns None.
+        let edits = recover_two_edits(&li, text, new_source, p, q, "X");
+        assert!(
+            edits.is_some(),
+            "partner at the primary's start must not shift"
+        );
+    }
+
+    #[test]
+    fn recover_keeps_a_fully_deleted_partner() {
+        // A partner whose new length is exactly 0 (deleted entirely) is a
+        // valid recovery: the lower bound on `q_new_len` must be strict `< 0`,
+        // not `== 0` or `<= 0`. Under those mutants the zero-length partner is
+        // wrongly rejected and the whole recovery returns None.
+        let text = "abcdefghijkl"; // len 12
+        let new_source = "abABCDEfjkl"; // len 11 → total_delta -1
+        let li = LineIndex::new(text);
+        let p = Span::new(2, 5); // len 3
+        let q = Span::new(6, 9); // len 3, starts strictly after p
+        // primary_delta = 5 - 3 = 2; partner_delta = -1 - 2 = -3;
+        // q_new_len = 3 + (-3) = 0; q_new_start = 6 + 2 = 8 (>= 0).
+        let edits = recover_two_edits(&li, text, new_source, p, q, "ABCDE")
+            .expect("a zero-length partner is a valid recovery, not a bail-out");
+        assert_eq!(edits.len(), 2, "primary edit plus the partner deletion");
+        assert_eq!(edits[1].new_text, "", "the partner region is deleted");
+    }
 }

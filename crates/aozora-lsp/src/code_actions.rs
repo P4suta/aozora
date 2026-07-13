@@ -581,4 +581,89 @@ mod tests {
             .clone();
         assert_eq!(change_text, "［＃「青空」に傍点］");
     }
+
+    // -----------------------------------------------------------------
+    // Field-presence pins: every builder stamps the LSP metadata
+    // (`title` / `kind` / `diagnostics` / `is_preferred`) explicitly.
+    // Dropping any of these would silently fall back to
+    // `CodeAction::default()` (`""` / `None`), so each assertion pins
+    // the exact non-default value the builder must set.
+    // -----------------------------------------------------------------
+
+    fn as_code_action(action: &CodeActionOrCommand) -> &CodeAction {
+        let CodeActionOrCommand::CodeAction(ca) = action else {
+            panic!("expected CodeAction");
+        };
+        ca
+    }
+
+    #[test]
+    fn build_action_sets_title_and_refactor_kind() {
+        let src = "青空";
+        let sel = Range::new(Position::new(0, 0), Position::new(0, 2));
+        let actions = wrap_selection_actions(src, &LineIndex::new(src), &fake_uri(), sel);
+        let ca = as_code_action(&actions[0]);
+        // build_action forwards the caller's title verbatim (default: "").
+        assert_eq!(ca.title, "ルビをふる ｜SEL《》");
+        // and stamps REFACTOR_REWRITE (default: None).
+        assert_eq!(ca.kind, Some(CodeActionKind::REFACTOR_REWRITE));
+    }
+
+    #[test]
+    fn forward_bouten_action_sets_title_and_refactor_kind() {
+        let src = "青空";
+        let sel = Range::new(Position::new(0, 0), Position::new(0, 2));
+        let actions = wrap_selection_actions(src, &LineIndex::new(src), &fake_uri(), sel);
+        let ca = as_code_action(actions.last().expect("bouten last"));
+        // Literal title (default: "") and REFACTOR_REWRITE kind (default: None).
+        assert_eq!(ca.title, "傍点を付ける ［＃「SEL」に傍点］");
+        assert_eq!(ca.kind, Some(CodeActionKind::REFACTOR_REWRITE));
+    }
+
+    #[test]
+    fn insert_close_action_carries_originating_diagnostic() {
+        let diag = diag_with_payload(DiagnosticPayload::UnclosedBracket {
+            pair_kind: SerializablePairKind::Bracket,
+            expected_close: "］".to_owned(),
+        });
+        let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
+        let ca = as_code_action(&actions[0]);
+        // The source diagnostic is attached to the quick fix (default: None).
+        assert_eq!(ca.diagnostics, Some(vec![diag]));
+    }
+
+    #[test]
+    fn delete_unmatched_close_action_stamps_quickfix_diag_and_preferred() {
+        let diag = diag_with_payload(DiagnosticPayload::UnmatchedClose {
+            pair_kind: SerializablePairKind::Ruby,
+        });
+        let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
+        let ca = as_code_action(&actions[0]);
+        assert_eq!(ca.kind, Some(CodeActionKind::QUICKFIX)); // default: None
+        assert_eq!(ca.diagnostics, Some(vec![diag])); // default: None
+        assert_eq!(ca.is_preferred, Some(true)); // default: None
+    }
+
+    #[test]
+    fn rewrite_directive_action_sets_title_and_carries_diagnostic() {
+        let diag = diag_with_payload(DiagnosticPayload::NonCanonicalDirective {
+            canonical: "ここで字下げ終わり".to_owned(),
+        });
+        let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
+        let ca = as_code_action(&actions[0]);
+        // Title interpolates the canonical directive (default: "").
+        assert_eq!(ca.title, "`［＃ここで字下げ終わり］` に書き換える");
+        // The source diagnostic is attached (default: None).
+        assert_eq!(ca.diagnostics, Some(vec![diag]));
+    }
+
+    #[test]
+    fn delete_pua_action_stamps_quickfix_diag_and_preferred() {
+        let diag = diag_with_payload(DiagnosticPayload::SourceContainsPua { codepoint: 0xE001 });
+        let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
+        let ca = as_code_action(&actions[0]);
+        assert_eq!(ca.kind, Some(CodeActionKind::QUICKFIX)); // default: None
+        assert_eq!(ca.diagnostics, Some(vec![diag])); // default: None
+        assert_eq!(ca.is_preferred, Some(true)); // default: None
+    }
 }

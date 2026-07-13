@@ -201,4 +201,39 @@ mod tests {
         let ranges = folding_ranges(src);
         assert_eq!(ranges[0].kind, Some(FoldingRangeKind::Region));
     }
+
+    /// Opener and closer on the SAME line must NOT emit a degenerate
+    /// zero-height fold. Pins `line_idx > start_line` (line 57): with
+    /// `>=` the equal-line case (0 == 0) would produce a `start==end`
+    /// fold, so the empty result would break.
+    #[test]
+    fn same_line_open_close_emits_no_degenerate_fold() {
+        let src = "［＃ここから字下げ］中身［＃ここで字下げ終わり］\n";
+        let ranges = folding_ranges(src);
+        assert!(ranges.is_empty(), "{ranges:?}");
+    }
+
+    /// Two adjacent heading lines make the window `end == start` (both
+    /// resolve to line 0). Pins `end > start` (line 94): with `>=` a
+    /// degenerate `start_line == end_line == 0` window fold would be
+    /// pushed on top of the tail fold, making the count 2.
+    #[test]
+    fn adjacent_headings_emit_no_degenerate_window_fold() {
+        let src = "［＃「章1」は大見出し］\n［＃「章2」は大見出し］\n本文\n";
+        let ranges = folding_ranges(src);
+        // Only the tail fold (anchor 1 → last_line 2) survives.
+        assert_eq!(ranges.len(), 1, "{ranges:?}");
+        assert_eq!(ranges[0].start_line, 1);
+        assert_eq!(ranges[0].end_line, 2);
+    }
+
+    /// A heading on the very last line makes `last_line == last_anchor`.
+    /// Pins `last_line > last_anchor` (line 106): with `>=` a degenerate
+    /// `start_line == end_line == 1` tail fold would be emitted.
+    #[test]
+    fn heading_on_last_line_emits_no_tail_fold() {
+        let src = "本文\n［＃「章」は大見出し］\n";
+        let ranges = folding_ranges(src);
+        assert!(ranges.is_empty(), "{ranges:?}");
+    }
 }

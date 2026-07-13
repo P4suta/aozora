@@ -458,4 +458,124 @@ mod tests {
         assert!(!items.is_empty());
         assert_eq!(items[0].label, "［＃］");
     }
+
+    #[test]
+    fn empty_wrap_carries_detail_documentation_and_kind() {
+        // Pins the three metadata fields on the preselected empty-wrap
+        // item: dropping any of them (mutant "delete field …") flips it
+        // to the `CompletionItem::default()` `None`.
+        let src = "#";
+        let items = snippet_completions(src, pos_at(src, src.len()));
+        let wrap = items
+            .iter()
+            .find(|i| i.label == "［＃］")
+            .expect("empty wrap present");
+        // `detail` field (line 109).
+        assert_eq!(
+            wrap.detail.as_deref(),
+            Some("注記スラグの空ひな型 (中身を編集)")
+        );
+        // `documentation` field (line 110) — pin the markdown payload.
+        let Some(Documentation::MarkupContent(mc)) = &wrap.documentation else {
+            panic!("empty wrap must carry markdown documentation")
+        };
+        assert_eq!(mc.kind, MarkupKind::Markdown);
+        assert_eq!(mc.value, "`#` を `［＃<カーソル>］` に変換。Enter で確定。");
+        // `kind` field (line 114).
+        assert_eq!(wrap.kind, Some(CompletionItemKind::SNIPPET));
+    }
+
+    #[test]
+    fn catalogue_entry_carries_detail_documentation_kind_and_format() {
+        // Pins the four metadata fields on a catalogue item. `改ページ`
+        // takes no parameter, so its `insert_text_format` is PLAIN_TEXT.
+        let src = "#";
+        let items = snippet_completions(src, pos_at(src, src.len()));
+        let entry = SLUGS
+            .iter()
+            .find(|e| e.canonical == "改ページ")
+            .expect("改ページ in SLUGS");
+        let kaipage = items
+            .iter()
+            .find(|i| i.label == "［＃改ページ］")
+            .expect("改ページ catalogue item present");
+        // `detail` field (line 137) is the entry's doc string.
+        assert_eq!(kaipage.detail.as_deref(), Some(entry.doc));
+        // `documentation` field (line 138) is present.
+        assert!(
+            kaipage.documentation.is_some(),
+            "catalogue item must carry documentation: {kaipage:?}",
+        );
+        // `kind` field (line 151) is derived from the entry's family.
+        assert_eq!(kaipage.kind, Some(family_to_kind(entry.family)));
+        // `insert_text_format` field (line 156): no param → PLAIN_TEXT.
+        let expected_format = if entry.accepts_param {
+            InsertTextFormat::SNIPPET
+        } else {
+            InsertTextFormat::PLAIN_TEXT
+        };
+        assert_eq!(kaipage.insert_text_format, Some(expected_format));
+    }
+
+    #[test]
+    fn open_angle_fires_when_only_non_close_text_follows() {
+        // `《` just typed, a reading half-entered, but NO closing `》`
+        // ahead → the `any(|c| c == '》')` guard is false → snippet
+        // fires. Flipping `==` to `!=` sees the non-`》` chars and
+        // wrongly bails (0 items).
+        let src = "太郎《読み";
+        let cursor = "太郎《".len();
+        let items = snippet_completions(src, pos_at(src, cursor));
+        assert_eq!(items.len(), 1, "reading snippet must fire: {items:?}");
+        let CompletionTextEdit::Edit(edit) = items[0].text_edit.as_ref().unwrap() else {
+            panic!("expected Edit")
+        };
+        assert_eq!(edit.new_text, "${1:reading}》");
+    }
+
+    #[test]
+    fn kome_fires_when_only_non_bracket_text_follows() {
+        // `※` just typed, plain text after it, but NO closing `］`
+        // ahead → the `any(|c| c == '］')` guard is false → skeleton
+        // fires. Flipping `==` to `!=` sees the non-`］` char and
+        // wrongly bails (0 items).
+        let src = "※あ";
+        let cursor = "※".len();
+        let items = snippet_completions(src, pos_at(src, cursor));
+        assert_eq!(items.len(), 1, "gaiji skeleton must fire: {items:?}");
+        let CompletionTextEdit::Edit(edit) = items[0].text_edit.as_ref().unwrap() else {
+            panic!("expected Edit")
+        };
+        assert_eq!(
+            edit.new_text,
+            "［＃「${1:description}」、${2:mencode}］${0}"
+        );
+    }
+
+    #[test]
+    fn char_before_returns_char_ending_exactly_at_offset() {
+        // `byte_end == source.len()` must return the LAST char, not
+        // `None`: `>` → `==` and `>` → `>=` both treat the end offset as
+        // out of range and return `None` instead.
+        assert_eq!(char_before("ab", 2), Some('b'));
+        // Multi-byte: `あ` is 3 bytes; ending offset 3 == len → its char.
+        assert_eq!(char_before("あ", 3), Some('あ'));
+        // Interior boundary returns the preceding char.
+        assert_eq!(char_before("ab", 1), Some('a'));
+        // `byte_end == 0` → `None` (no char ends at the start).
+        assert_eq!(char_before("ab", 0), None);
+        // `byte_end` past the end → `None`, NOT a panic: `||` → `&&`
+        // drops the out-of-range guard and slices out of bounds.
+        assert_eq!(char_before("ab", 5), None);
+    }
+
+    #[test]
+    fn has_ruby_struct_ahead_matches_both_angle_chars_only() {
+        // Open angle alone → true; `c == '《'` → `!=` would miss it.
+        assert!(has_ruby_struct_ahead("《", 0));
+        // Close angle alone → true; `c == '》'` → `!=` would miss it.
+        assert!(has_ruby_struct_ahead("》", 0));
+        // A non-angle char → false; either `==` → `!=` flip flips it true.
+        assert!(!has_ruby_struct_ahead("あ", 0));
+    }
 }

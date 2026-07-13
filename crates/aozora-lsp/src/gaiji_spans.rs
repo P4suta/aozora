@@ -169,6 +169,32 @@ mod tests {
         assert!(spans[0].mencode.is_none());
     }
 
+    fn span(start_byte: u32, end_byte: u32, description: &str) -> Arc<GaijiSpan> {
+        Arc::new(GaijiSpan {
+            start_byte,
+            end_byte,
+            description: Arc::from(description),
+            mencode: None,
+        })
+    }
+
+    #[test]
+    fn range_upper_bound_excludes_span_starting_at_end() {
+        // start_byte ascending so `partition_point` sees a monotone predicate.
+        let spans = vec![
+            span(5, 8, "a"),   // start 5  < 10  -> included
+            span(9, 10, "b"),  // start 9  < 10  -> included (just below the bound)
+            span(10, 15, "c"), // start 10 == end -> EXCLUDED (range is half-open)
+            span(20, 25, "d"), // start 20 -> excluded
+        ];
+        // Query [0, 10): span "c" begins exactly at the exclusive end `10`.
+        // With `<` it is dropped (len 2); the `<=` mutant would keep it (len 3).
+        let inside = spans_in_byte_range(&spans, 0, 10);
+        assert_eq!(inside.len(), 2);
+        assert_eq!(&*inside[0].description, "a");
+        assert_eq!(&*inside[1].description, "b");
+    }
+
     #[test]
     fn binary_search_filters_out_of_range_spans() {
         let src = "※［＃「a」、X］\n※［＃「b」、X］\n※［＃「c」、X］";

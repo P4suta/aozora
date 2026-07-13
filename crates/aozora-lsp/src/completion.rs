@@ -624,4 +624,241 @@ mod tests {
             edit.new_text
         );
     }
+
+    // --- resolve_slug_context forward-scan offset math ---------------------
+
+    #[test]
+    fn newline_stops_forward_close_scan() {
+        // The forward close scan MUST stop at the first newline — slug
+        // bodies never span lines. Cursor sits right after `＃` with the
+        // `］` on the *next* line. With the `'\n'` arm, close_end pins to
+        // the cursor (no existing close → the completion supplies its own
+        // `］` and the range ends at the cursor). Delete that arm and the
+        // scan runs past the newline, adopts the next-line `］` as this
+        // slug's close, emits a body-only new_text and pulls the range
+        // end onto line 1.
+        let src = "［＃\n］";
+        let cursor = "［＃".len(); // byte 6, just after ＃
+        let pos = byte_offset_to_position(src, cursor);
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        let CompletionTextEdit::Edit(edit) = entry.text_edit.as_ref().unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(edit.new_text, "改ページ］");
+        assert_eq!(edit.range.end, byte_offset_to_position(src, cursor));
+    }
+
+    #[test]
+    fn full_width_close_offset_lands_at_bracket_start() {
+        // The `］` arm computes close_end = cursor + rel + len_utf8('］')
+        // with a body char (`あ`) between the cursor and the close, so
+        // rel > 0 — this catches a `+`→`-` flip in either addend that a
+        // rel==0 case leaves equivalent. Correct math finds the existing
+        // full-width close, so new_text is body-only and the range ends
+        // exactly at the START of `］`.
+        let src = "［＃あ］";
+        let cursor = "［＃".len(); // byte 6
+        let pos = byte_offset_to_position(src, cursor);
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        let CompletionTextEdit::Edit(edit) = entry.text_edit.as_ref().unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(edit.new_text, "改ページ");
+        let close_start = "［＃あ".len(); // byte 9 = START of ］
+        assert_eq!(edit.range.end, byte_offset_to_position(src, close_start));
+    }
+
+    #[test]
+    fn ascii_close_offset_covers_through_close() {
+        // The `]` (half-width close) arm computes
+        // close_end = cursor + rel + len_utf8(']') with rel > 0 (body
+        // char `あ` precedes the `]`). A full-width opener paired with an
+        // ASCII close is NOT treated as an existing canonical close, so
+        // the whole span through the `]` is replaced and the range end
+        // must reach the byte AFTER `]`. A `+`→`-` flip shrinks close_end
+        // and pulls the range end back.
+        let src = "［＃あ]";
+        let cursor = "［＃".len(); // byte 6
+        let pos = byte_offset_to_position(src, cursor);
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        let CompletionTextEdit::Edit(edit) = entry.text_edit.as_ref().unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(edit.range.end, byte_offset_to_position(src, src.len()));
+    }
+
+    // --- CompletionItem field population -----------------------------------
+
+    #[test]
+    fn completion_item_carries_family_kind() {
+        // The `kind` field must be populated from the slug family;
+        // deleting it defaults to None and strips the per-family icon.
+        // 改ページ is PageBreak → EVENT.
+        let src = "［＃";
+        let pos = byte_offset_to_position(src, src.len());
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        assert_eq!(entry.kind, Some(CompletionItemKind::EVENT));
+    }
+
+    #[test]
+    fn completion_item_carries_documentation() {
+        // The `documentation` field must be present and embed the slug's
+        // doc string; deleting the field defaults it to None.
+        let src = "［＃";
+        let pos = byte_offset_to_position(src, src.len());
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        let Some(Documentation::MarkupContent(markup)) = entry.documentation.as_ref() else {
+            panic!(
+                "expected markdown documentation, got {:?}",
+                entry.documentation
+            );
+        };
+        assert_eq!(markup.kind, MarkupKind::Markdown);
+        assert!(
+            markup.value.contains("ページを改める"),
+            "documentation must embed the slug doc string, got {:?}",
+            markup.value,
+        );
+    }
+
+    #[test]
+    fn half_width_existing_full_close_does_not_shrink_replacement_range() {
+        // `[#あ］` — half-width opener, full-width close typed. The
+        // `existing_full_close_start` guard is gated on `!half_width()`,
+        // so for a half-width opener it MUST stay None: the whole
+        // `[#あ］` span (through the `］`) is rewritten to the canonical
+        // form. Flipping either `&&` to `||` in that guard treats the
+        // close as a pre-existing full-width close and pulls the range
+        // end back to the START of `］`, doubling the bracket.
+        let src = "[#あ］";
+        let cursor = "[#".len(); // byte 2
+        let pos = byte_offset_to_position(src, cursor);
+        let items = completion_at(src, pos);
+        let entry = items
+            .iter()
+            .find(|i| i.label == "改ページ")
+            .expect("改ページ in completions");
+        let CompletionTextEdit::Edit(edit) = entry.text_edit.as_ref().unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(edit.new_text, "［＃改ページ］");
+        assert_eq!(edit.range.start, byte_offset_to_position(src, 0));
+        assert_eq!(edit.range.end, byte_offset_to_position(src, src.len()));
+    }
+
+    // --- canonical_to_snippet placeholder-brace consumption ----------------
+
+    #[test]
+    #[allow(
+        clippy::literal_string_with_formatting_args,
+        reason = "`${1:N}` is LSP snippet placeholder syntax in the expected output, not a Rust format arg"
+    )]
+    fn snippet_consumes_exactly_through_the_placeholder_brace() {
+        // After emitting `${1:N}` for a `{N}` placeholder the scanner
+        // advances `chars` past the closing `}` — the `j > i + close_rel`
+        // guard consumes up to AND including the `}` and no further.
+        // `==`/`>=` leave the `}` un-consumed (stray `}` in output); `<`
+        // stops before the placeholder body char (re-emits it verbatim).
+        assert_eq!(canonical_to_snippet("{N}字下げ"), "${1:N}字下げ");
+    }
+
+    // --- forward_already_has partner detection -----------------------------
+
+    #[test]
+    fn forward_already_has_detects_partner_presence() {
+        // True when `partner` occurs at/after `cursor`; used to suppress
+        // the auto-inserted close. A body replaced by `false` would never
+        // detect an existing close and always duplicate it.
+        assert!(forward_already_has(
+            "本文\n［＃ここで字下げ終わり］",
+            0,
+            "ここで字下げ終わり",
+        ));
+        // Real forward content but the partner is genuinely absent.
+        assert!(!forward_already_has(
+            "本文［＃ここから字下げ］\nつづき",
+            0,
+            "ここで字下げ終わり",
+        ));
+        // Scans FORWARD only: the partner sits before the cursor here.
+        let src = "［＃ここで字下げ終わり］";
+        assert!(!forward_already_has(src, src.len(), "ここで字下げ終わり"));
+    }
+
+    // --- family_to_kind arm mapping ----------------------------------------
+
+    #[test]
+    fn family_to_kind_maps_every_family_to_its_icon() {
+        // Each arm pins one family (or family pair) to a distinct icon;
+        // deleting any arm falls its family through to the `_ => TEXT`
+        // default, so every mapping below is load-bearing.
+        assert_eq!(
+            family_to_kind(SlugFamily::PageBreak),
+            CompletionItemKind::EVENT
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::Section),
+            CompletionItemKind::EVENT
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::BlockContainerOpen),
+            CompletionItemKind::CLASS
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::BlockContainerClose),
+            CompletionItemKind::CLASS
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::LeafAlign),
+            CompletionItemKind::ENUM_MEMBER
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::Bouten),
+            CompletionItemKind::FIELD
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::Illustration),
+            CompletionItemKind::FILE
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::Framed),
+            CompletionItemKind::STRUCT
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::Warichu),
+            CompletionItemKind::STRUCT
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::CombineUpright),
+            CompletionItemKind::OPERATOR
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::KaeritenSingle),
+            CompletionItemKind::CONSTANT
+        );
+        assert_eq!(
+            family_to_kind(SlugFamily::KaeritenCompound),
+            CompletionItemKind::CONSTANT
+        );
+    }
 }

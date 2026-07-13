@@ -1214,4 +1214,264 @@ mod tests {
         assert!(rendered.contains("DocSnapshot"), "{rendered}");
         assert!(rendered.contains("version"), "{rendered}");
     }
+
+    // =================================================================
+    // Mutation-kill reinforcements
+    // =================================================================
+
+    /// A `tracing::Subscriber` that counts `WARN`-level events on the
+    /// current thread. `enabled` returns `true` so its
+    /// `register_callsite` reports `Interest::always()` and every event
+    /// reaches `event`.
+    use std::sync::atomic::AtomicUsize;
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::subscriber::with_default;
+
+    struct WarnCounter {
+        warns: Arc<AtomicUsize>,
+    }
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.warns.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _span: &Id) {}
+        fn exit(&self, _span: &Id) {}
+    }
+
+    /// Run `f` with a thread-local `WARN`-counting subscriber and return
+    /// how many `WARN` events it emitted.
+    fn count_warns(f: impl FnOnce()) -> usize {
+        let warns = Arc::new(AtomicUsize::new(0));
+        let subscriber = WarnCounter {
+            warns: Arc::clone(&warns),
+        };
+        with_default(subscriber, f);
+        warns.load(Ordering::SeqCst)
+    }
+
+    /// A `ReparseStats` whose only non-default field is `latency_us`.
+    fn stats_with_latency(latency_us: u64) -> ReparseStats {
+        ReparseStats {
+            latency_us,
+            ..ReparseStats::default()
+        }
+    }
+
+    /// Pre-order tree-sitter node kinds.
+    fn collect_tree_kinds(tree: &tree_sitter::Tree) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor = tree.walk();
+        walk_tree_kinds(&mut cursor, &mut out);
+        out
+    }
+
+    fn walk_tree_kinds(cursor: &mut tree_sitter::TreeCursor<'_>, out: &mut Vec<String>) {
+        out.push(cursor.node().kind().to_owned());
+        if cursor.goto_first_child() {
+            loop {
+                walk_tree_kinds(cursor, out);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            let popped = cursor.goto_parent();
+            debug_assert!(popped, "every goto_first_child must have a matching parent");
+        }
+    }
+
+    /// `DocBuffer`'s `Debug` names the struct and its `paragraphs` field.
+    /// Kills the `fmt -> Ok(Default::default())` mutant (which renders
+    /// an empty string).
+    #[test]
+    fn doc_buffer_debug_names_struct_and_fields() {
+        let buffer = DocBuffer::new("hello".to_owned());
+        let rendered = format!("{buffer:?}");
+        assert!(rendered.contains("DocBuffer"), "{rendered}");
+        assert!(rendered.contains("paragraphs"), "{rendered}");
+    }
+
+    /// `OpenDocument`'s `Debug` names the struct and its `edit_version`
+    /// field. Kills the `fmt -> Ok(Default::default())` mutant.
+    #[test]
+    fn open_document_debug_names_struct_and_fields() {
+        let state = doc("a");
+        let rendered = format!("{state:?}");
+        assert!(rendered.contains("OpenDocument"), "{rendered}");
+        assert!(rendered.contains("edit_version"), "{rendered}");
+    }
+
+    /// `validate_edits` rejects an edit where exactly ONE endpoint sits
+    /// off a UTF-8 char boundary. "あ" is 3 bytes; start=1 is inside the
+    /// codepoint, end=3 is the document end. The `||`→`&&` mutant would
+    /// require BOTH endpoints off-boundary and wrongly accept this edit.
+    #[test]
+    fn validate_edits_rejects_single_off_boundary_endpoint() {
+        let buffer = DocBuffer::new("あ".to_owned());
+        let edits = [ByteEdit::new(1..3, String::new())];
+        let err = buffer
+            .validate_edits(&edits)
+            .expect_err("an off-boundary start must be rejected");
+        assert!(
+            matches!(err, EditError::NonCharBoundary { start: 1, end: 3 }),
+            "{err:?}",
+        );
+    }
+
+    /// A doc byte strictly past `total_bytes` is out of bounds and
+    /// `is_char_boundary` must short-circuit to `false` at the
+    /// `doc_byte > total` guard. The `>`→`==` mutant lets an
+    /// out-of-bounds byte fall through into `chunk_at_byte`, which
+    /// panics on the over-length local offset.
+    #[test]
+    fn is_char_boundary_past_total_is_false() {
+        let buffer = DocBuffer::new("あ".to_owned());
+        // total_bytes == 3; byte 8 is well past the end.
+        assert!(!buffer.is_char_boundary(8));
+    }
+
+    /// A real char boundary deep inside a multi-chunk paragraph rope must
+    /// report `true`. `is_char_boundary` maps the doc byte to an
+    /// in-chunk offset via `local - chunk_byte_idx`; the `-`→`+` mutant
+    /// overshoots the chunk length, so `str::is_char_boundary` returns
+    /// `false` for a byte that is actually a boundary.
+    #[test]
+    fn is_char_boundary_true_deep_in_a_multi_chunk_paragraph() {
+        // 20 000 ASCII bytes span many rope chunks (ropey caps a leaf at
+        // ~1 KB), so byte 15 000 sits in a chunk with chunk_byte_idx > 0.
+        let buffer = DocBuffer::new("a".repeat(20_000));
+        assert!(buffer.is_char_boundary(15_000));
+    }
+
+    /// A doc byte at a paragraph boundary (== the left paragraph's byte
+    /// length) resolves to the RIGHT paragraph at local offset 0. The
+    /// `<`→`<=` mutant instead keeps it in the left paragraph at its
+    /// end offset.
+    #[test]
+    fn locate_byte_reports_boundary_to_right_paragraph() {
+        // "aa\n\nbb" → p0 = "aa\n" (3 bytes), p1 = "\nbb".
+        let buffer = DocBuffer::new("aa\n\nbb".to_owned());
+        assert_eq!(buffer.paragraphs.len(), 2);
+        let len0 = buffer.paragraphs[0].text.len_bytes();
+        assert!(len0 > 0);
+        assert_eq!(buffer.locate_byte(len0), (1, 0));
+    }
+
+    /// Ruby-at-paragraph-start invariant: a within-paragraph insert at
+    /// `local.start == 0` must be parsed incrementally into an explicit-ruby
+    /// node.
+    ///
+    /// NOTE: this does NOT kill the `+`→`*` mutant on the new-end byte
+    /// (`apply_within_paragraph`'s `local.start + new_text.len()`), which
+    /// hands tree-sitter a `0 * 27 == 0` "nothing changed" hint. That mutant
+    /// is a frozen equivalent (mutants-baseline.json): `ParagraphBuffer::
+    /// apply_edit` re-parses against the authoritative post-edit rope
+    /// (`chunk_callback(&self.text)`), and since the new text is longer than
+    /// the old tree's coverage, tree-sitter re-lexes from position 0 and
+    /// still yields the ruby — the corrupted hint changes only reuse
+    /// efficiency, never the resulting tree. This test confirms exactly that
+    /// (the ruby parses regardless of the hint), so it stands as a regression
+    /// guard, not a mutant killer.
+    #[test]
+    fn within_paragraph_insert_reports_correct_new_end_to_tree_sitter() {
+        use tree_sitter_aozora::kind::EXPLICIT_RUBY;
+        let state = doc("本文。");
+        state
+            .apply_changes(&[ByteEdit::new(0..0, "｜青空《あおぞら》".to_owned())])
+            .expect("valid in-paragraph insert");
+        let snap = state.snapshot();
+        assert_eq!(snap.paragraphs.len(), 1, "{snap:?}");
+        let tree = snap.paragraphs[0].tree.as_ref().expect("paragraph tree");
+        let kinds = collect_tree_kinds(tree);
+        assert!(
+            kinds.iter().any(|k| k.as_str() == EXPLICIT_RUBY),
+            "the inserted ruby must be parsed incrementally: {kinds:?}",
+        );
+    }
+
+    /// A cross-paragraph edit that replaces a boundary-spanning range
+    /// with non-empty text must KEEP that text in the merged rope. The
+    /// `delete !` mutant (`if new_text.is_empty()`) appends the
+    /// replacement only when it is empty, i.e. never — dropping it.
+    #[test]
+    fn cross_paragraph_edit_keeps_replacement_text() {
+        // "aaa\n\nbbb" → p0 = "aaa\n", p1 = "\nbbb". Range 1..7 starts in
+        // p0 and ends in p1, so `apply_across_paragraphs` runs.
+        let state = doc("aaa\n\nbbb");
+        state
+            .apply_changes(&[ByteEdit::new(1..7, "X".to_owned())])
+            .expect("valid cross-paragraph edit");
+        assert_eq!(&**state.snapshot().doc_text(), "aXb");
+    }
+
+    /// `spawn_snapshot_rebuild`'s in-task guard skips the rebuild only
+    /// when the installed snapshot is already at/ahead of the target
+    /// version (`>=`). The `>=`→`<` mutant inverts this and skips the
+    /// rebuild precisely when the snapshot is BEHIND the target, so the
+    /// stale version-0 snapshot survives an edit.
+    #[test]
+    fn spawn_snapshot_rebuild_installs_snapshot_when_behind_target() {
+        use tokio::runtime::Builder;
+        let rt = Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .build()
+            .expect("build tokio runtime");
+        let state = doc("hello");
+        let version = rt.block_on(async {
+            let v = state
+                .apply_changes(&[ByteEdit::new(5..5, " world".to_owned())])
+                .expect("valid edit");
+            // The rebuild was submitted to the single-thread blocking pool
+            // during `apply_changes`; a second blocking task queued behind
+            // it (FIFO, one thread) can only complete once the rebuild has
+            // run — a deterministic barrier with no timing assumptions.
+            spawn_blocking(|| {}).await.expect("barrier task");
+            v
+        });
+        assert_eq!(state.snapshot().version, version);
+        assert_eq!(&**state.snapshot().doc_text(), "hello world");
+    }
+
+    /// A parse latency strictly above the slow-path threshold warns
+    /// exactly once. Kills `>`→`==` and `>`→`<` in `record_parse_stats`
+    /// (both stop warning above the threshold).
+    #[test]
+    fn record_parse_stats_warns_strictly_above_threshold() {
+        let state = doc("hello");
+        let warns = count_warns(|| {
+            state.record_parse_stats(stats_with_latency(150_000));
+        });
+        assert_eq!(warns, 1);
+    }
+
+    /// A latency exactly AT the threshold must not warn (strict `>`).
+    /// Kills `>`→`>=` and `>`→`==` (both warn at equality). The default
+    /// threshold is `100_000` µs.
+    #[test]
+    fn record_parse_stats_silent_at_exact_threshold() {
+        let state = doc("hello");
+        let warns = count_warns(|| {
+            state.record_parse_stats(stats_with_latency(100_000));
+        });
+        assert_eq!(warns, 0);
+    }
+
+    /// With `AOZORA_LSP_SLOW_PARSE_US` unset, the slow-parse threshold is
+    /// the 100 ms default. Pins the value against a body replaced by the
+    /// constants `0` or `1`.
+    #[test]
+    fn slow_parse_threshold_defaults_to_100_000_us() {
+        assert_eq!(slow_parse_threshold_us(), 100_000);
+    }
 }
