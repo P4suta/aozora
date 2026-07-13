@@ -1057,4 +1057,27 @@ mod tests {
                 .expect("pandoc args parse");
         run_pandoc_once(&args).unwrap_err();
     }
+
+    // --- command_config_path: threads --config into language resolution
+    //     (main.rs:510 body) ---
+
+    #[test]
+    fn command_config_path_carries_a_document_subcommands_override() {
+        // A document subcommand's `--config PATH` must reach `config_lang`; the
+        // whole-body `None` mutant would silently drop every explicit config.
+        let cli = Cli::try_parse_from(["aozora", "check", "--config", "custom.toml", "-"])
+            .expect("cli parses");
+        assert_eq!(
+            command_config_path(&cli.command),
+            Some(Path::new("custom.toml")),
+        );
+    }
+
+    #[test]
+    fn command_config_path_is_none_for_configless_subcommands() {
+        // The introspection subcommands flatten no `CrossCutArgs`, so they carry
+        // no config layer — the `None` arm, not the whole-body mutant.
+        let cli = Cli::try_parse_from(["aozora", "kinds"]).expect("cli parses");
+        assert_eq!(command_config_path(&cli.command), None);
+    }
 }

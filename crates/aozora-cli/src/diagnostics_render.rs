@@ -281,6 +281,30 @@ mod tests {
         );
     }
 
+    // Two over the cap (5 distinct codes): the tail count is
+    // `seen.len() - MAX_HINTS` == `5 - 3` == 2. Mutating `-` to `/` yields
+    // `5 / 3` == 1, so asserting the count is `2` (not `1`) kills it — the
+    // 4-code cases above can't, since `4 - 3` and `4 / 3` both equal 1.
+    #[test]
+    fn explain_hint_more_tail_counts_the_overflow_not_a_quotient() {
+        let codes = [
+            "aozora::a::x",
+            "aozora::b::y",
+            "aozora::c::z",
+            "aozora::d::w",
+            "aozora::e::v",
+        ];
+        let hint = explain_hint(codes.into_iter(), &lang("en")).expect("non-empty");
+        assert_eq!(
+            hint,
+            "help: run `aozora explain <code>` for details, e.g.\n\
+             \u{20}     aozora explain x\n\
+             \u{20}     aozora explain y\n\
+             \u{20}     aozora explain z\n\
+             \u{20}     … and 2 more\n",
+        );
+    }
+
     // The header and the `… and N more` tail are localized; the literal
     // per-code command lines are not. `--lang ja` / `zh` swap only the chrome.
     #[test]
