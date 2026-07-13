@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use tracing::debug;
 
 use crate::diagnostics_render::DiagFormat;
 use crate::{ColorChoice, Encoding};
@@ -61,10 +62,16 @@ impl ConfigFile {
     /// an all-default config.
     pub(crate) fn resolve(explicit: Option<&Path>, cwd: &Path) -> Result<Self> {
         if let Some(path) = explicit {
+            debug!(config = %path.display(), "config precedence: explicit --config (bypasses discovery + global)");
             return Self::load(path);
         }
-        let project =
-            discover(cwd).map_or_else(|| Ok(Self::default()), |path| Self::load(&path))?;
+        let discovered = discover(cwd);
+        if let Some(path) = &discovered {
+            debug!(config = %path.display(), "config precedence: nearest project .aozora.toml wins");
+        } else {
+            debug!("config precedence: no project .aozora.toml; defaults over global config.toml");
+        }
+        let project = discovered.map_or_else(|| Ok(Self::default()), |path| Self::load(&path))?;
         let global = Self::load_global()?;
         Ok(Self::merge(&project, &global))
     }
