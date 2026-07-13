@@ -29,11 +29,12 @@ before approving the Release PR):
   path / CRLF regression cannot slip into a release. Local `just` cannot
   reproduce these runners (Docker-only policy's documented exception), so
   this green run is CI-authoritative.
-- [ ] The mutation baseline holds — `just mutants -p aozora-spec` reports no
-  more survivors than its committed `mutants-baseline.json` count (aozora-syntax
-  is swept report-only until reinforced). This is the assertion-strength
-  counterpart to the region-coverage gate (ADR-0031); the scheduled `mutants`
-  workflow is the continuous mirror.
+- [ ] The mutation baselines hold — `just mutants -p <crate>` for every crate
+  in `mutants-baseline.json` (all 16 product crates are now armed) reports no
+  more survivors than its committed count. This is the assertion-strength
+  counterpart to the region-coverage gate (ADR-0031); the weekly `mutants`
+  workflow is the continuous mirror, and the per-PR `mutants-in-diff` gate is
+  now blocking.
 
 ```text
 1. Land changes on main with Conventional Commits (feat / fix / perf / …).
