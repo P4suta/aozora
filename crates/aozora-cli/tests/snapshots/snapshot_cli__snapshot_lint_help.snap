@@ -89,6 +89,12 @@ Options:
           `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
           Global
 
+      --lang <LOCALE>
+          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
+          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
+          (json / short / codes / exit / schema) or `--encoding`. Global
+
   -h, --help
           Print help (see a summary with '-h')
 

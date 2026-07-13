@@ -18,6 +18,15 @@
 //! is left for the OS to reap; the only contract is that it stay empty and
 //! alive while commands spawn, which costs a single `mkdir` no matter how
 //! many commands a suite runs.
+//!
+//! Message language is pinned too. Since `LANG` is now the lowest-priority
+//! source for *message* language (`--lang > AOZORA_LANG > config.lang >
+//! LANG`), a developer's real `LANG=ja_JP.UTF-8` would flip English message
+//! assertions to Japanese. [`hermetic_command`] therefore pins
+//! `AOZORA_LANG=en` and strips `LANG` / `LC_ALL`, so the human shell strings
+//! (and the help / version / message snapshots) are deterministic regardless
+//! of the host locale. A test that needs another language passes `--lang`,
+//! which outranks the pinned `AOZORA_LANG`.
 
 use std::path::Path;
 use std::process::Command;
@@ -49,5 +58,12 @@ pub(crate) fn empty_xdg_config_home() -> &'static Path {
 pub(crate) fn hermetic_command() -> Command {
     let mut cmd = Command::new(BIN);
     cmd.env("XDG_CONFIG_HOME", empty_xdg_config_home());
+    // Pin the message language: `AOZORA_LANG=en` beats the `LANG` fallback, and
+    // stripping `LANG` / `LC_ALL` removes the host locale from the chain
+    // entirely, so message output stays English (and deterministic) unless a
+    // test passes `--lang`.
+    cmd.env("AOZORA_LANG", "en")
+        .env_remove("LANG")
+        .env_remove("LC_ALL");
     cmd
 }

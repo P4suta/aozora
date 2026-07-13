@@ -18,6 +18,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use notify::{Event, RecursiveMode, Watcher};
 use tracing::{debug, trace};
 
@@ -28,9 +29,13 @@ const DEBOUNCE: Duration = Duration::from_millis(75);
 /// Run `once` immediately, then re-run it on every change to `path`
 /// until interrupted. Always returns `ExitCode::SUCCESS`: per-run exit
 /// codes are reported but not propagated — watching is the point.
-pub(crate) fn watch(path: &Path, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+pub(crate) fn watch(
+    path: &Path,
+    lang: &LanguageIdentifier,
+    once: impl Fn() -> Result<ExitCode>,
+) -> Result<ExitCode> {
     rerun(&once);
-    banner(path);
+    banner(path, lang);
 
     let parent = watched_dir(path);
     debug!(target = %path.display(), watch_dir = %parent.display(), "watch: monitoring parent directory for changes");
@@ -56,7 +61,7 @@ pub(crate) fn watch(path: &Path, once: impl Fn() -> Result<ExitCode>) -> Result<
         // Drain the debounce window so a rename+write burst is one re-run.
         while rx.recv_timeout(DEBOUNCE).is_ok() {}
         rerun(&once);
-        banner(path);
+        banner(path, lang);
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -92,18 +97,26 @@ fn rerun(once: &impl Fn() -> Result<ExitCode>) {
 }
 
 /// A between-runs banner, TTY only so piped output stays clean.
-fn banner(path: &Path) {
+fn banner(path: &Path, lang: &LanguageIdentifier) {
     let mut stderr = io::stderr().lock();
     let is_tty = stderr.is_terminal();
-    let _drop = write_banner(&mut stderr, is_tty, path);
+    let _drop = write_banner(&mut stderr, is_tty, path, lang);
 }
 
-/// Emit the banner line to `out`, but only when writing to a terminal.
-/// Split from [`banner`] so the message text and the TTY gate can be
-/// exercised over a capturing writer without a real terminal.
-fn write_banner(out: &mut impl Write, is_terminal: bool, path: &Path) -> io::Result<()> {
+/// Emit the banner line to `out` in `lang`, but only when writing to a
+/// terminal. Split from [`banner`] so the message text and the TTY gate can
+/// be exercised over a capturing writer without a real terminal. The banner
+/// text lives in the `watch-banner` catalog key.
+fn write_banner(
+    out: &mut impl Write,
+    is_terminal: bool,
+    path: &Path,
+    lang: &LanguageIdentifier,
+) -> io::Result<()> {
     if is_terminal {
-        writeln!(out, "── watching {} (Ctrl-C to stop) ──", path.display())?;
+        let mut args = FluentArgs::new();
+        args.set("path", path.display().to_string());
+        writeln!(out, "{}", i18n::tf(lang, "watch-banner", &args))?;
     }
     Ok(())
 }
@@ -163,20 +176,34 @@ mod tests {
         assert_eq!(calls.get(), 1);
     }
 
-    #[test]
-    fn write_banner_emits_the_path_on_a_terminal() {
+    fn lang(tag: &str) -> LanguageIdentifier {
+        tag.parse().expect("test locale tag parses")
+    }
+
+    fn banner_line(tag: &str) -> String {
         let mut out = Vec::new();
-        write_banner(&mut out, true, Path::new("doc.txt")).unwrap();
+        write_banner(&mut out, true, Path::new("doc.txt"), &lang(tag)).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn write_banner_emits_the_path_on_a_terminal_in_english_by_default() {
         assert_eq!(
-            String::from_utf8(out).unwrap(),
-            "── watching doc.txt (Ctrl-C to stop) ──\n",
+            banner_line("en"),
+            "── watching doc.txt (Ctrl-C to stop) ──\n"
         );
+    }
+
+    #[test]
+    fn write_banner_localizes_the_path_line() {
+        assert_eq!(banner_line("ja"), "── 監視中 doc.txt（Ctrl-C で終了）──\n");
+        assert_eq!(banner_line("zh"), "── 正在监视 doc.txt（Ctrl-C 停止）──\n");
     }
 
     #[test]
     fn write_banner_is_silent_off_a_terminal() {
         let mut out = Vec::new();
-        write_banner(&mut out, false, Path::new("doc.txt")).unwrap();
+        write_banner(&mut out, false, Path::new("doc.txt"), &lang("en")).unwrap();
         // The TTY gate must hold: no bytes when stderr is not a terminal.
         assert!(out.is_empty());
     }

@@ -51,6 +51,11 @@ pub(crate) struct ConfigFile {
     pub format: Option<DiagFormat>,
     pub strict: Option<bool>,
     pub color: Option<ColorChoice>,
+    /// Human-message language (`en` / `ja` / `zh`, or any BCP-47 tag) — the
+    /// `config.lang` layer of `--lang > AOZORA_LANG > config.lang > LANG`.
+    /// A `String` (not a value-enum) so a new locale needs no code change; an
+    /// unknown value negotiates to English at resolution time.
+    pub lang: Option<String>,
 }
 
 impl ConfigFile {
@@ -77,16 +82,17 @@ impl ConfigFile {
     }
 
     /// Field-wise overlay: every setting present in `project` wins; anything
-    /// it leaves unset falls through to `global`. Every field is `Copy`, so
-    /// the all-`Option` shape reduces the merge to a per-field
-    /// [`Option::or`], and the two layers compose without either clobbering
-    /// the other's unrelated keys.
+    /// it leaves unset falls through to `global`. The all-`Option` shape
+    /// reduces the merge to a per-field [`Option::or`] (the `Copy` fields) or
+    /// its cloning counterpart (`lang`, a `String`), so the two layers compose
+    /// without either clobbering the other's unrelated keys.
     fn merge(project: &Self, global: &Self) -> Self {
         Self {
             encoding: project.encoding.or(global.encoding),
             format: project.format.or(global.format),
             strict: project.strict.or(global.strict),
             color: project.color.or(global.color),
+            lang: project.lang.clone().or_else(|| global.lang.clone()),
         }
     }
 
@@ -156,6 +162,7 @@ mod tests {
         let project = ConfigFile {
             strict: Some(true),
             color: Some(ColorChoice::Never),
+            lang: Some("ja".to_owned()),
             ..empty()
         };
         let global = ConfigFile {
@@ -163,11 +170,13 @@ mod tests {
             format: Some(DiagFormat::Json),
             strict: Some(false),
             color: Some(ColorChoice::Always),
+            lang: Some("zh".to_owned()),
         };
         let merged = ConfigFile::merge(&project, &global);
         // Project's set fields win outright...
         assert_eq!(merged.strict, Some(true));
         assert_eq!(merged.color, Some(ColorChoice::Never));
+        assert_eq!(merged.lang.as_deref(), Some("ja"));
         // ...and the fields it left unset fall through to global — per-field,
         // not all-or-nothing: a whole-`project` return would drop these two.
         assert_eq!(merged.encoding, Some(Encoding::Sjis));
@@ -179,11 +188,14 @@ mod tests {
         let global = ConfigFile {
             strict: Some(true),
             color: Some(ColorChoice::Always),
+            lang: Some("zh".to_owned()),
             ..empty()
         };
         let merged = ConfigFile::merge(&empty(), &global);
         assert_eq!(merged.strict, Some(true));
         assert_eq!(merged.color, Some(ColorChoice::Always));
+        // The `String` field falls through just like the `Copy` ones.
+        assert_eq!(merged.lang.as_deref(), Some("zh"));
     }
 
     #[test]
@@ -193,6 +205,7 @@ mod tests {
         assert_eq!(merged.color, None);
         assert_eq!(merged.encoding, None);
         assert!(merged.format.is_none());
+        assert_eq!(merged.lang, None);
     }
 
     // --- global_config_path_from: the XDG-over-HOME precedence seam ---

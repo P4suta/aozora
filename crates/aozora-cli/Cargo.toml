@@ -31,6 +31,7 @@ aozora = { workspace = true, features = ["schema"] }
 aozora-pipeline = { workspace = true }
 aozora-buildstamp = { workspace = true } # channel-aware `--version` stamp
 aozora-fmt = { workspace = true } # shared format core + the `Encoding` decoder
+aozora-i18n = { workspace = true } # Fluent catalog for the human shell strings
 aozora-pandoc = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
