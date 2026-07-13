@@ -37,7 +37,7 @@ fn run_in(dir: &Path, args: &[&str], envs: &[(&str, &str)], stdin: &[u8]) -> (Op
         .current_dir(dir)
         .env_remove("AOZORA_STRICT")
         .env_remove("AOZORA_ENCODING")
-        .env_remove("AOZORA_DIAGNOSTIC_FORMAT")
+        .env_remove("AOZORA_FORMAT")
         .env("XDG_CONFIG_HOME", empty_xdg.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -105,29 +105,24 @@ fn env_strict_overrides_absent_config() {
 }
 
 #[test]
-fn config_diagnostic_format_short_shapes_stderr() {
+fn config_format_short_shapes_stderr() {
     let dir = TempDir::new().expect("tempdir");
-    write_config(dir.path(), "diagnostic-format = \"short\"\n");
+    write_config(dir.path(), "format = \"short\"\n");
     let (_, stderr) = run_in(dir.path(), &["check"], &[], ONE_PUA);
     assert!(
         stderr.contains("warning[aozora::lex::source_contains_pua]:"),
-        "config diagnostic-format=short → rustc-style line: {stderr:?}"
+        "config format=short → rustc-style line: {stderr:?}"
     );
 }
 
 #[test]
-fn flag_beats_config_diagnostic_format() {
+fn flag_beats_config_format() {
     let dir = TempDir::new().expect("tempdir");
-    write_config(dir.path(), "diagnostic-format = \"json\"\n");
-    let (_, stderr) = run_in(
-        dir.path(),
-        &["check", "--diagnostic-format", "short"],
-        &[],
-        ONE_PUA,
-    );
+    write_config(dir.path(), "format = \"json\"\n");
+    let (_, stderr) = run_in(dir.path(), &["check", "--format", "short"], &[], ONE_PUA);
     assert!(
         stderr.contains("warning[aozora::lex::source_contains_pua]:"),
-        "explicit --diagnostic-format short beats config json: {stderr:?}"
+        "explicit --format short beats config json: {stderr:?}"
     );
 }
 
@@ -228,14 +223,14 @@ fn project_overrides_global_per_field() {
     let xdg = TempDir::new().expect("xdg tempdir");
     // Global sets BOTH strict and the diagnostic format; the project file
     // overrides only the format, leaving strict to fall through from global.
-    write_global_config(xdg.path(), "strict = true\ndiagnostic-format = \"json\"\n");
-    write_config(cwd.path(), "diagnostic-format = \"short\"\n");
+    write_global_config(xdg.path(), "strict = true\nformat = \"json\"\n");
+    write_config(cwd.path(), "format = \"short\"\n");
     let env = xdg_env(&xdg);
     let (code, stderr) = run_in(cwd.path(), &["check"], &[(env.0, env.1.as_str())], ONE_PUA);
-    // Project's diagnostic-format wins (short → rustc-style line)...
+    // Project's format wins (short → rustc-style line)...
     assert!(
         stderr.contains("warning[aozora::lex::source_contains_pua]:"),
-        "project diagnostic-format=short overrides global json: {stderr:?}"
+        "project format=short overrides global json: {stderr:?}"
     );
     // ...while global's strict, which the project left unset, still applies:
     // proof the merge is per-field, not whole-file.
@@ -267,18 +262,18 @@ fn env_overrides_both_project_and_global() {
 fn flag_overrides_both_project_and_global() {
     let cwd = TempDir::new().expect("cwd tempdir");
     let xdg = TempDir::new().expect("xdg tempdir");
-    write_global_config(xdg.path(), "diagnostic-format = \"json\"\n");
-    write_config(cwd.path(), "diagnostic-format = \"json\"\n");
+    write_global_config(xdg.path(), "format = \"json\"\n");
+    write_config(cwd.path(), "format = \"json\"\n");
     let env = xdg_env(&xdg);
     let (_, stderr) = run_in(
         cwd.path(),
-        &["check", "--diagnostic-format", "short"],
+        &["check", "--format", "short"],
         &[(env.0, env.1.as_str())],
         ONE_PUA,
     );
     assert!(
         stderr.contains("warning[aozora::lex::source_contains_pua]:"),
-        "explicit --diagnostic-format short beats project+global json: {stderr:?}"
+        "explicit --format short beats project+global json: {stderr:?}"
     );
 }
 

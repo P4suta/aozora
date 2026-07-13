@@ -251,10 +251,7 @@ fn fmt_fix_rewrites_flagged_directive_near_miss() {
 
 #[test]
 fn lint_reports_non_canonical_directive() {
-    let (_, _, stderr) = run(
-        &["lint", "--diagnostic-format", "short"],
-        Some("あ［＃字下げ終わり］"),
-    );
+    let (_, _, stderr) = run(&["lint", "--format", "short"], Some("あ［＃字下げ終わり］"));
     assert!(
         stderr.contains("aozora::lint::non_canonical_directive"),
         "lint must flag the near-miss: {stderr:?}"
@@ -282,7 +279,7 @@ fn lint_strict_exits_non_zero_when_a_lint_fires() {
 fn lint_ignores_non_lint_lex_faults() {
     // An unclosed bracket is a lex fault (`aozora::lex::*`), not a lint, so
     // `lint` stays silent on it — the is_lint() namespace filter at work.
-    let (_, _, stderr) = run(&["lint", "--diagnostic-format", "short"], Some("あ［＃"));
+    let (_, _, stderr) = run(&["lint", "--format", "short"], Some("あ［＃"));
     assert!(
         !stderr.contains("aozora::lint::"),
         "lint must not surface lex faults: {stderr:?}"

@@ -76,12 +76,12 @@ aozora check --strict src.txt     # warnings → exit 1 (the CI gate)
 cat src.txt | aozora check        # reads stdin
 ```
 
-Pass `--diagnostic-format json` to get the exact `diagnostics`
+Pass `--format json` to get the exact `diagnostics`
 envelope shown above — byte-identical to the library path and to what
 every binding emits — straight from the shell, no Rust required:
 
 ```sh
-aozora check --diagnostic-format json src.txt
+aozora check --format json src.txt
 ```
 
 Diagnostics print to **stderr** (where `json` is already the default
@@ -89,7 +89,7 @@ once stderr is piped), so redirect that stream to feed a tool like
 `jq`. A clean file prints nothing and exits `0`:
 
 ```sh
-aozora check --diagnostic-format json src.txt 2>&1 >/dev/null | jq .
+aozora check --format json src.txt 2>&1 >/dev/null | jq .
 ```
 
 See the [CLI reference](../ref/cli.md) for the full flag list and the

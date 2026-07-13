@@ -34,19 +34,9 @@ Options:
 
       --timing
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
-          stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline
-
-      --timing-format <TIMING_FORMAT>
-          Timing report format: `human` (aligned lines + total, the default) or `json` (a
-          `{schema_version, phases, total_nanos}` envelope for scripts and agents). Ignored without
-          `--timing`
-
-          Possible values:
-          - human: Aligned `name  duration` lines plus a total. The default
-          - json:  `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}` — the agent /
-            scripting view
-          
-          [default: human]
+          stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline. The report
+          auto-selects its view like `check`'s diagnostics: aligned `human` lines when stderr is a
+          terminal, the `{schemaVersion:1,data:{phases,totalNanos}}` envelope when it is piped
 
       --watch
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
@@ -58,9 +48,9 @@ Options:
           
           [env: AOZORA_STRICT=]
 
-      --diagnostic-format <DIAGNOSTIC_FORMAT>
+      --format <FORMAT>
           How to render lints: `human` / `json` / `short` — the same views and `.aozora.toml` /
-          `AOZORA_DIAGNOSTIC_FORMAT` fallbacks as `check`
+          `AOZORA_FORMAT` fallbacks as `check`
 
           Possible values:
           - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
@@ -68,7 +58,7 @@ Options:
           - json:  The `aozora::json` JSON envelope — the cross-binding machine view
           - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
           
-          [env: AOZORA_DIAGNOSTIC_FORMAT=]
+          [env: AOZORA_FORMAT=]
 
       --fix
           Rewrite the flagged directive near-misses to their canonical spelling in place — the

@@ -19,7 +19,7 @@ Each `Diagnostic` carries:
 ## Rendering them
 
 The `aozora check` CLI renders diagnostics three ways, chosen with
-`--diagnostic-format`:
+`--format`:
 
 - **`human`** (the default on a terminal) — a graphical
   [`miette`](https://docs.rs/miette/latest/miette/) report: the source line, a caret
@@ -386,7 +386,7 @@ codes here as it lands.
 - [Architecture → Error recovery](../arch/error-recovery.md) — what the
   parser *does* after each diagnostic fires (preserved output, dropped
   tokens, where the bytes go).
-- [CLI reference](../ref/cli.md) — `aozora check --diagnostic-format` and
+- [CLI reference](../ref/cli.md) — `aozora check --format` and
   the exit-code contract.
 - [Library Quickstart → Diagnostics](../getting-started/library.md)
 - [Bindings → Diagnostics as JSON](../recipes/diagnostics-json.md)

@@ -60,7 +60,7 @@ A clean file prints nothing, so only files with diagnostics appear:
 
 ```sh
 for f in *.txt; do
-  aozora check --diagnostic-format json "$f" 2>&1 >/dev/null
+  aozora check --format json "$f" 2>&1 >/dev/null
 done | jq -s 'map(.data) | add'
 ```
 

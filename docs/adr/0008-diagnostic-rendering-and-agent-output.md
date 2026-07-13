@@ -37,7 +37,7 @@ diagnostics and a *meaningful exit code*, not prose scraped from stderr.
 ## Decision
 
 1. **Three rendering views, auto-selected.** `aozora check` gains
-   `--diagnostic-format {human,json,short}`, defaulting to `Auto`:
+   `--format {human,json,short}`, defaulting to `Auto`:
    - **`human`** (default when stderr is a TTY) — build a
      `miette::Report` with the source attached and render the graphical
      snippet + caret + label + help (`fancy`).
@@ -89,7 +89,7 @@ diagnostics and a *meaningful exit code*, not prose scraped from stderr.
    reporter.
 
 7. **No MCP / `serve` mode — REJECTED for now.** stdin → stdout plus
-   `--diagnostic-format json` plus the stable exit codes already give
+   `--format json` plus the stable exit codes already give
    agents and editors a deterministic, idiomatic interface, and it
    preserves the "single binary, no runtime process dependencies"
    guarantee. A long-lived sub-process protocol is reconsidered only if a
