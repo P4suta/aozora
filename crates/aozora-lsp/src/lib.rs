@@ -100,10 +100,10 @@ pub async fn run() {
 /// Serve the language server over stdio until the client disconnects.
 ///
 /// Installs the stderr tracing subscriber, builds the service (with the
-/// `aozora/*` custom methods), and serves. This is [`run`] minus argv parsing:
-/// the `aozora` umbrella binary parses argv itself (so `aozora lsp --help`
-/// works and stdout stays clean) and then calls `serve` directly, while the
-/// standalone `aozora-lsp` binary goes through `run`.
+/// `aozora/*` custom methods), and serves. This is [`run`] minus argv
+/// parsing, kept as a seam so an embedder can drive the server after
+/// handling its own argv; the standalone `aozora-lsp` binary reaches it
+/// through `run`.
 pub async fn serve() {
     tracing_subscriber::fmt()
         .with_env_filter(

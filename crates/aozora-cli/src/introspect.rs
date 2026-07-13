@@ -254,9 +254,10 @@ where
 // ---- per-variant prose ---------------------------------------------
 //
 // Short, single-line summaries used by `aozora kinds` rows. The full
-// multi-paragraph prose for each `NodeKind` lives in
-// `crates/aozora-book/src/nodes/<kind>.md` and is surfaced verbatim
-// by `aozora explain <kind>` via `include_str!`.
+// multi-paragraph prose for each `NodeKind` lives in this crate under
+// `src/node-docs/<kind>.md` and is surfaced verbatim by
+// `aozora explain <kind>` via `include_str!`; the handbook borrows the
+// same bytes with `{{#include}}` from `aozora-book/src/nodes/<kind>.md`.
 
 fn describe_node(k: NodeKind) -> &'static str {
     match k {
@@ -346,10 +347,10 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
     }
 }
 
-/// Embedded handbook pages for `aozora explain <tag>`. Index keyed
-/// by camelCase wire tag → file slug; the markdown body is loaded
-/// at compile time via `include_str!` from the handbook chapters
-/// under `crates/aozora-book/src/nodes/`.
+/// Embedded prose pages for `aozora explain <tag>`. Index keyed by
+/// camelCase wire tag → file slug; the markdown body is loaded at
+/// compile time via `include_str!` from this crate's `src/node-docs/`
+/// — the single authority, which the handbook borrows via `{{#include}}`.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("node-docs/ruby.md")),
     ("bouten", include_str!("node-docs/bouten.md")),
