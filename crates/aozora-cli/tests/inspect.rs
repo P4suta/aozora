@@ -10,11 +10,11 @@
 //! Pure stdlib (mirrors `smoke.rs`) so the test crate stays dep-light.
 
 use std::io::Write;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 
 use tempfile::NamedTempFile;
 
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 /// Every wire envelope opens with this versioned header; asserting the
 /// literal prefix is a structural check that needs no JSON parser in
@@ -22,7 +22,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 const ENVELOPE_PREFIX: &str = r#"{"schemaVersion":2,"#;
 
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
-    let mut cmd = Command::new(BIN);
+    let mut cmd = common::hermetic_command();
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());

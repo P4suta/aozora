@@ -78,10 +78,10 @@ use aozora::{
     DiagnosticSource, Document, json,
     render::{DirectiveNormalization, RenderOptions, SerializeOptions},
 };
-use aozora_fmt::ColorChoice;
-// The formatter crate owns the source-encoding value-enum so both frontends
-// share one decoder; re-exported crate-wide so `config` can name it.
-pub(crate) use aozora_fmt::Encoding;
+// The formatter crate owns both the source-encoding value-enum (so both
+// frontends share one decoder) and the colour-policy enum; re-exported
+// crate-wide so `config` can name them.
+pub(crate) use aozora_fmt::{ColorChoice, Encoding};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};

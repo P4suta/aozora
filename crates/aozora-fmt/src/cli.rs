@@ -95,8 +95,11 @@ pub struct FmtArgs {
 /// When to emit ANSI colour in terminal output (diffs, diagnostics, …).
 ///
 /// Re-exported from the crate root so the `aozora` CLI's `lint`/`render`
-/// subcommands share one colour policy with the formatter.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+/// subcommands share one colour policy with the formatter. `Deserialize`
+/// (lowercase, mirroring [`Encoding`]) lets it back the `color` key in
+/// `.aozora.toml`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ColorChoice {
     /// Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`).
     Auto,
