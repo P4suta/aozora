@@ -48,7 +48,7 @@ const CONFIG_NAME: &str = ".aozora.toml";
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub(crate) struct ConfigFile {
     pub encoding: Option<Encoding>,
-    pub diagnostic_format: Option<DiagFormat>,
+    pub format: Option<DiagFormat>,
     pub strict: Option<bool>,
     pub color: Option<ColorChoice>,
 }
@@ -84,7 +84,7 @@ impl ConfigFile {
     fn merge(project: &Self, global: &Self) -> Self {
         Self {
             encoding: project.encoding.or(global.encoding),
-            diagnostic_format: project.diagnostic_format.or(global.diagnostic_format),
+            format: project.format.or(global.format),
             strict: project.strict.or(global.strict),
             color: project.color.or(global.color),
         }
@@ -160,7 +160,7 @@ mod tests {
         };
         let global = ConfigFile {
             encoding: Some(Encoding::Sjis),
-            diagnostic_format: Some(DiagFormat::Json),
+            format: Some(DiagFormat::Json),
             strict: Some(false),
             color: Some(ColorChoice::Always),
         };
@@ -171,7 +171,7 @@ mod tests {
         // ...and the fields it left unset fall through to global — per-field,
         // not all-or-nothing: a whole-`project` return would drop these two.
         assert_eq!(merged.encoding, Some(Encoding::Sjis));
-        assert!(matches!(merged.diagnostic_format, Some(DiagFormat::Json)));
+        assert!(matches!(merged.format, Some(DiagFormat::Json)));
     }
 
     #[test]
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(merged.strict, None);
         assert_eq!(merged.color, None);
         assert_eq!(merged.encoding, None);
-        assert!(merged.diagnostic_format.is_none());
+        assert!(merged.format.is_none());
     }
 
     // --- global_config_path_from: the XDG-over-HOME precedence seam ---

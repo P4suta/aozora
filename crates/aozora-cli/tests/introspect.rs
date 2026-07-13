@@ -30,7 +30,9 @@ fn run(args: &[&str]) -> (ExitStatus, String, String) {
 
 #[test]
 fn kinds_lists_every_enum_section() {
-    let (status, stdout, stderr) = run(&["kinds"]);
+    // `--format human` forces the tables: the captured stdout is piped, where
+    // the `auto` default now resolves to json (see `kinds_default_auto_...`).
+    let (status, stdout, stderr) = run(&["kinds", "--format", "human"]);
     assert!(status.success(), "kinds failed: {stderr:?}");
     for section in [
         "NodeKind",
@@ -49,12 +51,29 @@ fn kinds_lists_every_enum_section() {
 
 #[test]
 fn kinds_lists_concrete_node_tags() {
-    let (status, stdout, _) = run(&["kinds"]);
+    let (status, stdout, _) = run(&["kinds", "--format", "human"]);
     assert!(status.success());
     // Spot-check tags that span the camelCase / non-ascii lookup paths.
     for tag in ["ruby", "angleQuote", "containerOpen", "containerClose"] {
         assert!(stdout.contains(tag), "kinds missing tag {tag}: {stdout:?}");
     }
+}
+
+#[test]
+fn kinds_default_auto_is_json_when_stdout_piped() {
+    // No `--format`: `auto` resolves to json because the captured stdout is not
+    // a terminal — the unification with `check`'s diagnostics auto rule.
+    let (status, stdout, stderr) = run(&["kinds"]);
+    assert!(status.success(), "kinds failed: {stderr:?}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("piped kinds must default to json");
+    assert_eq!(parsed["schemaVersion"], 1, "cli-local envelope: {parsed}");
+    assert!(parsed["data"]["nodeKinds"].is_array(), "{parsed}");
+    // The human table section header must NOT appear — proof it is not tables.
+    assert!(
+        !stdout.contains("NodeKind — "),
+        "piped default must be json, not tables: {stdout:?}"
+    );
 }
 
 #[test]
@@ -64,7 +83,7 @@ fn kinds_format_json_emits_valid_envelope() {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("kinds --format json must be valid JSON");
     assert_eq!(
-        parsed["schemaVersion"], 2,
+        parsed["schemaVersion"], 1,
         "envelope schemaVersion: {parsed}"
     );
     // Every section appears as a camelCase array under `data`.

@@ -16,7 +16,7 @@
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -41,27 +41,49 @@ pub(crate) enum SchemaKind {
     ContainerPairs,
 }
 
-/// Output format for `aozora kinds`: the human tables (default) or the
-/// machine `{"schemaVersion":2,"data":{…}}` envelope. Mirrors
-/// [`crate::timing::TimingFormat`]'s two-value shape; `check`'s richer
-/// `DiagFormat` (with `auto` / `short`) is diagnostic-specific and does not
-/// apply here.
+/// Output format for `aozora kinds`: the human tables or the machine
+/// `{"schemaVersion":1,"data":{…}}` envelope, auto-selected by default on the
+/// same rule as `check`'s diagnostics — tables when stdout is a terminal, the
+/// JSON envelope when it is piped. `check`'s richer `DiagFormat` (with `short`)
+/// is diagnostic-specific and does not apply here.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub(crate) enum OutputFormat {
-    /// `comfy-table` tables, one per enum. The default.
+    /// Human tables on a terminal, machine (`json`) when piped. The default.
     #[default]
+    Auto,
+    /// `comfy-table` tables, one per enum.
     Human,
-    /// The `{"schemaVersion":2,"data":{nodeKinds,pairKinds,…}}` envelope —
+    /// The `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` envelope —
     /// the agent / scripting view.
     Json,
 }
 
+impl OutputFormat {
+    /// Collapse `Auto` to a concrete view based on whether stdout is a TTY.
+    fn resolved(self) -> Self {
+        self.resolve(io::stdout().is_terminal())
+    }
+
+    /// Pure decision seam for [`resolved`](Self::resolved): `Auto` becomes
+    /// `Human` on a terminal and `Json` otherwise; concrete formats pass
+    /// through unchanged. Mirrors [`crate::diagnostics_render::DiagFormat`]'s
+    /// auto rule (that one keys on stderr; `kinds` writes to stdout).
+    fn resolve(self, is_terminal: bool) -> Self {
+        match self {
+            Self::Auto if is_terminal => Self::Human,
+            Self::Auto => Self::Json,
+            other => other,
+        }
+    }
+}
+
 /// `aozora kinds` arguments. The table set is one fixed shape; `--format`
-/// selects the human tables or the JSON envelope.
+/// selects the human tables or the JSON envelope (`auto` by default).
 #[derive(Debug, Args)]
 pub(crate) struct KindsArgs {
-    /// Output format: `human` (tables, the default) or `json`.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+    /// Output format: `auto` (the default — tables on a terminal, `json` when
+    /// piped), `human` (tables), or `json`.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Auto)]
     format: OutputFormat,
 }
 
@@ -163,8 +185,9 @@ fn kind_tables() -> Vec<KindTable> {
 pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     let tables = kind_tables();
     let mut stdout = io::stdout().lock();
-    match args.format {
-        OutputFormat::Human => {
+    match args.format.resolved() {
+        // `resolved()` never returns `Auto`, but match exhaustively.
+        OutputFormat::Human | OutputFormat::Auto => {
             for t in &tables {
                 write_table(&mut stdout, t.title, t.blurb, t.rows.iter().copied())?;
             }
@@ -174,9 +197,10 @@ pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Emit the `{"schemaVersion":2,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
-/// Single-line / compact, matching the `inspect` JSON envelopes (the
-/// `aozora::json::*` outputs) rather than the pretty-printed `schema` dump.
+/// Emit the `{"schemaVersion":1,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
+/// Single-line / compact, matching the shape (two keys / camelCase) of the
+/// `inspect` wire envelopes, though `schemaVersion` here is a CLI-local counter
+/// distinct from the wire `SCHEMA_VERSION`.
 fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
     let mut data = serde_json::Map::new();
     for t in tables {
@@ -187,7 +211,7 @@ fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
             .collect();
         data.insert(t.json_key.to_owned(), serde_json::Value::Array(rows));
     }
-    let envelope = serde_json::json!({ "schemaVersion": 2, "data": data });
+    let envelope = serde_json::json!({ "schemaVersion": 1, "data": data });
     let line = serde_json::to_string(&envelope).context("serialize kinds envelope as JSON")?;
     writeln!(out, "{line}").context("write kinds JSON to stdout")
 }
@@ -417,6 +441,41 @@ fn explain_diagnostic(arg: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // `resolve` is the pure TTY-decision seam behind `kinds --format auto`. On
+    // a terminal `Auto` renders `Human` (tables); piped, it renders `Json`.
+    #[test]
+    fn output_format_resolve_auto_on_terminal_is_human() {
+        assert!(matches!(
+            OutputFormat::Auto.resolve(true),
+            OutputFormat::Human
+        ));
+    }
+
+    #[test]
+    fn output_format_resolve_auto_when_piped_is_json() {
+        assert!(matches!(
+            OutputFormat::Auto.resolve(false),
+            OutputFormat::Json
+        ));
+    }
+
+    #[test]
+    fn output_format_resolve_concrete_passes_through() {
+        assert!(matches!(
+            OutputFormat::Human.resolve(false),
+            OutputFormat::Human
+        ));
+        assert!(matches!(
+            OutputFormat::Json.resolve(true),
+            OutputFormat::Json
+        ));
+    }
+
+    #[test]
+    fn output_format_default_is_auto() {
+        assert!(matches!(OutputFormat::default(), OutputFormat::Auto));
+    }
 
     #[test]
     #[allow(

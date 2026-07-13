@@ -18,21 +18,8 @@
 //! a hand-driven `Pipeline`, so a common three-stage view is the honest
 //! one.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant};
-
-use clap::ValueEnum;
-
-/// How `--timing` renders its report.
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub(crate) enum TimingFormat {
-    /// Aligned `name  duration` lines plus a total. The default.
-    #[default]
-    Human,
-    /// `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}`
-    /// — the agent / scripting view.
-    Json,
-}
 
 /// Accumulates phase durations and renders them to stderr.
 ///
@@ -41,15 +28,13 @@ pub(crate) enum TimingFormat {
 /// the hot path is untouched and [`Self::report`] is a no-op.
 pub(crate) struct Timer {
     enabled: bool,
-    format: TimingFormat,
     phases: Vec<(&'static str, Duration)>,
 }
 
 impl Timer {
-    pub(crate) fn new(enabled: bool, format: TimingFormat) -> Self {
+    pub(crate) fn new(enabled: bool) -> Self {
         Self {
             enabled,
-            format,
             phases: Vec::new(),
         }
     }
@@ -69,14 +54,21 @@ impl Timer {
     /// Write the collected timings to stderr. A no-op when disabled or
     /// when nothing was measured (e.g. `inspect slugs`, which neither reads
     /// nor parses).
+    ///
+    /// The view auto-selects on the same rule as `check`'s diagnostics: the
+    /// aligned `human` report when stderr is a terminal, the machine `json`
+    /// envelope when it is piped — so an agent capturing stderr gets a
+    /// parseable stream without a flag.
     pub(crate) fn report(&self) -> io::Result<()> {
         if !self.enabled || self.phases.is_empty() {
             return Ok(());
         }
+        let human = io::stderr().is_terminal();
         let mut stderr = io::stderr().lock();
-        match self.format {
-            TimingFormat::Human => self.report_human(&mut stderr),
-            TimingFormat::Json => self.report_json(&mut stderr),
+        if human {
+            self.report_human(&mut stderr)
+        } else {
+            self.report_json(&mut stderr)
         }
     }
 
@@ -95,6 +87,10 @@ impl Timer {
         writeln!(w, "{:<width$}  {:>9.3} ms", "total", ms(total))
     }
 
+    /// The machine view: the two-key `{ schemaVersion, data }` envelope the
+    /// CLI-local JSON outputs share — a CLI-side counter, distinct from the
+    /// `aozora::json` wire `SCHEMA_VERSION`. `data` carries the per-phase
+    /// nanosecond durations and the total.
     fn report_json(&self, w: &mut impl Write) -> io::Result<()> {
         let total: Duration = self.phases.iter().map(|(_, d)| *d).sum();
         let phases: Vec<_> = self
@@ -104,8 +100,7 @@ impl Timer {
             .collect();
         let envelope = serde_json::json!({
             "schemaVersion": 1,
-            "phases": phases,
-            "totalNanos": nanos(total),
+            "data": { "phases": phases, "totalNanos": nanos(total) },
         });
         writeln!(w, "{envelope}")
     }
@@ -155,5 +150,52 @@ mod tests {
         // Kills body->0 and body->1: 2500 differs from both.
         assert_eq!(nanos(Duration::from_nanos(2500)), 2500);
         assert_eq!(nanos(Duration::from_millis(1)), 1_000_000);
+    }
+
+    /// A `Timer` primed with fixed phase durations — bypasses `measure` so
+    /// the render seams can be pinned deterministically (wall-clock timing is
+    /// otherwise non-reproducible).
+    fn primed() -> Timer {
+        Timer {
+            enabled: true,
+            phases: vec![
+                ("read", Duration::from_nanos(5)),
+                ("parse", Duration::from_nanos(7)),
+            ],
+        }
+    }
+
+    #[test]
+    fn report_json_uses_the_two_key_data_envelope() {
+        // The CLI-local shape is `{ schemaVersion, data:{ phases, totalNanos } }`
+        // — the phases/total live UNDER `data`, matching the wire two-key shape,
+        // and `schemaVersion` is the CLI-side counter `1` (not the wire version).
+        let mut buf = Vec::new();
+        primed().report_json(&mut buf).expect("write json");
+        let v: serde_json::Value = serde_json::from_slice(&buf).expect("parse json");
+        assert_eq!(v["schemaVersion"], 1, "cli-local counter: {v}");
+        assert_eq!(v["data"]["totalNanos"], 12, "5 + 7 nanos under data: {v}");
+        assert_eq!(v["data"]["phases"][0]["name"], "read");
+        assert_eq!(v["data"]["phases"][0]["nanos"], 5);
+        assert_eq!(v["data"]["phases"][1]["name"], "parse");
+        assert_eq!(v["data"]["phases"][1]["nanos"], 7);
+        // The old top-level `phases` / `totalNanos` must be gone — the payload
+        // now lives exclusively under `data`.
+        assert!(v.get("phases").is_none(), "phases must be nested: {v}");
+        assert!(v.get("totalNanos").is_none(), "total must be nested: {v}");
+    }
+
+    #[test]
+    fn report_human_aligns_phase_lines_and_a_total() {
+        let mut buf = Vec::new();
+        primed().report_human(&mut buf).expect("write human");
+        let text = String::from_utf8(buf).expect("utf8");
+        for label in ["read", "parse", "total"] {
+            assert!(text.contains(label), "human names {label:?}: {text:?}");
+        }
+        assert!(
+            text.contains("ms"),
+            "human carries millisecond units: {text:?}"
+        );
     }
 }

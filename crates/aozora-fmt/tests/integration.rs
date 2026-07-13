@@ -320,7 +320,9 @@ fn check_json_reports_per_file_status() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("\"version\": 1"), "{stdout}");
+    // The two-key CLI-local envelope: `{ schemaVersion, data:{ formatted, files } }`.
+    assert!(stdout.contains("\"schemaVersion\": 1"), "{stdout}");
+    assert!(stdout.contains("\"data\""), "{stdout}");
     assert!(stdout.contains("\"formatted\": false"), "{stdout}");
     assert!(stdout.contains("\"would_reformat\""), "{stdout}");
     assert!(stdout.contains("\"ok\""), "{stdout}");

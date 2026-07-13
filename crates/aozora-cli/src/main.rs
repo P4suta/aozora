@@ -93,7 +93,7 @@ use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
-use crate::timing::{Timer, TimingFormat};
+use crate::timing::Timer;
 
 /// Help / usage styling: bold-green headers and usage line (the single
 /// accent), cyan literals (flag names and their values), plain placeholders.
@@ -226,15 +226,12 @@ struct CrossCutArgs {
 
     /// Print per-phase timing (read / parse / output) to stderr. Writes
     /// only to stderr, so stdout stays byte-identical — safe to leave on
-    /// inside a `render` / `inspect` pipeline.
+    /// inside a `render` / `inspect` pipeline. The report auto-selects its
+    /// view like `check`'s diagnostics: aligned `human` lines when stderr is
+    /// a terminal, the `{schemaVersion:1,data:{phases,totalNanos}}` envelope
+    /// when it is piped.
     #[arg(long)]
     timing: bool,
-
-    /// Timing report format: `human` (aligned lines + total, the
-    /// default) or `json` (a `{schema_version, phases, total_nanos}`
-    /// envelope for scripts and agents). Ignored without `--timing`.
-    #[arg(long, value_enum, default_value_t = TimingFormat::Human)]
-    timing_format: TimingFormat,
 
     /// Re-run on every change to the input file (foreground; Ctrl-C to
     /// stop). Requires a file path — not available on stdin.
@@ -287,9 +284,9 @@ struct CheckArgs {
     /// default on a terminal), `json` (the `aozora::json` envelope, the
     /// default when stderr is piped — the machine / agent path), or
     /// `short` (one grep-able line per diagnostic). Falls back to
-    /// `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`.
-    #[arg(long, value_enum, env = "AOZORA_DIAGNOSTIC_FORMAT")]
-    diagnostic_format: Option<DiagFormat>,
+    /// `AOZORA_FORMAT`, then `.aozora.toml`.
+    #[arg(long, value_enum, env = "AOZORA_FORMAT")]
+    format: Option<DiagFormat>,
 }
 
 #[derive(Debug, Parser)]
@@ -308,9 +305,9 @@ struct LintArgs {
     strict: bool,
 
     /// How to render lints: `human` / `json` / `short` — the same views and
-    /// `.aozora.toml` / `AOZORA_DIAGNOSTIC_FORMAT` fallbacks as `check`.
-    #[arg(long, value_enum, env = "AOZORA_DIAGNOSTIC_FORMAT")]
-    diagnostic_format: Option<DiagFormat>,
+    /// `.aozora.toml` / `AOZORA_FORMAT` fallbacks as `check`.
+    #[arg(long, value_enum, env = "AOZORA_FORMAT")]
+    format: Option<DiagFormat>,
 
     /// Rewrite the flagged directive near-misses to their canonical spelling
     /// in place — the zero-false-positive Tier1 autofix. This is the same
@@ -514,13 +511,10 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
 fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let diagnostic_format = args
-        .diagnostic_format
-        .or(cfg.diagnostic_format)
-        .unwrap_or_default();
+    let format = args.format.or(cfg.format).unwrap_or_default();
     let strict = args.strict || cfg.strict.unwrap_or(false);
 
-    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
@@ -532,7 +526,7 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
         timer
             .measure("render", || {
                 diagnostics_render::render(
-                    diagnostic_format,
+                    format,
                     &display_path(&args.common.input.file),
                     &doc,
                     diagnostics,
@@ -570,18 +564,15 @@ fn run_lint(args: &LintArgs) -> Result<ExitCode> {
 fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let diagnostic_format = args
-        .diagnostic_format
-        .or(cfg.diagnostic_format)
-        .unwrap_or_default();
+    let format = args.format.or(cfg.format).unwrap_or_default();
     let strict = args.strict || cfg.strict.unwrap_or(false);
     let path = &args.common.input.file;
 
     if args.fix {
-        return run_lint_fix(path, encoding, diagnostic_format, strict);
+        return run_lint_fix(path, encoding, format, strict);
     }
 
-    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(path, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
@@ -591,7 +582,7 @@ fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
     if lints.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    diagnostics_render::render(diagnostic_format, &display_path(path), &doc, &lints)
+    diagnostics_render::render(format, &display_path(path), &doc, &lints)
         .context("failed to write lints")?;
     // Lint codes are advisory and never `Internal`, so there is no exit-3 arm
     // (unlike `check`): tolerated by default, exit 1 under `--strict` for CI.
@@ -608,7 +599,7 @@ fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
 fn run_lint_fix(
     path: &Path,
     encoding: Encoding,
-    diagnostic_format: DiagFormat,
+    format: DiagFormat,
     strict: bool,
 ) -> Result<ExitCode> {
     if path.as_os_str() == "-" {
@@ -629,7 +620,7 @@ fn run_lint_fix(
     if residual.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    diagnostics_render::render(diagnostic_format, &display_path(path), &doc, &residual)
+    diagnostics_render::render(format, &display_path(path), &doc, &residual)
         .context("failed to write lints")?;
     Ok(if strict {
         ExitCode::from(1)
@@ -693,7 +684,7 @@ fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
     let cfg = config::ConfigFile::resolve(args.cross.config.as_deref(), &cwd)?;
     let encoding = args.fmt.encoding().or(cfg.encoding).unwrap_or_default();
 
-    let mut timer = Timer::new(args.cross.timing, args.cross.timing_format);
+    let mut timer = Timer::new(args.cross.timing);
     let code = timer.measure("format", || {
         aozora_fmt::run_engine(&args.fmt, encoding, color, "aozora fmt")
     });
@@ -711,7 +702,7 @@ fn run_render(args: &RenderArgs) -> Result<ExitCode> {
 fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
@@ -766,7 +757,7 @@ fn inspect_cmd(kind: InspectKind) -> String {
 }
 
 fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
-    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing);
     let json = inspect_json(args, &mut timer)?;
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
@@ -812,7 +803,7 @@ fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
 fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let owned = timer.measure("parse", || doc.lex());

@@ -4,6 +4,11 @@
 //! labels appear, that stdout is unaffected, that the json envelope
 //! parses — never specific durations. Same `Command` + stdin pattern as
 //! `diagnostics_render.rs`.
+//!
+//! `--timing` is a plain bool: the report auto-selects `human` (TTY) vs
+//! `json` (piped) on the same rule as `check`'s diagnostics. Because these
+//! tests capture stderr (never a TTY), `--timing` alone yields the `json`
+//! envelope.
 
 use std::io::Write;
 use std::process::Stdio;
@@ -36,14 +41,16 @@ fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
 const RUBY: &[u8] = "｜青《あ》\n".as_bytes();
 
 #[test]
-fn timing_reports_phases_on_stderr() {
+fn timing_auto_selects_json_when_stderr_is_piped() {
+    // No format flag: `--timing` alone auto-selects `json` because the
+    // captured stderr is not a terminal — the same auto rule as diagnostics.
     let (_, stderr) = run(&["render", "--timing"], RUBY);
-    for label in ["read", "parse", "render", "total"] {
-        assert!(
-            stderr.contains(label),
-            "human timing names the {label:?} phase: {stderr:?}"
-        );
-    }
+    let value: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("auto → json envelope parses");
+    assert_eq!(
+        value["schemaVersion"], 1,
+        "auto resolves to the json envelope off a TTY: {stderr:?}"
+    );
 }
 
 #[test]
@@ -59,16 +66,17 @@ fn timing_leaves_stdout_untouched() {
 }
 
 #[test]
-fn timing_json_is_a_json_envelope() {
-    let (_, stderr) = run(&["render", "--timing", "--timing-format", "json"], RUBY);
+fn timing_json_envelope_carries_phases_and_total_under_data() {
+    let (_, stderr) = run(&["render", "--timing"], RUBY);
     let value: serde_json::Value = serde_json::from_str(stderr.trim()).expect("timing json parses");
     assert_eq!(
         value["schemaVersion"], 1,
-        "carries schema_version: {stderr:?}"
+        "carries the cli-local schemaVersion: {stderr:?}"
     );
-    let names: Vec<&str> = value["phases"]
+    // Two-key envelope: the phases + total live UNDER `data`.
+    let names: Vec<&str> = value["data"]["phases"]
         .as_array()
-        .expect("phases is an array")
+        .expect("data.phases is an array")
         .iter()
         .map(|p| p["name"].as_str().expect("phase name is a string"))
         .collect();
@@ -77,14 +85,14 @@ fn timing_json_is_a_json_envelope() {
         "json names read/parse/render phases: {names:?}"
     );
     assert!(
-        value["totalNanos"].as_u64().is_some(),
-        "total_nanos is a number: {stderr:?}"
+        value["data"]["totalNanos"].as_u64().is_some(),
+        "data.totalNanos is a number: {stderr:?}"
     );
 }
 
 #[test]
 fn timing_json_does_not_pollute_stdout() {
-    let (with, _) = run(&["render", "--timing", "--timing-format", "json"], RUBY);
+    let (with, _) = run(&["render", "--timing"], RUBY);
     let (without, _) = run(&["render"], RUBY);
     assert_eq!(with, without, "json timing must not alter stdout");
 }

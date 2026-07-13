@@ -30,7 +30,7 @@ subcommands accept `-` (or no path) to read **stdin**.
 |---|---|---|
 | `-E`, `--encoding {auto,utf8,sjis}` | check / lint / fmt / render / inspect / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
 | `--color {auto,always,never}` | global | ANSI colour policy. `auto` honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and whether the stream is a terminal. |
-| `--timing` | check / lint / fmt / render / inspect / pandoc | Print per-phase timing to stderr (`--timing-format {human,json}`); stdout stays byte-identical. |
+| `--timing` | check / lint / fmt / render / inspect / pandoc | Print per-phase timing to stderr — aligned `human` lines on a TTY, the `{"schemaVersion":1,"data":{phases,totalNanos}}` envelope when piped; stdout stays byte-identical. |
 | `--config PATH` / `--watch` | check / lint / fmt / render / inspect / pandoc | Use a specific `.aozora.toml`; re-run on file change (needs a path). |
 
 There is no `--color` *disable* flag beyond `--color never`; the
@@ -49,7 +49,7 @@ from stdin.
 |---|---|
 | `--strict`, `-s` | Exit non-zero (`1`) on any diagnostic. |
 | `--encoding`, `-E` | Source encoding (see above). |
-| `--diagnostic-format {human,json,short}` | How to render diagnostics. Default **`auto`**: `human` when stderr is a terminal, `json` when piped. |
+| `--format {auto,human,json,short}` | How to render diagnostics. Default **`auto`**: `human` when stderr is a terminal, `json` when piped. Falls back to `AOZORA_FORMAT`, then the `format` key in `.aozora.toml`. |
 
 The three formats:
 
@@ -69,7 +69,7 @@ bad input; please report it).
 aozora check src.txt                       # human on a TTY, json when piped
 aozora check --strict src.txt              # any diagnostic -> exit 1
 aozora check -E sjis crime.txt             # Shift_JIS source
-aozora check --diagnostic-format short -   # one line per diagnostic, from stdin
+aozora check --format short -              # one line per diagnostic, from stdin
 cat src.txt | aozora check                 # json envelope (stderr is piped)
 ```
 
@@ -88,7 +88,7 @@ where `check` reports *every* diagnostic. See
 |---|---|
 | `--strict`, `-s` | Exit non-zero (`1`) if any lint fired. |
 | `--fix` | Rewrite the flagged directive near-misses to their canonical form in place — the zero-false-positive Tier1 autofix. Needs a file (not stdin). Same transform as `fmt --fix --write`. |
-| `--diagnostic-format {human,json,short}` | How to render lints (shared with `check`). |
+| `--format {auto,human,json,short}` | How to render lints (shared with `check`). |
 | `--encoding`, `-E` | Source encoding (see above). |
 
 Exit codes mirror `check`: `0` (tolerant default), `1` (`--strict` with a
@@ -178,7 +178,7 @@ parser output into a shell pipeline.
 | `nodes` | Source-keyed nodes: `{ kind, span }`. |
 | `pairs` | Matched delimiter pairs: `{ kind, open, close }`. |
 | `container-pairs` | Container open/close pairs (normalized coordinates). |
-| `diagnostics` | The diagnostics stream as data (same shape as `check --diagnostic-format json`, but always exit `0`). |
+| `diagnostics` | The diagnostics stream as data (same shape as `check --format json`, but always exit `0`). |
 | `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
 | `slugs` | The static `［＃…］` slug catalogue — needs no input. |
 
@@ -253,10 +253,14 @@ back the drift-gated JSON artefacts; see [JSON output](../json/overview.md).
 The **data** counterpart to `schema` is [`aozora inspect`](#aozora-inspect),
 which projects a parsed document into those same envelopes.
 
-`kinds` defaults to human tables; `aozora kinds --format json` emits the
-machine envelope `{"schemaVersion":2,"data":{"nodeKinds":[{"tag","summary"}],
+`kinds --format` defaults to **`auto`** — human tables when stdout is a
+terminal, the machine envelope when piped (`--format {human,json}` forces
+either). The envelope is
+`{"schemaVersion":1,"data":{"nodeKinds":[{"tag","summary"}],
 "pairKinds":[…],"severities":[…],"diagnosticSources":[…],"sentinels":[…],
-"internalCheckCodes":[…]}}` (one line, like the `inspect` envelopes).
+"internalCheckCodes":[…]}}` (one line, sharing the two-key `{schemaVersion,data}`
+shape of the `inspect` envelopes; `schemaVersion` is a CLI-local counter,
+distinct from the wire `SCHEMA_VERSION`).
 
 `aozora explain` accepts either a `NodeKind` camelCase tag (printing the
 node's handbook chapter) or a **diagnostic code** — the full
@@ -299,4 +303,4 @@ See [Reference → Environment variables](env.md) for the full matrix.
 - [Notation overview](../notation/overview.md) — what the parser
   recognises.
 - [Diagnostics catalogue](../notation/diagnostics.md) — the codes you'll
-  see in `check`'s output and how `--diagnostic-format` renders them.
+  see in `check`'s output and how `--format` renders them.

@@ -52,16 +52,16 @@ human renderer in automation.
 
 | Want | Command | Output |
 |---|---|---|
-| Diagnostics as data | `aozora check --diagnostic-format json FILE` | `{"schema_version":N,"data":[…]}` on stderr; same envelope every binding emits |
-| Diagnostics, one line each | `aozora check --diagnostic-format short FILE` | `path:offset: severity[code]: message` |
+| Diagnostics as data | `aozora check --format json FILE` | `{"schemaVersion":N,"data":[…]}` on stderr; same envelope every binding emits |
+| Diagnostics, one line each | `aozora check --format short FILE` | `path:offset: severity[code]: message` |
 | HTML | `aozora render FILE` | semantic HTML5 on stdout |
 | Pandoc AST (→ any format) | `aozora pandoc FILE` | Pandoc JSON on stdout |
 | Wire JSON Schema | `aozora schema {diagnostics\|nodes\|pairs\|container-pairs}` | JSON Schema |
-| Enum/wire-tag tables | `aozora kinds` | tables (human) by default; `--format json` emits `{"schemaVersion":2,"data":{nodeKinds,pairKinds,…}}` — the typed contract behind the wire format |
+| Enum/wire-tag tables | `aozora kinds` | tables when stdout is a terminal, else the machine envelope `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` (force with `--format {human,json}`) — the typed contract behind the wire format |
 
-`--diagnostic-format` defaults to `human` on a TTY and `json` when piped,
+`--format` defaults to `human` on a TTY and `json` when piped,
 so a piped `aozora check` already yields machine output without a flag.
-**Agents should pass `--diagnostic-format json` (or `short`) explicitly**
+**Agents should pass `--format json` (or `short`) explicitly**
 and never parse the `human` graphical render (it is width/colour
 dependent — the only non-deterministic output surface).
 

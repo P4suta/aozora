@@ -8,10 +8,10 @@
 ## Context
 
 The document subcommands (`check` / `render` / `fmt` / `wire` / `pandoc`)
-take the same `--encoding`, `--diagnostic-format`, and `--strict` flags on
+take the same `--encoding`, `--format`, and `--strict` flags on
 every invocation. In a CI pipeline or a repeated editing loop that
 repetition is friction: a project that always ships Shift_JIS, or always
-wants `--diagnostic-format json` in CI, has to repeat itself on every
+wants `--format json` in CI, has to repeat itself on every
 call. A project-local default would remove the boilerplate.
 
 The risk a config file introduces is *precedence opacity*: once a setting
@@ -31,7 +31,7 @@ Add an optional **`.aozora.toml`**.
   flag-over-env itself. The CLI then folds in the config value with
   `Option::or` and falls back to the built-in default. One resolver
   function, easy to read and to test.
-- **Keys (v1):** `encoding`, `diagnostic-format`, `strict` (kebab-case,
+- **Keys (v1):** `encoding`, `format`, `strict` (kebab-case,
   mirroring the flags). Parsed with `serde` + `toml`, both already
   workspace dependencies — **no new external crate**.
 - **`deny_unknown_fields`.** A mistyped key is a hard error, not a silent
@@ -79,6 +79,6 @@ dependency, is the Rust-ecosystem convention (`Cargo.toml`,
 - `crates/aozora-cli/src/config.rs` — discovery, loading, the
   `ConfigFile` struct with `deny_unknown_fields`.
 - `crates/aozora-cli/tests/config.rs` — precedence and error coverage.
-- ADR-0008 — diagnostic rendering; the `diagnostic-format` key selects
+- ADR-0008 — diagnostic rendering; the `format` key selects
   among the views defined there.
 - Plan: `cli-devex-twinkling-mountain.md`.

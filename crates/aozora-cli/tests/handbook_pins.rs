@@ -54,7 +54,7 @@ fn quickstart_diagnostic_example_is_not_fiction() {
         book.contains(&message),
         "handbook CLI quickstart no longer shows the real diagnostic message \
          `{message}` — regenerate the example from `aozora check \
-         --diagnostic-format human --color never`",
+         --format human --color never`",
     );
     assert!(
         book.contains(code),

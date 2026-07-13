@@ -11,7 +11,7 @@ container plumbing.
 | `NO_COLOR` | `aozora-cli` | If set (any value), disable ANSI colour output. Same as `--color never`. |
 | `AOZORA_ENCODING` | `aozora-cli` | Source-encoding fallback for `-E/--encoding`: `auto` (default), `utf8`, or `sjis`. Lower precedence than the flag, higher than `.aozora.toml`. |
 | `AOZORA_STRICT` | `aozora-cli` | Fallback for `check` / `lint` `--strict`: any diagnostic exits non-zero. |
-| `AOZORA_DIAGNOSTIC_FORMAT` | `aozora-cli` | Fallback for `check` / `lint` `--diagnostic-format`: `auto` / `human` / `json` / `short`. |
+| `AOZORA_FORMAT` | `aozora-cli` | Fallback for `check` / `lint` `--format`: `auto` / `human` / `json` / `short`. |
 | `AOZORA_LOG` | `aozora-cli`, library opt-in | `tracing-subscriber` filter directive (e.g. `aozora_pipeline=debug,aozora_render=info`). For internal debugging; not part of the stable surface. |
 
 ## Dev / bench harness

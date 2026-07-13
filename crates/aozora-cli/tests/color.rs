@@ -27,7 +27,7 @@ use std::process::{Command, ExitStatus, Stdio};
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
 /// Input that provokes at least one diagnostic — a literal PUA sentinel
-/// (U+E001) trips `SourceContainsPua` — so `check --diagnostic-format human`
+/// (U+E001) trips `SourceContainsPua` — so `check --format human`
 /// actually renders a miette report whose colour we can inspect.
 const DIRTY: &str = "abc\u{E001}def";
 
@@ -81,7 +81,7 @@ fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
 /// the given `--color` value and `env`, fed dirty input on stdin.
 fn check_human(color: &str, env: &[(&str, &str)]) -> Output {
     run(
-        &["check", "--diagnostic-format", "human", "--color", color],
+        &["check", "--format", "human", "--color", color],
         env,
         Some(DIRTY),
     )

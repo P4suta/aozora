@@ -2,7 +2,7 @@
 //!
 //! The three diagnostic views (`human` / `json` / `short`) write to
 //! the process's stderr, so they are exercised by spawning the real
-//! binary with `--diagnostic-format` and capturing stderr — the same
+//! binary with `--format` and capturing stderr — the same
 //! `Command` + `CARGO_BIN_EXE_aozora` pattern as `smoke.rs` /
 //! `snapshot_cli.rs`. Each test pins a structural property of the
 //! rendered output so a regression in the formatter lands as a
@@ -56,7 +56,7 @@ const TWO_PUA: &[u8] = b"a\xee\x80\x81b\xee\x80\x82c";
 
 #[test]
 fn short_format_renders_rustc_style_line() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "short"], ONE_PUA);
+    let (_, stderr) = run(&["check", "--format", "short"], ONE_PUA);
     // `path:offset: severity[code]: message`
     assert!(
         stderr.contains("<stdin>:1: warning[aozora::lex::source_contains_pua]:"),
@@ -70,7 +70,7 @@ fn short_format_renders_rustc_style_line() {
 
 #[test]
 fn short_format_emits_one_line_per_diagnostic() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "short"], TWO_PUA);
+    let (_, stderr) = run(&["check", "--format", "short"], TWO_PUA);
     let lines: Vec<&str> = stderr.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(
         lines.len(),
@@ -96,7 +96,7 @@ fn short_format_uses_the_file_path() {
     file.flush().expect("flush temp input");
     let path = file.path().to_owned();
     let path_str = path.to_str().expect("utf-8 temp path");
-    let (_, stderr) = run(&["check", "--diagnostic-format", "short", path_str], &[]);
+    let (_, stderr) = run(&["check", "--format", "short", path_str], &[]);
     assert!(
         stderr.contains(path_str),
         "short line should name the input file path: {stderr:?}"
@@ -106,10 +106,7 @@ fn short_format_uses_the_file_path() {
 #[test]
 fn short_format_renders_note_severity() {
     // 〔e^〕 accent digraph → sanitize-stage decomposition `note` diagnostic.
-    let (_, stderr) = run(
-        &["check", "--diagnostic-format", "short"],
-        "〔e^〕".as_bytes(),
-    );
+    let (_, stderr) = run(&["check", "--format", "short"], "〔e^〕".as_bytes());
     assert!(
         stderr.contains("note[aozora::lex::accent_decomposition_applied]:"),
         "accent decomposition renders as a `note`: {stderr:?}"
@@ -120,7 +117,7 @@ fn short_format_renders_note_severity() {
 fn short_format_renders_error_severity() {
     // A ruby reading carrying a nested ruby → `nested_ruby` error.
     let (_, stderr) = run(
-        &["check", "--diagnostic-format", "short"],
+        &["check", "--format", "short"],
         "｜青《あ｜お《く》》".as_bytes(),
     );
     assert!(
@@ -135,7 +132,7 @@ fn short_format_renders_error_severity() {
 
 #[test]
 fn json_format_emits_wire_envelope() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "json"], ONE_PUA);
+    let (_, stderr) = run(&["check", "--format", "json"], ONE_PUA);
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("json diagnostics envelope parses");
     assert_eq!(
@@ -154,7 +151,7 @@ fn json_format_emits_wire_envelope() {
 
 #[test]
 fn json_format_carries_every_diagnostic() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "json"], TWO_PUA);
+    let (_, stderr) = run(&["check", "--format", "json"], TWO_PUA);
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("json envelope parses");
     assert_eq!(
@@ -166,7 +163,7 @@ fn json_format_carries_every_diagnostic() {
 
 #[test]
 fn auto_format_resolves_to_json_when_stderr_is_piped() {
-    // No `--diagnostic-format`: `Auto` collapses to `json` because the
+    // No `--format`: `Auto` collapses to `json` because the
     // captured stderr is not a terminal.
     let (_, stderr) = run(&["check"], ONE_PUA);
     let value: serde_json::Value =
@@ -183,7 +180,7 @@ fn auto_format_resolves_to_json_when_stderr_is_piped() {
 
 #[test]
 fn human_format_renders_graphical_report() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], ONE_PUA);
+    let (_, stderr) = run(&["check", "--format", "human"], ONE_PUA);
     // miette's graphical report carries the code, the message, a source
     // snippet line and a caret label.
     assert!(
@@ -202,7 +199,7 @@ fn human_format_renders_graphical_report() {
 
 #[test]
 fn human_format_renders_a_report_per_diagnostic() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], TWO_PUA);
+    let (_, stderr) = run(&["check", "--format", "human"], TWO_PUA);
     // One graphical report per diagnostic. Exclude the explain-hint
     // footer, which names the (deduped) code once more.
     let occurrences = stderr
@@ -218,7 +215,7 @@ fn human_format_renders_a_report_per_diagnostic() {
 
 #[test]
 fn human_format_appends_explain_hint() {
-    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], ONE_PUA);
+    let (_, stderr) = run(&["check", "--format", "human"], ONE_PUA);
     assert!(
         stderr.contains("aozora explain source_contains_pua"),
         "human report points the reader at `aozora explain <code>`: {stderr:?}"
@@ -229,7 +226,7 @@ fn human_format_appends_explain_hint() {
 fn human_explain_hint_dedupes_repeated_codes() {
     // TWO_PUA fires two `source_contains_pua` diagnostics; the hint
     // names the code exactly once.
-    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], TWO_PUA);
+    let (_, stderr) = run(&["check", "--format", "human"], TWO_PUA);
     assert_eq!(
         stderr.matches("aozora explain source_contains_pua").count(),
         1,
@@ -242,7 +239,7 @@ fn explain_hint_absent_from_machine_formats() {
     // The hint is human-only; `json` / `short` are machine contracts
     // (ADR-0008) and must stay byte-identical — no hint.
     for fmt in ["json", "short"] {
-        let (_, stderr) = run(&["check", "--diagnostic-format", fmt], ONE_PUA);
+        let (_, stderr) = run(&["check", "--format", fmt], ONE_PUA);
         assert!(
             !stderr.contains("aozora explain"),
             "format {fmt:?} must not carry the explain hint: {stderr:?}"
@@ -257,10 +254,7 @@ fn explain_hint_absent_from_machine_formats() {
 #[test]
 fn clean_input_writes_nothing_for_any_format() {
     for fmt in ["short", "json", "human", "auto"] {
-        let (_, stderr) = run(
-            &["check", "--diagnostic-format", fmt],
-            "｜青梅《おうめ》\n".as_bytes(),
-        );
+        let (_, stderr) = run(&["check", "--format", fmt], "｜青梅《おうめ》\n".as_bytes());
         assert!(
             stderr.is_empty(),
             "clean input → empty stderr for format {fmt:?}: {stderr:?}"

@@ -139,9 +139,21 @@ impl JsonFile {
     }
 }
 
+/// The `--json` report envelope: the two-key `{ schemaVersion, data }` shape
+/// the CLI-local JSON outputs share (matching the wire envelopes' key names and
+/// camelCase). `schemaVersion` is a CLI-side counter, distinct from the
+/// `aozora::json` wire `SCHEMA_VERSION`.
 #[derive(Serialize)]
 struct JsonReport {
-    version: u32,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    data: JsonReportData,
+}
+
+/// The `data` payload of the `--json` report: the aggregate `formatted` flag
+/// and the per-file statuses.
+#[derive(Serialize)]
+struct JsonReportData {
     formatted: bool,
     files: Vec<JsonFile>,
 }
@@ -150,9 +162,11 @@ struct JsonReport {
 /// input was already canonical.
 pub(crate) fn emit_json(outcome: Outcome, files: Vec<JsonFile>) -> io::Result<()> {
     let report = JsonReport {
-        version: 1,
-        formatted: outcome == Outcome::Ok,
-        files,
+        schema_version: 1,
+        data: JsonReportData {
+            formatted: outcome == Outcome::Ok,
+            files,
+        },
     };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &report)?;
@@ -267,6 +281,31 @@ mod tests {
         let text = String::from_utf8(out).expect("utf8");
         // Only the `---` / `+++` headers, no `@@` hunks.
         assert!(!text.contains("@@"), "no hunks for identical input: {text}");
+    }
+
+    #[test]
+    fn json_report_uses_the_two_key_data_envelope() {
+        // `{ schemaVersion, data:{ formatted, files } }` — the CLI-local shape:
+        // `formatted`/`files` live UNDER `data`, and `schemaVersion` is the
+        // CLI-side counter `1` (distinct from the wire `SCHEMA_VERSION`).
+        let report = JsonReport {
+            schema_version: 1,
+            data: JsonReportData {
+                formatted: false,
+                files: vec![JsonFile::would_reformat("a.afm".to_owned())],
+            },
+        };
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["schemaVersion"], 1, "cli-local counter: {v}");
+        assert_eq!(v["data"]["formatted"], false, "formatted nested: {v}");
+        assert_eq!(v["data"]["files"][0]["status"], "would_reformat", "{v}");
+        // The payload must not leak to the top level.
+        assert!(
+            v.get("formatted").is_none(),
+            "formatted must be nested: {v}"
+        );
+        assert!(v.get("files").is_none(), "files must be nested: {v}");
+        assert!(v.get("version").is_none(), "old `version` key gone: {v}");
     }
 
     #[test]
