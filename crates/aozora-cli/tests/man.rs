@@ -36,7 +36,7 @@ fn man_root_emits_roff_for_the_binary() {
 #[test]
 fn man_renders_a_named_subcommand() {
     let (ok, stdout) = run(&["man", "inspect"]);
-    assert!(ok, "man wire must succeed");
+    assert!(ok, "man inspect must succeed");
     assert!(stdout.contains(".TH"), "expected roff output");
     assert!(
         stdout.contains("inspect"),
