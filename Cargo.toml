@@ -25,6 +25,7 @@ members = [
   "crates/aozora-cst",
   "crates/aozora-query",
   "crates/aozora-fmt",
+  "crates/aozora-i18n",
   "crates/tree-sitter-aozora",
   "crates/aozora-lsp",
 ]
@@ -186,6 +187,7 @@ aozora-cst = { version = "0.4.1", path = "crates/aozora-cst" }
 aozora-query = { version = "0.4.1", path = "crates/aozora-query" }
 aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
 aozora-fmt = { version = "0.4.1", path = "crates/aozora-fmt" }
+aozora-i18n = { version = "0.4.1", path = "crates/aozora-i18n" }
 # Build-identity leaf: depended on ONLY by the binaries (aozora-cli / aozora-lsp)
 # so its git-probing build.rs never invalidates the hot library crates' caches.
 aozora-buildstamp = { version = "0.4.1", path = "crates/aozora-buildstamp" }
@@ -331,6 +333,23 @@ clap_mangen = "0.3"
 # notify is the de-facto cross-platform watcher (inotify / FSEvents /
 # ReadDirectoryChangesW); CLI-only, like the clap_* generators above.
 notify = "8.2"
+
+# Localization (aozora-i18n) — the Project Fluent stack, the de-facto Rust
+# i18n standard (Mozilla's localization system, the engine behind Firefox).
+# Message catalogs are external `.ftl` files so translators never touch Rust
+# and a new language is one file. `fluent-bundle` is the core runtime (FTL
+# parse + message formatting); `unic-langid` models BCP-47 language
+# identifiers; `fluent-langneg` negotiates a requested locale against the
+# available catalogs. The CLI and LSP share the one catalog. All are pinned
+# per ADR-0017 and consumed only by aozora-i18n (no `langid!` macro — it
+# expands to `unsafe`, which the workspace forbids — so no `macros` feature).
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+# Pinned to 0.13 (not 0.14): fluent-langneg 0.14 rebased its identifier type on
+# ICU4X's `icu_locid`, whereas fluent-bundle 0.16 and `unic-langid` here speak
+# `unic_langid::LanguageIdentifier`. 0.13 keeps the whole stack on the one
+# identifier type so bundles and negotiation share it without a bridge.
+fluent-langneg = "0.13"
 
 # Testing
 insta = { version = "1.47", features = ["yaml", "json", "filters"] }

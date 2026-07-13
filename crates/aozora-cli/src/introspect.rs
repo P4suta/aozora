@@ -20,6 +20,7 @@ use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
@@ -234,11 +235,11 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
 /// Print the explainer for `args.kind`. Recognises every camelCase
 /// tag exposed by `aozora kinds`. Returns a non-zero exit code when
 /// the tag is unknown, with a hint pointing back at `aozora kinds`.
-pub(crate) fn run_explain(args: &ExplainArgs) -> Result<ExitCode> {
+pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     // NodeKind tags (camelCase, no `_`/`::`) and diagnostic codes (which
     // always carry `_` and/or `::`) never collide, so try the node page
     // first and fall back to a diagnostic-code lookup.
-    let prose = explain_kind(&args.kind).or_else(|| explain_diagnostic(&args.kind));
+    let prose = explain_kind(&args.kind).or_else(|| explain_diagnostic(&args.kind, lang));
     let mut stdout = io::stdout().lock();
     match prose {
         Some(text) => {
@@ -409,8 +410,10 @@ fn explain_kind(tag: &str) -> Option<String> {
 /// Explain a diagnostic code: `aozora explain aozora::lex::unclosed_bracket`
 /// (or the short `unclosed_bracket`). Prints the same code / severity /
 /// help / URL that `aozora check` attaches to the diagnostic, sourced
-/// from [`aozora::Diagnostic::explain`] so the two never diverge.
-fn explain_diagnostic(arg: &str) -> Option<String> {
+/// from [`aozora::Diagnostic::explain`] so the two never diverge. Only the
+/// CLI-owned section labels (repro / fixed / see) are localized via `lang`;
+/// the spec-owned prose (title / body / repro / fixed example) is verbatim.
+fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
     // Accept the full `aozora::lex::<token>` / `aozora::lint::<token>` code or
     // the bare trailing token; expand the short form against both namespaces.
     let info = if arg.contains("::") {
@@ -427,12 +430,18 @@ fn explain_diagnostic(arg: &str) -> Option<String> {
         info.source.as_json_str(),
         info.body,
     );
-    out.push_str("\n\n再現例:\n");
+    out.push_str("\n\n");
+    out.push_str(&i18n::t(lang, "explain-repro-label"));
+    out.push('\n');
     out.push_str(info.repro);
-    out.push_str("\n\n修正後:\n");
+    out.push_str("\n\n");
+    out.push_str(&i18n::t(lang, "explain-fixed-label"));
+    out.push('\n');
     out.push_str(info.fixed);
     if let Some(url) = &info.url {
-        out.push_str("\n\nsee: ");
+        out.push_str("\n\n");
+        out.push_str(&i18n::t(lang, "explain-see-label"));
+        out.push(' ');
         out.push_str(url);
     }
     Some(out)

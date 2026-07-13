@@ -13,8 +13,16 @@ use std::process::{Command, ExitStatus, Stdio};
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
 fn run(args: &[&str]) -> (ExitStatus, String, String) {
+    // Pin the message language so `explain`'s section labels are English and
+    // deterministic regardless of the host locale: `AOZORA_LANG=en` beats the
+    // `LANG` fallback and stripping `LANG` / `LC_ALL` removes it from the
+    // chain. A test that wants another language passes `--lang`, which outranks
+    // `AOZORA_LANG`.
     let output = Command::new(BIN)
         .args(args)
+        .env("AOZORA_LANG", "en")
+        .env_remove("LANG")
+        .env_remove("LC_ALL")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -214,4 +222,37 @@ fn explain_internal_diagnostic_code_succeeds() {
         "code: {stdout:?}"
     );
     assert!(stdout.contains("internal"), "source axis: {stdout:?}");
+}
+
+#[test]
+fn explain_section_labels_default_to_english() {
+    // The CLI-owned section labels are English by default; the spec-owned
+    // diagnostic prose around them is untouched by the language axis.
+    let (status, stdout, stderr) = run(&["explain", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain must succeed: {stderr:?}");
+    assert!(stdout.contains("Reproduction:"), "repro label: {stdout:?}");
+    assert!(stdout.contains("After fix:"), "fixed label: {stdout:?}");
+    assert!(stdout.contains("see: "), "see label: {stdout:?}");
+}
+
+#[test]
+fn explain_section_labels_localize_with_lang() {
+    // `--lang` outranks the pinned `AOZORA_LANG=en` and swaps only the
+    // CLI-owned labels; the diagnostic code / URL contract is unchanged.
+    let (status, ja, stderr) = run(&["explain", "--lang", "ja", "aozora::lex::unclosed_bracket"]);
+    assert!(
+        status.success(),
+        "explain --lang ja must succeed: {stderr:?}"
+    );
+    assert!(ja.contains("再現例:"), "ja repro label: {ja:?}");
+    assert!(ja.contains("修正後:"), "ja fixed label: {ja:?}");
+    assert!(ja.contains("参照: "), "ja see label: {ja:?}");
+    // The machine-stable code and URL survive localization.
+    assert!(ja.contains("aozora::lex::unclosed_bracket"), "code: {ja:?}");
+
+    let (status, zh, _) = run(&["explain", "--lang", "zh", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain --lang zh must succeed");
+    assert!(zh.contains("复现示例:"), "zh repro label: {zh:?}");
+    assert!(zh.contains("修正后:"), "zh fixed label: {zh:?}");
+    assert!(zh.contains("参见: "), "zh see label: {zh:?}");
 }

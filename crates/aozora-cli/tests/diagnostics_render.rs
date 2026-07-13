@@ -248,6 +248,54 @@ fn explain_hint_absent_from_machine_formats() {
 }
 
 // ---------------------------------------------------------------------
+// i18n: the human footer localizes; the machine axis never does
+// ---------------------------------------------------------------------
+
+#[test]
+fn explain_hint_header_is_english_by_default() {
+    // The harness pins `AOZORA_LANG=en`, so the human footer header is English.
+    let (_, stderr) = run(&["check", "--format", "human"], ONE_PUA);
+    assert!(
+        stderr.contains("help: run `aozora explain <code>` for details, e.g."),
+        "english footer header: {stderr:?}"
+    );
+}
+
+#[test]
+fn explain_hint_header_localizes_with_lang() {
+    // `--lang` swaps the human footer header (the per-code command lines stay
+    // literal). It outranks the pinned `AOZORA_LANG=en`.
+    let (_, ja) = run(&["check", "--format", "human", "--lang", "ja"], ONE_PUA);
+    assert!(
+        ja.contains("ヒント: 詳細は `aozora explain <code>` を実行。例:"),
+        "japanese footer header: {ja:?}"
+    );
+    assert!(
+        ja.contains("aozora explain source_contains_pua"),
+        "the per-code command line stays literal under --lang ja: {ja:?}"
+    );
+
+    let (_, zh) = run(&["check", "--format", "human", "--lang", "zh"], ONE_PUA);
+    assert!(
+        zh.contains("提示: 运行 `aozora explain <code>` 查看详情，例如:"),
+        "chinese footer header: {zh:?}"
+    );
+}
+
+#[test]
+fn machine_formats_are_byte_identical_across_languages() {
+    // The core correctness invariant of the i18n work: json / short output is
+    // an English-stable contract, byte-for-byte the same under any `--lang`.
+    for fmt in ["json", "short"] {
+        let (_, en) = run(&["check", "--format", fmt, "--lang", "en"], TWO_PUA);
+        let (_, ja) = run(&["check", "--format", fmt, "--lang", "ja"], TWO_PUA);
+        let (_, zh) = run(&["check", "--format", fmt, "--lang", "zh"], TWO_PUA);
+        assert_eq!(en, ja, "format {fmt:?}: en and ja bytes differ");
+        assert_eq!(en, zh, "format {fmt:?}: en and zh bytes differ");
+    }
+}
+
+// ---------------------------------------------------------------------
 // no diagnostics → render is never reached, stderr stays empty
 // ---------------------------------------------------------------------
 

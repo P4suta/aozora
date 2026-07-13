@@ -12,6 +12,8 @@ container plumbing.
 | `AOZORA_ENCODING` | `aozora-cli` | Source-encoding fallback for `-E/--encoding`: `auto` (default), `utf8`, or `sjis`. Lower precedence than the flag, higher than `.aozora.toml`. |
 | `AOZORA_STRICT` | `aozora-cli` | Fallback for `check` / `lint` `--strict`: any diagnostic exits non-zero. |
 | `AOZORA_FORMAT` | `aozora-cli` | Fallback for `check` / `lint` `--format`: `auto` / `human` / `json` / `short`. |
+| `AOZORA_LANG` | `aozora-cli` | Language for **human messages** (the stdin guard, `--watch` banner, `explain` chrome): `en` (default) / `ja` / `zh`, or any BCP-47 tag. Precedence `--lang > AOZORA_LANG > .aozora.toml lang > LANG > en`; unknown locales fall back to `en`. Never affects machine output (json / short / codes / exit / schema) or encoding. See [ADR-0033](https://github.com/P4suta/aozora/blob/main/docs/adr/0033-cli-output-language-policy.md). |
+| `LANG` | `aozora-cli` | **Lowest-priority** fallback for the human-message language only (a POSIX `ja_JP.UTF-8` value negotiates to `ja`). Outranked by `--lang` / `AOZORA_LANG` / `.aozora.toml lang`. **Not** read for source-byte encoding — see below. |
 | `AOZORA_LOG` | `aozora-cli`, library opt-in | `tracing-subscriber` filter directive (e.g. `aozora_pipeline=debug,aozora_render=info`). For internal debugging; not part of the stable surface. |
 
 ## Dev / bench harness
@@ -46,7 +48,7 @@ A few standard variables aozora intentionally ignores:
 
 | Variable | Why ignored |
 |---|---|
-| `LANG` / `LC_ALL` | aozora handles its own encoding via `--encoding`. Locale-driven byte interpretation would make the parser non-reproducible across machines. |
+| `LANG` / `LC_ALL` **for encoding** | Source-byte interpretation is governed only by `--encoding` / `AOZORA_ENCODING` / `.aozora.toml encoding` / auto-detection. Locale-driven byte interpretation would make the parser non-reproducible across machines. (`LANG` *is* read as the lowest-priority **message-language** fallback — see the parser-configuration table above; `LC_ALL` is not read at all.) |
 | `RUSTFLAGS` (in non-build context) | The release / bench / PGO profiles set their own flags; per-invocation `RUSTFLAGS` would defeat sccache hits for unrelated crates. |
 | `CARGO_BUILD_JOBS` | Cargo's default (CPU count) is what we want. Overriding usually fights the bench harness's own parallelism control. |
 

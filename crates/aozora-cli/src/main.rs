@@ -83,6 +83,7 @@ use aozora::{
 // frontends share one decoder) and the colour-policy enum; re-exported
 // crate-wide so `config` can name them.
 pub(crate) use aozora_fmt::{ColorChoice, Encoding};
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 
 use anyhow::{Context, Result};
 use clap::builder::styling::{AnsiColor, Style, Styles};
@@ -147,6 +148,14 @@ struct Cli {
     /// logging, never stdout. `AOZORA_LOG` overrides it. Global.
     #[arg(long, short = 'q', global = true)]
     quiet: bool,
+
+    /// Language for human messages (the stdin guard, the `--watch` banner,
+    /// and `explain`), as a BCP-47 tag: `en` (the default), `ja`, or `zh`.
+    /// Highest priority in `--lang > AOZORA_LANG > .aozora.toml lang > LANG`;
+    /// unknown locales fall back to `en`. Never affects machine output
+    /// (json / short / codes / exit / schema) or `--encoding`. Global.
+    #[arg(long, global = true, value_name = "LOCALE")]
+    lang: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -425,16 +434,23 @@ fn main() -> ExitCode {
     // miette captures its handler at construction time (see `color::install`).
     color::install(cli.color);
 
+    // Resolve the human-message language once, up front, so every surface
+    // (stdin guard, watch banner, explain footer / labels) speaks the same
+    // language. Precedence: `--lang > AOZORA_LANG > .aozora.toml lang > LANG`,
+    // then English. The machine axis never consults it. (Introspection
+    // subcommands that read no config resolve without a config layer.)
+    let lang = resolve_lang(cli.lang.as_deref(), &cli.command);
+
     let result = match cli.command {
-        Command::Check(opts) => run_check(&opts),
-        Command::Lint(opts) => run_lint(&opts),
-        Command::Fmt(opts) => run_fmt(&opts, cli.color),
-        Command::Render(opts) => run_render(&opts),
-        Command::Inspect(opts) => run_inspect(&opts),
+        Command::Check(opts) => run_check(&opts, &lang),
+        Command::Lint(opts) => run_lint(&opts, &lang),
+        Command::Fmt(opts) => run_fmt(&opts, cli.color, &lang),
+        Command::Render(opts) => run_render(&opts, &lang),
+        Command::Inspect(opts) => run_inspect(&opts, &lang),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
         Command::Schema(opts) => introspect::run_schema(&opts),
-        Command::Explain(opts) => introspect::run_explain(&opts),
-        Command::Pandoc(opts) => run_pandoc(&opts),
+        Command::Explain(opts) => introspect::run_explain(&opts, &lang),
+        Command::Pandoc(opts) => run_pandoc(&opts, &lang),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -457,6 +473,53 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+    }
+}
+
+/// Resolve the human-message language from the full precedence chain
+/// `--lang > AOZORA_LANG > .aozora.toml lang > LANG`, then English.
+///
+/// `explicit` is the parsed `--lang`. `AOZORA_LANG` and `LANG` are read from
+/// the environment — `LANG` for *message* language only, never for encoding
+/// (ADR-0033). The config `lang` comes from a tolerant load of the same
+/// `.aozora.toml` layers the subcommand will use.
+fn resolve_lang(explicit: Option<&str>, command: &Command) -> LanguageIdentifier {
+    let config_lang = config_lang(command);
+    i18n::resolve(
+        explicit,
+        env::var("AOZORA_LANG").ok().as_deref(),
+        config_lang.as_deref(),
+        env::var("LANG").ok().as_deref(),
+    )
+}
+
+/// The `lang` key from the effective `.aozora.toml` for `command`, or `None`.
+/// Best-effort: any error (unreadable cwd, malformed config) resolves to `None`
+/// so language resolution stays infallible — the subcommand re-loads the config
+/// and surfaces a malformed file through its own normal error path.
+fn config_lang(command: &Command) -> Option<String> {
+    let cwd = env::current_dir().ok()?;
+    config::ConfigFile::resolve(command_config_path(command), &cwd)
+        .ok()?
+        .lang
+}
+
+/// The `--config PATH` override carried by `command`, if it takes one. Only the
+/// document subcommands flatten `CrossCutArgs`; the introspection / tooling
+/// subcommands read no config file, so they contribute no config layer.
+fn command_config_path(command: &Command) -> Option<&Path> {
+    match command {
+        Command::Check(a) => a.common.cross.config.as_deref(),
+        Command::Lint(a) => a.common.cross.config.as_deref(),
+        Command::Render(a) => a.common.cross.config.as_deref(),
+        Command::Inspect(a) => a.common.cross.config.as_deref(),
+        Command::Pandoc(a) => a.common.cross.config.as_deref(),
+        Command::Fmt(a) => a.cross.config.as_deref(),
+        Command::Kinds(_)
+        | Command::Schema(_)
+        | Command::Explain(_)
+        | Command::Completions(_)
+        | Command::Man(_) => None,
     }
 }
 
@@ -487,7 +550,11 @@ fn classify_err(err: &anyhow::Error) -> ErrDisposition {
 
 /// Run `once`, or — with `--watch` — run it now and re-run on every
 /// change to the input file. `--watch` on stdin is a usage error (2).
-fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+fn run_watched(
+    common: &CommonArgs,
+    lang: &LanguageIdentifier,
+    once: impl Fn() -> Result<ExitCode>,
+) -> Result<ExitCode> {
     if !common.cross.watch {
         return once();
     }
@@ -498,17 +565,17 @@ fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Resu
         );
         return Ok(ExitCode::from(2));
     }
-    watch::watch(&common.input.file, once)
+    watch::watch(&common.input.file, lang, once)
 }
 
-fn run_check(args: &CheckArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.input.file, "check") {
+fn run_check(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "check", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, || run_check_once(args))
+    run_watched(&args.common, lang, || run_check_once(args, lang))
 }
 
-fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
+fn run_check_once(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let format = args.format.or(cfg.format).unwrap_or_default();
@@ -530,6 +597,7 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
                     &display_path(&args.common.input.file),
                     &doc,
                     diagnostics,
+                    lang,
                 )
             })
             .context("failed to write diagnostics")?;
@@ -554,14 +622,14 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
     Ok(code)
 }
 
-fn run_lint(args: &LintArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.input.file, "lint") {
+fn run_lint(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "lint", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, || run_lint_once(args))
+    run_watched(&args.common, lang, || run_lint_once(args, lang))
 }
 
-fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
+fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let format = args.format.or(cfg.format).unwrap_or_default();
@@ -569,7 +637,7 @@ fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
     let path = &args.common.input.file;
 
     if args.fix {
-        return run_lint_fix(path, encoding, format, strict);
+        return run_lint_fix(path, encoding, format, strict, lang);
     }
 
     let mut timer = Timer::new(args.common.cross.timing);
@@ -582,7 +650,7 @@ fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
     if lints.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    diagnostics_render::render(format, &display_path(path), &doc, &lints)
+    diagnostics_render::render(format, &display_path(path), &doc, &lints, lang)
         .context("failed to write lints")?;
     // Lint codes are advisory and never `Internal`, so there is no exit-3 arm
     // (unlike `check`): tolerated by default, exit 1 under `--strict` for CI.
@@ -596,11 +664,16 @@ fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
 /// `aozora lint --fix`: apply the Tier1 autofix in place through the same
 /// guarded engine `fmt --fix --write` uses, then re-lint the result and report
 /// anything the autofix could not resolve.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a path plus the four resolved lint settings (encoding / format / strict / lang), each independent; a bundle struct would not read more clearly"
+)]
 fn run_lint_fix(
     path: &Path,
     encoding: Encoding,
     format: DiagFormat,
     strict: bool,
+    lang: &LanguageIdentifier,
 ) -> Result<ExitCode> {
     if path.as_os_str() == "-" {
         anyhow::bail!("lint --fix needs a file path; it cannot rewrite stdin");
@@ -620,7 +693,7 @@ fn run_lint_fix(
     if residual.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    diagnostics_render::render(format, &display_path(path), &doc, &residual)
+    diagnostics_render::render(format, &display_path(path), &doc, &residual, lang)
         .context("failed to write lints")?;
     Ok(if strict {
         ExitCode::from(1)
@@ -639,17 +712,17 @@ fn lint_diagnostics(tree: &aozora::Tree<'_>) -> Vec<aozora::Diagnostic> {
         .collect()
 }
 
-fn run_fmt(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
+fn run_fmt(args: &FmtCmd, color: ColorChoice, lang: &LanguageIdentifier) -> Result<ExitCode> {
     // Anti-hang guard: fmt reading an interactive TTY with no file would block
     // forever. `resolve` reports whether the paths degrade to stdin.
     if matches!(
         aozora_fmt::resolve(args.fmt.paths()),
         Ok(aozora_fmt::Input::Stdin)
-    ) && let Some(code) = input::guard_stdin(Path::new("-"), "fmt")
+    ) && let Some(code) = input::guard_stdin(Path::new("-"), "fmt", lang)
     {
         return Ok(code);
     }
-    fmt_watched(args, || run_fmt_once(args, color))
+    fmt_watched(args, lang, || run_fmt_once(args, color))
 }
 
 /// The concrete file paths among fmt's PATHs — every path that is not the `-`
@@ -661,7 +734,11 @@ fn watch_target_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
 
 /// `--watch` for `fmt`: re-run on every change to the single input file.
 /// fmt takes many PATHs, so watch requires exactly one non-stdin path.
-fn fmt_watched(args: &FmtCmd, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+fn fmt_watched(
+    args: &FmtCmd,
+    lang: &LanguageIdentifier,
+    once: impl Fn() -> Result<ExitCode>,
+) -> Result<ExitCode> {
     if !args.cross.watch {
         return once();
     }
@@ -673,7 +750,7 @@ fn fmt_watched(args: &FmtCmd, once: impl Fn() -> Result<ExitCode>) -> Result<Exi
         );
         return Ok(ExitCode::from(2));
     };
-    watch::watch(path, once)
+    watch::watch(path, lang, once)
 }
 
 fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
@@ -692,11 +769,11 @@ fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
     Ok(code)
 }
 
-fn run_render(args: &RenderArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.input.file, "render") {
+fn run_render(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "render", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, || run_render_once(args))
+    run_watched(&args.common, lang, || run_render_once(args))
 }
 
 fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
@@ -726,16 +803,16 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_inspect(args: &InspectArgs) -> Result<ExitCode> {
+fn run_inspect(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     // `slugs` is a static catalogue that reads no input, so it must stay
     // usable on a bare terminal — guard only the kinds that read stdin.
     if inspect_reads_stdin(args.which) {
         let cmd = inspect_cmd(args.which);
-        if let Some(code) = input::guard_stdin(&args.common.input.file, &cmd) {
+        if let Some(code) = input::guard_stdin(&args.common.input.file, &cmd, lang) {
             return Ok(code);
         }
     }
-    run_watched(&args.common, || run_inspect_once(args))
+    run_watched(&args.common, lang, || run_inspect_once(args))
 }
 
 /// Does this `inspect` kind read document input from stdin? Every kind but the
@@ -793,11 +870,11 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
     }))
 }
 
-fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.input.file, "pandoc") {
+fn run_pandoc(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "pandoc", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, || run_pandoc_once(args))
+    run_watched(&args.common, lang, || run_pandoc_once(args))
 }
 
 fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {

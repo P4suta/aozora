@@ -15,6 +15,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
+
 /// The pure decision behind [`stdin_is_interactive`], split out so both
 /// outcomes are unit-testable without a real TTY: it is `true` only when
 /// `path` is the stdin sentinel `-` *and* `is_terminal` says stdin is a
@@ -31,16 +33,18 @@ fn stdin_is_interactive(path: &Path) -> bool {
     is_interactive_decision(path, io::stdin().is_terminal())
 }
 
-/// Write the four-line "empty stdin on a terminal" hint for `cmd` to `w`.
+/// Write the four-line "empty stdin on a terminal" hint for `cmd` to `w`, in
+/// `lang`.
 ///
 /// `cmd` is the subcommand tag shown in the copy-pasteable examples, e.g.
-/// `check` or `inspect nodes`. The alignment is tuned for fullwidth CJK
-/// glyphs in a monospace terminal; keep it in sync with the unit test.
-fn write_stdin_hint(w: &mut impl Write, cmd: &str) -> io::Result<()> {
-    writeln!(w, "error: 標準入力が空です (端末から実行中)")?;
-    writeln!(w, "  ヒント: ファイルを →  aozora {cmd} <FILE>")?;
-    writeln!(w, "          パイプで   →  cat f.txt | aozora {cmd}")?;
-    writeln!(w, "  全機能:  aozora --help")
+/// `check` or `inspect nodes`. The message text (and its per-language
+/// alignment, tuned for the script's glyph widths) lives in the `stdin-empty`
+/// key of the `aozora-i18n` catalog; the catalog value has no trailing
+/// newline, so `writeln!` supplies the final one.
+fn write_stdin_hint(w: &mut impl Write, cmd: &str, lang: &LanguageIdentifier) -> io::Result<()> {
+    let mut args = FluentArgs::new();
+    args.set("cmd", cmd);
+    writeln!(w, "{}", i18n::tf(lang, "stdin-empty", &args))
 }
 
 /// Guard a document subcommand against hanging on an interactive terminal
@@ -54,12 +58,12 @@ fn write_stdin_hint(w: &mut impl Write, cmd: &str) -> io::Result<()> {
 /// The exit code must be returned through the caller's normal `Ok(..)` path
 /// (not `?`), so it stays `2` rather than collapsing to the generic `1` the
 /// `main` error handler assigns.
-pub(crate) fn guard_stdin(path: &Path, cmd: &str) -> Option<ExitCode> {
+pub(crate) fn guard_stdin(path: &Path, cmd: &str, lang: &LanguageIdentifier) -> Option<ExitCode> {
     if !stdin_is_interactive(path) {
         return None;
     }
     let mut stderr = io::stderr().lock();
-    let _drop = write_stdin_hint(&mut stderr, cmd);
+    let _drop = write_stdin_hint(&mut stderr, cmd, lang);
     Some(ExitCode::from(2))
 }
 
@@ -67,17 +71,53 @@ pub(crate) fn guard_stdin(path: &Path, cmd: &str) -> Option<ExitCode> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn stdin_hint_bytes_are_exact() {
+    fn lang(tag: &str) -> LanguageIdentifier {
+        tag.parse().expect("test locale tag parses")
+    }
+
+    fn hint(cmd: &str, tag: &str) -> String {
         let mut buf = Vec::new();
-        write_stdin_hint(&mut buf, "check").expect("writing to a Vec cannot fail");
-        let expected = concat!(
-            "error: 標準入力が空です (端末から実行中)\n",
-            "  ヒント: ファイルを →  aozora check <FILE>\n",
-            "          パイプで   →  cat f.txt | aozora check\n",
-            "  全機能:  aozora --help\n",
+        write_stdin_hint(&mut buf, cmd, &lang(tag)).expect("writing to a Vec cannot fail");
+        String::from_utf8(buf).unwrap()
+    }
+
+    #[test]
+    fn stdin_hint_bytes_are_exact_in_english_by_default() {
+        assert_eq!(
+            hint("check", "en"),
+            concat!(
+                "error: standard input is empty (reading from a terminal)\n",
+                "  hint: read a file →  aozora check <FILE>\n",
+                "        or a pipe   →  cat f.txt | aozora check\n",
+                "  all commands:  aozora --help\n",
+            ),
         );
-        assert_eq!(String::from_utf8(buf).unwrap(), expected);
+    }
+
+    #[test]
+    fn stdin_hint_bytes_are_exact_in_japanese() {
+        assert_eq!(
+            hint("check", "ja"),
+            concat!(
+                "error: 標準入力が空です (端末から実行中)\n",
+                "  ヒント: ファイルを →  aozora check <FILE>\n",
+                "          パイプで   →  cat f.txt | aozora check\n",
+                "  全機能:  aozora --help\n",
+            ),
+        );
+    }
+
+    #[test]
+    fn stdin_hint_bytes_are_exact_in_chinese() {
+        assert_eq!(
+            hint("inspect nodes", "zh"),
+            concat!(
+                "error: 标准输入为空（正在从终端读取）\n",
+                "  提示: 从文件读取 →  aozora inspect nodes <FILE>\n",
+                "        用管道传入 →  cat f.txt | aozora inspect nodes\n",
+                "  全部命令:  aozora --help\n",
+            ),
+        );
     }
 
     #[test]
@@ -123,7 +163,7 @@ mod tests {
             "a file path must not be treated as interactive stdin"
         );
         assert!(
-            guard_stdin(Path::new("some/file.txt"), "check").is_none(),
+            guard_stdin(Path::new("some/file.txt"), "check", &lang("en")).is_none(),
             "a file path must never trip the stdin guard"
         );
     }
@@ -138,7 +178,7 @@ mod tests {
             "non-terminal stdin must not be interactive"
         );
         assert!(
-            guard_stdin(Path::new("-"), "check").is_none(),
+            guard_stdin(Path::new("-"), "check", &lang("en")).is_none(),
             "non-terminal `-` must not trip the guard"
         );
     }

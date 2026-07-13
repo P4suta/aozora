@@ -1,0 +1,25 @@
+[package]
+name = "aozora-i18n"
+description = "Localization layer for the aozora CLI and LSP: a Project Fluent (.ftl) message catalog with locale negotiation. Shell strings only — the machine output axis is never localized."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
+fluent-langneg = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

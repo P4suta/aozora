@@ -17,6 +17,7 @@ use std::io::{self, IsTerminal, Write};
 
 use aozora::Document;
 use aozora::json;
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use aozora_pipeline::lexer::sanitize;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
@@ -54,22 +55,34 @@ impl DiagFormat {
     }
 }
 
-/// Render `diagnostics` (belonging to `doc`) to stderr in `format`.
+/// Render `diagnostics` (belonging to `doc`) to stderr in `format`. `lang`
+/// selects the language of the human-only `explain` footer; the `json` /
+/// `short` machine views ignore it and stay byte-identical.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the five render inputs (format / path / doc / diagnostics / lang) are each distinct; bundling them behind a struct would move the arity without clarifying it"
+)]
 pub(crate) fn render(
     format: DiagFormat,
     path: &str,
     doc: &Document,
     diagnostics: &[aozora::Diagnostic],
+    lang: &LanguageIdentifier,
 ) -> io::Result<()> {
     match format.resolved() {
         // `resolved()` never returns `Auto`, but match exhaustively.
-        DiagFormat::Human | DiagFormat::Auto => render_human(path, doc, diagnostics),
+        DiagFormat::Human | DiagFormat::Auto => render_human(path, doc, diagnostics, lang),
         DiagFormat::Json => render_json(diagnostics),
         DiagFormat::Short => render_short(path, diagnostics),
     }
 }
 
-fn render_human(path: &str, doc: &Document, diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {
+fn render_human(
+    path: &str,
+    doc: &Document,
+    diagnostics: &[aozora::Diagnostic],
+    lang: &LanguageIdentifier,
+) -> io::Result<()> {
     // Diagnostic spans live in SANITIZED coordinates: the sanitize stage
     // strips the BOM, folds CRLF→LF, and decomposes 〔…〕 accent digraphs — each of
     // which shifts byte offsets. Aozora Bunko files ship as CRLF, so
@@ -88,15 +101,19 @@ fn render_human(path: &str, doc: &Document, diagnostics: &[aozora::Diagnostic]) 
     // <code>` so the obvious next step is one copy-paste away. Human-only:
     // `json` / `short` are machine contracts (ADR-0008) and stay
     // byte-identical, so the hint never reaches them.
-    write_explain_hint(&mut stderr, diagnostics)
+    write_explain_hint(&mut stderr, diagnostics, lang)
 }
 
 /// Append a one-time `aozora explain <code>` pointer covering the
 /// distinct diagnostic codes present, in first-seen order and capped so
 /// noisy input does not bury the reports. A no-op when `diagnostics` is
 /// empty.
-fn write_explain_hint(w: &mut impl Write, diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {
-    if let Some(hint) = explain_hint(diagnostics.iter().map(aozora::Diagnostic::code)) {
+fn write_explain_hint(
+    w: &mut impl Write,
+    diagnostics: &[aozora::Diagnostic],
+    lang: &LanguageIdentifier,
+) -> io::Result<()> {
+    if let Some(hint) = explain_hint(diagnostics.iter().map(aozora::Diagnostic::code), lang) {
         w.write_all(hint.as_bytes())?;
     }
     Ok(())
@@ -105,7 +122,12 @@ fn write_explain_hint(w: &mut impl Write, diagnostics: &[aozora::Diagnostic]) ->
 /// Pure formatting seam for [`write_explain_hint`]: build the hint text
 /// for the distinct short codes among `codes` (first-seen order, capped at
 /// `MAX_HINTS` with an `… and N more` tail), or `None` when there are none.
-fn explain_hint(codes: impl Iterator<Item = &'static str>) -> Option<String> {
+/// The header and the `… and N more` tail are localized via `lang`; the
+/// per-code `aozora explain <code>` lines are literal shell commands.
+fn explain_hint(
+    codes: impl Iterator<Item = &'static str>,
+    lang: &LanguageIdentifier,
+) -> Option<String> {
     use std::fmt::Write as _;
 
     const MAX_HINTS: usize = 3;
@@ -120,13 +142,15 @@ fn explain_hint(codes: impl Iterator<Item = &'static str>) -> Option<String> {
         return None;
     }
     let mut out = String::new();
-    writeln!(out, "help: run `aozora explain <code>` for details, e.g.")
+    writeln!(out, "{}", i18n::t(lang, "explain-hint-header"))
         .expect("writing to a String is infallible");
     for code in seen.iter().take(MAX_HINTS) {
         writeln!(out, "      aozora explain {code}").expect("writing to a String is infallible");
     }
     if seen.len() > MAX_HINTS {
-        writeln!(out, "      … and {} more", seen.len() - MAX_HINTS)
+        let mut args = FluentArgs::new();
+        args.set("count", (seen.len() - MAX_HINTS).to_string());
+        writeln!(out, "      {}", i18n::tf(lang, "explain-hint-more", &args))
             .expect("writing to a String is infallible");
     }
     Some(out)
@@ -193,17 +217,21 @@ mod tests {
         ));
     }
 
+    fn lang(tag: &str) -> LanguageIdentifier {
+        tag.parse().expect("test locale tag parses")
+    }
+
     #[test]
     fn explain_hint_empty_is_none() {
         use std::iter::empty;
-        assert_eq!(explain_hint(empty()), None);
+        assert_eq!(explain_hint(empty(), &lang("en")), None);
     }
 
-    // Deduped to distinct short codes, in first-seen order.
+    // Deduped to distinct short codes, in first-seen order. English default.
     #[test]
     fn explain_hint_dedups_by_short_code() {
         let codes = ["aozora::lex::foo", "aozora::parse::foo", "aozora::lex::bar"];
-        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        let hint = explain_hint(codes.into_iter(), &lang("en")).expect("non-empty");
         assert_eq!(
             hint,
             "help: run `aozora explain <code>` for details, e.g.\n\
@@ -219,7 +247,7 @@ mod tests {
     #[test]
     fn explain_hint_exactly_max_has_no_more_tail() {
         let codes = ["aozora::a::x", "aozora::b::y", "aozora::c::z"];
-        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        let hint = explain_hint(codes.into_iter(), &lang("en")).expect("non-empty");
         assert_eq!(
             hint,
             "help: run `aozora explain <code>` for details, e.g.\n\
@@ -242,7 +270,7 @@ mod tests {
             "aozora::c::z",
             "aozora::d::w",
         ];
-        let hint = explain_hint(codes.into_iter()).expect("non-empty");
+        let hint = explain_hint(codes.into_iter(), &lang("en")).expect("non-empty");
         assert_eq!(
             hint,
             "help: run `aozora explain <code>` for details, e.g.\n\
@@ -250,6 +278,36 @@ mod tests {
              \u{20}     aozora explain y\n\
              \u{20}     aozora explain z\n\
              \u{20}     … and 1 more\n",
+        );
+    }
+
+    // The header and the `… and N more` tail are localized; the literal
+    // per-code command lines are not. `--lang ja` / `zh` swap only the chrome.
+    #[test]
+    fn explain_hint_localizes_header_and_tail() {
+        let codes = [
+            "aozora::a::x",
+            "aozora::b::y",
+            "aozora::c::z",
+            "aozora::d::w",
+        ];
+        let ja = explain_hint(codes.into_iter(), &lang("ja")).expect("non-empty");
+        assert_eq!(
+            ja,
+            "ヒント: 詳細は `aozora explain <code>` を実行。例:\n\
+             \u{20}     aozora explain x\n\
+             \u{20}     aozora explain y\n\
+             \u{20}     aozora explain z\n\
+             \u{20}     … 他 1 件\n",
+        );
+        let zh = explain_hint(codes.into_iter(), &lang("zh")).expect("non-empty");
+        assert_eq!(
+            zh,
+            "提示: 运行 `aozora explain <code>` 查看详情，例如:\n\
+             \u{20}     aozora explain x\n\
+             \u{20}     aozora explain y\n\
+             \u{20}     aozora explain z\n\
+             \u{20}     … 还有 1 项\n",
         );
     }
 }
