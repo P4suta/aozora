@@ -302,4 +302,73 @@ mod tests {
         assert!(hover_at("", Position::new(0, 0)).is_none());
         assert!(hover_at("", Position::new(99, 99)).is_none());
     }
+
+    // --- direct helper pins (mutation kills) ---------------------------
+
+    /// `snap_to_char_boundary_left` walks an index left until it lands on
+    /// a UTF-8 boundary (or 0). Pinning both interior and on-boundary
+    /// inputs against exact offsets kills the loop-guard and step
+    /// mutations.
+    #[test]
+    fn snap_left_lands_on_prior_char_boundary() {
+        // "aあ": 'a' at byte 0, 'あ' (U+3042, 3 bytes) at bytes 1..4.
+        // Char boundaries: {0, 1, 4}; bytes 2 and 3 are interior.
+        let s = "aあ";
+        // Interior bytes snap back to the start of 'あ' (byte 1). This is
+        // the single most load-bearing assertion: a body replaced with
+        // `0` returns 0; `>`→`<`/`==` never enters the loop and returns 2;
+        // `&&`→`||` over-decrements to 0; `-=`→`+=` overshoots to 4;
+        // `-=`→`/=` spins forever (timeout). Real answer is 1.
+        assert_eq!(snap_to_char_boundary_left(s, 2), 1);
+        assert_eq!(snap_to_char_boundary_left(s, 3), 1);
+        // On-boundary and terminal indices are returned unchanged.
+        assert_eq!(snap_to_char_boundary_left(s, 1), 1);
+        assert_eq!(snap_to_char_boundary_left(s, 4), 4);
+        assert_eq!(snap_to_char_boundary_left(s, 0), 0);
+    }
+
+    /// `snap_to_char_boundary_right` walks an index right to the next
+    /// UTF-8 boundary (or `len`). Mirror pins for its loop guard and step.
+    #[test]
+    fn snap_right_lands_on_next_char_boundary() {
+        // "aあ": boundaries {0, 1, 4}; len 4; interior bytes 2 and 3.
+        let s = "aあ";
+        // Interior bytes advance to the end of 'あ' (byte 4). Kills
+        // `<`→`==`/`>` (never enters, returns 2), `+=`→`-=` (retreats to
+        // 1), `+=`→`*=` (spins forever, timeout).
+        assert_eq!(snap_to_char_boundary_right(s, 2), 4);
+        assert_eq!(snap_to_char_boundary_right(s, 3), 4);
+        // A real boundary below `len` must be returned untouched: this is
+        // what distinguishes `&&`→`||` (would run to 4) and the deleted
+        // `!` (would advance past the boundary to the next interior stop,
+        // 2) from correct behaviour.
+        assert_eq!(snap_to_char_boundary_right(s, 1), 1);
+        assert_eq!(snap_to_char_boundary_right(s, 0), 0);
+        assert_eq!(snap_to_char_boundary_right(s, 4), 4);
+    }
+
+    /// The span returned by `find_gaiji_span` must be the *absolute* byte
+    /// range `win_start + start_in_win ..`, not a product. Pushing the
+    /// cursor past `MAX_GAIJI_SPAN_LEN` forces a non-zero `win_start` so
+    /// `+`→`*` diverges (`98 + 502 = 600` vs `98 * 502 = 49196`).
+    #[test]
+    fn find_gaiji_span_returns_absolute_range_past_window_origin() {
+        let pad = "x".repeat(600);
+        let span = "※［＃「desc」、第3水準1-85-54］";
+        let src = format!("{pad}{span}");
+        let kome = src.find('※').unwrap(); // == 600, > MAX_GAIJI_SPAN_LEN
+        let cursor = kome + 10; // inside the span, on an ASCII boundary
+        assert_eq!(find_gaiji_span(&src, cursor), Some(kome..src.len()));
+    }
+
+    /// `parse_gaiji_body` slices the description starting at
+    /// `open_idx + '「'.len_utf8()`. Leading text makes `open_idx` = 2,
+    /// so `+`→`*` shifts the slice start from byte 5 to byte 6 and drops
+    /// the first description character (`desc` → `esc`).
+    #[test]
+    fn parse_gaiji_body_slices_description_after_open_quote() {
+        let (description, mencode) = parse_gaiji_body("xy「desc」、mc");
+        assert_eq!(description, "desc");
+        assert_eq!(mencode.as_deref(), Some("mc"));
+    }
 }

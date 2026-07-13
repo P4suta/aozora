@@ -386,4 +386,101 @@ mod tests {
     fn asterisk_triggers_full_width_gaiji_marker() {
         assert_eq!(first_label("*", pos(0, 1)).as_deref(), Some("※"));
     }
+
+    /// Fetch the single emmet item a trigger produces, panicking with a
+    /// clear message when the completion list is empty.
+    fn only_item(source: &str, position: Position) -> CompletionItem {
+        emmet_completions(source, position)
+            .into_iter()
+            .next()
+            .expect("expected exactly one emmet item")
+    }
+
+    #[test]
+    fn slug_context_true_when_open_bracket_precedes_hash() {
+        // `[#` and `［#`: walking back from the trailing hash we hit the
+        // opening bracket before any closer, so the slug catalogue owns
+        // the cursor. Pins `in_slug_context` == true, which kills:
+        //   * `||`→`&&` at line 190 (would demand the tail end with both
+        //     `#` AND `＃` — impossible — so it would always return
+        //     false),
+        //   * `&&`→`||` at line 199 (would run the snap loop up to
+        //     `cursor`, emptying the look-back window → false),
+        //   * deletion of the `'[' | '［'` arm at line 205 (the bracket
+        //     would fall through to `_` and never report true).
+        assert!(in_slug_context("[#", 2));
+        assert!(in_slug_context("［#", "［#".len()));
+    }
+
+    #[test]
+    fn slug_context_false_when_closer_or_newline_precedes_hash() {
+        // A `]`, `］`, or newline seen before the `[` means the cursor is
+        // NOT inside an open slug bracket, so each must short-circuit to
+        // false. Without the `']' | '］' | '\n'` arm (line 206) the scan
+        // would run past the closer, reach the leading `[`, and wrongly
+        // report true — so these pin that arm's three alternatives.
+        assert!(!in_slug_context("[]#", 3));
+        assert!(!in_slug_context("[］#", "[］#".len()));
+        assert!(!in_slug_context("[\n#", 3));
+    }
+
+    #[test]
+    fn slug_context_snaps_window_start_forward_across_multibyte_char() {
+        // Force the SLUG_WINDOW look-back cap (256 bytes) to land in the
+        // middle of a multi-byte char. Layout (byte ranges):
+        //   `あ`      → 0..3
+        //   `［`      → 3..6
+        //   `あ`×84   → 6..258
+        //   `＃`      → 258..261
+        // cursor = 261, so `cursor - SLUG_WINDOW` = 5 = the 3rd byte of
+        // `［` (bytes 3..6), i.e. mid-codepoint. The correct forward snap
+        // starts the window on byte 6 (after `［`), excluding the bracket,
+        // so the result is false.
+        let src = format!("あ［{}＃", "あ".repeat(84));
+        assert_eq!(src.len(), 261);
+        let cursor = src.len();
+        // This single assertion kills four mutants at once:
+        //   * `<`→`==` and `<`→`>` (line 199): the snap loop never runs,
+        //     leaving `start` mid-codepoint → `&source[start..cursor]`
+        //     panics.
+        //   * `+=`→`*=` (line 200): once entered, the snap loop can never
+        //     advance → non-termination (caught by cargo-mutants timeout).
+        //   * `+=`→`-=` (line 200): the loop snaps BACKWARD onto the start
+        //     of `［`, so the window includes the bracket and the result
+        //     flips to true.
+        assert!(!in_slug_context(&src, cursor));
+    }
+
+    #[test]
+    fn emmet_item_kind_reflects_snippet_vs_plain() {
+        // `kind` must be populated (line 241) and reflect whether the
+        // snippet body carries a `${0}` tabstop. Deleting the field
+        // defaults it to `None`, failing both arms below.
+        let snippet_item = only_item("<", pos(0, 1));
+        assert_eq!(snippet_item.kind, Some(CompletionItemKind::SNIPPET));
+
+        let plain_item = only_item("[", pos(0, 1));
+        assert_eq!(plain_item.kind, Some(CompletionItemKind::TEXT));
+    }
+
+    #[test]
+    fn emmet_item_carries_markdown_documentation() {
+        // `documentation` must be present (line 243); deleting the field
+        // defaults it to `None` and the destructure below panics.
+        let item = only_item("[", pos(0, 1));
+        let Some(Documentation::MarkupContent(mc)) = item.documentation else {
+            panic!("documentation must be Some(MarkupContent), got None/other");
+        };
+        assert_eq!(mc.kind, MarkupKind::Markdown);
+        assert_eq!(mc.value.as_str(), "半角 `[` → `［`");
+    }
+
+    #[test]
+    fn emmet_item_is_preselected() {
+        // `preselect` must be `Some(true)` (line 255) so a single Enter
+        // accepts the substitution; deleting the field defaults it to
+        // `None`.
+        let item = only_item("[", pos(0, 1));
+        assert_eq!(item.preselect, Some(true));
+    }
 }

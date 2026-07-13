@@ -94,6 +94,7 @@ jobs:
           - crate: aozora-ffi       # ratcheted at mutants-baseline.json (0 survivors)
           - crate: aozora-extism    # ratcheted at mutants-baseline.json (0 survivors; wasm-only plugin.rs excluded in mutants.toml)
           - crate: aozora-cli       # ratcheted at mutants-baseline.json (0 survivors)
+          - crate: aozora-lsp       # ratcheted at mutants-baseline.json (27 equivalent survivors; default features — internals gates only test targets)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

@@ -87,6 +87,20 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 /// bounding piece count + per-query cost (#249, the periodic-compaction bound).
 pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
 
+/// True if a document of `len` bytes exceeds the parse size cap
+/// ([`MAX_DOCUMENT_BYTES`]) and must skip semantic analysis. The single
+/// authority for the size gate: every call site (the backend's `did_open` /
+/// debounced-reparse / `render_html` paths and the parse cache's full +
+/// incremental builds) routes its `len > cap` check through here, so the
+/// exclusive boundary is pinned once — by an integer unit test — instead of
+/// at each site with a 16 MiB fixture the mutation sweep would then re-run
+/// per mutant. The gate is exclusive: a document of *exactly* the cap is
+/// within budget.
+#[inline]
+pub(crate) const fn exceeds_document_cap(len: usize) -> bool {
+    len > MAX_DOCUMENT_BYTES
+}
+
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
 /// [`ParseCache::reparse_incremental`].
 ///
@@ -358,7 +372,7 @@ impl ParseCache {
         // `MAX_DOCUMENT_BYTES`). Store the raw rope so size checks stay
         // consistent, store no base / no tree, and report a zero-parse reparse.
         let len = raw.len_bytes();
-        if len == 0 || len > MAX_DOCUMENT_BYTES {
+        if len == 0 || exceeds_document_cap(len) {
             self.raw = raw.clone();
             self.base = None;
             self.tree = OnceLock::new();
@@ -488,7 +502,7 @@ fn incremental_splice(
     // cached doc that is not a sanitize fixed point in a way the line map cannot
     // model (lone CR / 〔…〕 accent / raw PUA), → decline.
     let new_len = new_raw.len_bytes();
-    if new_len == 0 || new_len > MAX_DOCUMENT_BYTES {
+    if new_len == 0 || exceeds_document_cap(new_len) {
         return None;
     }
     if prior.flags.has_lone_cr || prior.flags.has_tortoise || prior.flags.has_pua {
@@ -1387,5 +1401,426 @@ mod tests {
         let (want, _) = fresh.reparse(&new_raw);
         assert_eq!(diag_debug(&diags), diag_debug(&want));
         assert_eq!(stored_sanitized(&cache), stored_sanitized(&fresh));
+    }
+
+    // ---- mutation-reinforcement unit checks --------------------------------
+
+    #[test]
+    fn max_document_bytes_is_exactly_sixteen_mib() {
+        // Pin the `16 * 1024 * 1024` arithmetic: a `*`→`+` on either factor
+        // silently shrinks the cap (`1_064_960` or `17_408`) and would start
+        // rejecting genuine documents. 16 MiB == 16_777_216 bytes.
+        assert_eq!(MAX_DOCUMENT_BYTES, 16_777_216);
+    }
+
+    #[test]
+    fn exceeds_document_cap_is_exclusive_at_the_boundary() {
+        // The parse size gate is EXCLUSIVE: a document of exactly
+        // `MAX_DOCUMENT_BYTES` is within budget (analysed), one byte over is
+        // not (skipped). Pinning the boundary here — on the pure predicate,
+        // with integer lengths — kills every `>`→`>=`/`==`/`<` mutation at all
+        // five call sites (backend did_open / reparse / render_html, parse
+        // cache full + incremental gates) without constructing a 16 MiB buffer.
+        assert!(!exceeds_document_cap(0));
+        assert!(!exceeds_document_cap(MAX_DOCUMENT_BYTES - 1));
+        assert!(!exceeds_document_cap(MAX_DOCUMENT_BYTES));
+        assert!(exceeds_document_cap(MAX_DOCUMENT_BYTES + 1));
+    }
+
+    #[test]
+    fn single_splice_increments_counter_to_one() {
+        // One accepted incremental splice must bump `splices_since_full` from
+        // 0 to exactly 1. A `+=`→`*=` mutation leaves it at 0 (`0 * 1`); a
+        // `>=`→`<` on the compaction bound compacts+resets to 0 on the very
+        // first splice (`1 < 64`). Both land the counter on 0, not 1.
+        let mut cache = ParseCache::default();
+        let old = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n";
+        drop(cache.reparse(old));
+        let (new_raw, edit) = interior_insert(old, "くけこ", "も");
+        let (_, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
+        assert!(stats.cache_hits > 0, "the splice must fast-path: {stats:?}");
+        assert_eq!(
+            cache.splices_since_full, 1,
+            "one splice leaves the counter at 1 (no compaction below the bound)",
+        );
+    }
+
+    #[test]
+    fn oversized_skip_reports_byte_estimate() {
+        // The oversized skip branch still reports the byte count in
+        // `cache_bytes_estimate`; deleting that field defaults it to 0.
+        let mut cache = ParseCache::default();
+        let big = "a".repeat(MAX_DOCUMENT_BYTES + 1);
+        let (_, stats) = cache.reparse(&big);
+        assert_eq!(stats.parse_count, 0, "oversized text is skipped");
+        assert_eq!(
+            stats.cache_bytes_estimate,
+            u64::try_from(MAX_DOCUMENT_BYTES + 1).unwrap(),
+            "the skip branch must record the oversized byte count",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_declines_empty_post_edit() {
+        // G0 size gate: a post-edit rope of zero bytes must decline (`None`) so
+        // the caller full-parses the emptied document. `new_len == 0` mutated to
+        // `!= 0`, or the `||` to `&&`, drops the empty case out of the gate and
+        // the splice would proceed on an empty rope. (The `> cap` half of the
+        // gate is pinned cheaply on the pure predicate by
+        // `exceeds_document_cap_is_exclusive_at_the_boundary`, so this no longer
+        // needs a 16 MiB fixture to reach the boundary.)
+        let old = "｜青空《あおぞら》\n\nかきくけこ\n";
+        let mut cache = ParseCache::default();
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        let edit = ByteEdit::new(0..old.len(), String::new());
+        let (old_raw, new_raw) = (Rope::from(old), Rope::from(""));
+        assert!(
+            incremental_splice(prior, &old_raw, &new_raw, &edit).is_none(),
+            "an empty post-edit rope must decline the incremental splice",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_declines_tortoise_doc() {
+        // The `has_tortoise` fixed-point flag hard-declines every incremental
+        // edit. A `||`→`&&` between `has_tortoise` and `has_pua` drops the
+        // decline (the doc has no PUA), so a body edit far from the `〔…〕`
+        // span would splice to `Some` instead of returning `None`.
+        let mut cache = ParseCache::default();
+        let old = "じょぶん\n\n〔ちゅう〕\n\nまつび\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        assert!(prior.flags.has_tortoise && !prior.flags.has_pua && !prior.flags.has_lone_cr);
+        let (new_raw, edit) = interior_insert(old, "まつび", "も");
+        let (old_raw, new_raw) = (Rope::from(old), Rope::from(new_raw.as_str()));
+        assert!(
+            incremental_splice(prior, &old_raw, &new_raw, &edit).is_none(),
+            "a tortoiseshell-bracket doc must decline every incremental edit",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_declines_lone_cr_doc() {
+        // The `has_lone_cr` flag hard-declines. A `||`→`&&` between
+        // `has_lone_cr` and `has_tortoise` drops the decline (the doc has no
+        // `〔`), so a line-0 edit far from the lone `\r` would splice to `Some`.
+        let mut cache = ParseCache::default();
+        let old = "へんしゅう\n\nちゅうかん\n\nまつ\rび\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        assert!(prior.flags.has_lone_cr && !prior.flags.has_tortoise && !prior.flags.has_pua);
+        let (new_raw, edit) = interior_insert(old, "しゅう", "も");
+        let (old_raw, new_raw) = (Rope::from(old), Rope::from(new_raw.as_str()));
+        assert!(
+            incremental_splice(prior, &old_raw, &new_raw, &edit).is_none(),
+            "a lone-CR doc must decline every incremental edit",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_declines_inverted_edit_range() {
+        use std::ops::Range;
+        // The bounds gate `a > b || b > old_raw.len()` rejects a start-past-end
+        // range up front. A `||`→`&&` (or `>`→`==` on `a > b`) instead lets it
+        // through, where the reversed `byte_slice(a..b)` / underflow panics —
+        // the unmodified guard returns `None` cleanly.
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("本文本文"));
+        let prior = cache.base.as_ref().expect("base");
+        let raw = Rope::from("本文本文");
+        // Deliberately reversed (start past end) — the struct form sidesteps
+        // the `reversed_empty_ranges` lint that a `6..3` literal would trip.
+        let edit = ByteEdit::new(Range { start: 6, end: 3 }, String::new());
+        assert!(
+            incremental_splice(prior, &raw, &raw, &edit).is_none(),
+            "a > b must decline before any coordinate math runs",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_accepts_zero_width_insert() {
+        // A pure insert has `a == b`; the bounds gate must NOT reject it. A
+        // `>`→`==` or `>`→`>=` on `a > b` turns every insert into a decline
+        // (`None`); the unmodified strict `>` lets the clean insert splice.
+        let mut cache = ParseCache::default();
+        let old = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        let (new_raw, edit) = interior_insert(old, "くけこ", "も");
+        assert_eq!(edit.range.start, edit.range.end, "fixture is a pure insert");
+        let (old_raw, new_raw) = (Rope::from(old), Rope::from(new_raw.as_str()));
+        assert!(
+            incremental_splice(prior, &old_raw, &new_raw, &edit).is_some(),
+            "a zero-width insert must splice, not decline",
+        );
+    }
+
+    #[test]
+    fn map_edit_declines_san_line_past_buffer() {
+        // `san_line > sanitized.len_lines()` guards the sanitized coordinate
+        // lookup. A `>`→`==` lets a strictly-out-of-range `san_line` through,
+        // and the subsequent `line_to_byte(san_line)` panics; the unmodified
+        // `>` returns `None`. (Prior has 2 sanitized lines; raw line 3 maps to
+        // san_line 3 > 2.)
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("ゆき\nよる"));
+        let prior = cache.base.as_ref().expect("base");
+        assert_eq!(prior.sanitized.len_lines(), 2);
+        let old_raw = Rope::from("ゆき\nよる\nみつ\nよん");
+        let a = old_raw.line_to_byte(3);
+        assert!(
+            map_edit(prior, &old_raw, a, a).is_none(),
+            "a san_line past the sanitized buffer must decline",
+        );
+    }
+
+    #[test]
+    fn map_edit_accepts_san_line_at_buffer_end() {
+        // The boundary the guard must NOT reject: `san_line == len_lines` is a
+        // valid one-past-the-end line index (`line_to_byte` returns the buffer
+        // end). A `>`→`>=` rejects it (`None`); the unmodified `>` maps a
+        // zero-width insert there to `Some`. (Prior has 2 sanitized lines;
+        // raw line 2's content start maps to san_line 2 == len_lines.)
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("ゆき\nよる"));
+        let prior = cache.base.as_ref().expect("base");
+        assert_eq!(prior.sanitized.len_lines(), 2);
+        let old_raw = Rope::from("ゆき\nよる\nみっつ");
+        let a = old_raw.line_to_byte(2);
+        assert!(
+            map_edit(prior, &old_raw, a, a).is_some(),
+            "san_line == len_lines is in bounds and must map, not decline",
+        );
+    }
+
+    #[test]
+    fn edit_triggers_decline_fires_on_line_terminator_insert() {
+        // Inserting a `\n` carries a structural byte (T1) and must decline. The
+        // `n.contains([..]) || contains_raw_pua(n)` clause is what catches it;
+        // a `||`→`&&` needs the insert to ALSO be raw PUA, which a bare `\n`
+        // is not, so the mutant falls through to a `false` verdict.
+        let mut cache = ParseCache::default();
+        let old = "ほんぶんです。\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        let old_raw = Rope::from(old);
+        let new_raw = Rope::from("ほん\nぶんです。\n");
+        let newline_edit = ByteEdit::new(6..6, "\n".to_owned());
+        assert!(
+            edit_triggers_decline(prior, &old_raw, &new_raw, &newline_edit),
+            "a line-terminator insert must trigger a decline",
+        );
+        // A plain insert on the same line must NOT trigger — pins the other side.
+        let plain_new = Rope::from("ほんもぶんです。\n");
+        let plain_edit = ByteEdit::new(6..6, "も".to_owned());
+        assert!(
+            !edit_triggers_decline(prior, &old_raw, &plain_new, &plain_edit),
+            "a plain interior insert carries no structural trigger",
+        );
+    }
+
+    #[test]
+    fn windowed_resanitize_wide_window_catches_next_line_isolation() {
+        // The window spans the edited line PLUS the next, so a next-line
+        // decorative rule whose isolation blank is wrong in the spliced buffer
+        // is caught. A `raw_line + 1`→`raw_line * 1` shrinks the window to the
+        // edited line alone, missing the defect and wrongly accepting it.
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("本文\n----------\nあと\n"));
+        let prior = cache.base.as_ref().expect("base");
+        assert_eq!(
+            prior.isolation_lines,
+            vec![1],
+            "the rule at line 1 is isolated"
+        );
+        let new_raw = Rope::from("本文X\n----------\nあと\n");
+        // A CORRUPT splice: the isolation blank before the rule is missing.
+        let corrupt = Rope::from("本文X\n----------\nあと\n");
+        assert!(
+            !windowed_resanitize_ok(prior, &new_raw, &corrupt, 0),
+            "the wide window must reject a missing next-line isolation blank",
+        );
+        // The CORRECT splice (blank present) passes — pins the accepting side.
+        let correct = Rope::from("本文X\n\n----------\nあと\n");
+        assert!(
+            windowed_resanitize_ok(prior, &new_raw, &correct, 0),
+            "the correctly-isolated splice must pass the windowed check",
+        );
+    }
+
+    #[test]
+    fn windowed_resanitize_bounds_check_rejects_short_buffer() {
+        // The `lo_line > san_lines || hi_line > san_lines` guard rejects a
+        // spliced buffer with too few lines before indexing it. A `||`→`&&`
+        // drops the guard and `line_to_byte(hi_line)` panics; the unmodified
+        // guard returns `false`.
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("あ\nい\nう\nえ"));
+        let prior = cache.base.as_ref().expect("base");
+        let new_raw = Rope::from("あ\nい\nう\nえ");
+        let too_short = Rope::from("X");
+        assert!(
+            !windowed_resanitize_ok(prior, &new_raw, &too_short, 0),
+            "a spliced buffer shorter than the mapped window must be rejected",
+        );
+    }
+
+    #[test]
+    fn rope_slice_has_detects_and_rejects() {
+        // The predicate scan is load-bearing for the removed-bytes trigger; a
+        // stub-`false` return would silently disarm it.
+        let hit = Rope::from("a\nb");
+        assert!(
+            rope_slice_has(hit.byte_slice(..), |c| c == '\n'),
+            "must report a matching char present",
+        );
+        let miss = Rope::from("abc");
+        assert!(
+            !rope_slice_has(miss.byte_slice(..), |c| c == '\n'),
+            "must report no match when the char is absent",
+        );
+    }
+
+    #[test]
+    fn trimmed_line_strips_bom_on_line_zero_only() {
+        // Line 0 strips the leading BOM; other lines do not. A `== 0`→`!= 0`
+        // inverts which lines get stripped, so both assertions below diverge.
+        let rope = Rope::from("\u{FEFF}本文\n次のぎょう");
+        assert_eq!(
+            trimmed_line(&rope, 0, 3),
+            "本文",
+            "line 0 must have its 3-byte BOM stripped",
+        );
+        assert_eq!(
+            trimmed_line(&rope, 1, 3),
+            "次のぎょう",
+            "line 1 must NOT be stripped",
+        );
+    }
+
+    #[test]
+    fn next_line_is_rule_bounds_and_detects() {
+        // A genuine rule on an in-bounds line is detected...
+        assert!(
+            next_line_is_rule(&Rope::from("本文\n----------\n"), 1),
+            "the decorative rule on line 1 must be detected",
+        );
+        // ...and a one-past-the-end index returns `false` without indexing. A
+        // `<`→`<=` lets `line_idx == len_lines` through and `raw.line(idx)`
+        // panics ("本文\n" has 2 lines: indices 0 and 1; index 2 is past end).
+        assert!(
+            !next_line_is_rule(&Rope::from("本文\n"), 2),
+            "an out-of-range next line must be false, not a panic",
+        );
+    }
+
+    #[test]
+    fn scan_doc_flags_sets_each_flag() {
+        // Every flag must reflect its feature; a `Default::default()` stub
+        // clears all three even when the raw text carries them.
+        let f = scan_doc_flags("a\rb〔c〕\u{E001}d");
+        assert!(f.has_lone_cr, "a lone CR must set has_lone_cr");
+        assert!(f.has_tortoise, "a 〔 must set has_tortoise");
+        assert!(f.has_pua, "a raw PUA sentinel must set has_pua");
+        // A clean fixed-point document sets none — pins the other side.
+        let clean = scan_doc_flags("ふつうの日本語\n");
+        assert!(!clean.has_lone_cr && !clean.has_tortoise && !clean.has_pua);
+    }
+
+    #[test]
+    fn duration_as_us_reports_exact_micros() {
+        // Pins the conversion against `-> 0` and `-> 1` stubs.
+        assert_eq!(duration_as_us(Duration::from_micros(500)), 500);
+        assert_eq!(duration_as_us(Duration::from_secs(2)), 2_000_000);
+    }
+
+    #[test]
+    fn incremental_splice_declines_empty_post_edit_off_line_zero() {
+        // G0 empty-doc gate: `new_len == 0 || exceeds_document_cap(new_len)`.
+        // A `||`→`&&` disables the empty-doc decline (no document is ever both
+        // empty AND oversized), so the mutant proceeds on a zero-length
+        // post-edit rope. The existing empty-doc test cannot see this: its
+        // full-delete edit starts at byte 0, where the later G1 BOM gate
+        // (`a <= bom`, with `a == 0 <= bom == 0`) declines the mutant anyway,
+        // masking the difference. Here the edit sits on raw line 1 (`a` well
+        // past the BOM), so G1 does not shadow it — the unmodified code declines
+        // cleanly at the empty gate (`None`), while the `&&` mutant runs on into
+        // `edit_triggers_decline`, whose `trimmed_line` indexes `new_raw.line(1)`
+        // on the empty rope (`len_lines() == 1`) and panics. Original: `None`;
+        // mutant: panic. Either way the mutant is caught.
+        let mut cache = ParseCache::default();
+        let old = "ゆき\nよる\nみつ";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        assert_eq!(prior.bom, 0, "plain doc has no BOM run");
+        let old_raw = Rope::from(old);
+        let line1 = old_raw.line_to_byte(1);
+        assert!(
+            line1 > 0,
+            "the edit must sit past the BOM so the G1 gate does not shadow it",
+        );
+        let edit = ByteEdit::new(line1..line1, "も".to_owned());
+        let empty_post_edit = Rope::from("");
+        assert!(
+            incremental_splice(prior, &old_raw, &empty_post_edit, &edit).is_none(),
+            "a zero-length post-edit rope must decline the incremental splice",
+        );
+    }
+
+    #[test]
+    fn incremental_splice_accepts_edit_ending_at_buffer_end() {
+        // The bounds gate's second clause `b > old_raw.len_bytes()` must NOT
+        // reject an edit whose end lands EXACTLY at the buffer end. A `>`→`==`
+        // or `>`→`>=` makes `b == len_bytes` satisfy the guard, turning every
+        // end-of-buffer edit into a decline (`None`); the unmodified strict `>`
+        // lets the clean end insert splice (`Some`). The existing accept test
+        // inserts in the interior (`b < len_bytes`), so it never exercises the
+        // `b == len_bytes` boundary. A leading ruby paragraph keeps the shape
+        // identical to the known-splicing interior fixture.
+        let mut cache = ParseCache::default();
+        let old = "｜青空《あおぞら》のした\n\nかきくけこ";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        let old_raw = Rope::from(old);
+        let end = old_raw.len_bytes();
+        let edit = ByteEdit::new(end..end, "も".to_owned());
+        let new_raw = Rope::from(format!("{old}も").as_str());
+        assert_eq!(
+            edit.range.end, end,
+            "the edit ends exactly at the buffer end"
+        );
+        assert!(
+            incremental_splice(prior, &old_raw, &new_raw, &edit).is_some(),
+            "an edit ending exactly at the buffer end must splice, not decline",
+        );
+    }
+
+    #[test]
+    fn windowed_resanitize_lo_line_at_buffer_end_still_accepts() {
+        // The bounds guard `lo_line > san_lines || hi_line > san_lines` must
+        // reject only strictly-out-of-range line indices: `lo_line == san_lines`
+        // is the valid one-past-the-end index (`line_to_byte` maps it to the
+        // buffer end without panicking), so the check must PROCEED, not decline.
+        // A `>`→`==` or `>`→`>=` on the `lo_line` clause makes
+        // `lo_line == san_lines` trip the guard and wrongly return `false`. The
+        // existing short-buffer test trips via the `hi_line` clause, so it never
+        // exercises the `lo_line` boundary.
+        //
+        // With single-line `new_raw` / `new_san` and `raw_line == 1`, both
+        // windows are empty (`raw_line` is one-past-end, so its content span is
+        // vacuous) and `lo_line == 1 == new_san.len_lines()`. The compared
+        // regions are vacuously equal, so the unmodified code returns `true`
+        // while the `==`/`>=` mutants return `false`.
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("あ\nい"));
+        let prior = cache.base.as_ref().expect("base");
+        assert!(prior.isolation_lines.is_empty(), "no isolation-blank shift");
+        let new_raw = Rope::from("a");
+        let new_san = Rope::from("a");
+        assert!(
+            windowed_resanitize_ok(prior, &new_raw, &new_san, 1),
+            "lo_line == san_lines is the valid one-past-end index and must accept",
+        );
     }
 }

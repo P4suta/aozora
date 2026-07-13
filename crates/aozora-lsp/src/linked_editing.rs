@@ -325,4 +325,75 @@ mod tests {
         let close_byte = src.rfind('》').unwrap();
         assert_eq!(result.ranges[1].start, pos(&src, close_byte));
     }
+
+    /// Kills `char_at_offset` `||`→`&&` (line 81). A mid-codepoint
+    /// `offset` (strictly less than `len`, not a boundary) must be
+    /// rejected as `None`. Under `&&` the early return is skipped and
+    /// `source[offset..]` panics on the non-boundary slice.
+    #[test]
+    fn char_at_offset_rejects_mid_codepoint_offset() {
+        // In `あい`, `あ` occupies bytes 0..3, so byte 1 is inside a
+        // codepoint yet strictly below the length (6).
+        assert!(char_at_offset("あい", 1).is_none());
+    }
+
+    /// Kills `find_partner_forward` `<`→`<=` on the window bound
+    /// (line 155:38). A `target` sitting exactly `SCAN_WINDOW` bytes
+    /// from `start` is outside the half-open window and must not be
+    /// found; `<=` would wrongly admit it.
+    #[test]
+    fn forward_scan_excludes_char_exactly_at_window_edge() {
+        let src = format!("{}》", "x".repeat(SCAN_WINDOW));
+        // `》` starts at byte `SCAN_WINDOW`; distance from start (0) is
+        // exactly `SCAN_WINDOW`, so the strict `<` bound rejects it.
+        assert_eq!(find_partner_forward(&src, 0, '》'), None);
+    }
+
+    /// Kills `find_partner_forward` `idx - start`→`idx + start`
+    /// (line 155:30). The window is the distance walked *from*
+    /// `start`, so a large `start` with the partner right beside it is
+    /// still inside the window and found; `idx + start` would exceed
+    /// it spuriously.
+    #[test]
+    fn forward_scan_measures_distance_from_start_not_sum() {
+        let src = format!("{}》", "x".repeat(700));
+        // Distance walked is 0 (partner at `start`), well inside the
+        // window; `idx + start` = 1400 would falsely blow the window.
+        assert_eq!(find_partner_forward(&src, 700, '》'), Some((700, 703)));
+    }
+
+    /// Kills `find_partner_forward` end offset `idx + ch.len_utf8()`
+    /// mutated to `idx - len` or `idx * len` (line 161:35). The
+    /// partner span end must be exactly `idx` plus the char's UTF-8
+    /// length.
+    #[test]
+    fn forward_scan_partner_end_is_start_plus_char_len() {
+        // `》` starts at byte 3 and is 3 bytes → span (3, 6).
+        // `idx - len` gives (3, 0); `idx * len` gives (3, 9).
+        assert_eq!(find_partner_forward("xxx》", 0, '》'), Some((3, 6)));
+    }
+
+    /// Kills `find_partner_backward` `floor += 1`→`floor -= 1`
+    /// (line 177). The floor must snap *up* to the next boundary,
+    /// dropping a char that straddles the `end - SCAN_WINDOW` mark.
+    #[test]
+    fn backward_scan_snaps_floor_up_to_boundary() {
+        // `《` occupies bytes 3..6; `end` = 1028 puts
+        // `end - SCAN_WINDOW` = 4 mid-`《`. Snapping up to byte 6 drops
+        // `《` from the head → no partner. Snapping *down* to byte 3
+        // would wrongly include it and yield `Some((3, 6))`.
+        let src = format!("xxx《{}", "x".repeat(1022));
+        assert_eq!(src.len(), 1028);
+        assert_eq!(find_partner_backward(&src, src.len(), '《'), None);
+    }
+
+    /// Kills `find_partner_backward` end offset `abs + ch_len` mutated
+    /// to `abs - ch_len` or `abs * ch_len` (line 189:35). The partner
+    /// span end must be exactly `abs` plus the char's UTF-8 length.
+    #[test]
+    fn backward_scan_partner_end_is_abs_plus_char_len() {
+        // `《` occupies bytes 3..6 → span (3, 6). `abs - len` gives
+        // (3, 0); `abs * len` gives (3, 9).
+        assert_eq!(find_partner_backward("yyy《xx", 8, '《'), Some((3, 6)));
+    }
 }

@@ -347,4 +347,144 @@ mod tests {
         assert!(tokens.iter().all(|t| t.token_type == TT_GAIJI));
         assert_eq!(tokens[1].delta_line, 1);
     }
+
+    // --- Direct-unit helpers for the internal functions -----------------
+    //
+    // The multi-line segmentation branch of `push_token` is unreachable
+    // through `semantic_tokens_full`: every tree-sitter token body in the
+    // grammar is `[^…\n]+`, so no gaiji / ruby span ever crosses a `\n`.
+    // To exercise (and pin) that branch we hand `push_token` the
+    // whole-document root node, which legitimately spans multiple lines.
+
+    fn parse_whole(src: &str) -> Tree {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_aozora::LANGUAGE.into())
+            .unwrap();
+        parser.parse(src, None).unwrap()
+    }
+
+    fn find_kind<'t>(node: tree_sitter::Node<'t>, target: &str) -> Option<tree_sitter::Node<'t>> {
+        if node.kind() == target {
+            return Some(node);
+        }
+        let mut cursor = node.walk();
+        // Each recursion walks with its own cursor, so iterating the
+        // borrowed one here is safe (no collect needed).
+        node.children(&mut cursor)
+            .find_map(|child| find_kind(child, target))
+    }
+
+    /// Drive `push_token` directly against a tree's whole-document root
+    /// node so the multi-line segmentation branch is reachable in-crate
+    /// under default features. `line_offset` is applied exactly as the
+    /// real per-paragraph walk applies it.
+    fn push_root_token(src: &str, line_offset: u32) -> Vec<RawToken> {
+        let tree = parse_whole(src);
+        let line_index = LineIndex::new(src);
+        let ctx = ParagraphCtx {
+            text: src,
+            line_index: &line_index,
+            line_offset,
+        };
+        let mut out: Vec<RawToken> = Vec::new();
+        push_token(&mut out, tree.root_node(), &ctx, TT_GAIJI);
+        out
+    }
+
+    /// `count_newlines` counts `\n` BYTES, exactly. `"a\nb\nc"` has two
+    /// newlines among five bytes; `"あ\nい\nう"` has two among eleven.
+    /// Pinning the exact count kills:
+    /// - body → `0` (would report 0 for `"a\nb\nc"`),
+    /// - body → `1` (would report 1 for both `""` and `"a\nb\nc"`),
+    /// - `==` → `!=` on the byte test (would count the 3 / 15 / 9
+    ///   NON-newline bytes instead of the newlines).
+    #[test]
+    fn count_newlines_counts_newline_bytes_exactly() {
+        assert_eq!(count_newlines(""), 0);
+        assert_eq!(count_newlines("no newline here"), 0);
+        assert_eq!(count_newlines("a\nb\nc"), 2);
+        // 11 bytes, 9 of them non-newline, 2 newlines — a byte-count vs
+        // newline-count confusion is unambiguous here.
+        assert_eq!(count_newlines("あ\nい\nう"), 2);
+    }
+
+    /// `is_inside_ruby` is `true` exactly when the node's parent is a
+    /// ruby container. The whole-document root node has NO parent, so it
+    /// is `false`; a `ruby_base_implicit` inside `base《reading》` sits
+    /// under `implicit_ruby`, so it is `true`. Asserting BOTH arms kills
+    /// the `-> bool with true` mutation, which flattens the `false` arm.
+    #[test]
+    fn is_inside_ruby_true_and_false_arms() {
+        let tree = parse_whole("青空《あおぞら》");
+        // FALSE: the root node has no parent at all.
+        assert!(
+            !is_inside_ruby(tree.root_node()),
+            "root node has no parent → not inside ruby",
+        );
+        // TRUE: the implicit-ruby base's parent is `implicit_ruby`.
+        let base = find_kind(tree.root_node(), kind::RUBY_BASE_IMPLICIT)
+            .expect("implicit ruby base present");
+        assert!(
+            is_inside_ruby(base),
+            "ruby_base_implicit's parent is implicit_ruby → inside ruby",
+        );
+    }
+
+    /// Multi-line token segmentation. Source `"AB\nCDE\nFG"` with
+    /// `line_offset = 10` gives start = (line 10, col 0) and
+    /// end = (line 12, col 2), so `push_token` emits exactly three
+    /// segments: a first-line segment, one between-line segment, and a
+    /// last-line segment. Concrete values pin the arithmetic:
+    /// - `>>` → `<<` on the between-line sentinel (would make `out[1]`
+    ///   `u32::MAX << 1` = `4_294_967_294` instead of `2_147_483_647`),
+    /// - `>>` → `<<` on the first-line sentinel (same, for `out[0]`),
+    /// - `+` → `-` in the between-line range start (`(10-1)..12` → three
+    ///   between segments → `len` 5, and `out[1].line` 9),
+    /// - `+` → `*` in the between-line range start (`(10*1)..12` → two
+    ///   between segments → `len` 4, and `out[1].line` 10),
+    /// - `>` → `==` and `>` → `<` on the last-line guard (`end.character`
+    ///   is 2, so both drop the last segment → `len` 2).
+    #[test]
+    fn push_token_multiline_emits_first_between_last_segments() {
+        let out = push_root_token("AB\nCDE\nFG", 10);
+        assert_eq!(out.len(), 3, "first + one between + last: {out:?}");
+
+        // First-line segment.
+        assert_eq!(out[0].line, 10);
+        assert_eq!(out[0].start_char, 0);
+        assert_eq!(out[0].length, u32::MAX >> 1);
+
+        // Between-line segment: exactly line 11.
+        assert_eq!(out[1].line, 11);
+        assert_eq!(out[1].start_char, 0);
+        assert_eq!(out[1].length, u32::MAX >> 1);
+
+        // Last-line segment: cols 0..2 on line 12.
+        assert_eq!(out[2].line, 12);
+        assert_eq!(out[2].start_char, 0);
+        assert_eq!(out[2].length, 2);
+    }
+
+    /// Multi-line token whose END lands at column 0 of a fresh line, so
+    /// the last-line segment MUST be suppressed. Source `"AB\nCD\n"` with
+    /// `line_offset = 5` gives start = (line 5, col 0) and
+    /// end = (line 7, col 0). Because `end.character == 0`, only the
+    /// first + between segments are emitted (2 total).
+    ///
+    /// This is the case that separates `>` from `>=` on the last-line
+    /// guard: `0 > 0` is false (correct — no empty trailing segment), but
+    /// `0 >= 0` is true (would push a bogus zero-length line-7 segment,
+    /// making `len` 3). Kills `>` → `>=`.
+    #[test]
+    fn push_token_multiline_end_at_line_start_emits_no_last_segment() {
+        let out = push_root_token("AB\nCD\n", 5);
+        assert_eq!(out.len(), 2, "first + one between, no last: {out:?}");
+        assert_eq!(out[0].line, 5);
+        assert_eq!(out[1].line, 6);
+        assert!(
+            out.iter().all(|t| t.line != 7),
+            "no zero-length segment on the end line: {out:?}",
+        );
+    }
 }

@@ -525,4 +525,108 @@ mod tests {
         assert_eq!(ranges.first().unwrap().start, 0);
         assert_eq!(ranges.last().unwrap().end, s.len());
     }
+
+    /// `MAX_PARAGRAPH_BYTES` must be exactly 64 KiB. Pins the `64 * 1024`
+    /// product so a `*`→`+` mutation (which would yield 1088) is caught.
+    #[test]
+    fn max_paragraph_bytes_is_64_kib() {
+        assert_eq!(MAX_PARAGRAPH_BYTES, 65_536);
+    }
+
+    fn one_span(start_byte: u32, end_byte: u32) -> Vec<Arc<GaijiSpan>> {
+        vec![Arc::new(GaijiSpan {
+            start_byte,
+            end_byte,
+            description: Arc::from("x"),
+            mencode: None,
+        })]
+    }
+
+    /// `shift_existing_spans` applies the exact signed delta
+    /// `new_start - prior_start` to every span's `start_byte` /
+    /// `end_byte`. Concrete numbers pin the arithmetic:
+    /// prior=10, new=50 ⇒ delta=+40, so span 100..200 ⇒ 140..240.
+    ///
+    /// Kills, via the exact offsets:
+    /// - `==`→`!=` guard (would early-return the *unshifted* spans →100/200),
+    /// - `-`→`+` / `-`→`/` in the delta (→60 or 5 ⇒ 160 or 105),
+    /// - `+`→`-` / `+`→`*` on `start_byte` (→60 or 4000),
+    /// - `+`→`-` / `+`→`*` on `end_byte` (→160 or 8000).
+    #[test]
+    fn shift_existing_spans_applies_exact_signed_delta() {
+        let spans = one_span(100, 200);
+        let out = shift_existing_spans(&spans, 10, 50);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].start_byte, 140, "100 + (50 - 10)");
+        assert_eq!(out[0].end_byte, 240, "200 + (50 - 10)");
+    }
+
+    /// Same-position call is an identity on the byte offsets (documents
+    /// the `prior_start == new_start` true-side of the early-return
+    /// guard). Delta would be 0 either way, so this documents rather
+    /// than kills the `==`→`!=` mutant — the kill lives in
+    /// `shift_existing_spans_applies_exact_signed_delta`.
+    #[test]
+    fn shift_existing_spans_same_position_keeps_offsets() {
+        let spans = one_span(100, 200);
+        let out = shift_existing_spans(&spans, 42, 42);
+        assert_eq!(out[0].start_byte, 100);
+        assert_eq!(out[0].end_byte, 200);
+    }
+
+    /// Cap fallback: 30 000 × 3-byte `あ` with no newline. The cap fires
+    /// at byte 65 536, which is the 2nd byte of an `あ`
+    /// (65 536 % 3 == 1), so the char-boundary snap loop must move
+    /// FORWARD to 65 538. A `+=`→`-=` mutation would step backward to
+    /// 65 535 (also a boundary, so alignment-only assertions miss it) —
+    /// this pins the exact forward offset.
+    #[test]
+    fn paragraph_byte_ranges_cap_snap_advances_forward_to_65538() {
+        let s: String = "あ".repeat(30_000);
+        let r = rope(&s);
+        let ranges = paragraph_byte_ranges(&r);
+        assert_eq!(ranges[0].end, 65_538);
+    }
+
+    /// Cap fallback with a single `\n` soft boundary at byte 100
+    /// (followed by `B`, so it is NOT a `\n\n` run). A long newline-free
+    /// tail pushes the segment past the 64 KiB cap; the fallback must
+    /// retreat to the recorded soft boundary at byte 101 (one past the
+    /// `\n`).
+    ///
+    /// Pins byte 101, which kills:
+    /// - `==`→`!=` at the single-`\n` test (`soft_end` would track every
+    ///   non-newline byte and land at the cap edge, 65 536),
+    /// - `+`→`-` in `Some(end + 1)` (→99),
+    /// - `+`→`*` in `Some(end + 1)` (→100).
+    #[test]
+    fn paragraph_byte_ranges_cap_retreats_to_single_newline_soft_boundary() {
+        let s = format!("{}\n{}", "A".repeat(100), "B".repeat(70_000));
+        let r = rope(&s);
+        let ranges = paragraph_byte_ranges(&r);
+        assert_eq!(ranges[0].end, 101);
+    }
+
+    /// `is_byte_char_boundary` at the one-past-the-end index returns
+    /// `true` (the `idx == bytes.len()` arm), and any index strictly
+    /// past the end returns `false`. Kills the `==`→`!=` mutation on
+    /// that arm, which would flip both.
+    #[test]
+    fn is_byte_char_boundary_at_and_past_len() {
+        let bytes = b"ab";
+        assert!(is_byte_char_boundary(bytes, 2), "idx == len is a boundary");
+        assert!(!is_byte_char_boundary(bytes, 3), "idx > len is not");
+        assert!(!is_byte_char_boundary(bytes, 100));
+    }
+
+    /// Interior contract of `is_byte_char_boundary`: leading byte and
+    /// one-past-the-end are boundaries; continuation bytes are not.
+    #[test]
+    fn is_byte_char_boundary_interior_bytes() {
+        let bytes = "あ".as_bytes(); // E3 81 82
+        assert!(is_byte_char_boundary(bytes, 0), "leading byte");
+        assert!(!is_byte_char_boundary(bytes, 1), "continuation byte");
+        assert!(!is_byte_char_boundary(bytes, 2), "continuation byte");
+        assert!(is_byte_char_boundary(bytes, 3), "idx == len");
+    }
 }
