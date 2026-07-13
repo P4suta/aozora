@@ -778,15 +778,22 @@ pub enum Diagnostic {
     },
 }
 
-/// Introspected metadata for a diagnostic code — the data behind
-/// `aozora explain <code>`.
+/// Introspected metadata for a diagnostic code — the machine axes plus the
+/// language-neutral example data behind `aozora explain <code>`.
 ///
-/// Returned by [`Diagnostic::explain`]. `help` and `url` are read from
-/// the live [`miette::Diagnostic`] impl of a representative instance, and
-/// `body` from that instance's [`Diagnostic::detail_body`], so none of
-/// them can drift from what `aozora check` renders for the same
-/// diagnostic. `title` / `repro` / `fixed` are the static per-code entry
-/// from the crate-private `DOCS` table.
+/// Returned by [`Diagnostic::explain`]. `severity` / `source` come from the
+/// inherent accessors and `help` / `url` from the live [`miette::Diagnostic`]
+/// impl of a representative instance, so none of them can drift from what
+/// `aozora check` renders. `repro` / `fixed` are the language-neutral example
+/// pair from the crate-private `DOCS` table, and `body_args` are the
+/// representative instance's [`Diagnostic::body_args`].
+///
+/// The localized *prose* — the one-line title and the long-form body — no
+/// longer lives here: it was migrated to the `aozora-i18n` catalog, keyed by
+/// `code`, so this crate stays a pure machine contract. A consumer renders the
+/// title with `aozora_i18n::diag_title(lang, info.code)` and the body with
+/// `aozora_i18n::diag_body(lang, info.code, args)` where `args` is built from
+/// `info.body_args`.
 #[derive(Debug, Clone)]
 pub struct DiagnosticInfo {
     /// Stable `aozora::lex::*` code (see [`codes`]).
@@ -799,27 +806,24 @@ pub struct DiagnosticInfo {
     pub help: String,
     /// Documentation URL for the code, when the variant carries one.
     pub url: Option<String>,
-    /// One-line human title for the code.
-    pub title: &'static str,
-    /// Long-form Japanese explanation (何が起きた / 何が問題 / どう直す),
-    /// rendered from a representative instance so it agrees with what a
-    /// host shows for a real diagnostic of this code.
-    pub body: String,
     /// A minimal reproduction of the condition in Aozora notation.
     pub repro: &'static str,
     /// The corrected form corresponding to [`Self::repro`].
     pub fixed: &'static str,
+    /// The representative instance's body placeables — the `(name, value)`
+    /// pairs the localized `diag-<code>-body` message interpolates (empty for
+    /// static-body variants). See [`Diagnostic::body_args`].
+    pub body_args: Vec<(&'static str, String)>,
 }
 
-/// Static long-form documentation for one diagnostic code — the parts
-/// that do not vary with a specific instance (title, a minimal
-/// reproduction, and its corrected form). Paired at `explain` time with
-/// the instance-aware [`Diagnostic::detail_body`].
+/// Static language-neutral example data for one diagnostic code.
+///
+/// A minimal reproduction in Aozora notation and its corrected form. The
+/// localized title / body prose lives in the `aozora-i18n` catalog keyed by
+/// [`Self::code`].
 struct DiagnosticDoc {
     /// The stable code this entry documents (a [`codes`] constant).
     code: &'static str,
-    /// One-line human title.
-    title: &'static str,
     /// A minimal reproduction in Aozora notation.
     repro: &'static str,
     /// The corrected form of [`Self::repro`].
@@ -827,133 +831,113 @@ struct DiagnosticDoc {
 }
 
 /// One [`DiagnosticDoc`] per [`Diagnostic::ALL_CODES`] entry, in the same
-/// order. The single authority for per-code title / reproduction / fixed
-/// prose; a coverage test pins `DOCS.len() == ALL_CODES.len()` and that
-/// every code resolves.
+/// order. The single authority for the per-code language-neutral reproduction
+/// / fixed example pair; a coverage test pins `DOCS.len() == ALL_CODES.len()`
+/// and that every code resolves. The localized title / body prose lives in the
+/// `aozora-i18n` catalog, keyed by code.
 const DOCS: [DiagnosticDoc; 21] = [
     DiagnosticDoc {
         code: codes::SOURCE_CONTAINS_PUA,
-        title: "私用領域文字がソースに紛れ込んでいる",
         repro: "（不可視の U+E001 などが混入した行）",
         fixed: "（その 1 文字を削除した行）",
     },
     DiagnosticDoc {
         code: codes::UNCLOSED_BRACKET,
-        title: "閉じられていない開き括弧",
         repro: "本文［＃改ページ",
         fixed: "本文［＃改ページ］",
     },
     DiagnosticDoc {
         code: codes::UNMATCHED_CLOSE,
-        title: "対応する開き括弧のない閉じ括弧",
         repro: "本文 ］",
         fixed: "本文",
     },
     DiagnosticDoc {
         code: codes::ACCENT_DECOMPOSITION_APPLIED,
-        title: "アクセント分解が適用された（情報）",
         repro: "Cre〔e'〕vez",
         fixed: "（修正不要。保存時に元の〔…〕へ復元されます）",
     },
     DiagnosticDoc {
         code: codes::UNRESOLVED_GAIJI,
-        title: "外字参照が解決できなかった",
         repro: "※［＃「ある字」の説明］",
         fixed: "※［＃「ある字」、第3水準1-15-23］（面区点か U+ を補う）",
     },
     DiagnosticDoc {
         code: codes::MISMATCHED_CONTAINER_CLOSE,
-        title: "開いた種別と違う閉じで閉じたコンテナ",
         repro: "［＃ここから2字下げ］\n本文\n［＃ここで地付き終わり］",
         fixed: "［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］",
     },
     DiagnosticDoc {
         code: codes::EMPTY_RUBY_READING,
-        title: "ルビの読みが空",
         repro: "｜青空《》",
         fixed: "｜青空《あおぞら》",
     },
     DiagnosticDoc {
         code: codes::NESTED_RUBY,
-        title: "ルビの読みの中で入れ子になったルビ",
         repro: "｜漢《字《かん》》",
         fixed: "｜漢字《かんじ》",
     },
     DiagnosticDoc {
         code: codes::UNRECOGNISED_CONTAINER_DIRECTIVE,
-        title: "未知のコンテナ指示",
         repro: "［＃ここから謎レイアウト］",
         fixed: "［＃ここから2字下げ］（既知のコンテナ名にする）",
     },
     DiagnosticDoc {
         code: codes::TCY_TARGET_NOT_FOUND,
-        title: "縦中横の対象が前方に見つからない",
         repro: "本文［＃「25」は縦中横］",
         fixed: "25［＃「25」は縦中横］（対象を注記より前に置く）",
     },
     DiagnosticDoc {
         code: codes::BOUTEN_TARGET_AMBIGUOUS,
-        title: "傍点の対象が複数あり曖昧",
         repro: "花と花［＃「花」に傍点］",
         fixed: "赤い花と白い花［＃「白い花」に傍点］（対象を一意にする）",
     },
     DiagnosticDoc {
         code: codes::FORWARD_REFERENT_NOT_STYLABLE,
-        title: "前方参照の対象がその場で装飾できない",
         repro: "｜我《われ》は […]［＃「我」に傍点］",
         fixed: "我［＃「我」に傍点］（プレーンな出現の隣に置く）",
     },
     DiagnosticDoc {
         code: codes::BREAK_IN_SINGLE_LINE_CONTAINER,
-        title: "単一行コンテナ内の改ページ／改段",
         repro: "［＃地付き］本文［＃改ページ］",
         fixed: "本文［＃改ページ］\n［＃地付き］本文（改ページを行外に出す）",
     },
     DiagnosticDoc {
         code: codes::BRACKETED_KAERITEN_NO_PAIR,
-        title: "対応する基点のない角括弧返り点",
         repro: "学而時習之［＃二］",
         fixed: "学而［＃一］時習之［＃二］（家系の基点［＃一］を置く）",
     },
     DiagnosticDoc {
         code: codes::KAERITEN_OUTSIDE_KANBUN,
-        title: "漢文文脈の外に現れた返り点",
         repro: "ふつうの文章です［＃レ］",
         fixed: "（返り点でないなら注記を削除、本物の漢文文脈で使う）",
     },
     DiagnosticDoc {
         code: codes::MISMATCHED_BOUTEN_CONTAINER,
-        title: "傍点と傍線で開閉が食い違うレンジ",
         repro: "［＃傍点］本文［＃傍線終わり］",
         fixed: "［＃傍点］本文［＃傍点終わり］",
     },
     DiagnosticDoc {
         code: codes::NON_CANONICAL_DIRECTIVE,
-        title: "非正規の綴りの ［＃…］ 注記",
         repro: "本文［＃字下げ終わり］",
         fixed: "本文［＃ここで字下げ終わり］",
     },
     DiagnosticDoc {
         code: codes::RESIDUAL_ANNOTATION_MARKER,
-        title: "未分類の ［＃…］ 注記（パイプライン内部）",
         repro: "本文［＃なぞの注記］",
         fixed: "本文［＃改ページ］",
     },
     DiagnosticDoc {
         code: codes::UNREGISTERED_SENTINEL,
-        title: "未登録の内部 sentinel（パイプライン内部エラー）",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
     DiagnosticDoc {
         code: codes::REGISTRY_OUT_OF_ORDER,
-        title: "プレースホルダーレジストリの順序破壊（パイプライン内部エラー）",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
     DiagnosticDoc {
         code: codes::REGISTRY_POSITION_MISMATCH,
-        title: "プレースホルダーレジストリの位置不一致（パイプライン内部エラー）",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
@@ -1350,167 +1334,78 @@ impl Diagnostic {
         self.code().starts_with(codes::LINT_NAMESPACE)
     }
 
-    /// The long-form Japanese explanation for this diagnostic, written
-    /// for the typesetter (何が起きた / 何が問題 / どう直す).
+    /// The instance placeables for this diagnostic's localized body message.
     ///
-    /// Instance-aware: variants that carry data (the offending
-    /// codepoint, delimiter family, container tags, canonical spelling)
-    /// interpolate the real values, so a host renders the exact detail
-    /// for the diagnostic in hand. The single authority for this prose —
-    /// `explain` renders it from a representative sample, a host renders
-    /// it from the live diagnostic, and both read it from here.
+    /// The `(name, value)` pairs the `diag-<code>-body` Fluent message in the
+    /// `aozora-i18n` catalog interpolates for the diagnostic in hand.
     ///
-    /// No `_` arm: like [`severity`](Self::severity) / [`code`](Self::code),
-    /// a future `#[non_exhaustive]` variant must be classified here rather
-    /// than silently fall through to a generic message.
+    /// Plain data, no localization: variants that carry data (the offending
+    /// codepoint, delimiter family, container tags, canonical spelling) yield
+    /// their live values so a host renders the exact detail; static-body
+    /// variants yield an empty vector. A consumer binds these into a Fluent
+    /// args set and calls `aozora_i18n::diag_body(lang, self.code(), &args)` —
+    /// `explain` from a representative sample, an editor from the live
+    /// diagnostic, both reading the prose from the one catalog.
+    ///
+    /// The keys mirror the `$…` placeables in the `.ftl` body messages
+    /// (`open` / `close` / `example` / `codepoint` / `char` / `open_kind` /
+    /// `close_kind` / `container` / `open_family` / `close_family` /
+    /// `canonical`). No `_` arm: like [`severity`](Self::severity) /
+    /// [`code`](Self::code), a future `#[non_exhaustive]` variant must decide
+    /// its placeables here rather than silently render a body with none.
     #[must_use]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one match arm of authored prose per diagnostic variant — the length is the catalogue, and splitting it would only scatter the single authority"
-    )]
-    pub fn detail_body(&self) -> String {
+    pub fn body_args(&self) -> Vec<(&'static str, Cow<'static, str>)> {
         match self {
-            Self::SourceContainsPua { codepoint, .. } => format!(
-                "私用領域文字 `U+{cp:04X}` がソースに紛れ込んでいます。\n\n\
-                 この文字 (`{ch}`) は青空文庫の通常テキストには現れない予約コードポイントで、\
-                 aozora-lex の内部マーカー (U+E001..U+E004) と衝突します。\n\
-                 通常はテキストエディタの非表示文字設定や、コピペ時の不可視文字で混入します。\n\n\
-                 直し方: 該当の 1 文字を削除してください。",
-                cp = *codepoint as u32,
-                ch = codepoint,
-            ),
-            Self::UnclosedBracket { kind, .. } => format!(
-                "閉じられていない `{open}` があります。\n\n\
-                 どこかに対応する `{close}` を必ず置いてください。aozora 記法では一行内で閉じるのが基本です。\n\n\
-                 例: `{example}`",
-                open = kind.open_str(),
-                close = kind.close_str(),
-                example = pair_example(*kind),
-            ),
-            Self::UnmatchedClose { kind, .. } => format!(
-                "対応する `{open}` のない `{close}` です。\n\n\
-                 考えられる原因:\n\
-                 1. 余分な `{close}` を打ってしまった → 削除する\n\
-                 2. 前にあるはずの `{open}` が欠けている → 適切な位置に追加する\n\
-                 3. その間に別の `{close}` があり、ペアが一段ずれた → 該当箇所のペアを見直す",
-                open = kind.open_str(),
-                close = kind.close_str(),
-            ),
-            Self::AccentDecompositionApplied { .. } =>
-                "「〔…〕」のアクセント表記が、サニタイズ段階で合成済み Unicode 文字へ分解されました（例: 〔e'〕→é）。\n\n\
-                 これは意図された挙動（ADR-0003）で、情報提供のための Note です。\n\n\
-                 直し方: 対応は不要です。保存（serialize）すると元の 〔…〕 形へ復元され、変換は無損失です。"
-                    .to_owned(),
-            Self::UnresolvedGaiji { .. } =>
-                "外字参照（※［＃…］）が Unicode 文字にも JIS X 0213 の面区点にも解決できませんでした。\n\n\
-                 このため描画では意図した字形ではなく、説明テキストがそのまま表示されます。\n\n\
-                 直し方: 参照に解決可能な指定を与えてください — `第3水準1-15-23` のような面区点、\
-                 または `U+XXXX` 形式の Unicode 参照を補います。"
-                    .to_owned(),
+            Self::SourceContainsPua { codepoint, .. } => vec![
+                ("codepoint", format!("{:04X}", *codepoint as u32).into()),
+                ("char", codepoint.to_string().into()),
+            ],
+            Self::UnclosedBracket { kind, .. } => vec![
+                ("open", Cow::Borrowed(kind.open_str())),
+                ("close", Cow::Borrowed(kind.close_str())),
+                ("example", Cow::Borrowed(pair_example(*kind))),
+            ],
+            Self::UnmatchedClose { kind, .. } => vec![
+                ("open", Cow::Borrowed(kind.open_str())),
+                ("close", Cow::Borrowed(kind.close_str())),
+            ],
             Self::MismatchedContainerClose {
                 open_kind,
                 close_kind,
                 ..
-            } => format!(
-                "コンテナを `{open_kind}` として開いたのに、`{close_kind}` の閉じ指示で閉じています。\n\n\
-                 開きと閉じの家系が食い違うため、範囲が正しく確定しません。\n\n\
-                 直し方: 開いた家系に合わせて閉じてください — `ここから字下げ` は `ここで字下げ終わり`、\
-                 `ここから地付き` は `ここで地付き終わり` のように対応させます。",
-            ),
-            Self::EmptyRubyReading { .. } =>
-                "ベース付きルビ（｜ベース《…》）でベースはあるのに読みが空です。\n\n\
-                 `｜` がある以上これは素の《》ではなく入力の書き損じで、ルビはプレーンテキストに退化します。\n\n\
-                 直し方: 読みを補う（｜青空《あおぞら》）か、ルビをやめるなら ｜…《》 のマーカーごと外して\
-                 ベースを地の文にします。"
-                    .to_owned(),
-            Self::NestedRuby { .. } =>
-                "ルビの読みの中で、さらに別のルビ（《…》）が開かれています。\n\n\
-                 ルビは入れ子にできないため、内側の《…》が問題箇所です。外側のルビは可能な範囲で解釈されます。\n\n\
-                 直し方: 内側の《 の前で外側の読みを閉じるか、内側の《…》を取り除いてください。"
-                    .to_owned(),
-            Self::UnrecognisedContainerDirective { .. } =>
-                "`［＃ここから…］` はコンテナの開きに見えますが、既知のコンテナ名（字下げ／地付き／地から N 字上げ など）に\
-                 一致しません。\n\n\
-                 出力は保たれますが、コンテナとしては扱われず、ただの注記として残ります。\n\n\
-                 直し方: 既知のコンテナ名に直してください（例: ［＃ここから2字下げ］）。"
-                    .to_owned(),
-            Self::TcyTargetNotFound { .. } =>
-                "縦中横の前方参照（［＃「X」は縦中横］）が指す対象 X が、直前までの本文のどこにも現れません。\n\n\
-                 装飾すべき文字列が無いため、指示は Unknown 注記に退化します。\n\n\
-                 直し方: 対象は注記より前の同じ行に現れている必要があります。綴りを確認するか、\
-                 装飾したい文字列の後ろに ［＃「X」は縦中横］ を置いてください。"
-                    .to_owned(),
-            Self::BoutenTargetAmbiguous { .. } =>
-                "傍点の前方参照（［＃「X」に傍点］）の対象 X が、直前までに複数回現れています。\n\n\
-                 どの出現に傍点を付けるか一意でないため、意図しない箇所が装飾されるおそれがあります\
-                 （パーサは look-back 規則で1つに決めます）。\n\n\
-                 直し方: 対象が一意になるよう言い換えてください（例:「白い花」のように限定する）。"
-                    .to_owned(),
-            Self::ForwardReferentNotStylable { .. } =>
-                "前方参照の対象 X は直前までに存在しますが、その場で装飾できません — ルビのベース、前の行、\
-                 別の構造の内側、または複数候補のいずれかです。\n\n\
-                 注記は保持され本文は往復しますが、装飾は前の出現には適用されません。\n\n\
-                 直し方: 対象がプレーンに現れる箇所の隣へ ［＃…］ を移動してください。"
-                    .to_owned(),
-            Self::BreakInSingleLineContainer { container, .. } => format!(
-                "単一行コンテナ（`{container}`）と同じ行に、改ページ／改段が現れました。\n\n\
-                 単一行コンテナはその行の残りだけに効くため、行内の改行系指示はコンテナの効果を落とします。\n\n\
-                 直し方: 改ページを行外へ出すか、改行をまたいで効く ［＃ここから…］ … ［＃ここで…終わり］ の\
-                 ブロック形式を使ってください。",
-            ),
-            Self::BracketedKaeritenNoPair { .. } =>
-                "角括弧返り点（［＃二］／［＃下］／［＃乙］ など）に対応する家系の基点（［＃一］／［＃上］／［＃甲］）が、\
-                 文書中のどこにもありません。\n\n\
-                 返るべき先が無いため、返り点として成立しません。\n\n\
-                 直し方: 家系の基点を文書のどこかに置いてください — ［＃二］/［＃三］には ［＃一］、\
-                 ［＃下］/［＃中］には ［＃上］、［＃乙］…には ［＃甲］。"
-                    .to_owned(),
-            Self::KaeritenOutsideKanbun { .. } =>
-                "返り点（［＃二］／［＃レ］ など）が漢文的でない文脈に現れています — 文書中で唯一の返り点で、\
-                 周囲が普通のかな文です。\n\n\
-                 本物の返り点ではなく、紛れ込んだ注記の可能性が高いと判定されました。\n\n\
-                 直し方: 本物の返り点なら漢文文脈で使い、そうでなければ該当の ［＃…］ 注記を削除してください。"
-                    .to_owned(),
+            } => vec![
+                ("open_kind", Cow::Borrowed(*open_kind)),
+                ("close_kind", Cow::Borrowed(*close_kind)),
+            ],
+            Self::BreakInSingleLineContainer { container, .. } => {
+                vec![("container", Cow::Borrowed(*container))]
+            }
             Self::MismatchedBoutenContainer {
                 open_family,
                 close_family,
                 ..
-            } => format!(
-                "傍点／傍線のレンジを `{open_family}` で開いたのに、`{close_family}` の閉じで閉じています。\n\n\
-                 点と線は描画が異なるため、その範囲の強調が曖昧になります（パーサは開き側の家系で復旧します）。\n\n\
-                 直し方: 開いた家系に合わせて閉じてください — 傍点は ［＃傍点終わり］、傍線は ［＃傍線終わり］。",
-            ),
-            Self::NonCanonicalDirective { canonical, .. } => format!(
-                "非正規の綴りの ［＃…］ 注記です。正規形は `［＃{canonical}］` です。\n\n\
-                 この注記の中身は、登録済みの記法を非正規な綴り（送り仮名・同義語・綴りゆれ）で書いたものと\
-                 判定され、Unknown 注記のまま保持されています。パーサは中身を書き換えません。\n\n\
-                 直し方: `［＃{canonical}］` に書き換えてください。`aozora fmt --fix` で自動修正できます。",
-            ),
-            Self::Internal { check, .. } => match check {
-                InternalCheckCode::ResidualAnnotationMarker =>
-                    "未分類の ［＃...］ 注記です。\n\n\
-                     注記辞典 (gaiji_chuki) のキーワードに合致しなかったか、誤字の可能性があります。\n\n\
-                     確認手順:\n\
-                     1. ［＃ の中身が `改ページ` / `中央揃え` などの登録済みキーワードと一致するか確認\n\
-                     2. `第3水準1-...` のような JIS X 0213 面区点コードを付け忘れていないか確認\n\
-                     3. それでも不明な場合は説明のみ形式 (※［＃「説明」］) でひとまず通せます"
-                        .to_owned(),
-                InternalCheckCode::UnregisteredSentinel =>
-                    "未登録の私用領域 sentinel が検出されました (pipeline 内部の整合性エラー)。\n\n\
-                     これは aozora-pipeline のバグの可能性が高いです。\
-                     再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues"
-                        .to_owned(),
-                InternalCheckCode::RegistryOutOfOrder =>
-                    "プレースホルダーレジストリの順序が崩れています (pipeline 内部の整合性エラー)。\n\n\
-                     aozora-pipeline のバグの可能性があります。\
-                     再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues"
-                        .to_owned(),
-                InternalCheckCode::RegistryPositionMismatch =>
-                    "プレースホルダーレジストリの位置情報が期待と異なっています (pipeline 内部の整合性エラー)。\n\n\
-                     aozora-pipeline のバグの可能性があります。\
-                     再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues"
-                        .to_owned(),
-            },
+            } => vec![
+                ("open_family", Cow::Borrowed(*open_family)),
+                ("close_family", Cow::Borrowed(*close_family)),
+            ],
+            Self::NonCanonicalDirective { canonical, .. } => {
+                vec![("canonical", canonical.clone())]
+            }
+            // Static-body variants carry no placeables; their `diag-*-body`
+            // messages are plain prose. The four internal checks all reach
+            // here through the single `Internal` variant — each maps to its own
+            // distinct `diag-*-body` keyed by [`code`](Self::code).
+            Self::AccentDecompositionApplied { .. }
+            | Self::UnresolvedGaiji { .. }
+            | Self::EmptyRubyReading { .. }
+            | Self::NestedRuby { .. }
+            | Self::UnrecognisedContainerDirective { .. }
+            | Self::TcyTargetNotFound { .. }
+            | Self::BoutenTargetAmbiguous { .. }
+            | Self::ForwardReferentNotStylable { .. }
+            | Self::BracketedKaeritenNoPair { .. }
+            | Self::KaeritenOutsideKanbun { .. }
+            | Self::Internal { .. } => Vec::new(),
         }
     }
 
@@ -1580,8 +1475,12 @@ impl Diagnostic {
     ///
     /// `severity` / `source` come from the inherent accessors; `help` /
     /// `url` are read from the live [`miette::Diagnostic`] impl of a
-    /// representative instance, so the explanation always agrees with
-    /// what `aozora check` prints for the same diagnostic.
+    /// representative instance, so they always agree with what `aozora check`
+    /// prints for the same diagnostic. `repro` / `fixed` are the
+    /// language-neutral example pair, and `body_args` the representative
+    /// instance's [`body_args`](Self::body_args). The localized title / body
+    /// prose is fetched separately from the `aozora-i18n` catalog by
+    /// [`Self::code`] — this crate no longer carries it.
     #[must_use]
     pub fn explain(code: &str) -> Option<DiagnosticInfo> {
         let sample = Self::sample_for_code(code)?;
@@ -1597,10 +1496,13 @@ impl Diagnostic {
                 .map(|h| h.to_string())
                 .unwrap_or_default(),
             url: MietteDiagnostic::url(&sample).map(|u| u.to_string()),
-            title: doc.title,
-            body: sample.detail_body(),
             repro: doc.repro,
             fixed: doc.fixed,
+            body_args: sample
+                .body_args()
+                .into_iter()
+                .map(|(name, value)| (name, value.into_owned()))
+                .collect(),
         })
     }
 
@@ -1994,8 +1896,6 @@ mod tests {
                     .is_some_and(|u| u.starts_with("https://")),
                 "{code}: missing or non-https url"
             );
-            assert!(!info.title.trim().is_empty(), "{code}: empty title");
-            assert!(!info.body.trim().is_empty(), "{code}: empty body");
             assert!(!info.repro.trim().is_empty(), "{code}: empty repro");
             assert!(!info.fixed.trim().is_empty(), "{code}: empty fixed");
         }
@@ -2057,15 +1957,59 @@ mod tests {
     }
 
     #[test]
-    fn detail_body_is_instance_aware_for_carrying_variants() {
-        // The unclosed-bracket body names the offending delimiter family,
-        // so a Ruby opener and a Bracket opener produce different prose.
-        let bracket =
-            Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Bracket).detail_body();
-        let ruby = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Ruby).detail_body();
-        assert!(bracket.contains('］'), "bracket body: {bracket}");
-        assert!(ruby.contains('》'), "ruby body: {ruby}");
+    fn body_args_are_instance_specific_for_carrying_variants() {
+        // The unclosed-bracket body placeables name the offending delimiter
+        // family, so a Ruby opener and a Bracket opener yield different args —
+        // the localized body then interpolates the exact glyphs / example.
+        let bracket = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Bracket).body_args();
+        let ruby = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Ruby).body_args();
         assert_ne!(bracket, ruby);
+        // The `example` arg is the per-family canonical construct.
+        assert!(
+            bracket
+                .iter()
+                .any(|(k, v)| *k == "example" && v.contains('］')),
+            "bracket example arg: {bracket:?}"
+        );
+        assert!(
+            ruby.iter()
+                .any(|(k, v)| *k == "example" && v.contains('》')),
+            "ruby example arg: {ruby:?}"
+        );
+        // The `open` / `close` args carry the delimiter glyphs.
+        assert!(bracket.iter().any(|(k, v)| *k == "open" && v == "［"));
+        assert!(bracket.iter().any(|(k, v)| *k == "close" && v == "］"));
+    }
+
+    #[test]
+    fn body_args_are_empty_for_static_body_variants() {
+        // A static-body variant (and every internal check) supplies no
+        // placeables — its `diag-*-body` message is plain prose.
+        assert!(
+            Diagnostic::empty_ruby_reading(Span::new(0, 1))
+                .body_args()
+                .is_empty()
+        );
+        assert!(
+            Diagnostic::internal(Span::new(0, 0), InternalCheckCode::ResidualAnnotationMarker)
+                .body_args()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn source_pua_body_args_format_the_codepoint_as_hex() {
+        // The `codepoint` arg is the 4-digit uppercase hex the `U+{$codepoint}`
+        // placeable expects; `char` is the offending scalar itself.
+        let args = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E002}').body_args();
+        assert!(
+            args.iter().any(|(k, v)| *k == "codepoint" && v == "E002"),
+            "codepoint arg: {args:?}"
+        );
+        assert!(
+            args.iter().any(|(k, v)| *k == "char" && v == "\u{E002}"),
+            "char arg: {args:?}"
+        );
     }
 
     #[test]

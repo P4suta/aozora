@@ -20,7 +20,7 @@ use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
-use aozora_i18n::{self as i18n, LanguageIdentifier};
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
@@ -408,11 +408,12 @@ fn explain_kind(tag: &str) -> Option<String> {
 }
 
 /// Explain a diagnostic code: `aozora explain aozora::lex::unclosed_bracket`
-/// (or the short `unclosed_bracket`). Prints the same code / severity /
-/// help / URL that `aozora check` attaches to the diagnostic, sourced
-/// from [`aozora::Diagnostic::explain`] so the two never diverge. Only the
-/// CLI-owned section labels (repro / fixed / see) are localized via `lang`;
-/// the spec-owned prose (title / body / repro / fixed example) is verbatim.
+/// (or the short `unclosed_bracket`). Prints the same code / severity / URL
+/// that `aozora check` attaches to the diagnostic — the machine axis, sourced
+/// from [`aozora::Diagnostic::explain`] so the two never diverge. The localized
+/// title / body prose and the section labels (repro / fixed / see) are pulled
+/// from the `aozora-i18n` catalog by code + `lang`; the repro / fixed example
+/// pair is the language-neutral Aozora notation carried by `info`.
 fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
     // Accept the full `aozora::lex::<token>` / `aozora::lint::<token>` code or
     // the bare trailing token; expand the short form against both namespaces.
@@ -422,13 +423,19 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
         Diagnostic::explain(&format!("aozora::lex::{arg}"))
             .or_else(|| Diagnostic::explain(&format!("aozora::lint::{arg}")))?
     };
+    let title = i18n::diag_title(lang, info.code);
+    let mut body_args = FluentArgs::new();
+    for (name, value) in &info.body_args {
+        body_args.set(*name, value.clone());
+    }
+    let body = i18n::diag_body(lang, info.code, &body_args);
     let mut out = format!(
         "{}  —  {}\n{} · {}\n\n{}",
         info.code,
-        info.title,
+        title,
         info.severity.as_json_str(),
         info.source.as_json_str(),
-        info.body,
+        body,
     );
     out.push_str("\n\n");
     out.push_str(&i18n::t(lang, "explain-repro-label"));

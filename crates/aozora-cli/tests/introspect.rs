@@ -256,3 +256,43 @@ fn explain_section_labels_localize_with_lang() {
     assert!(zh.contains("修正后:"), "zh fixed label: {zh:?}");
     assert!(zh.contains("参见: "), "zh see label: {zh:?}");
 }
+
+#[test]
+fn explain_title_and_body_prose_localize_with_lang() {
+    // The migrated title / body prose comes from aozora-i18n by code + lang.
+    // The English default title/body:
+    let (status, en, stderr) = run(&["explain", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain en must succeed: {stderr:?}");
+    assert!(en.contains("Unclosed opening bracket"), "en title: {en:?}");
+    assert!(en.contains("There is an unclosed"), "en body: {en:?}");
+
+    // `--lang ja` swaps the title and body to the migrated Japanese prose.
+    let (status, ja, _) = run(&["explain", "--lang", "ja", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain --lang ja must succeed");
+    assert!(ja.contains("閉じられていない開き括弧"), "ja title: {ja:?}");
+    assert!(
+        ja.contains("閉じられていない `［` があります"),
+        "ja body: {ja:?}"
+    );
+
+    // `--lang zh` swaps to the Chinese prose.
+    let (status, zh, _) = run(&["explain", "--lang", "zh", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain --lang zh must succeed");
+    assert!(zh.contains("未闭合的开括号"), "zh title: {zh:?}");
+    assert!(zh.contains("存在未闭合的 `［`"), "zh body: {zh:?}");
+
+    // The machine axis (code / severity / URL) is language-invariant.
+    for out in [&en, &ja, &zh] {
+        assert!(
+            out.contains("aozora::lex::unclosed_bracket"),
+            "code: {out:?}"
+        );
+        assert!(out.contains("error · source"), "axes: {out:?}");
+        assert!(
+            out.contains(
+                "https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"
+            ),
+            "url: {out:?}"
+        );
+    }
+}

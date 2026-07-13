@@ -283,6 +283,43 @@ fn explain_hint_header_localizes_with_lang() {
 }
 
 #[test]
+fn human_report_headline_localizes_but_english_keeps_the_display() {
+    // English (the pinned default) keeps the byte-stable `#[error]` Display as
+    // the report headline.
+    let (_, en) = run(&["check", "--format", "human", "--lang", "en"], ONE_PUA);
+    assert!(
+        en.contains("source contains lexer PUA sentinel"),
+        "en headline is the #[error] Display: {en:?}"
+    );
+
+    // `--lang ja` / `zh` substitute the localized title as the headline via the
+    // thin adapter — the English Display sentence must NOT appear as a headline.
+    let (_, ja) = run(&["check", "--format", "human", "--lang", "ja"], ONE_PUA);
+    assert!(
+        ja.contains("私用領域文字がソースに紛れ込んでいる"),
+        "ja headline is the localized title: {ja:?}"
+    );
+    assert!(
+        !ja.contains("source contains lexer PUA sentinel"),
+        "ja must not show the English Display headline: {ja:?}"
+    );
+    let (_, zh) = run(&["check", "--format", "human", "--lang", "zh"], ONE_PUA);
+    assert!(
+        zh.contains("源文本中混入了私用区字符"),
+        "zh headline is the localized title: {zh:?}"
+    );
+
+    // The machine axis inside the human report — the dotted code and the docs
+    // URL — is language-invariant across all three.
+    for out in [&en, &ja, &zh] {
+        assert!(
+            out.contains("aozora::lex::source_contains_pua"),
+            "code present in every language: {out:?}"
+        );
+    }
+}
+
+#[test]
 fn machine_formats_are_byte_identical_across_languages() {
     // The core correctness invariant of the i18n work: json / short output is
     // an English-stable contract, byte-for-byte the same under any `--lang`.

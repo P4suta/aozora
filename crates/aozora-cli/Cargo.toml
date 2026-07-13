@@ -54,6 +54,10 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 insta = { workspace = true }
+# `#[cfg_attr(test, mutants::skip)]` on the `LocalizedHeadline` miette
+# accessors that are mutation-equivalent survivors (ADR-0031); a no-op
+# outside `cargo mutants`.
+mutants = { workspace = true }
 # Golden-fixture loader for the cross-surface parity gate
 # (`tests/fixture_parity.rs`). Declared path-only (no version) on
 # purpose: aozora-conformance is a dev-only, `publish = false` crate, so

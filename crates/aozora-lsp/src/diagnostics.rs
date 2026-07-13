@@ -1,14 +1,18 @@
 //! aozora lexer diagnostic → LSP `Diagnostic` adapter.
 //!
-//! The diagnostic *catalogue* — codes, severities, the verbose Japanese
-//! prose ([`aozora::Diagnostic::detail_body`]), the one-line titles and
-//! documentation URLs ([`aozora::Diagnostic::explain`]) — is single-sourced
-//! in `aozora-spec` (surfaced through the `aozora` facade), the same
-//! authority `aozora check` and `aozora explain` render from. This module
-//! is a thin adapter: it maps each [`aozora::Diagnostic`] onto a `tower_lsp`
+//! The machine *catalogue* — codes, severities, documentation URLs — is
+//! single-sourced in `aozora-spec` (surfaced through the `aozora` facade), the
+//! same authority `aozora check` and `aozora explain` render from. The
+//! human-facing prose — the one-line title and the verbose body — comes from
+//! the shared `aozora-i18n` Fluent catalog keyed by diagnostic code, the same
+//! catalog the CLI's `explain` and human report use. This module is a thin
+//! adapter: it maps each [`aozora::Diagnostic`] onto a `tower_lsp`
 //! [`Diagnostic`], converting byte spans into line/UTF-16 coordinates via a
 //! [`DocLineView`] and attaching a serialised quick-fix [`DiagnosticPayload`]
 //! for the `code_action` handler.
+//!
+//! The hover message is emitted in the canonical English catalog for now;
+//! negotiating the editor client's locale is a later i18n wave.
 //!
 //! `DiagnosticPayload` / `SerializablePairKind` live here (not in the
 //! catalogue crate) because they are an LSP concern: the `data` channel and
@@ -16,6 +20,7 @@
 //! `crate::diagnostics`.
 
 use aozora::{Diagnostic as AozoraDiagnostic, Document, InternalCheckCode, PairKind, Severity};
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use serde::{Deserialize, Serialize};
 use tower_lsp::lsp_types::{
     CodeDescription, Diagnostic, DiagnosticSeverity, DiagnosticTag, NumberOrString, Range, Url,
@@ -137,7 +142,11 @@ pub fn diagnostics_from_aozora(
     view: &DocLineView<'_>,
     diagnostics: &[AozoraDiagnostic],
 ) -> Vec<Diagnostic> {
-    diagnostics.iter().map(|d| to_lsp(view, d)).collect()
+    // Resolve the message language once for the batch. With no source supplied
+    // this is the canonical English catalog; client-locale negotiation is a
+    // later i18n wave.
+    let lang = i18n::resolve(None, None, None, None);
+    diagnostics.iter().map(|d| to_lsp(view, d, &lang)).collect()
 }
 
 /// Map `aozora`'s [`Severity`] onto the LSP severity enum.
@@ -184,16 +193,23 @@ fn quick_fix_payload(d: &AozoraDiagnostic) -> Option<DiagnosticPayload> {
     }
 }
 
-fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic) -> Diagnostic {
+fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic, lang: &LanguageIdentifier) -> Diagnostic {
     let span = d.span();
     let start = view.position(span.start as usize);
     let end = view.position(span.end as usize);
-    // Title + URL come from the catalogue keyed by the code; the body is
-    // rendered from this live diagnostic so its instance specifics (the
-    // offending delimiter, codepoint, canonical spelling) are exact.
+    // Title + body come from the shared i18n catalog keyed by the code; the
+    // body's instance specifics (the offending delimiter, codepoint, canonical
+    // spelling) are interpolated from this live diagnostic's `body_args`. The
+    // documentation URL is the machine axis, read from the catalogue crate.
     let info = AozoraDiagnostic::explain(d.code())
         .expect("every emitted diagnostic code is catalogued in aozora-spec");
-    let message = format!("{}\n\n{}", info.title, d.detail_body());
+    let title = i18n::diag_title(lang, d.code());
+    let mut body_args = FluentArgs::new();
+    for (name, value) in d.body_args() {
+        body_args.set(name, value.into_owned());
+    }
+    let body = i18n::diag_body(lang, d.code(), &body_args);
+    let message = format!("{title}\n\n{body}");
     let code_description = info
         .url
         .as_deref()
@@ -245,7 +261,7 @@ mod tests {
             .iter()
             .find(|d| code_of(d) == Some("aozora::lex::source_contains_pua"))
             .expect("PUA warning expected");
-        assert!(pua.message.contains("削除"), "msg: {}", pua.message);
+        assert!(pua.message.contains("delete"), "msg: {}", pua.message);
         assert_eq!(pua.severity, Some(DiagnosticSeverity::WARNING));
         assert!(
             pua.tags
@@ -270,7 +286,7 @@ mod tests {
             .expect("UnclosedBracket expected on missing ］");
         assert!(unclosed.message.contains('］'), "{}", unclosed.message);
         assert!(
-            unclosed.message.contains("例:"),
+            unclosed.message.contains("Example:"),
             "message must include a concrete example: {}",
             unclosed.message,
         );
@@ -289,9 +305,13 @@ mod tests {
             .iter()
             .find(|d| code_of(d) == Some("aozora::lex::unmatched_close"))
             .expect("UnmatchedClose expected on stray ］");
-        assert!(unmatched.message.contains("削除"), "{}", unmatched.message);
         assert!(
-            unmatched.message.contains("欠けている"),
+            unmatched.message.contains("delete"),
+            "{}",
+            unmatched.message
+        );
+        assert!(
+            unmatched.message.contains("missing"),
             "{}",
             unmatched.message
         );
@@ -408,7 +428,8 @@ mod tests {
         let source = "𠮷文］";
         let view = DocLineView::from_source(source);
         let d = AozoraDiagnostic::unmatched_close(Span::new(7, 10), PairKind::Bracket);
-        let lsp = to_lsp(&view, &d);
+        let lang = i18n::resolve(None, None, None, None);
+        let lsp = to_lsp(&view, &d, &lang);
         assert_eq!(
             lsp.range,
             Range::new(Position::new(0, 3), Position::new(0, 4)),
