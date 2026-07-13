@@ -164,6 +164,57 @@ pub fn tf(lang: &LanguageIdentifier, key: &str, args: &FluentArgs<'_>) -> String
     lookup(lang, key, Some(args))
 }
 
+/// True when `lang` is the canonical English locale.
+///
+/// The one language for which a host keeps the byte-stable `#[error]` Display
+/// as the human diagnostic headline instead of substituting a localized title
+/// — so the English human report never moves. Every resolved language from
+/// [`resolve`] is one of the available base tags, so this is an exact match.
+#[must_use]
+pub fn is_english(lang: &LanguageIdentifier) -> bool {
+    *lang == english()
+}
+
+/// The Fluent message-key stem for a diagnostic `code`.
+///
+/// Its trailing `::` segment with `_` turned into `-`:
+/// `aozora::lex::unclosed_bracket` → `unclosed-bracket`, so the catalog keys
+/// are `diag-unclosed-bracket-title` and `diag-unclosed-bracket-body`. The
+/// diagnostic code string thus doubles as the localization key, keeping
+/// aozora-spec and the `.ftl` catalogs in lock-step with no separate mapping
+/// table.
+fn diag_slug(code: &str) -> String {
+    code.rsplit_once("::")
+        .map_or(code, |(_, tail)| tail)
+        .replace('_', "-")
+}
+
+/// The localized one-line title for a diagnostic `code` in `lang`.
+///
+/// Looks up `diag-<slug>-title`, where `slug` is `code`'s trailing `::`
+/// segment with `_` turned into `-`; missing keys surface as the key itself, a
+/// loud, greppable signal of a catalog gap. This is the prose migrated out of
+/// `aozora-spec`'s `DOCS` table — the machine `code` / severity / `#[error]`
+/// Display in that crate are unchanged.
+#[must_use]
+pub fn diag_title(lang: &LanguageIdentifier, code: &str) -> String {
+    t(lang, &format!("diag-{}-title", diag_slug(code)))
+}
+
+/// The localized long-form body for a diagnostic `code` in `lang`.
+///
+/// `args` binds the body message's instance placeables (`$open`, `$close`,
+/// `$example`, `$codepoint`, `$char`, `$open_kind`, `$close_kind`,
+/// `$container`, `$open_family`, `$close_family`, `$canonical`). The consumer
+/// builds `args` from the live diagnostic — `aozora_spec::Diagnostic::
+/// body_args` yields exactly the `(name, value)` pairs a variant's body
+/// interpolates (empty for static-body variants). Looks up `diag-<slug>-body`,
+/// the slug derived from `code` as in [`diag_title`].
+#[must_use]
+pub fn diag_body(lang: &LanguageIdentifier, code: &str, args: &FluentArgs<'_>) -> String {
+    tf(lang, &format!("diag-{}-body", diag_slug(code)), args)
+}
+
 fn lookup(lang: &LanguageIdentifier, key: &str, args: Option<&FluentArgs<'_>>) -> String {
     if let Some(text) = format_from(catalog_for(lang), key, args) {
         return text;
@@ -367,5 +418,115 @@ mod tests {
         assert_eq!(t(&lang("en"), "explain-repro-label"), "Reproduction:");
         assert_eq!(t(&lang("ja"), "explain-repro-label"), "再現例:");
         assert_eq!(t(&lang("zh"), "explain-repro-label"), "复现示例:");
+    }
+
+    // --- diagnostic prose migrated out of aozora-spec ---
+
+    /// The 21 diagnostic code slugs, mirroring `aozora_spec::Diagnostic::
+    /// ALL_CODES` (kept here as literals so this crate does not depend on the
+    /// catalogue crate — the `.ftl` keys are the coupling point, verified by
+    /// the CLI's per-code `explain` tests end-to-end).
+    const DIAG_SLUGS: [&str; 21] = [
+        "source-contains-pua",
+        "unclosed-bracket",
+        "unmatched-close",
+        "accent-decomposition-applied",
+        "unresolved-gaiji",
+        "mismatched-container-close",
+        "empty-ruby-reading",
+        "nested-ruby",
+        "unrecognised-container-directive",
+        "tcy-target-not-found",
+        "bouten-target-ambiguous",
+        "forward-referent-not-stylable",
+        "break-in-single-line-container",
+        "bracketed-kaeriten-no-pair",
+        "kaeriten-outside-kanbun",
+        "mismatched-bouten-container",
+        "non-canonical-directive",
+        "residual-annotation-marker",
+        "unregistered-sentinel",
+        "registry-out-of-order",
+        "registry-position-mismatch",
+    ];
+
+    #[test]
+    fn every_diagnostic_has_title_and_body_in_every_locale() {
+        // No silent catalog gap: each code's title/body resolves (i.e. does
+        // not fall through to the bare key) in en / ja / zh.
+        for tag in ["en", "ja", "zh"] {
+            let l = lang(tag);
+            for slug in DIAG_SLUGS {
+                let code = format!("aozora::lex::{}", slug.replace('-', "_"));
+                let title = diag_title(&l, &code);
+                assert_ne!(title, format!("diag-{slug}-title"), "{tag}: {slug} title");
+                assert!(!title.trim().is_empty(), "{tag}: {slug} empty title");
+                let body = diag_body(&l, &code, &FluentArgs::new());
+                assert_ne!(body, format!("diag-{slug}-body"), "{tag}: {slug} body");
+                assert!(!body.trim().is_empty(), "{tag}: {slug} empty body");
+            }
+        }
+    }
+
+    #[test]
+    fn diag_slug_takes_the_trailing_segment_and_kebabs_underscores() {
+        assert_eq!(
+            diag_slug("aozora::lex::unclosed_bracket"),
+            "unclosed-bracket"
+        );
+        assert_eq!(
+            diag_slug("aozora::lint::non_canonical_directive"),
+            "non-canonical-directive"
+        );
+        // A bare, unqualified token is passed through (still kebab-cased).
+        assert_eq!(diag_slug("nested_ruby"), "nested-ruby");
+    }
+
+    #[test]
+    fn diag_title_localizes_by_locale() {
+        let code = "aozora::lex::unclosed_bracket";
+        assert_eq!(diag_title(&lang("en"), code), "Unclosed opening bracket");
+        assert_eq!(diag_title(&lang("ja"), code), "閉じられていない開き括弧");
+        assert_eq!(diag_title(&lang("zh"), code), "未闭合的开括号");
+    }
+
+    #[test]
+    fn diag_body_interpolates_instance_args_without_bidi_isolates() {
+        // The unclosed-bracket body weaves in the delimiter glyphs and the
+        // canonical example; `set_use_isolating(false)` must hold so the
+        // interpolated values carry no U+2068/U+2069 around them.
+        let mut args = FluentArgs::new();
+        args.set("open", "［");
+        args.set("close", "］");
+        args.set("example", "［＃改ページ］");
+        let body = diag_body(&lang("en"), "aozora::lex::unclosed_bracket", &args);
+        assert!(body.contains('［') && body.contains('］'), "glyphs: {body}");
+        assert!(body.contains("［＃改ページ］"), "example woven in: {body}");
+        assert!(
+            !body.contains('\u{2068}') && !body.contains('\u{2069}'),
+            "no bidi isolates: {body:?}"
+        );
+        // The multiline body keeps paragraph breaks (blank lines → `\n\n`).
+        assert!(body.contains("\n\n"), "paragraphs preserved: {body:?}");
+    }
+
+    #[test]
+    fn diag_body_missing_locale_key_falls_back_to_english() {
+        // zh omits nothing today, so force the fallback path with a fabricated
+        // code: it resolves to the bare key (loud signal), same in every locale.
+        let code = "aozora::lex::does_not_exist";
+        assert_eq!(
+            diag_body(&lang("zh"), code, &FluentArgs::new()),
+            "diag-does-not-exist-body"
+        );
+    }
+
+    #[test]
+    fn is_english_matches_only_the_english_base() {
+        assert!(is_english(&lang("en")));
+        assert!(!is_english(&lang("ja")));
+        assert!(!is_english(&lang("zh")));
+        // A resolved en-region still negotiates to the `en` base tag.
+        assert!(is_english(&resolve(Some("en-US"), None, None, None)));
     }
 }

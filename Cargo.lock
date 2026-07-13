@@ -309,6 +309,7 @@ dependencies = [
  "aozora-corpus",
  "aozora-encoding",
  "aozora-fmt",
+ "aozora-i18n",
  "aozora-pipeline",
  "arc-swap",
  "clap",

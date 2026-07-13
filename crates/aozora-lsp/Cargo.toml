@@ -27,6 +27,7 @@ aozora = { workspace = true }
 # no-contract internal surfaces the umbrella deliberately does not re-export.
 aozora-pipeline = { workspace = true }
 aozora-encoding = { workspace = true }
+aozora-i18n = { workspace = true } # shared Fluent catalog for diagnostic prose
 aozora-buildstamp = { workspace = true } # channel-aware --version stamp
 tree-sitter-aozora = { workspace = true }
 tree-sitter = "0.26"

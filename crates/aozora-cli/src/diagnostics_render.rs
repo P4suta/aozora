@@ -13,6 +13,8 @@
 //!   (`path:offset: severity[code]: message`), for editors that render
 //!   their own snippets.
 
+use std::error::Error;
+use std::fmt;
 use std::io::{self, IsTerminal, Write};
 
 use aozora::Document;
@@ -90,18 +92,103 @@ fn render_human(
     // number of preceding line breaks. Re-derive the sanitized text (the
     // exact bytes the lexer spanned into) and attach that instead.
     let sanitized = sanitize(doc.source()).text;
+    // English keeps the byte-stable `#[error]` Display as the report headline
+    // (unchanged); any other language substitutes the localized title through
+    // the `LocalizedHeadline` adapter. The machine views (`json` / `short`)
+    // never take this branch, so their bytes stay language-invariant.
+    let localize_headline = !i18n::is_english(lang);
     let mut stderr = io::stderr().lock();
     for diag in diagnostics {
-        let report = Report::new(diag.clone())
-            .with_source_code(NamedSource::new(path, sanitized.to_string()));
+        let source = NamedSource::new(path, sanitized.to_string());
         // With miette's `fancy` feature, `{:?}` renders the graphical report.
-        writeln!(stderr, "{report:?}")?;
+        if localize_headline {
+            let headline = LocalizedHeadline {
+                title: i18n::diag_title(lang, diag.code()),
+                inner: diag.clone(),
+            };
+            let report = Report::new(headline).with_source_code(source);
+            writeln!(stderr, "{report:?}")?;
+        } else {
+            let report = Report::new(diag.clone()).with_source_code(source);
+            writeln!(stderr, "{report:?}")?;
+        }
     }
     // After the graphical reports, point the reader at `aozora explain
     // <code>` so the obvious next step is one copy-paste away. Human-only:
     // `json` / `short` are machine contracts (ADR-0008) and stay
     // byte-identical, so the hint never reaches them.
     write_explain_hint(&mut stderr, diagnostics, lang)
+}
+
+/// A miette adapter that swaps only the report *headline* for the localized title.
+///
+/// The headline is the `Display` line miette prints at the top of a graphical
+/// report; this adapter substitutes the localized diagnostic title and
+/// delegates every structural accessor (`code`, `severity`, `labels`, `help`,
+/// `url`, `source_code`, …) to the inner diagnostic.
+///
+/// Used for `--lang != en` so the human `check` / `lint` report reads its
+/// headline in the reader's language. The `#[error]` `Display` of the inner
+/// diagnostic — the byte-stable `short` / `json` / log string — is never
+/// touched: those views render the raw `aozora::Diagnostic`, not this adapter,
+/// so the machine axis stays language-invariant.
+struct LocalizedHeadline {
+    /// The diagnostic being reported, owned so the adapter is `'static` (miette
+    /// `Report::new` requires it) — mirrors the `diag.clone()` the un-localized
+    /// path already pays.
+    inner: aozora::Diagnostic,
+    /// The localized title, rendered as the report headline via `Display`.
+    title: String,
+}
+
+impl fmt::Display for LocalizedHeadline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.title)
+    }
+}
+
+impl fmt::Debug for LocalizedHeadline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Debug is only the `Error` supertrait obligation; the graphical report
+        // renders through `Display` + the miette accessors, not this.
+        fmt::Debug::fmt(&self.inner, f)
+    }
+}
+
+impl Error for LocalizedHeadline {}
+
+impl miette::Diagnostic for LocalizedHeadline {
+    fn code(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        miette::Diagnostic::code(&self.inner)
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        miette::Diagnostic::severity(&self.inner)
+    }
+
+    fn help(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        miette::Diagnostic::help(&self.inner)
+    }
+
+    fn url(&self) -> Option<Box<dyn fmt::Display + '_>> {
+        miette::Diagnostic::url(&self.inner)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        miette::Diagnostic::labels(&self.inner)
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        miette::Diagnostic::source_code(&self.inner)
+    }
+
+    fn related(&self) -> Option<Box<dyn Iterator<Item = &dyn miette::Diagnostic> + '_>> {
+        miette::Diagnostic::related(&self.inner)
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
+        miette::Diagnostic::diagnostic_source(&self.inner)
+    }
 }
 
 /// Append a one-time `aozora explain <code>` pointer covering the
