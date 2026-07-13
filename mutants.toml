@@ -52,10 +52,37 @@ minimum_test_timeout = 30.0
 #     so its ~49 mutants are all vacuous survivors. It was split out of
 #     `lib.rs` into its own file precisely so this glob excludes only the
 #     wrappers while `logic` (swept normally) keeps carrying the assertions.
+#
+# Non-product crates and non-native bindings. The per-PR `mutants-in-diff`
+# gate (ci.yml) mutates the changed lines across the WHOLE workspace, not a
+# single `-p` crate, so without these globs a change to tooling — or to a
+# binding whose product surface is cfg-dead on a host build — would be gated
+# on vacuous mutants. Excluding them makes the invariant hold: a crate in the
+# `mutants.yml` sweep matrix is exactly a mutation-tested product crate.
+#   - aozora-wasm / aozora-py: the product surface is entirely
+#     `#[cfg(target_arch = "wasm32")]` / `feature = "extension-module"`
+#     gated, so a host / default build compiles it out and every mutant is
+#     vacuous. Wire correctness is covered upstream by the `aozora::json`
+#     sweep plus the `parity.mjs` (wasm) and pytest (py) cross-checks.
+#   - aozora-xtask / -corpus / -conformance / -proptest / -trace: dev
+#     tooling and test / audit / profiling harnesses, not shipped product.
+#   - aozora-go / -book: the Go binding and the mdbook (both workspace-
+#     excluded); tree-sitter-aozora: generated `parser.c` plus a thin
+#     hand-written Rust binding.
 exclude_globs = [
   "crates/aozora-bench/**",
   "**/fuzz/**",
   "crates/aozora-buildstamp/**",
   "crates/aozora-pipeline/src/lexer/instrumentation.rs",
   "crates/aozora-extism/src/plugin.rs",
+  "crates/aozora-wasm/**",
+  "crates/aozora-py/**",
+  "crates/aozora-xtask/**",
+  "crates/aozora-corpus/**",
+  "crates/aozora-conformance/**",
+  "crates/aozora-proptest/**",
+  "crates/aozora-trace/**",
+  "crates/aozora-go/**",
+  "crates/aozora-book/**",
+  "crates/tree-sitter-aozora/**",
 ]
