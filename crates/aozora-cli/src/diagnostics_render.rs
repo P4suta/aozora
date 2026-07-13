@@ -178,14 +178,27 @@ impl miette::Diagnostic for LocalizedHeadline {
         miette::Diagnostic::labels(&self.inner)
     }
 
+    // `source_code` / `related` / `diagnostic_source` are faithful
+    // delegations, but each is a mutation-equivalent survivor: no
+    // `aozora::Diagnostic` variant carries a `#[source_code]` / `#[related]`
+    // field or a diagnostic-source, so the inner accessor is `None` for every
+    // possible input and no assertion can tell delegation apart from a hard
+    // `None`. They are kept for adapter faithfulness — a future variant that
+    // gains one of those fields is then delegated automatically instead of
+    // silently dropped — and `mutants::skip`-ed rather than left as permanent
+    // report-only survivors. The value-bearing accessors above (`severity` /
+    // `help` / `url` / `labels` / `code`) are covered by delegation tests.
+    #[cfg_attr(test, mutants::skip)]
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
         miette::Diagnostic::source_code(&self.inner)
     }
 
+    #[cfg_attr(test, mutants::skip)]
     fn related(&self) -> Option<Box<dyn Iterator<Item = &dyn miette::Diagnostic> + '_>> {
         miette::Diagnostic::related(&self.inner)
     }
 
+    #[cfg_attr(test, mutants::skip)]
     fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
         miette::Diagnostic::diagnostic_source(&self.inner)
     }
@@ -306,6 +319,112 @@ mod tests {
 
     fn lang(tag: &str) -> LanguageIdentifier {
         tag.parse().expect("test locale tag parses")
+    }
+
+    // ---- LocalizedHeadline: the --lang report-headline adapter ----
+    //
+    // The adapter swaps ONLY the `Display` headline for the localized title and
+    // delegates every miette structural accessor to the inner diagnostic. A
+    // real `source_contains_pua` warning is the value-bearing fixture: it has a
+    // non-default severity (Warning; miette defaults to Error), help text, a
+    // docs URL and a single caret label — so the delegation of each is
+    // observable. (`source_code` / `related` / `diagnostic_source` are `None`
+    // for every aozora variant; see the `mutants::skip` note on the impl.)
+
+    /// A representative inner diagnostic built through the public `aozora` API.
+    fn pua_diagnostic() -> aozora::Diagnostic {
+        Document::new("a\u{E001}b")
+            .parse()
+            .diagnostics()
+            .first()
+            .cloned()
+            .expect("a PUA sentinel yields one diagnostic")
+    }
+
+    fn headline_over(inner: aozora::Diagnostic) -> LocalizedHeadline {
+        LocalizedHeadline {
+            title: "ローカライズ見出し".to_owned(),
+            inner,
+        }
+    }
+
+    // Display is the swapped axis: it renders the localized title verbatim, not
+    // the inner `#[error]` sentence.
+    #[test]
+    fn headline_display_is_the_localized_title() {
+        let h = headline_over(pua_diagnostic());
+        assert_eq!(h.to_string(), "ローカライズ見出し");
+    }
+
+    // Debug is only the `Error` supertrait obligation, delegated to the inner.
+    // The mutant that empties the body would make `{:?}` render nothing.
+    #[test]
+    fn headline_debug_delegates_to_inner() {
+        let inner = pua_diagnostic();
+        let shown = format!("{:?}", headline_over(inner.clone()));
+        assert!(!shown.is_empty(), "Debug must not render empty: {shown:?}");
+        assert_eq!(shown, format!("{inner:?}"), "Debug delegates to the inner");
+    }
+
+    // Severity delegates: the PUA diagnostic is a `Warning`, which is neither
+    // `None` nor miette's `Default` severity (`Error`) — so both severity
+    // mutants diverge from this.
+    #[test]
+    fn headline_severity_delegates_to_inner() {
+        let inner = pua_diagnostic();
+        let h = headline_over(inner.clone());
+        assert_eq!(
+            miette::Diagnostic::severity(&h),
+            Some(miette::Severity::Warning),
+            "the PUA diagnostic renders as a warning",
+        );
+        assert_eq!(
+            miette::Diagnostic::severity(&h),
+            miette::Diagnostic::severity(&inner),
+            "severity delegates to the inner",
+        );
+    }
+
+    // help / url / code delegate: each is `Some` for the PUA diagnostic and
+    // must match the inner's value byte-for-byte. The mutants blank them to
+    // `None`.
+    #[test]
+    fn headline_help_url_code_delegate_to_inner() {
+        let inner = pua_diagnostic();
+        let h = headline_over(inner.clone());
+
+        let h_help = miette::Diagnostic::help(&h).map(|d| d.to_string());
+        assert!(h_help.is_some(), "PUA diagnostic carries help text");
+        assert_eq!(
+            h_help,
+            miette::Diagnostic::help(&inner).map(|d| d.to_string()),
+            "help delegates to the inner",
+        );
+
+        let h_url = miette::Diagnostic::url(&h).map(|d| d.to_string());
+        assert!(h_url.is_some(), "PUA diagnostic carries a docs url");
+        assert_eq!(
+            h_url,
+            miette::Diagnostic::url(&inner).map(|d| d.to_string()),
+            "url delegates to the inner",
+        );
+
+        assert_eq!(
+            miette::Diagnostic::code(&h).map(|d| d.to_string()),
+            miette::Diagnostic::code(&inner).map(|d| d.to_string()),
+            "code delegates to the inner",
+        );
+    }
+
+    // labels delegate: the PUA diagnostic carries exactly one caret label; the
+    // mutant drops it to `None`.
+    #[test]
+    fn headline_labels_delegate_to_inner() {
+        let h = headline_over(pua_diagnostic());
+        let labels: Vec<_> = miette::Diagnostic::labels(&h)
+            .expect("the headline forwards the inner caret label")
+            .collect();
+        assert_eq!(labels.len(), 1, "the PUA diagnostic has one caret label");
     }
 
     #[test]

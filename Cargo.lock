@@ -201,6 +201,7 @@ dependencies = [
  "comfy-table",
  "insta",
  "miette",
+ "mutants",
  "notify",
  "serde",
  "serde_json",
