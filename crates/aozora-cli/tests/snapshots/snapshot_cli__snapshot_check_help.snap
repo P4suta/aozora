@@ -83,6 +83,16 @@ Options:
           
           [default: auto]
 
+  -v, --verbose...
+          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
+          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
+          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+
+  -q, --quiet
+          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
+          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
+          Global
+
   -h, --help
           Print help (see a summary with '-h')
 

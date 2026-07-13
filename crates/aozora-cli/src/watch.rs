@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use notify::{Event, RecursiveMode, Watcher};
+use tracing::{debug, trace};
 
 /// Coalesce a burst of save events (an editor's temp-write + rename, or a
 /// formatter's own write-back) into a single re-run.
@@ -32,6 +33,7 @@ pub(crate) fn watch(path: &Path, once: impl Fn() -> Result<ExitCode>) -> Result<
     banner(path);
 
     let parent = watched_dir(path);
+    debug!(target = %path.display(), watch_dir = %parent.display(), "watch: monitoring parent directory for changes");
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         if let Ok(event) = res {
@@ -47,8 +49,10 @@ pub(crate) fn watch(path: &Path, once: impl Fn() -> Result<ExitCode>) -> Result<
 
     while let Ok(event) = rx.recv() {
         if should_skip(&event, path) {
+            trace!(kind = ?event.kind, "watch: skipping fs event that does not touch the target");
             continue;
         }
+        debug!(kind = ?event.kind, "watch: target changed; draining the debounce window");
         // Drain the debounce window so a rename+write burst is one re-run.
         while rx.recv_timeout(DEBOUNCE).is_ok() {}
         rerun(&once);

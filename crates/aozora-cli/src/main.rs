@@ -64,6 +64,7 @@ mod config;
 mod diagnostics_render;
 mod input;
 mod introspect;
+mod logging;
 mod manpage;
 mod timing;
 mod watch;
@@ -84,7 +85,9 @@ use aozora::{
 pub(crate) use aozora_fmt::{ColorChoice, Encoding};
 
 use anyhow::{Context, Result};
+use clap::builder::styling::{AnsiColor, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
+use tracing::debug;
 
 use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
@@ -92,12 +95,25 @@ use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
 use crate::timing::{Timer, TimingFormat};
 
+/// Help / usage styling: bold-green headers and usage line (the single
+/// accent), cyan literals (flag names and their values), plain placeholders.
+/// clap only emits these ANSI codes when its `color` feature decides colour is
+/// on, so `NO_COLOR` / `CLICOLOR` / a piped stream drop them automatically. The
+/// `kinds` / `schema` tables are comfy-table, not clap, so they stay
+/// monochrome regardless.
+const HELP_STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Green.on_default().bold())
+    .usage(AnsiColor::Green.on_default().bold())
+    .literal(AnsiColor::Cyan.on_default())
+    .placeholder(Style::new());
+
 #[derive(Debug, Parser)]
 #[command(
     name = "aozora",
     about = "Aozora Bunko notation parser CLI",
     version = aozora_buildstamp::VERSION,
     propagate_version = true,
+    styles = HELP_STYLES,
     after_long_help = "Examples:
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
@@ -118,6 +134,19 @@ struct Cli {
     /// graphical diagnostics; `kinds` tables are always monochrome.
     #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
     color: ColorChoice,
+
+    /// Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv`
+    /// trace. Logs go to stderr only, so stdout — and the JSON / short
+    /// diagnostic streams — stay byte-identical. `AOZORA_LOG` overrides this;
+    /// cancels against `--quiet` (one axis). Global.
+    #[arg(long, short = 'v', global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Lower log verbosity to errors only — the opposite end of the
+    /// `--verbose` axis (a single `-v` cancels it). Affects only stderr
+    /// logging, never stdout. `AOZORA_LOG` overrides it. Global.
+    #[arg(long, short = 'q', global = true)]
+    quiet: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -387,6 +416,13 @@ struct PandocArgs {
 fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().collect();
     let cli = Cli::parse_from(raw);
+
+    // Install the stderr tracing subscriber once, before any subcommand runs.
+    // `-v`/`-q` set the default level (default `warn`); `AOZORA_LOG` overrides.
+    // Writes only to stderr, so stdout and the machine diagnostic streams stay
+    // byte-identical at any verbosity. (`--help` / `--version` already exited
+    // during `parse_from`, so this never runs for them.)
+    logging::init(cli.verbose, cli.quiet);
 
     // Install the colour hook before any diagnostic `Report` is constructed:
     // miette captures its handler at construction time (see `color::install`).
@@ -799,6 +835,7 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     };
 
     // --format set: pipe through `pandoc -f json -t <format>`.
+    debug!(format, "spawning `pandoc -f json -t <format>` subprocess");
     let mut child = Process::new("pandoc")
         .args(["-f", "json", "-t", format])
         .stdin(Stdio::piped())
@@ -823,6 +860,11 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
 }
 
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
+    debug!(
+        source = %display_path(path),
+        ?encoding,
+        "reading and decoding input"
+    );
     // The formatter crate owns both the guarded readers and the decoder, so
     // `check`/`render`/`inspect`/`pandoc` and both `fmt` frontends read and
     // resolve bytes identically — including the oversize-input rejection
