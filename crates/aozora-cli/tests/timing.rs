@@ -6,13 +6,13 @@
 //! `diagnostics_render.rs`.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 /// Run `aozora <args>` feeding `stdin`; return `(stdout, stderr)`.
 fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

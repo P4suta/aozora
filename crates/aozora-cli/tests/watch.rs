@@ -6,15 +6,15 @@
 //! `cargo test -- --ignored`).
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 #[test]
 fn watch_on_stdin_is_a_usage_error() {
     // `--watch -` cannot watch a pipe; it must fail fast with exit 2 and
     // never enter the watch loop.
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(["check", "--watch", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -54,7 +54,7 @@ fn watch_reruns_on_change() {
     file.flush().expect("flush");
     let path = file.path().to_owned();
 
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(["render", "--watch", path.to_str().expect("utf-8 path")])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

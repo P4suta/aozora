@@ -46,6 +46,10 @@ fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR")
         .env_remove("CLICOLOR_FORCE")
+        // `check` loads `.aozora.toml`, including the global (XDG) layer, so
+        // pin XDG_CONFIG_HOME at an empty, test-scoped dir — otherwise a
+        // developer's real ~/.config/aozora/ could flip these exit codes.
+        .env("XDG_CONFIG_HOME", env!("CARGO_TARGET_TMPDIR"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if stdin.is_some() {

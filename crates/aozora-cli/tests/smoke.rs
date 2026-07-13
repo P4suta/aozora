@@ -17,11 +17,11 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 
 use tempfile::NamedTempFile;
 
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 fn write_temp(contents: &str) -> NamedTempFile {
     let mut f = tempfile::Builder::new()
@@ -39,7 +39,7 @@ fn write_temp(contents: &str) -> NamedTempFile {
 /// least the exit status, and one of stdout/stderr to ensure the
 /// path actually executed (not just compiled).
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
-    let mut cmd = Command::new(BIN);
+    let mut cmd = common::hermetic_command();
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
@@ -357,7 +357,7 @@ fn render_rejects_non_utf8_input_when_encoding_is_utf8() {
     // than silently producing garbage. (The default is now `auto`,
     // which would decode it — that path is covered separately.)
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0]; // 「あ」 in SJIS
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(["render", "-E", "utf8"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -383,7 +383,7 @@ fn render_rejects_non_utf8_input_when_encoding_is_utf8() {
 fn render_accepts_sjis_input_with_explicit_encoding_flag() {
     // 「あいうえお」 in Shift_JIS.
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0, 0x82, 0xa2, 0x82, 0xa4, 0x82, 0xa6, 0x82, 0xa8];
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(["render", "-E", "sjis"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -434,7 +434,7 @@ fn oversized_source() -> String {
 fn broken_pipe_run(args: &[&str], input_path: &str) -> (ExitStatus, String) {
     use std::io::Read;
 
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(args)
         .arg(input_path)
         .stdout(Stdio::piped())
@@ -508,7 +508,7 @@ fn render_auto_detects_sjis_without_encoding_flag() {
     // The default encoding is `auto`: a raw SJIS file renders correctly
     // with no `-E` flag at all — the caller need not know the encoding.
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0, 0x82, 0xa2, 0x82, 0xa4, 0x82, 0xa6, 0x82, 0xa8];
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(["render"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

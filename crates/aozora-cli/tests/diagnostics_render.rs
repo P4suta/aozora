@@ -13,17 +13,17 @@
 //! the assertions stay deterministic.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use tempfile::Builder;
 
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 /// Run `aozora <args>` feeding `stdin`; return `(stdout, stderr)`.
 /// Both pipes are captured, so the `Auto` diagnostic format resolves
 /// to the machine (`json`) view (stderr is not a TTY).
 fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
-    let mut child = Command::new(BIN)
+    let mut child = common::hermetic_command()
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -25,13 +25,9 @@
 //! `golden + "\n"`. The trailing newline is asserted, not trimmed: a
 //! *second* stray newline (or a missing one) still fails the gate.
 
-use std::process::Command;
-
 use aozora_conformance::{RenderFixture, fixtures_root};
 
-/// The `aozora` binary under test — Cargo exports its path to integration
-/// tests via this env var.
-const BIN: &str = env!("CARGO_BIN_EXE_aozora");
+mod common;
 
 /// Whether a subcommand appends a trailing newline to its payload.
 #[derive(Clone, Copy)]
@@ -53,7 +49,7 @@ fn load() -> Vec<RenderFixture> {
 fn run(argv: &[&str], source_path: &str) -> String {
     let mut cmdline: Vec<&str> = argv.to_vec();
     cmdline.push(source_path);
-    let out = Command::new(BIN)
+    let out = common::hermetic_command()
         .args(&cmdline)
         .output()
         .expect("spawn aozora binary");
