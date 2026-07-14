@@ -886,6 +886,18 @@ mod tests {
     }
 
     #[test]
+    fn nearest_target_tie_resolves_to_earliest_pool_entry() {
+        // `ル字` sits at edit distance 1 from exactly two known targets — the
+        // concept keys `ルビ` and `外字` (each a one-substitution slip) — and no
+        // closer, so it is a genuine two-way tie at the global minimum, inside
+        // the length-scaled threshold. The pool visits `ルビ` before `外字`, and
+        // the tie-break keeps the *earliest* entry: a strict `<` update never
+        // displaces an equal-distance incumbent. (Flip it to `<=` and `外字`
+        // would win instead.)
+        assert_eq!(nearest_target("ル字"), Some("ルビ"));
+    }
+
+    #[test]
     fn nearest_target_declines_when_nothing_is_close() {
         // `bogus` is far from every known target — no misleading suggestion.
         assert_eq!(nearest_target("bogus"), None);
