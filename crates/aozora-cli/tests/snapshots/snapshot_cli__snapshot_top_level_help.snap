@@ -1,5 +1,6 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
+assertion_line: 53
 expression: "run(&[\"--help\"])"
 ---
 Aozora Bunko notation parser CLI
@@ -25,7 +26,8 @@ Commands:
   kinds        Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel`
                / `InternalCheckCode` variant with its wire tag
   schema       Pretty-print the JSON Schema for one of the four JSON envelopes
-  explain      Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code
+  explain      Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a
+               diagnostic code
   pandoc       Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON
                to stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
                pandoc and pipes the JSON through it

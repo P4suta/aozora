@@ -39,6 +39,73 @@ explain-repro-label = Reproduction:
 explain-fixed-label = After fix:
 explain-see-label = see:
 
+# Shown (to stderr, exit non-zero) when `aozora explain <TARGET>` names nothing
+# the resolver recognises. $target is the unrecognised argument.
+explain-unknown = unknown explain target `{$target}`
+# Appended to the line above when a near neighbour of the unknown target exists
+# (edit-distance match over node tags, concepts, and diagnostic codes).
+# $suggestion is the closest known target — a literal identifier, not localized.
+explain-did-you-mean = did you mean `{$suggestion}`?
+# Tail listing where the valid set lives. `aozora kinds` and the example code
+# are literal shell text and stay the same in every locale.
+explain-unknown-hint =
+    expected a NodeKind tag or notation concept (run `aozora kinds`), or a
+    diagnostic code such as `aozora::lex::unclosed_bracket`
+
+## Notation concepts
+##
+## `aozora explain <concept>` prose for notation families the reader is likely
+## to type but that are not a one-to-one NodeKind handbook page — abbreviations
+## (`tcy`) and Japanese names (`傍点`, `ルビ`, …). One `concept-<slug>-title`
+## (headline) and `concept-<slug>-body` (short prose) per family. The aozora
+## notation glyphs woven in are literal syntax, the same in every locale.
+
+concept-ruby-title = Ruby (ルビ) — reading gloss
+concept-ruby-body =
+    A small reading printed alongside a base run: 青空《あおぞら》. A leading `｜`
+    pins an explicit base when the extent is otherwise ambiguous: ｜青空《あおぞら》.
+
+    Run `aozora explain ruby` for the full handbook page.
+
+concept-gaiji-title = Gaiji (外字) — non-Unicode character reference
+concept-gaiji-body =
+    A character with no plain-Unicode spelling, written as a ※［＃…］ reference —
+    typically a JIS X 0213 men-ku-ten cell (`第3水準1-15-23`) or a `U+XXXX` code.
+
+    Run `aozora explain gaiji` for the full handbook page; see also the
+    `unresolved_gaiji` diagnostic.
+
+concept-kaeriten-title = Kaeriten (返り点) — kanbun return marks
+concept-kaeriten-body =
+    Return marks that reorder classical Chinese (kanbun) for Japanese reading,
+    written as ［＃…］ annotations — the レ mark and the 一/二/上/下/甲/乙 families.
+
+    Run `aozora explain kaeriten` for the full handbook page; see also the
+    `bracketed_kaeriten_no_pair` and `kaeriten_outside_kanbun` diagnostics.
+
+concept-bouten-title = Bouten (傍点) — emphasis dots
+concept-bouten-body =
+    Emphasis dots set alongside a run, the Aozora counterpart of italics:
+    ［＃「ここ」に傍点］. Sibling families set 傍線 (lines) instead of dots.
+
+    Run `aozora explain bouten` for the full handbook page; see also the
+    `bouten_target_ambiguous` diagnostic.
+
+concept-warichu-title = Warichu (割注) — split-line inline note
+concept-warichu-body =
+    A note set in two half-height lines inside the main run, opened with
+    ［＃割り注］ and closed with ［＃割り注終わり］.
+
+    Run `aozora explain warichu` for the full handbook page.
+
+concept-tcy-title = Tate-chu-yoko (縦中横) — horizontal run in vertical text
+concept-tcy-body =
+    A short horizontal run — usually two-digit numerals — set upright within
+    vertical text, written ［＃「25」は縦中横］.
+
+    The NodeKind tag is `combineUpright`; see also the `tcy_target_not_found`
+    diagnostic.
+
 ## Diagnostic prose
 ##
 ## One `diag-<slug>-title` (headline) and `diag-<slug>-body` (long form) per

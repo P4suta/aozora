@@ -286,6 +286,22 @@ mod tests {
             "explain-repro-label",
             "explain-fixed-label",
             "explain-see-label",
+            "explain-unknown-hint",
+            "explain-did-you-mean",
+            // Notation-concept prose (`aozora explain <concept>`): one title +
+            // body per family, present in every locale.
+            "concept-ruby-title",
+            "concept-ruby-body",
+            "concept-gaiji-title",
+            "concept-gaiji-body",
+            "concept-kaeriten-title",
+            "concept-kaeriten-body",
+            "concept-bouten-title",
+            "concept-bouten-body",
+            "concept-warichu-title",
+            "concept-warichu-body",
+            "concept-tcy-title",
+            "concept-tcy-body",
         ];
         for tag in ["en", "ja", "zh"] {
             let l = lang(tag);
@@ -296,6 +312,9 @@ mod tests {
             let mut args = FluentArgs::new();
             args.set("cmd", "check");
             assert_ne!(tf(&l, "stdin-empty", &args), "stdin-empty");
+            let mut target = FluentArgs::new();
+            target.set("target", "bogus");
+            assert_ne!(tf(&l, "explain-unknown", &target), "explain-unknown");
         }
     }
 

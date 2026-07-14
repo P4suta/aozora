@@ -1,15 +1,17 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
+assertion_line: 109
 expression: "run(&[\"explain\", \"--help\"])"
 ---
-Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code
+Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a diagnostic code
 
 Usage: aozora explain [OPTIONS] <TARGET>
 
 Arguments:
   <TARGET>
-          A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run `aozora kinds` for the list) or
-          a diagnostic code (e.g. `aozora::lex::unclosed_bracket`, or the short `unclosed_bracket`)
+          A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run `aozora kinds` for the list), a
+          notation concept (e.g. `tcy`, `傍点`), or a diagnostic code (e.g.
+          `aozora::lex::unclosed_bracket`, or the short `unclosed_bracket`)
 
 Options:
       --color <WHEN>
@@ -49,5 +51,8 @@ Options:
 
 Examples:
   aozora explain ruby                          # NodeKind handbook chapter
+  aozora explain tcy                           # notation concept (縦中横)
   aozora explain aozora::lex::unclosed_bracket # diagnostic code -> help + URL
   aozora explain unresolved_gaiji              # short form of the code
+
+An unrecognised target suggests the nearest known one ("did you mean …?").

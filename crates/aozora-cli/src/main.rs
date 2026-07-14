@@ -187,8 +187,8 @@ enum Command {
     Kinds(KindsArgs),
     /// Pretty-print the JSON Schema for one of the four JSON envelopes.
     Schema(SchemaArgs),
-    /// Print prose for a `NodeKind` tag, or help / severity / URL for a
-    /// diagnostic code.
+    /// Print prose for a `NodeKind` tag or notation concept, or help /
+    /// severity / URL for a diagnostic code.
     Explain(ExplainArgs),
     /// Project the parsed document to a Pandoc AST.
     /// Without `--format`, prints Pandoc JSON to stdout (consumable
