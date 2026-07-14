@@ -18,6 +18,7 @@
 //! `［＃「TARGET」…］` directive after the selection, with `TARGET`
 //! pre-filled to the selected text.
 
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, Range, TextEdit, Url,
     WorkspaceEdit,
@@ -31,11 +32,18 @@ use std::collections::HashMap;
 /// `selection` in `source`. Returns an empty vec when the selection
 /// is empty or unresolvable.
 #[must_use]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the wrap request (source, line index, uri, selection) plus the \
+              resolved UI language for the action titles; lang is a \
+              cross-cutting locale, not a data param to bundle"
+)]
 pub fn wrap_selection_actions(
     source: &str,
     line_index: &LineIndex,
     uri: &Url,
     selection: Range,
+    lang: &LanguageIdentifier,
 ) -> Vec<CodeActionOrCommand> {
     let Some(start) = line_index.byte_offset(source, selection.start) else {
         return Vec::new();
@@ -48,21 +56,27 @@ pub fn wrap_selection_actions(
     }
     let selected = &source[start..end];
 
+    // Titles come from the shared i18n catalog; the woven notation glyphs
+    // (｜, 《》, 「」, 〔〕, ［＃…］) are locale-neutral aozora syntax.
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
     actions.extend([
-        // ルビ系: ｜ を必ず先頭に挿入する。aozora 記法のスタイルガイドが
-        // 「ベースの開始位置を曖昧にしないため常に ｜ を付ける」を推奨
-        // しているため、ルビ wrap の唯一の形をこれに統一する。
-        ruby_wrap(uri, selection, "《》", "ルビをふる ｜SEL《》"),
-        ruby_wrap(uri, selection, "《《》》", "二重ルビをふる ｜SEL《《》》"),
-        // 文字列を囲むだけの 3 種。
+        // Ruby: always prepend ｜ so the base's start is unambiguous (aozora
+        // style-guide recommended) — the single canonical ruby-wrap shape.
+        ruby_wrap(uri, selection, "《》", &i18n::t(lang, "lsp-action-ruby")),
+        ruby_wrap(
+            uri,
+            selection,
+            "《《》》",
+            &i18n::t(lang, "lsp-action-ruby-double"),
+        ),
+        // The three plain surround-only wraps.
         wrap_pair(
             uri,
             selection,
             &WrapDecoration {
                 open: "「",
                 close: "」",
-                title: "「」 で囲む",
+                title: &i18n::t(lang, "lsp-action-wrap-quote"),
             },
         ),
         wrap_pair(
@@ -71,7 +85,7 @@ pub fn wrap_selection_actions(
             &WrapDecoration {
                 open: "〔",
                 close: "〕",
-                title: "〔〕 で囲む (アクセント分解)",
+                title: &i18n::t(lang, "lsp-action-wrap-accent"),
             },
         ),
         wrap_pair(
@@ -80,11 +94,11 @@ pub fn wrap_selection_actions(
             &WrapDecoration {
                 open: "［＃",
                 close: "］",
-                title: "［＃...］ 注記にする",
+                title: &i18n::t(lang, "lsp-action-wrap-annotation"),
             },
         ),
-        // 傍点: 選択文字はそのまま、注記が後ろに付く。
-        forward_bouten_action(uri, selection, selected),
+        // Bouten: the selection is left as-is; the directive follows it.
+        forward_bouten_action(uri, selection, selected, lang),
     ]);
     actions
 }
@@ -166,7 +180,11 @@ fn build_action(uri: &Url, edits: Vec<TextEdit>, title: &str) -> CodeActionOrCom
 /// Returns an empty `Vec` when no diagnostic in the request range
 /// has a known fix shape.
 #[must_use]
-pub(crate) fn quick_fix_actions(uri: &Url, diagnostics: &[Diagnostic]) -> Vec<CodeActionOrCommand> {
+pub(crate) fn quick_fix_actions(
+    uri: &Url,
+    diagnostics: &[Diagnostic],
+    lang: &LanguageIdentifier,
+) -> Vec<CodeActionOrCommand> {
     diagnostics
         .iter()
         .filter_map(|diag| {
@@ -174,7 +192,7 @@ pub(crate) fn quick_fix_actions(uri: &Url, diagnostics: &[Diagnostic]) -> Vec<Co
                 .data
                 .as_ref()
                 .and_then(|v| serde_json::from_value::<DiagnosticPayload>(v.clone()).ok())?;
-            build_quick_fix(uri, diag, payload)
+            build_quick_fix(uri, diag, payload, lang)
         })
         .collect()
 }
@@ -183,33 +201,47 @@ fn build_quick_fix(
     uri: &Url,
     diag: &Diagnostic,
     payload: DiagnosticPayload,
+    lang: &LanguageIdentifier,
 ) -> Option<CodeActionOrCommand> {
     match payload {
         DiagnosticPayload::UnclosedBracket {
             pair_kind,
             expected_close,
-        } => Some(insert_close_action(uri, diag, pair_kind, &expected_close)),
+        } => Some(insert_close_action(
+            uri,
+            diag,
+            pair_kind,
+            &expected_close,
+            lang,
+        )),
         DiagnosticPayload::UnmatchedClose { pair_kind } => {
-            Some(delete_unmatched_close_action(uri, diag, pair_kind))
+            Some(delete_unmatched_close_action(uri, diag, pair_kind, lang))
         }
         DiagnosticPayload::SourceContainsPua { codepoint } => {
-            Some(delete_pua_action(uri, diag, codepoint))
+            Some(delete_pua_action(uri, diag, codepoint, lang))
         }
         // ResidualAnnotationMarker → no automatic fix (the user must
         // choose which keyword they meant); the diagnostic's verbose
         // message lists the manual recovery steps.
         DiagnosticPayload::ResidualAnnotationMarker => None,
         DiagnosticPayload::NonCanonicalDirective { canonical } => {
-            Some(rewrite_directive_action(uri, diag, &canonical))
+            Some(rewrite_directive_action(uri, diag, &canonical, lang))
         }
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the quick-fix context (uri, diagnostic, pair kind, close glyph) \
+              plus the resolved UI language for the title; lang is a \
+              cross-cutting locale, not a data param to bundle"
+)]
 fn insert_close_action(
     uri: &Url,
     diag: &Diagnostic,
     pair_kind: SerializablePairKind,
     close: &str,
+    lang: &LanguageIdentifier,
 ) -> CodeActionOrCommand {
     // Insert the close at the end of the diagnostic's range — that
     // sits just past the unclosed open delimiter, which is the most
@@ -221,8 +253,11 @@ fn insert_close_action(
     }];
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
+    let mut args = FluentArgs::new();
+    args.set("close", close.to_owned());
+    args.set("open", pair_kind.open_str().to_owned());
     CodeActionOrCommand::CodeAction(CodeAction {
-        title: format!("`{close}` を補って閉じる ({} ペア)", pair_kind.open_str()),
+        title: i18n::tf(lang, "lsp-action-close-bracket", &args),
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(WorkspaceEdit {
@@ -239,6 +274,7 @@ fn delete_unmatched_close_action(
     uri: &Url,
     diag: &Diagnostic,
     pair_kind: SerializablePairKind,
+    lang: &LanguageIdentifier,
 ) -> CodeActionOrCommand {
     let close = pair_kind.close_str();
     // Replace the diagnostic span (the stray close) with empty text.
@@ -248,8 +284,10 @@ fn delete_unmatched_close_action(
     }];
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
+    let mut args = FluentArgs::new();
+    args.set("close", close.to_owned());
     CodeActionOrCommand::CodeAction(CodeAction {
-        title: format!("対応のない `{close}` を削除する"),
+        title: i18n::tf(lang, "lsp-action-delete-unmatched", &args),
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(WorkspaceEdit {
@@ -262,12 +300,19 @@ fn delete_unmatched_close_action(
     })
 }
 
-fn rewrite_directive_action(uri: &Url, diag: &Diagnostic, canonical: &str) -> CodeActionOrCommand {
+fn rewrite_directive_action(
+    uri: &Url,
+    diag: &Diagnostic,
+    canonical: &str,
+    lang: &LanguageIdentifier,
+) -> CodeActionOrCommand {
     // Replace the whole ［＃…］ span (the diagnostic range) with the canonical
     // directive. The lint's `span` is the full bracket extent, so a single
     // range replace swaps the near-miss body without disturbing the delimiters.
     let new_text = format!("［＃{canonical}］");
-    let title = format!("`{new_text}` に書き換える");
+    let mut args = FluentArgs::new();
+    args.set("directive", new_text.clone());
+    let title = i18n::tf(lang, "lsp-action-rewrite", &args);
     let edits = vec![TextEdit {
         range: diag.range,
         new_text,
@@ -288,15 +333,22 @@ fn rewrite_directive_action(uri: &Url, diag: &Diagnostic, canonical: &str) -> Co
     })
 }
 
-fn delete_pua_action(uri: &Url, diag: &Diagnostic, codepoint: u32) -> CodeActionOrCommand {
+fn delete_pua_action(
+    uri: &Url,
+    diag: &Diagnostic,
+    codepoint: u32,
+    lang: &LanguageIdentifier,
+) -> CodeActionOrCommand {
     let edits = vec![TextEdit {
         range: diag.range,
         new_text: String::new(),
     }];
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
+    let mut args = FluentArgs::new();
+    args.set("codepoint", format!("{codepoint:04X}"));
     CodeActionOrCommand::CodeAction(CodeAction {
-        title: format!("私用領域文字 U+{codepoint:04X} を削除する"),
+        title: i18n::tf(lang, "lsp-action-delete-pua", &args),
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(WorkspaceEdit {
@@ -312,7 +364,12 @@ fn delete_pua_action(uri: &Url, diag: &Diagnostic, codepoint: u32) -> CodeAction
 /// Append a forward-reference `［＃「SEL」に傍点］` immediately after
 /// the selection. The selection itself is not modified — bouten
 /// targets the prior run.
-fn forward_bouten_action(uri: &Url, selection: Range, selected: &str) -> CodeActionOrCommand {
+fn forward_bouten_action(
+    uri: &Url,
+    selection: Range,
+    selected: &str,
+    lang: &LanguageIdentifier,
+) -> CodeActionOrCommand {
     let new_text = format!("［＃「{selected}」に傍点］");
     let edits = vec![TextEdit {
         range: Range::new(selection.end, selection.end),
@@ -321,7 +378,7 @@ fn forward_bouten_action(uri: &Url, selection: Range, selected: &str) -> CodeAct
     let mut changes = HashMap::new();
     changes.insert(uri.clone(), edits);
     CodeActionOrCommand::CodeAction(CodeAction {
-        title: "傍点を付ける ［＃「SEL」に傍点］".to_owned(),
+        title: i18n::t(lang, "lsp-action-bouten"),
         kind: Some(CodeActionKind::REFACTOR_REWRITE),
         edit: Some(WorkspaceEdit {
             changes: Some(changes),
@@ -342,6 +399,25 @@ mod tests {
 
     fn fake_uri() -> Url {
         Url::parse("file:///fake.afm").expect("valid URL")
+    }
+
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shims mirroring the pre-i18n arities, pinned to the canonical English
+    /// catalog so the title assertions below stay locale-stable.
+    fn wrap_selection_actions(
+        source: &str,
+        line_index: &LineIndex,
+        uri: &Url,
+        selection: Range,
+    ) -> Vec<CodeActionOrCommand> {
+        super::wrap_selection_actions(source, line_index, uri, selection, &en())
+    }
+
+    fn quick_fix_actions(uri: &Url, diagnostics: &[Diagnostic]) -> Vec<CodeActionOrCommand> {
+        super::quick_fix_actions(uri, diagnostics, &en())
     }
 
     /// A diagnostic carrying a serialised quick-fix payload, the shape the
@@ -394,6 +470,26 @@ mod tests {
         let actions = wrap_selection_actions(src, &LineIndex::new(src), &fake_uri(), sel);
         // ルビ + 二重ルビ + 「」 + 〔〕 + ［＃］ + 傍点 = 6 actions.
         assert_eq!(actions.len(), 6, "expected 6 wrap actions, got {actions:?}");
+    }
+
+    #[test]
+    fn action_titles_localize_by_lang() {
+        // Titles come from the shared catalog: `ja` keeps the migrated
+        // Japanese, `zh` the new Chinese; `en` is asserted via the shim above.
+        let src = "青空";
+        let sel = Range::new(Position::new(0, 0), Position::new(0, 2));
+        let idx = LineIndex::new(src);
+        let uri = fake_uri();
+        let ruby_title = |tag: &str| {
+            let lang: LanguageIdentifier = tag.parse().expect("locale parses");
+            let acts = super::wrap_selection_actions(src, &idx, &uri, sel, &lang);
+            let CodeActionOrCommand::CodeAction(ca) = &acts[0] else {
+                unreachable!("first action is the ruby wrap")
+            };
+            ca.title.clone()
+        };
+        assert_eq!(ruby_title("ja"), "ルビをふる ｜SEL《》");
+        assert_eq!(ruby_title("zh"), "添加注音 ｜SEL《》");
     }
 
     #[test]
@@ -488,7 +584,7 @@ mod tests {
         let CodeActionOrCommand::CodeAction(ca) = &actions[0] else {
             unreachable!()
         };
-        assert!(ca.title.contains("削除"), "title: {}", ca.title);
+        assert!(ca.title.contains("Delete"), "title: {}", ca.title);
         // A deletion edit replaces the span with the empty string.
         assert_eq!(single_edit_text(&actions[0]), "");
     }
@@ -604,7 +700,7 @@ mod tests {
         let actions = wrap_selection_actions(src, &LineIndex::new(src), &fake_uri(), sel);
         let ca = as_code_action(&actions[0]);
         // build_action forwards the caller's title verbatim (default: "").
-        assert_eq!(ca.title, "ルビをふる ｜SEL《》");
+        assert_eq!(ca.title, "Add ruby ｜SEL《》");
         // and stamps REFACTOR_REWRITE (default: None).
         assert_eq!(ca.kind, Some(CodeActionKind::REFACTOR_REWRITE));
     }
@@ -615,8 +711,8 @@ mod tests {
         let sel = Range::new(Position::new(0, 0), Position::new(0, 2));
         let actions = wrap_selection_actions(src, &LineIndex::new(src), &fake_uri(), sel);
         let ca = as_code_action(actions.last().expect("bouten last"));
-        // Literal title (default: "") and REFACTOR_REWRITE kind (default: None).
-        assert_eq!(ca.title, "傍点を付ける ［＃「SEL」に傍点］");
+        // Localized title (default: "") and REFACTOR_REWRITE kind (default: None).
+        assert_eq!(ca.title, "Add emphasis dots ［＃「SEL」に傍点］");
         assert_eq!(ca.kind, Some(CodeActionKind::REFACTOR_REWRITE));
     }
 
@@ -652,7 +748,7 @@ mod tests {
         let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
         let ca = as_code_action(&actions[0]);
         // Title interpolates the canonical directive (default: "").
-        assert_eq!(ca.title, "`［＃ここで字下げ終わり］` に書き換える");
+        assert_eq!(ca.title, "Rewrite to `［＃ここで字下げ終わり］`");
         // The source diagnostic is attached (default: None).
         assert_eq!(ca.diagnostics, Some(vec![diag]));
     }

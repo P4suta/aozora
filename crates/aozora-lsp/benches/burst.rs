@@ -28,7 +28,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aozora_lsp::internals::{
-    ByteEdit, GaijiSpan, LineIndex, OpenDocument, TreeSitterDoc, apply_edits,
+    ByteEdit, GaijiSpan, LanguageIdentifier, LineIndex, OpenDocument, TreeSitterDoc, apply_edits,
     extract_gaiji_spans_from_tree, inlay_hints, input_edit,
 };
 use criterion::measurement::WallTime;
@@ -144,6 +144,7 @@ fn bench_inlay(c: &mut Criterion) {
     // only consumer of the slice form.
     let spans: Vec<Arc<GaijiSpan>> = snap.doc_gaiji_spans().values().cloned().collect();
     let range = full_range_for(snap.doc_text(), snap.doc_line_index());
+    let lang: LanguageIdentifier = "en".parse().expect("en parses");
     let mut g = c.benchmark_group("inlay");
     g.bench_function("solo_full_range_bouten_6mb", |b| {
         b.iter(|| {
@@ -152,6 +153,7 @@ fn bench_inlay(c: &mut Criterion) {
                 &spans,
                 snap.doc_line_index(),
                 range,
+                &lang,
             ));
         });
     });

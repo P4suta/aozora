@@ -5,13 +5,19 @@
 //! — no stdin/stdout framing needed. These smoke tests stay focused on the
 //! pure `internals` helpers (diagnostics / format / hover).
 
-use aozora_lsp::internals::{diagnostics_for_source, format_edits, hover_at};
+use aozora_lsp::internals::{LanguageIdentifier, diagnostics_for_source, format_edits, hover_at};
 use tower_lsp::lsp_types::{DiagnosticSeverity, HoverContents, Position};
+
+/// The pinned message language for these pure-helper smoke checks — the
+/// providers are locale-parameterised, so pin English for determinism.
+fn en() -> LanguageIdentifier {
+    "en".parse().expect("en parses")
+}
 
 #[test]
 fn plain_text_yields_no_diagnostics_and_no_edits() {
     let src = "hello world";
-    assert!(diagnostics_for_source(src).is_empty());
+    assert!(diagnostics_for_source(src, &en()).is_empty());
     assert!(format_edits(src).is_empty());
 }
 
@@ -21,7 +27,7 @@ fn pua_collision_produces_warning_diagnostic() {
     // sanity-check; at least one warning-severity diagnostic must
     // surface.
     let src = "oops\u{E001}here";
-    let diags = diagnostics_for_source(src);
+    let diags = diagnostics_for_source(src, &en());
     assert!(
         diags
             .iter()
@@ -56,7 +62,7 @@ fn hover_on_known_gaiji_mentions_resolved_character() {
     let src = "語※［＃「木＋吶のつくり」、第3水準1-85-54］で";
     // cursor inside the gaiji token
     let pos = Position::new(0, 3);
-    let hover = hover_at(src, pos).expect("hover must fire");
+    let hover = hover_at(src, pos, &en()).expect("hover must fire");
     let md = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected Markdown hover"),
@@ -67,5 +73,5 @@ fn hover_on_known_gaiji_mentions_resolved_character() {
 
 #[test]
 fn hover_outside_any_gaiji_returns_none() {
-    assert!(hover_at("ただの文", Position::new(0, 1)).is_none());
+    assert!(hover_at("ただの文", Position::new(0, 1), &en()).is_none());
 }

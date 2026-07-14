@@ -23,6 +23,7 @@
 //!   line so the editor can land both in one accept.
 
 use aozora::{SLUGS, SlugEntry, SlugFamily};
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position, Range, TextEdit,
@@ -93,7 +94,11 @@ impl SlugCtx {
 /// catalogue by enclosing container kind can re-introduce the
 /// tree-sitter tree as a parameter.
 #[must_use]
-pub fn completion_at(source: &str, position: Position) -> Vec<CompletionItem> {
+pub fn completion_at(
+    source: &str,
+    position: Position,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     let Some(byte_offset) = position_to_byte_offset(source, position) else {
         return Vec::new();
     };
@@ -108,7 +113,7 @@ pub fn completion_at(source: &str, position: Position) -> Vec<CompletionItem> {
     // (`[#bouten` should still show 傍点).
     SLUGS
         .iter()
-        .map(|entry| build_completion_item(source, entry, &ctx))
+        .map(|entry| build_completion_item(source, entry, &ctx, lang))
         .collect()
 }
 
@@ -156,9 +161,20 @@ fn resolve_slug_context(source: &str, cursor: usize) -> Option<SlugCtx> {
     })
 }
 
-fn build_completion_item(source: &str, entry: &SlugEntry, ctx: &SlugCtx) -> CompletionItem {
+fn build_completion_item(
+    source: &str,
+    entry: &SlugEntry,
+    ctx: &SlugCtx,
+    lang: &LanguageIdentifier,
+) -> CompletionItem {
+    // `entry.doc` is authored Japanese from the aozora slug catalogue (data,
+    // not LSP-owned prose); only the half-width hint suffix is localized.
     let detail = if ctx.half_width() {
-        format!("{}  (半角→全角)", entry.doc)
+        format!(
+            "{}  {}",
+            entry.doc,
+            i18n::t(lang, "lsp-completion-half-to-full-hint")
+        )
     } else {
         entry.doc.to_owned()
     };
@@ -186,9 +202,9 @@ fn build_completion_item(source: &str, entry: &SlugEntry, ctx: &SlugCtx) -> Comp
                 "**{family:?}** {accepts}\n\n{doc}",
                 family = entry.family,
                 accepts = if entry.accepts_param {
-                    "(パラメータあり)"
+                    i18n::t(lang, "lsp-completion-takes-param")
                 } else {
-                    ""
+                    String::new()
                 },
                 doc = entry.doc,
             ),
@@ -330,6 +346,16 @@ mod tests {
 
     use super::*;
 
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shim mirroring the pre-i18n `completion_at(source, position)` arity,
+    /// pinned to English so the detail assertions below stay locale-stable.
+    fn completion_at(source: &str, position: Position) -> Vec<CompletionItem> {
+        super::completion_at(source, position, &en())
+    }
+
     #[test]
     fn completion_inside_full_width_open_returns_full_catalogue() {
         let src = "前文［＃";
@@ -354,9 +380,27 @@ mod tests {
         assert!(
             items
                 .iter()
-                .all(|i| i.detail.as_deref().unwrap_or("").contains("半角→全角")),
+                .all(|i| i.detail.as_deref().unwrap_or("").contains("half-width")),
             "half-width hint missing in detail",
         );
+    }
+
+    #[test]
+    fn half_width_hint_localizes_by_lang() {
+        // The half-width→full-width detail hint comes from the shared catalog.
+        // The slug `doc` (Japanese, from the aozora catalogue) is data and is
+        // unchanged; only the parenthetical hint follows the locale.
+        let src = "[#";
+        let pos = byte_offset_to_position(src, src.len());
+        let hint = |tag: &str| {
+            let lang: LanguageIdentifier = tag.parse().expect("locale parses");
+            super::completion_at(src, pos, &lang)[0]
+                .detail
+                .clone()
+                .expect("detail present")
+        };
+        assert!(hint("ja").contains("(半角→全角)"), "ja: {}", hint("ja"));
+        assert!(hint("zh").contains("(半角→全角)"), "zh: {}", hint("zh"));
     }
 
     #[test]

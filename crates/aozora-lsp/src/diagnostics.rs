@@ -11,8 +11,11 @@
 //! [`DocLineView`] and attaching a serialised quick-fix [`DiagnosticPayload`]
 //! for the `code_action` handler.
 //!
-//! The hover message is emitted in the canonical English catalog for now;
-//! negotiating the editor client's locale is a later i18n wave.
+//! The message language is the server's UI language (`crate::i18n::ui_lang`,
+//! resolved once at startup from `AOZORA_LANG > LANG > en`), threaded in as
+//! `lang` by the backend so a `ja`/`zh` editor gets localized diagnostic
+//! prose. The machine axis — code, severity, span, documentation URL — is
+//! unchanged by the locale.
 //!
 //! `DiagnosticPayload` / `SerializablePairKind` live here (not in the
 //! catalogue crate) because they are an LSP concern: the `data` channel and
@@ -122,13 +125,14 @@ impl SerializablePairKind {
     }
 }
 
-/// Parse `source` and return its diagnostics in LSP shape.
+/// Parse `source` and return its diagnostics in LSP shape, with the human
+/// prose rendered in `lang`.
 #[must_use]
-pub fn diagnostics_for_source(source: &str) -> Vec<Diagnostic> {
+pub fn diagnostics_for_source(source: &str, lang: &LanguageIdentifier) -> Vec<Diagnostic> {
     let document = Document::new(source);
     let tree = document.parse();
     let view = DocLineView::from_source(source);
-    diagnostics_from_aozora(&view, tree.diagnostics())
+    diagnostics_from_aozora(&view, tree.diagnostics(), lang)
 }
 
 /// Map a slice of pre-computed `aozora` [`AozoraDiagnostic`]s to LSP diagnostics.
@@ -141,12 +145,11 @@ pub fn diagnostics_for_source(source: &str) -> Vec<Diagnostic> {
 pub fn diagnostics_from_aozora(
     view: &DocLineView<'_>,
     diagnostics: &[AozoraDiagnostic],
+    lang: &LanguageIdentifier,
 ) -> Vec<Diagnostic> {
-    // Resolve the message language once for the batch. With no source supplied
-    // this is the canonical English catalog; client-locale negotiation is a
-    // later i18n wave.
-    let lang = i18n::resolve(None, None, None, None);
-    diagnostics.iter().map(|d| to_lsp(view, d, &lang)).collect()
+    // `lang` is the server's UI language, resolved once at startup and threaded
+    // in by the backend — the whole batch renders in one locale.
+    diagnostics.iter().map(|d| to_lsp(view, d, lang)).collect()
 }
 
 /// Map `aozora`'s [`Severity`] onto the LSP severity enum.
@@ -235,6 +238,17 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use super::*;
+
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shim mirroring the pre-i18n `diagnostics_for_source(source)` arity,
+    /// pinned to English so the prose assertions below stay locale-stable
+    /// (they already asserted the canonical English wording).
+    fn diagnostics_for_source(source: &str) -> Vec<Diagnostic> {
+        super::diagnostics_for_source(source, &en())
+    }
 
     fn code_of(d: &Diagnostic) -> Option<&str> {
         match &d.code {
@@ -435,6 +449,27 @@ mod tests {
             Range::new(Position::new(0, 3), Position::new(0, 4)),
             "range must reflect the diagnostic span, not Range::default()",
         );
+    }
+
+    #[test]
+    fn diagnostic_prose_follows_the_requested_lang() {
+        // W7: the LSP threads the server lang into the shared catalog. The same
+        // diagnostic renders an English headline by default and a Japanese one
+        // under `ja`; the code / severity / range are unchanged by the locale.
+        let src = "本文［＃改ページ"; // unclosed bracket
+        let ja: LanguageIdentifier = "ja".parse().expect("ja parses");
+        let msg = |lang: &LanguageIdentifier| {
+            super::diagnostics_for_source(src, lang)
+                .into_iter()
+                .find(|d| code_of(d) == Some("aozora::lex::unclosed_bracket"))
+                .map(|d| d.message)
+                .expect("unclosed_bracket diagnostic present")
+        };
+        let en_msg = msg(&en());
+        let ja_msg = msg(&ja);
+        assert!(en_msg.contains("Unclosed"), "en headline: {en_msg}");
+        assert!(ja_msg.contains("閉じ"), "ja headline: {ja_msg}");
+        assert_ne!(en_msg, ja_msg, "the requested lang must change the prose");
     }
 
     #[test]

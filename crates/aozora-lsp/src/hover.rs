@@ -17,6 +17,7 @@
 use std::ops::Range as ByteRange;
 
 use aozora_encoding::gaiji;
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::position::{byte_offset_to_position, position_to_byte_offset};
@@ -24,15 +25,16 @@ use crate::position::{byte_offset_to_position, position_to_byte_offset};
 const GAIJI_OPEN: &str = "※［＃";
 const GAIJI_CLOSE: &str = "］";
 
-/// Compute a hover, if any, at `position` in `source`.
+/// Compute a hover, if any, at `position` in `source`, with the Markdown body
+/// prose rendered in `lang`.
 #[must_use]
-pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
+pub fn hover_at(source: &str, position: Position, lang: &LanguageIdentifier) -> Option<Hover> {
     let byte_offset = position_to_byte_offset(source, position)?;
     let span = find_gaiji_span(source, byte_offset)?;
     let body = &source[span.start + GAIJI_OPEN.len()..span.end - GAIJI_CLOSE.len()];
     let (description, mencode) = parse_gaiji_body(body);
     let resolved = gaiji::lookup(None, mencode.as_deref(), &description);
-    let markdown = render_markdown(&description, mencode.as_deref(), resolved);
+    let markdown = render_markdown(lang, &description, mencode.as_deref(), resolved);
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
@@ -143,18 +145,22 @@ fn parse_gaiji_body(body: &str) -> (String, Option<String>) {
 }
 
 fn render_markdown(
+    lang: &LanguageIdentifier,
     description: &str,
     mencode: Option<&str>,
     resolved: Option<gaiji::Resolved>,
 ) -> String {
     use core::fmt::Write as _;
-    let mut md = String::from("**外字 (gaiji)**\n\n");
+    // Prose (header + labels) comes from the shared i18n catalog; the notation
+    // glyphs, backticks and `U+XXXX` formatting are locale-neutral structure.
+    let resolved_label = i18n::t(lang, "lsp-hover-resolved-label");
+    let mut md = format!("{}\n\n", i18n::t(lang, "lsp-hover-gaiji-header"));
     match resolved {
         Some(gaiji::Resolved::Char(ch)) => {
             // `write!` into the existing buffer avoids the intermediate
             // `format!() -> String` allocation that the workspace
             // `format_push_string` lint flags.
-            _ = writeln!(md, "- 解決: `{ch}` (U+{:04X})", ch as u32);
+            _ = writeln!(md, "- {resolved_label}: `{ch}` (U+{:04X})", ch as u32);
         }
         Some(gaiji::Resolved::Multi(s)) => {
             // Multi-codepoint cells render their full sequence plus
@@ -164,15 +170,24 @@ fn render_markdown(
                 s.chars().map(|c| format!("U+{:04X}", c as u32)).collect();
             _ = writeln!(
                 md,
-                "- 解決: `{s}` (合成シーケンス: {})",
+                "- {resolved_label}: `{s}` ({}: {})",
+                i18n::t(lang, "lsp-hover-composed-seq-label"),
                 codepoints.join(" + ")
             );
         }
         None => {
-            md.push_str("- 解決: (辞書にマッチせず — 記述で代替表示)\n");
+            _ = writeln!(
+                md,
+                "- {resolved_label}: {}",
+                i18n::t(lang, "lsp-hover-unresolved")
+            );
         }
     }
-    _ = writeln!(md, "- 記述: `{description}`");
+    _ = writeln!(
+        md,
+        "- {}: `{description}`",
+        i18n::t(lang, "lsp-hover-description-label")
+    );
     if let Some(m) = mencode {
         _ = writeln!(md, "- mencode: `{m}`");
     }
@@ -182,6 +197,17 @@ fn render_markdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lang(tag: &str) -> LanguageIdentifier {
+        tag.parse().expect("test locale tag parses")
+    }
+
+    /// Shim mirroring the pre-i18n `hover_at(source, position)` signature,
+    /// pinned to the canonical English catalog so the structural assertions
+    /// below stay locale-stable regardless of the host `LANG`.
+    fn hover_at(source: &str, position: Position) -> Option<Hover> {
+        super::hover_at(source, position, &lang("en"))
+    }
 
     #[test]
     fn hover_on_gaiji_returns_markdown_with_resolved_char() {
@@ -243,7 +269,7 @@ mod tests {
             HoverContents::Markup(m) => m.value,
             _ => panic!(),
         };
-        assert!(md.contains("辞書にマッチせず"));
+        assert!(md.contains("no dictionary match"));
         assert!(md.contains("未知字"));
     }
 
@@ -301,6 +327,33 @@ mod tests {
     fn hover_on_empty_source_returns_none_without_panic() {
         assert!(hover_at("", Position::new(0, 0)).is_none());
         assert!(hover_at("", Position::new(99, 99)).is_none());
+    }
+
+    /// The gaiji hover header + labels come from the shared i18n catalog: `ja`
+    /// keeps the migrated Japanese, `zh` gets the new Chinese, and `en` (the
+    /// default asserted throughout via the shim) carries the canonical prose.
+    #[test]
+    fn hover_prose_localizes_by_lang() {
+        let src = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let pos = byte_offset_to_position(src, 3);
+        let body = |tag: &str| match super::hover_at(src, pos, &lang(tag))
+            .expect("hover fires")
+            .contents
+        {
+            HoverContents::Markup(m) => m.value,
+            HoverContents::Scalar(_) | HoverContents::Array(_) => unreachable!("markdown hover"),
+        };
+        let ja = body("ja");
+        assert!(ja.contains("外字 (gaiji)"), "ja header: {ja}");
+        assert!(
+            ja.contains("解決") && ja.contains("記述"),
+            "ja labels: {ja}"
+        );
+        let zh = body("zh");
+        assert!(
+            zh.contains("解析") && zh.contains("描述"),
+            "zh labels: {zh}"
+        );
     }
 
     // --- direct helper pins (mutation kills) ---------------------------

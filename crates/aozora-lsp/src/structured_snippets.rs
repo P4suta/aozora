@@ -44,6 +44,7 @@
 )]
 
 use aozora::{SLUGS, SlugFamily};
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position, Range, TextEdit,
@@ -61,16 +62,20 @@ const KOME: char = '※';
 /// an empty vec when none of the trigger chars sits immediately
 /// before the cursor.
 #[must_use]
-pub fn snippet_completions(source: &str, position: Position) -> Vec<CompletionItem> {
+pub fn snippet_completions(
+    source: &str,
+    position: Position,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     let Some(cursor) = position_to_byte_offset(source, position) else {
         return Vec::new();
     };
 
     let mut items = Vec::new();
-    items.extend(hash_wrap_completions(source, cursor));
-    items.extend(pipe_ruby_completion(source, cursor));
-    items.extend(open_angle_reading_completion(source, cursor));
-    items.extend(kome_gaiji_completion(source, cursor));
+    items.extend(hash_wrap_completions(source, cursor, lang));
+    items.extend(pipe_ruby_completion(source, cursor, lang));
+    items.extend(open_angle_reading_completion(source, cursor, lang));
+    items.extend(kome_gaiji_completion(source, cursor, lang));
     items
 }
 
@@ -81,7 +86,11 @@ pub fn snippet_completions(source: &str, position: Position) -> Vec<CompletionIt
 /// which already shows the catalogue. This path covers the case
 /// where the user just types `#` first (no opener) and gets the
 /// brackets + catalogue in one popup.
-fn hash_wrap_completions(source: &str, cursor: usize) -> Vec<CompletionItem> {
+fn hash_wrap_completions(
+    source: &str,
+    cursor: usize,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     let Some(typed_start) = char_typed_just_before(source, cursor, HASH) else {
         return Vec::new();
     };
@@ -106,10 +115,10 @@ fn hash_wrap_completions(source: &str, cursor: usize) -> Vec<CompletionItem> {
         // catalogue entries (which sort by their canonical body
         // alphabetically).
         sort_text: Some("00".to_owned()),
-        detail: Some("注記スラグの空ひな型 (中身を編集)".to_owned()),
+        detail: Some(i18n::t(lang, "lsp-snippet-empty-wrap-detail")),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: "`#` を `［＃<カーソル>］` に変換。Enter で確定。".to_owned(),
+            value: i18n::t(lang, "lsp-snippet-empty-wrap-doc"),
         })),
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -141,9 +150,9 @@ fn hash_wrap_completions(source: &str, cursor: usize) -> Vec<CompletionItem> {
                     "**{family:?}** {accepts}\n\n{doc}",
                     family = entry.family,
                     accepts = if entry.accepts_param {
-                        "(パラメータあり)"
+                        i18n::t(lang, "lsp-completion-takes-param")
                     } else {
-                        ""
+                        String::new()
                     },
                     doc = entry.doc,
                 ),
@@ -171,7 +180,11 @@ fn hash_wrap_completions(source: &str, cursor: usize) -> Vec<CompletionItem> {
 /// `｜` typed alone → suggest `${1:base}《${2:reading}》` snippet
 /// inserted AFTER the typed pipe. Activates IDE-style Tab navigation:
 /// type base, Tab, type reading, Tab to escape.
-fn pipe_ruby_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
+fn pipe_ruby_completion(
+    source: &str,
+    cursor: usize,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     if char_typed_just_before(source, cursor, PIPE_FW).is_none() {
         return Vec::new();
     }
@@ -187,12 +200,10 @@ fn pipe_ruby_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
         label: "${base}《${reading}》".to_owned(),
         filter_text: Some("｜".to_owned()),
         sort_text: Some("00".to_owned()),
-        detail: Some("ルビ ｜ベース《読み》 (Tab で読みへ移動)".to_owned()),
+        detail: Some(i18n::t(lang, "lsp-snippet-ruby-detail")),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value:
-                "`｜` の後に `<base>《<reading>》` を挿入。`<base>` から開始、Tab で `<reading>` へ。"
-                    .to_owned(),
+            value: i18n::t(lang, "lsp-snippet-ruby-doc"),
         })),
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -208,7 +219,11 @@ fn pipe_ruby_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
 /// `《` typed alone → suggest `${1:reading}》` snippet. Useful when
 /// the user types `《` directly (without going via `｜`); the
 /// reading slot is selected for direct typing.
-fn open_angle_reading_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
+fn open_angle_reading_completion(
+    source: &str,
+    cursor: usize,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     if char_typed_just_before(source, cursor, OPEN_DOUBLE_ANGLE).is_none() {
         return Vec::new();
     }
@@ -222,10 +237,10 @@ fn open_angle_reading_completion(source: &str, cursor: usize) -> Vec<CompletionI
         label: "${reading}》".to_owned(),
         filter_text: Some("《".to_owned()),
         sort_text: Some("00".to_owned()),
-        detail: Some("ルビ読み (閉じ括弧自動補完)".to_owned()),
+        detail: Some(i18n::t(lang, "lsp-snippet-reading-detail")),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: "`《` の後に `<reading>》` を挿入。`<reading>` を編集。".to_owned(),
+            value: i18n::t(lang, "lsp-snippet-reading-doc"),
         })),
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -242,7 +257,11 @@ fn open_angle_reading_completion(source: &str, cursor: usize) -> Vec<CompletionI
 /// `［＃「${1:description}」、${2:mencode}］${0}`. The `※` itself is
 /// already typed (or auto-converted from `*`); the snippet body
 /// fills in the bracket structure with Tab-stops.
-fn kome_gaiji_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
+fn kome_gaiji_completion(
+    source: &str,
+    cursor: usize,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     if char_typed_just_before(source, cursor, KOME).is_none() {
         return Vec::new();
     }
@@ -255,12 +274,10 @@ fn kome_gaiji_completion(source: &str, cursor: usize) -> Vec<CompletionItem> {
         label: "［＃「${desc}」、${men}］".to_owned(),
         filter_text: Some("※".to_owned()),
         sort_text: Some("00".to_owned()),
-        detail: Some("外字注記 (description, mencode)".to_owned()),
+        detail: Some(i18n::t(lang, "lsp-snippet-gaiji-detail")),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value:
-                "`※` の後に `［＃「<desc>」、<men>］` を挿入。`<desc>` から開始、Tab で `<men>` へ。"
-                    .to_owned(),
+            value: i18n::t(lang, "lsp-snippet-gaiji-doc"),
         })),
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -319,6 +336,16 @@ mod tests {
 
     fn pos_at(source: &str, byte: usize) -> Position {
         byte_offset_to_position(source, byte)
+    }
+
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shim mirroring the pre-i18n `snippet_completions(source, position)`
+    /// arity, pinned to English so the detail/doc assertions stay locale-stable.
+    fn snippet_completions(source: &str, position: Position) -> Vec<CompletionItem> {
+        super::snippet_completions(source, position, &en())
     }
 
     #[test]
@@ -470,19 +497,44 @@ mod tests {
             .iter()
             .find(|i| i.label == "［＃］")
             .expect("empty wrap present");
-        // `detail` field (line 109).
+        // `detail` field — the canonical English catalog value (via the shim).
         assert_eq!(
             wrap.detail.as_deref(),
-            Some("注記スラグの空ひな型 (中身を編集)")
+            Some("Empty annotation-slug template (edit the body)")
         );
-        // `documentation` field (line 110) — pin the markdown payload.
+        // `documentation` field — pin the markdown payload.
         let Some(Documentation::MarkupContent(mc)) = &wrap.documentation else {
             panic!("empty wrap must carry markdown documentation")
         };
         assert_eq!(mc.kind, MarkupKind::Markdown);
-        assert_eq!(mc.value, "`#` を `［＃<カーソル>］` に変換。Enter で確定。");
+        assert_eq!(
+            mc.value,
+            "Convert `#` to `［＃<cursor>］`. Press Enter to confirm."
+        );
         // `kind` field (line 114).
         assert_eq!(wrap.kind, Some(CompletionItemKind::SNIPPET));
+    }
+
+    #[test]
+    fn empty_wrap_prose_localizes_by_lang() {
+        // The empty-wrap detail/doc come from the shared catalog: `ja` keeps
+        // the migrated Japanese, `zh` the new Chinese (en is asserted above).
+        let src = "#";
+        let wrap = |tag: &str| {
+            let lang: LanguageIdentifier = tag.parse().expect("locale parses");
+            super::snippet_completions(src, pos_at(src, src.len()), &lang)
+                .into_iter()
+                .find(|i| i.label == "［＃］")
+                .expect("empty wrap present")
+        };
+        assert_eq!(
+            wrap("ja").detail.as_deref(),
+            Some("注記スラグの空ひな型 (中身を編集)")
+        );
+        assert_eq!(
+            wrap("zh").detail.as_deref(),
+            Some("注记 slug 空模板（编辑内容）")
+        );
     }
 
     #[test]
