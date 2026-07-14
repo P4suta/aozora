@@ -382,6 +382,36 @@ repl-load-error = 无法读取 {$path}: {$error}
 repl-unknown-meta = 未知命令 `:{$cmd}` — 列表见 :help
 repl-usage = 用法: :{$cmd} {$expected}
 
+## TUI 实时编辑器
+##
+## 全屏 `aozora tui` 编辑器的外壳: 三个窗格的标题、未保存标记、无诊断占位符、
+## 底部快捷键图例（仅翻译动作词 — ^S / ^L / ^P / ^Q 字形以及 html / nodes / en
+## 等字面量在所有语言中保持一致）、保存/错误状态行。窗格*内容*（渲染后的
+## HTML、节点 JSON、Pandoc AST、英文诊断报告）属于机器轴，不经过此处（ADR-0033）。
+
+# 窗格标题（文件路径、视图标签、诊断数量由代码追加）。
+tui-title-source = 源文
+tui-title-preview = 预览
+tui-title-diagnostics = 诊断
+# 追加到源文标题上的未保存标记。
+tui-modified = 未保存
+# 解析干净时诊断窗格的占位符。
+tui-diag-none = （无诊断）
+
+# 底部快捷键图例 — 每个 Ctrl 字形后的动作词。
+tui-key-save = 保存
+tui-key-lang = 语言
+tui-key-preview = 预览
+tui-key-quit = 退出
+
+# Ctrl-S 之后的底部状态。$path 为保存路径，$error 为英文操作系统消息。
+# 无文件行在缓冲区打开时未带路径的情况下出现。
+tui-saved = 已保存 {$path}
+tui-save-error = 无法保存 {$path}: {$error}
+tui-no-file = 无文件可保存 — 请带路径重新打开: aozora tui FILE
+# 当 stdout / stdin 不是终端（管道）时的拒绝。TUI 需要一个 tty。
+tui-no-tty = aozora tui 需要交互式终端（可尝试 aozora repl 或 --watch）
+
 ## LSP 编辑器外壳
 ##
 ## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、

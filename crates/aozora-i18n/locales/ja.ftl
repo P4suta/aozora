@@ -391,6 +391,37 @@ repl-load-error = {$path} を読み込めません: {$error}
 repl-unknown-meta = 不明なコマンド `:{$cmd}` — 一覧は :help
 repl-usage = 使い方: :{$cmd} {$expected}
 
+## TUI ライブエディタ
+##
+## フルスクリーン `aozora tui` のクローム: 3 ペインのタイトル、未保存マーカー、
+## 診断なしのプレースホルダ、フッタのキーバインド凡例（訳すのは動詞のみ。
+## ^S / ^L / ^P / ^Q のグリフや html / nodes / en といったリテラルは全ロケール
+## 共通）、保存・エラーのステータス行。ペインの*中身*（HTML・ノード JSON・
+## Pandoc AST・英語の診断レポート）は機械軸であり、ここは経由しない（ADR-0033）。
+
+# ペインタイトル（ファイルパス・ビュー種別・診断件数はコード側で付加）。
+tui-title-source = ソース
+tui-title-preview = プレビュー
+tui-title-diagnostics = 診断
+# ソースタイトルに付く未保存マーカー。
+tui-modified = 未保存
+# 解析がクリーンなときの診断ペインのプレースホルダ。
+tui-diag-none = （診断なし）
+
+# フッタのキーバインド凡例 — 各 Ctrl グリフの後ろに置く動詞。
+tui-key-save = 保存
+tui-key-lang = 言語
+tui-key-preview = プレビュー
+tui-key-quit = 終了
+
+# Ctrl-S 後のフッタステータス。$path は保存先、$error は英語の OS メッセージ。
+# no-file 行はパスなしで開いたバッファのときに出る。
+tui-saved = 保存しました {$path}
+tui-save-error = 保存できません {$path}: {$error}
+tui-no-file = 保存先がありません — パスを指定して開き直してください: aozora tui FILE
+# stdout / stdin が端末でない（パイプ）ときの拒否。TUI には端末が必要。
+tui-no-tty = aozora tui には対話端末が必要です（aozora repl か --watch を試してください）
+
 ## LSP エディタ表層
 ##
 ## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、

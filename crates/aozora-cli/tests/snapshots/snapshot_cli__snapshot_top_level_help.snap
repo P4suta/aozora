@@ -45,6 +45,12 @@ Commands:
                the document subcommands, so its views can never disagree with them. `:mode` /
                `:lang` / `:encoding` / `:load` / `:help` / `:quit` tune the session; line editing
                and history come from rustyline on a terminal, and a piped stdin is scriptable
+  tui          Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane (rendered
+               HTML / nodes / Pandoc), and a DIAGNOSTICS pane, all refreshed on every keystroke
+               (debounced) through the same parse / render / json engine as the document
+               subcommands. The editor-free counterpart to `--watch`. `Ctrl-S` saves, `Ctrl-L`
+               cycles language, `Ctrl-P` cycles the preview view, `Ctrl-Q` quits. An optional
+               `[FILE]` opens for editing
   completions  Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` /
                `nushell`) on stdout. Generated from the live command tree, so it always matches the
                installed binary; release tarballs also ship these under `completions/`

@@ -1,0 +1,89 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"tui\", \"--help\"])"
+---
+Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane (rendered HTML / nodes /
+Pandoc), and a DIAGNOSTICS pane, all refreshed on every keystroke (debounced) through the same parse
+/ render / json engine as the document subcommands. The editor-free counterpart to `--watch`.
+`Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the preview view, `Ctrl-Q` quits. An
+optional `[FILE]` opens for editing
+
+Usage: aozora tui [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]
+          Optional file to open in the editor. Omit to start with an empty buffer; `Ctrl-S` then
+          reports that there is no file to save
+
+Options:
+      --preview <PREVIEW>
+          Which projection the preview pane shows at startup: `html` (the default, as `aozora
+          render`), `nodes` (as `aozora inspect nodes`), or `pandoc` (the Pandoc AST). Cycle it live
+          with `Ctrl-P`
+
+          Possible values:
+          - html:   Rendered HTML (as `aozora render`)
+          - nodes:  The parsed source nodes as JSON (as `aozora inspect nodes`)
+          - pandoc: The Pandoc AST as JSON (as `aozora pandoc`, pretty-printed for the pane)
+          
+          [default: html]
+
+  -E, --encoding <ENCODING>
+          Source encoding for opening `[FILE]`: `auto` (default), `utf8`, or `sjis`. The edit buffer
+          is Unicode; `Ctrl-S` always saves UTF-8
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [default: auto]
+
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
+  -v, --verbose...
+          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
+          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
+          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+
+  -q, --quiet
+          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
+          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
+          Global
+
+      --lang <LOCALE>
+          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
+          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
+          (json / short / codes / exit / schema) or `--encoding`. Global
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  aozora tui                     # start with an empty buffer
+  aozora tui hon.aozora          # open a file to edit
+  aozora tui --preview nodes     # start the preview pane in nodes view
+  aozora tui -E sjis book.txt    # decode a Shift_JIS file on open
+
+Keys (while running):
+  Ctrl-S  save the buffer to the file      Ctrl-L  cycle message language
+  Ctrl-P  cycle the preview view           Ctrl-Q  quit
+Every unmodified keystroke edits the source pane; the preview and diagnostics
+panes refresh automatically, debounced.
