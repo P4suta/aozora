@@ -62,6 +62,7 @@ mod color;
 mod completions;
 mod config;
 mod diagnostics_render;
+mod doctor;
 mod input;
 mod introspect;
 mod logging;
@@ -195,6 +196,12 @@ enum Command {
     /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
+    /// Run an end-user runtime self-check: the discovered `.aozora.toml` and
+    /// the effective settings (with each value's source), whether `pandoc` and
+    /// `aozora-lsp` are on `PATH`, and the terminal's colour capabilities.
+    /// Exits 0 when all-green, 1 on a blocking problem (a malformed config).
+    /// The runtime counterpart to the contributor-facing `just doctor`.
+    Doctor,
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
     /// the live command tree, so it always matches the installed
@@ -451,6 +458,7 @@ fn main() -> ExitCode {
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts, &lang),
         Command::Pandoc(opts) => run_pandoc(&opts, &lang),
+        Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -518,6 +526,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         Command::Kinds(_)
         | Command::Schema(_)
         | Command::Explain(_)
+        | Command::Doctor
         | Command::Completions(_)
         | Command::Man(_) => None,
     }
@@ -579,7 +588,7 @@ fn run_check_once(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCod
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let format = args.format.or(cfg.format).unwrap_or_default();
-    let strict = args.strict || cfg.strict.unwrap_or(false);
+    let strict = config::strict_active(args.strict, cfg.strict);
 
     let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
@@ -633,7 +642,7 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let format = args.format.or(cfg.format).unwrap_or_default();
-    let strict = args.strict || cfg.strict.unwrap_or(false);
+    let strict = config::strict_active(args.strict, cfg.strict);
     let path = &args.common.input.file;
 
     if args.fix {

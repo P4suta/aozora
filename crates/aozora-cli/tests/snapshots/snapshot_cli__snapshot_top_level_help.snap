@@ -1,6 +1,5 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
-assertion_line: 53
 expression: "run(&[\"--help\"])"
 ---
 Aozora Bunko notation parser CLI
@@ -31,6 +30,11 @@ Commands:
   pandoc       Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON
                to stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
                pandoc and pipes the JSON through it
+  doctor       Run an end-user runtime self-check: the discovered `.aozora.toml` and the effective
+               settings (with each value's source), whether `pandoc` and `aozora-lsp` are on `PATH`,
+               and the terminal's colour capabilities. Exits 0 when all-green, 1 on a blocking
+               problem (a malformed config). The runtime counterpart to the contributor-facing `just
+               doctor`
   completions  Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` /
                `nushell`) on stdout. Generated from the live command tree, so it always matches the
                installed binary; release tarballs also ship these under `completions/`

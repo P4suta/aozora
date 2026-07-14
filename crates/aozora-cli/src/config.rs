@@ -58,6 +58,25 @@ pub(crate) struct ConfigFile {
     pub lang: Option<String>,
 }
 
+/// The two discovered config layers kept apart, with the file each came from
+/// — the raw material [`aozora doctor`](crate::doctor) needs to attribute every
+/// effective setting to its source (project vs global). [`ConfigFile::resolve`]
+/// folds these into one merged config; doctor keeps them separate to report
+/// provenance. Built by [`ConfigFile::layers`], which runs the same discovery
+/// and parse `resolve` does — so a malformed file is the identical hard error
+/// on either path.
+#[derive(Debug, Default)]
+pub(crate) struct Layers {
+    /// The discovered project `.aozora.toml`, if the upward search found one.
+    pub project_path: Option<PathBuf>,
+    /// The parsed project layer — all-default when no project file was found.
+    pub project: ConfigFile,
+    /// The XDG global `config.toml`, if it exists as a file.
+    pub global_path: Option<PathBuf>,
+    /// The parsed global layer — all-default when the global file is absent.
+    pub global: ConfigFile,
+}
+
 impl ConfigFile {
     /// Resolve the effective config. An explicit `--config PATH` (a hard
     /// error if unreadable or malformed) is a full escape hatch — used
@@ -70,15 +89,37 @@ impl ConfigFile {
             debug!(config = %path.display(), "config precedence: explicit --config (bypasses discovery + global)");
             return Self::load(path);
         }
-        let discovered = discover(cwd);
-        if let Some(path) = &discovered {
+        let layers = Self::layers(cwd)?;
+        Ok(Self::merge(&layers.project, &layers.global))
+    }
+
+    /// The project and global [`Layers`] kept apart. Discovers the nearest
+    /// project `.aozora.toml` (walking up from `cwd`) and the XDG global
+    /// `config.toml`, parsing each present file — the same steps
+    /// [`resolve`](Self::resolve) folds into one merged config. A malformed
+    /// file is a hard error, exactly as [`resolve`](Self::resolve) surfaces it.
+    pub(crate) fn layers(cwd: &Path) -> Result<Layers> {
+        let project_path = discover(cwd);
+        if let Some(path) = &project_path {
             debug!(config = %path.display(), "config precedence: nearest project .aozora.toml wins");
         } else {
             debug!("config precedence: no project .aozora.toml; defaults over global config.toml");
         }
-        let project = discovered.map_or_else(|| Ok(Self::default()), |path| Self::load(&path))?;
-        let global = Self::load_global()?;
-        Ok(Self::merge(&project, &global))
+        let project = match &project_path {
+            Some(path) => Self::load(path)?,
+            None => Self::default(),
+        };
+        let global_path = global_config_path().filter(|path| path.is_file());
+        let global = match &global_path {
+            Some(path) => Self::load(path)?,
+            None => Self::default(),
+        };
+        Ok(Layers {
+            project_path,
+            project,
+            global_path,
+            global,
+        })
     }
 
     /// Field-wise overlay: every setting present in `project` wins; anything
@@ -96,21 +137,22 @@ impl ConfigFile {
         }
     }
 
-    /// Load the global config when its file exists, else an all-default
-    /// config. A malformed global file is a hard error, exactly like the
-    /// project file.
-    fn load_global() -> Result<Self> {
-        match global_config_path() {
-            Some(path) if path.is_file() => Self::load(&path),
-            _ => Ok(Self::default()),
-        }
-    }
-
     fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
         toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))
     }
+}
+
+/// The effective `strict` the CLI applies: `flag_or_env || config_strict` — a
+/// boolean **OR**, not a layered override. `strict = true` in `.aozora.toml`
+/// therefore forces strict ON even when the `--strict` flag / `AOZORA_STRICT`
+/// env is `false`; a config `strict = false` is a no-op (indistinguishable from
+/// unset). The single source of truth for this rule: `run_check` / `run_lint`
+/// resolve strict through it, and [`aozora doctor`](crate::doctor) reports what
+/// it returns, so the report can never drift from the runtime's decision.
+pub(crate) fn strict_active(flag_or_env: bool, config_strict: Option<bool>) -> bool {
+    flag_or_env || config_strict.unwrap_or(false)
 }
 
 /// Walk up from `start` to the filesystem root, returning the first
@@ -153,6 +195,31 @@ mod tests {
     /// tweaks with `..`.
     fn empty() -> ConfigFile {
         ConfigFile::default()
+    }
+
+    // --- strict_active: the flag/env OR config boolean, not a layered override ---
+
+    #[test]
+    fn strict_active_is_the_boolean_or_of_flag_env_and_config() {
+        // The flag/env alone turns it on.
+        assert!(strict_active(true, None), "flag/env true wins");
+        assert!(
+            strict_active(true, Some(false)),
+            "flag/env true beats a config false"
+        );
+        // A config `true` forces strict ON even when the flag/env is false — the
+        // BUG-1 case: `false || true` is on, not off.
+        assert!(
+            strict_active(false, Some(true)),
+            "config true forces strict on"
+        );
+        // Off only when neither turns it on. A config `false` is a no-op, exactly
+        // like unset — the OR can never be forced off by a lower layer.
+        assert!(!strict_active(false, None), "nothing set -> off");
+        assert!(
+            !strict_active(false, Some(false)),
+            "config false is a no-op -> off"
+        );
     }
 
     // --- merge: the project-over-global field-wise overlay ---

@@ -1,0 +1,46 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"doctor\", \"--help\"])"
+---
+Run an end-user runtime self-check: the discovered `.aozora.toml` and the effective settings (with
+each value's source), whether `pandoc` and `aozora-lsp` are on `PATH`, and the terminal's colour
+capabilities. Exits 0 when all-green, 1 on a blocking problem (a malformed config). The runtime
+counterpart to the contributor-facing `just doctor`
+
+Usage: aozora doctor [OPTIONS]
+
+Options:
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
+  -v, --verbose...
+          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
+          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
+          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+
+  -q, --quiet
+          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
+          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
+          Global
+
+      --lang <LOCALE>
+          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
+          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
+          (json / short / codes / exit / schema) or `--encoding`. Global
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
