@@ -121,6 +121,16 @@ pub(crate) enum Mode {
     List,
 }
 
+impl Mode {
+    /// True for the machine-readable output mode (`--check --json`) — the one
+    /// mode whose stdout is a byte-stable contract, so the human batch progress
+    /// UI must never draw for it (the discovery spinner is skipped; the bar and
+    /// summary already never reach it, as `--json` bypasses `fold_files`).
+    pub(crate) fn is_machine(&self) -> bool {
+        matches!(self, Self::Check(CheckReport::Json))
+    }
+}
+
 /// How `--check` reports files that are not already formatted.
 pub(crate) enum CheckReport {
     /// One `<path> would be reformatted` line per file, on stderr.

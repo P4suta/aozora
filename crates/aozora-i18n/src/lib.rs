@@ -285,6 +285,9 @@ mod tests {
         // (the missing-key signal) in every locale — no accidental gaps.
         let keys = [
             "watch-banner",
+            // Directory `aozora fmt` batch chrome: the discovery spinner
+            // message (the arg-bearing summary resolves through `tf` below).
+            "fmt-progress-discovering",
             "explain-hint-header",
             "explain-hint-more",
             "explain-repro-label",
@@ -386,6 +389,12 @@ mod tests {
                 tf(&l, "doctor-setting-rejected", &rejected),
                 "doctor-setting-rejected"
             );
+            // The arg-bearing batch summary resolves through `tf` too.
+            let mut summary = FluentArgs::new();
+            summary.set("formatted", "3");
+            summary.set("unchanged", "10");
+            summary.set("errors", "0");
+            assert_ne!(tf(&l, "fmt-summary", &summary), "fmt-summary");
             // The arg-bearing keys resolve through `tf` too.
             let mut args = FluentArgs::new();
             args.set("cmd", "check");

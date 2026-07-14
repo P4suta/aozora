@@ -236,6 +236,53 @@ fn write_directory_formats_only_aozora_sources_recursively() {
 }
 
 #[test]
+fn directory_run_over_a_pipe_emits_no_batch_ui() {
+    // The batch progress bar / discovery spinner / summary are strictly gated
+    // to an interactive stderr. `Command::output` pipes stderr, so the child's
+    // stderr is not a terminal and the whole batch UI must be silent — the
+    // byte stream a piped run produces is exactly what it was before the UI
+    // existed. Two dirty files make a genuine batch (a bar *would* draw on a
+    // tty), so this pins the gate, not just an empty-work shortcut.
+    let dir = temp_dir("pipe-no-ui-write");
+    write_in(&dir, "a.afm", DIRTY);
+    write_in(&dir, "b.afm", DIRTY);
+
+    let out = aozora_fmt().arg("--write").arg(&dir).output().unwrap();
+    assert!(out.status.success(), "--write over a dir succeeds");
+    assert!(
+        out.stderr.is_empty(),
+        "a piped --write must print nothing to stderr (no summary / progress): {:?}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    fs::remove_dir_all(&dir).ok();
+
+    // `--check` over a pipe still prints its per-file "would be reformatted"
+    // result lines (those are the point of --check, not decorative UI), but no
+    // "N formatted, …" summary line may follow.
+    let dir = temp_dir("pipe-no-ui-check");
+    write_in(&dir, "a.afm", DIRTY);
+    write_in(&dir, "b.afm", CLEAN);
+    let out = aozora_fmt().arg("--check").arg(&dir).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "a dirty --check exits 1");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "only the single dirty file's result line, no summary: {lines:?}",
+    );
+    assert!(
+        lines[0].ends_with("a.afm would be reformatted"),
+        "the one line is the check result: {lines:?}",
+    );
+    assert!(
+        !stderr.contains("formatted,"),
+        "no batch summary over a pipe: {stderr:?}",
+    );
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn list_over_directory_prints_sorted_dirty_paths() {
     let dir = temp_dir("list-dir");
     write_in(&dir, "a.afm", DIRTY);

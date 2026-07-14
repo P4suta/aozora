@@ -486,7 +486,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Check(opts) => run_check(&opts, &lang),
         Command::Lint(opts) => run_lint(&opts, &lang),
-        Command::Fmt(opts) => run_fmt(&opts, cli.color, &lang),
+        Command::Fmt(opts) => run_fmt(&opts, cli.color, cli.quiet, &lang),
         Command::Render(opts) => run_render(&opts, &lang),
         Command::Inspect(opts) => run_inspect(&opts, &lang),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
@@ -762,7 +762,12 @@ fn lint_diagnostics(tree: &aozora::Tree<'_>) -> Vec<aozora::Diagnostic> {
         .collect()
 }
 
-fn run_fmt(args: &FmtCmd, color: ColorChoice, lang: &LanguageIdentifier) -> Result<ExitCode> {
+fn run_fmt(
+    args: &FmtCmd,
+    color: ColorChoice,
+    quiet: bool,
+    lang: &LanguageIdentifier,
+) -> Result<ExitCode> {
     // Anti-hang guard: fmt reading an interactive TTY with no file would block
     // forever. `resolve` reports whether the paths degrade to stdin.
     if matches!(
@@ -772,7 +777,7 @@ fn run_fmt(args: &FmtCmd, color: ColorChoice, lang: &LanguageIdentifier) -> Resu
     {
         return Ok(code);
     }
-    fmt_watched(args, lang, || run_fmt_once(args, color))
+    fmt_watched(args, lang, || run_fmt_once(args, color, quiet, lang))
 }
 
 /// The concrete file paths among fmt's PATHs — every path that is not the `-`
@@ -803,7 +808,12 @@ fn fmt_watched(
     watch::watch(path, lang, once)
 }
 
-fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
+fn run_fmt_once(
+    args: &FmtCmd,
+    color: ColorChoice,
+    quiet: bool,
+    lang: &LanguageIdentifier,
+) -> Result<ExitCode> {
     // Fold `.aozora.toml` into the effective encoding (flag/env > config >
     // auto), then hand off to the single shared engine — the same code the
     // standalone `aozora-fmt` binary runs, so behaviour can never diverge.
@@ -811,9 +821,17 @@ fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
     let cfg = config::ConfigFile::resolve(args.cross.config.as_deref(), &cwd)?;
     let encoding = args.fmt.encoding().or(cfg.encoding).unwrap_or_default();
 
+    // The presentation policy: `--color` drives the `--diff` hunks, while
+    // `--quiet` and the resolved message language govern the TTY-gated
+    // directory-fmt progress bar and localized summary on stderr.
+    let presentation = aozora_fmt::Presentation {
+        color,
+        quiet,
+        lang: lang.clone(),
+    };
     let mut timer = Timer::new(args.cross.timing);
     let code = timer.measure("format", || {
-        aozora_fmt::run_engine(&args.fmt, encoding, color, "aozora fmt")
+        aozora_fmt::run_engine(&args.fmt, encoding, "aozora fmt", &presentation)
     });
     timer.report()?;
     Ok(code)
