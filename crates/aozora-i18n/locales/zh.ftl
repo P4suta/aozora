@@ -272,6 +272,49 @@ diag-registry-position-mismatch-body =
 
     这可能是 aozora-pipeline 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
 
+## doctor
+##
+## `aozora doctor` — 面向最终用户的运行时自检（区别于面向贡献者的
+## `just doctor`）。小节标题、状态词与提示会本地化；而设置／工具的标识符、
+## enum 标签、来源标签（flag / env / project / global / default）以及工具版本
+## 是机器词汇，在每种语言中都保持原样。
+
+doctor-title = aozora doctor — 运行时自检
+doctor-config-heading = 配置
+doctor-settings-heading = 生效设置
+doctor-tools-heading = 外部工具
+doctor-terminal-heading = 终端
+
+# 配置小节。$dir 是向上查找 `.aozora.toml` 的起始工作目录；$error 是格式错误的
+# 文件返回的（英文）加载器消息。
+doctor-project-none = 无（从 {$dir} 向上查找）
+doctor-global-none = 无
+doctor-parse-ok = 配置解析正常（无未知键）
+doctor-parse-error = 配置错误: {$error}
+
+# 生效设置小节。阻塞行: $var 被设为 $value，但 CLI 运行时的 clap 解析器会拒绝它
+# （区分大小写的值枚举不匹配，或并非恰好为 true / false 的布尔值）。$var 与 $value
+# 保持原文。
+doctor-setting-rejected = 已设置 {$var}={$value}，但不是有效值；aozora 会拒绝它
+
+# 外部工具。提示行跟在缺失的工具之后。
+doctor-tool-missing = 未在 PATH 中找到
+doctor-hint-pandoc = `aozora pandoc -t FMT` 需要；从 https://pandoc.org 安装
+doctor-hint-lsp = `aozora lsp` 需要；随 aozora 工具链一同提供
+
+# 终端小节。$value 是已设置时环境变量的原始值。
+doctor-terminal-yes = 终端
+doctor-terminal-no = 非终端
+doctor-env-set = 已设置 ({$value})
+doctor-env-unset = 未设置
+doctor-colour-label = 生效颜色
+doctor-colour-on = 开
+doctor-colour-off = 关
+
+# 结尾摘要。$count 是阻塞性问题的数量。
+doctor-all-passed = 所有检查均已通过。
+doctor-problems = 发现 {$count} 个问题。
+
 ## LSP 编辑器外壳
 ##
 ## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、

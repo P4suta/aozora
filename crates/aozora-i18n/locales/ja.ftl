@@ -277,6 +277,49 @@ diag-registry-position-mismatch-body =
 
     aozora-pipeline のバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
 
+## doctor
+##
+## `aozora doctor` — 利用者向けのランタイム self-check（貢献者向けの
+## `just doctor` とは別物）。節見出し・状態語・ヒントは localize するが、設定／
+## ツールの識別子、enum タグ、出所ラベル（flag / env / project / global /
+## default）、ツールのバージョンは機械語彙でどのロケールでもそのまま。
+
+doctor-title = aozora doctor — ランタイム self-check
+doctor-config-heading = 設定
+doctor-settings-heading = 実効設定
+doctor-tools-heading = 外部ツール
+doctor-terminal-heading = 端末
+
+# 設定の節。$dir は `.aozora.toml` を上方向に探索し始めた作業ディレクトリ、
+# $error は不正なファイルが返す（英語の）ローダメッセージ。
+doctor-project-none = なし（{$dir} から上方向に探索）
+doctor-global-none = なし
+doctor-parse-ok = 設定は正常に解析されました（未知のキーなし）
+doctor-parse-error = 設定エラー: {$error}
+
+# 実効設定の節。ブロッキング行: $var に $value が設定されているが、CLI ランタイム
+# の clap パーサはこれを拒否する（大文字小文字を区別する値挙のミスマッチ、または
+# true / false 以外の bool）。$var と $value はそのまま表示。
+doctor-setting-rejected = {$var}={$value} が設定されていますが有効な値ではありません。aozora はこれを拒否します
+
+# 外部ツール。ヒント行は見つからないツールの後に続く。
+doctor-tool-missing = PATH 上に見つかりません
+doctor-hint-pandoc = `aozora pandoc -t FMT` に必要。https://pandoc.org から導入
+doctor-hint-lsp = `aozora lsp` に必要。aozora ツールチェインに同梱
+
+# 端末の節。$value は設定されている場合の環境変数の生の値。
+doctor-terminal-yes = 端末
+doctor-terminal-no = 端末ではない
+doctor-env-set = 設定あり ({$value})
+doctor-env-unset = 未設定
+doctor-colour-label = 実効カラー
+doctor-colour-on = 有効
+doctor-colour-off = 無効
+
+# 末尾のまとめ。$count はブロッキングな問題の件数。
+doctor-all-passed = すべてのチェックに合格しました。
+doctor-problems = {$count} 件の問題が見つかりました。
+
 ## LSP エディタ表層
 ##
 ## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、

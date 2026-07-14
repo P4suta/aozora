@@ -302,12 +302,51 @@ mod tests {
             "concept-warichu-body",
             "concept-tcy-title",
             "concept-tcy-body",
+            // `aozora doctor` chrome: section headings, status words, hints,
+            // and the summary (the arg-bearing keys resolve through `tf` below).
+            "doctor-title",
+            "doctor-config-heading",
+            "doctor-settings-heading",
+            "doctor-tools-heading",
+            "doctor-terminal-heading",
+            "doctor-global-none",
+            "doctor-parse-ok",
+            "doctor-tool-missing",
+            "doctor-hint-pandoc",
+            "doctor-hint-lsp",
+            "doctor-terminal-yes",
+            "doctor-terminal-no",
+            "doctor-env-unset",
+            "doctor-colour-label",
+            "doctor-colour-on",
+            "doctor-colour-off",
+            "doctor-all-passed",
         ];
         for tag in ["en", "ja", "zh"] {
             let l = lang(tag);
             for key in keys {
                 assert_ne!(t(&l, key), key, "{tag}.ftl is missing `{key}`");
             }
+            // The arg-bearing doctor keys resolve through `tf` too.
+            let mut dir = FluentArgs::new();
+            dir.set("dir", "/x");
+            assert_ne!(tf(&l, "doctor-project-none", &dir), "doctor-project-none");
+            let mut err = FluentArgs::new();
+            err.set("error", "boom");
+            assert_ne!(tf(&l, "doctor-parse-error", &err), "doctor-parse-error");
+            let mut value = FluentArgs::new();
+            value.set("value", "1");
+            assert_ne!(tf(&l, "doctor-env-set", &value), "doctor-env-set");
+            let mut count = FluentArgs::new();
+            count.set("count", "1");
+            assert_ne!(tf(&l, "doctor-problems", &count), "doctor-problems");
+            let mut rejected = FluentArgs::new();
+            rejected.set("var", "AOZORA_ENCODING");
+            rejected.set("value", "SJIS");
+            assert_ne!(
+                tf(&l, "doctor-setting-rejected", &rejected),
+                "doctor-setting-rejected"
+            );
             // The arg-bearing keys resolve through `tf` too.
             let mut args = FluentArgs::new();
             args.set("cmd", "check");

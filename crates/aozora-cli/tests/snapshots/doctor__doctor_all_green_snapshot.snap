@@ -1,0 +1,32 @@
+---
+source: crates/aozora-cli/tests/doctor.rs
+expression: stdout
+---
+aozora doctor — runtime self-check
+
+Configuration
+  project .aozora.toml   none (searched up from [CWD])
+  global config.toml     none
+  configuration parsed cleanly (no unknown keys)
+
+Effective settings
+  encoding   auto     default
+  format     auto     default
+  strict     false    default
+  color      auto     default
+  lang       en       env AOZORA_LANG
+
+External tools
+  pandoc       not found on PATH
+    ↳ needed for `aozora pandoc -t FMT`; install from https://pandoc.org
+  aozora-lsp   not found on PATH
+    ↳ needed for `aozora lsp`; part of the aozora toolchain
+
+Terminal
+  stdout            not a terminal
+  stderr            not a terminal
+  NO_COLOR          unset
+  CLICOLOR          unset
+  effective colour  off
+
+All checks passed.

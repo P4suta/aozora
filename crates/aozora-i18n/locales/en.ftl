@@ -283,6 +283,51 @@ diag-registry-position-mismatch-body =
 
     This may be a bug in aozora-pipeline. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
 
+## doctor
+##
+## `aozora doctor` — the end-user runtime self-check (distinct from the
+## contributor `just doctor`). Section headings, status words, and hints are
+## localized; the setting / tool identifiers, enum tags, source labels
+## (flag / env / project / global / default), and tool versions woven into the
+## report are machine vocabulary and stay literal in every locale.
+
+doctor-title = aozora doctor — runtime self-check
+doctor-config-heading = Configuration
+doctor-settings-heading = Effective settings
+doctor-tools-heading = External tools
+doctor-terminal-heading = Terminal
+
+# Configuration section. $dir is the working directory the upward `.aozora.toml`
+# search began from; $error is the underlying (English) loader message a
+# malformed file surfaces.
+doctor-project-none = none (searched up from {$dir})
+doctor-global-none = none
+doctor-parse-ok = configuration parsed cleanly (no unknown keys)
+doctor-parse-error = configuration error: {$error}
+
+# Effective-settings section. A blocking row: $var is set to $value, which the
+# CLI runtime's clap parser rejects (a case-sensitive value-enum mismatch, or a
+# bool that is not exactly true / false). $var and $value stay literal.
+doctor-setting-rejected = {$var}={$value} is set but not a valid value; aozora would reject it
+
+# External tools. The hint line follows a missing tool.
+doctor-tool-missing = not found on PATH
+doctor-hint-pandoc = needed for `aozora pandoc -t FMT`; install from https://pandoc.org
+doctor-hint-lsp = needed for `aozora lsp`; part of the aozora toolchain
+
+# Terminal section. $value is the raw environment-variable value when set.
+doctor-terminal-yes = a terminal
+doctor-terminal-no = not a terminal
+doctor-env-set = set ({$value})
+doctor-env-unset = unset
+doctor-colour-label = effective colour
+doctor-colour-on = on
+doctor-colour-off = off
+
+# Closing summary. $count is the number of blocking problems.
+doctor-all-passed = All checks passed.
+doctor-problems = {$count} problem(s) found.
+
 ## LSP editor surface
 ##
 ## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
