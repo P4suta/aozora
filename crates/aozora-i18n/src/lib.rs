@@ -321,6 +321,17 @@ mod tests {
             "doctor-colour-on",
             "doctor-colour-off",
             "doctor-all-passed",
+            // `aozora init` chrome: heading, per-file outcome words, the skip
+            // hint, and the next-steps footer.
+            "init-heading",
+            "init-created",
+            "init-overwritten",
+            "init-skipped",
+            "init-skipped-hint",
+            "init-next-steps",
+            "init-step-render",
+            "init-step-check",
+            "init-step-doctor",
         ];
         for tag in ["en", "ja", "zh"] {
             let l = lang(tag);

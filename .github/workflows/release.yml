@@ -147,7 +147,7 @@ jobs:
           # per subcommand.
           mkdir -p "${staging}/man/man1"
           "${bin}" man > "${staging}/man/man1/aozora.1"
-          for sub in check lint fmt render inspect kinds schema explain pandoc doctor completions; do
+          for sub in check lint fmt render inspect kinds schema explain pandoc doctor init completions; do
               "${bin}" man "${sub}" > "${staging}/man/man1/aozora-${sub}.1"
           done
 

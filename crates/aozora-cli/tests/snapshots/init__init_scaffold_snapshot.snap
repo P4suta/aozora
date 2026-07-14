@@ -1,0 +1,14 @@
+---
+source: crates/aozora-cli/tests/init.rs
+expression: stdout
+---
+aozora init — scaffold a project
+
+  .aozora.toml     created
+  hon.aozora       created
+  .gitignore       created
+
+Next steps:
+  aozora render hon.aozora   # render the sample to HTML
+  aozora check hon.aozora    # report diagnostics
+  aozora doctor              # verify the effective configuration

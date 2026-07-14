@@ -320,6 +320,29 @@ doctor-colour-off = 無効
 doctor-all-passed = すべてのチェックに合格しました。
 doctor-problems = {$count} 件の問題が見つかりました。
 
+## init
+##
+## `aozora init` — プロジェクトの雛形を作成。ローカライズされるのはレポートの
+## 装飾のみ。生成されるファイル名・ファイルの中身・リテラルな `aozora …`
+## 次ステップコマンドは言語非依存のプロジェクト成果物で、どのロケールでも同一。
+
+init-heading = aozora init — プロジェクトの雛形を作成
+
+# 生成した各ファイル名の前に表示する結果の語。
+init-created = 作成
+init-overwritten = 上書き
+init-skipped = スキップ
+# 既存（スキップした）ファイルの後ろの補足。`--force` はリテラルなフラグ名で
+# どのロケールでも同一。
+init-skipped-hint = 既に存在します。上書きするには --force
+
+# 次のステップの案内。`aozora …` コマンドはリテラルで、ここで訳すのは末尾の
+# コメントのみ。
+init-next-steps = 次のステップ:
+init-step-render = サンプルを HTML に変換
+init-step-check = 診断を表示
+init-step-doctor = 実効設定を確認
+
 ## LSP エディタ表層
 ##
 ## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、
