@@ -38,6 +38,13 @@
 //! - `aozora explain <kind>` — embedded handbook chapter for the
 //!   given `NodeKind`, surfaced via `include_str!`.
 //!
+//! Onboarding (set up / inspect a working environment):
+//! - `aozora init [DIR]` — scaffold a project: a commented
+//!   `.aozora.toml`, a sample `hon.aozora`, and a `.gitignore`.
+//! - `aozora doctor` — end-user runtime self-check: the discovered
+//!   config, the effective settings and their sources, PATH tools,
+//!   and terminal colour capabilities.
+//!
 //! Tooling:
 //! - `aozora completions <shell>` — print a shell completion script
 //!   (bash / zsh / fish / powershell / elvish / nushell), generated
@@ -63,6 +70,7 @@ mod completions;
 mod config;
 mod diagnostics_render;
 mod doctor;
+mod init;
 mod input;
 mod introspect;
 mod logging;
@@ -93,6 +101,7 @@ use tracing::debug;
 
 use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
+use crate::init::InitArgs;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
 use crate::timing::Timer;
@@ -117,6 +126,7 @@ const HELP_STYLES: Styles = Styles::styled()
     propagate_version = true,
     styles = HELP_STYLES,
     after_long_help = "Examples:
+  aozora init myproject              # scaffold a new project
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
   aozora inspect nodes FILE.txt         # parsed nodes as JSON
@@ -202,6 +212,12 @@ enum Command {
     /// Exits 0 when all-green, 1 on a blocking problem (a malformed config).
     /// The runtime counterpart to the contributor-facing `just doctor`.
     Doctor,
+    /// Scaffold a new Aozora notation project into `[DIR]` (default the
+    /// working directory): a commented `.aozora.toml`, a sample `hon.aozora`
+    /// exercising ruby / 傍点 / 字下げ so `render` and `check` work
+    /// immediately, and a `.gitignore`. Existing files are kept untouched
+    /// unless `--force`; idempotent. `--no-sample` / `--no-gitignore` opt out.
+    Init(InitArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
     /// the live command tree, so it always matches the installed
@@ -459,6 +475,7 @@ fn main() -> ExitCode {
         Command::Explain(opts) => introspect::run_explain(&opts, &lang),
         Command::Pandoc(opts) => run_pandoc(&opts, &lang),
         Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
+        Command::Init(opts) => init::run(&opts, &lang),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -527,6 +544,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         | Command::Schema(_)
         | Command::Explain(_)
         | Command::Doctor
+        | Command::Init(_)
         | Command::Completions(_)
         | Command::Man(_) => None,
     }

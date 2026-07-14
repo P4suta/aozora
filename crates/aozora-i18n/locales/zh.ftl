@@ -315,6 +315,27 @@ doctor-colour-off = 关
 doctor-all-passed = 所有检查均已通过。
 doctor-problems = 发现 {$count} 个问题。
 
+## init
+##
+## `aozora init` — 生成新项目脚手架。仅报告外壳会本地化：生成的文件名、文件
+## 内容本身以及字面的 `aozora …` 后续命令都是与语言无关的项目产物，在任何
+## 语言环境下都相同。
+
+init-heading = aozora init — 生成项目脚手架
+
+# 每个生成文件名之前显示的结果词。
+init-created = 已创建
+init-overwritten = 已覆盖
+init-skipped = 已跳过
+# 已跳过（已存在）文件后的括注；`--force` 是字面标志名，在任何语言环境下都相同。
+init-skipped-hint = 已存在；使用 --force 覆盖
+
+# 后续步骤提示。`aozora …` 命令为字面文本，此处仅翻译末尾注释。
+init-next-steps = 后续步骤:
+init-step-render = 将示例渲染为 HTML
+init-step-check = 报告诊断
+init-step-doctor = 检查生效配置
+
 ## LSP 编辑器外壳
 ##
 ## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、

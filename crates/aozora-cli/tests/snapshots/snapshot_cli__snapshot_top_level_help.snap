@@ -35,6 +35,10 @@ Commands:
                and the terminal's colour capabilities. Exits 0 when all-green, 1 on a blocking
                problem (a malformed config). The runtime counterpart to the contributor-facing `just
                doctor`
+  init         Scaffold a new Aozora notation project into `[DIR]` (default the working directory):
+               a commented `.aozora.toml`, a sample `hon.aozora` exercising ruby / 傍点 / 字下げ so
+               `render` and `check` work immediately, and a `.gitignore`. Existing files are kept
+               untouched unless `--force`; idempotent. `--no-sample` / `--no-gitignore` opt out
   completions  Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` /
                `nushell`) on stdout. Generated from the live command tree, so it always matches the
                installed binary; release tarballs also ship these under `completions/`
@@ -77,6 +81,7 @@ Options:
           Print version
 
 Examples:
+  aozora init myproject              # scaffold a new project
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
   aozora inspect nodes FILE.txt         # parsed nodes as JSON

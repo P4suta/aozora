@@ -116,3 +116,10 @@ fn snapshot_doctor_help() {
         insta::assert_snapshot!(run(&["doctor", "--help"]));
     });
 }
+
+#[test]
+fn snapshot_init_help() {
+    insta::with_settings!({ filters => cli_filters() }, {
+        insta::assert_snapshot!(run(&["init", "--help"]));
+    });
+}

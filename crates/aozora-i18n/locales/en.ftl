@@ -328,6 +328,30 @@ doctor-colour-off = off
 doctor-all-passed = All checks passed.
 doctor-problems = {$count} problem(s) found.
 
+## init
+##
+## `aozora init` — scaffold a new project. Only the report chrome is
+## localized: the scaffolded file names, the file contents themselves, and the
+## literal `aozora …` next-step commands are language-neutral project
+## artifacts, identical in every locale.
+
+init-heading = aozora init — scaffold a project
+
+# Per-file outcome words shown before each scaffolded file name.
+init-created = created
+init-overwritten = overwritten
+init-skipped = skipped
+# Parenthetical after a skipped (already-present) file; `--force` is a literal
+# flag name and stays the same in every locale.
+init-skipped-hint = already exists; use --force to overwrite
+
+# Next-steps footer. The `aozora …` commands are literal; only the trailing
+# comments here are localized.
+init-next-steps = Next steps:
+init-step-render = render the sample to HTML
+init-step-check = report diagnostics
+init-step-doctor = verify the effective configuration
+
 ## LSP editor surface
 ##
 ## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
