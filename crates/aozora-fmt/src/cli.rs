@@ -237,4 +237,19 @@ mod tests {
             DirectiveNormalization::Canonical
         );
     }
+
+    #[test]
+    fn is_machine_is_exactly_check_json() {
+        // The machine-readable mode is `--check --json` alone: its stdout is a
+        // byte-stable contract, so it is the one mode that reports `true` and
+        // suppresses the human batch UI. Pinning `Json` true and every other
+        // mode false kills the `-> true` / `-> false` body replacements.
+        assert!(Mode::Check(CheckReport::Json).is_machine());
+        assert!(!Mode::Check(CheckReport::Plain).is_machine());
+        assert!(!Mode::Check(CheckReport::Diff).is_machine());
+        assert!(!Mode::Stdout.is_machine());
+        assert!(!Mode::Write { list: false }.is_machine());
+        assert!(!Mode::Write { list: true }.is_machine());
+        assert!(!Mode::List.is_machine());
+    }
 }

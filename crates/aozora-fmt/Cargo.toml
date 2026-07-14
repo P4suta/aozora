@@ -35,6 +35,10 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# `#[cfg_attr(test, mutants::skip)]` no-op attribute for the terminal-only
+# progress-UI shells in `progress.rs`, whose pure decision seams are the
+# unit-tested surface; a plain dev-dependency, inert outside `cargo mutants`.
+mutants = { workspace = true }
 
 [lints]
 workspace = true

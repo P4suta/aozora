@@ -12,7 +12,7 @@
 use std::io::{self, IsTerminal, Write};
 use std::time::Duration;
 
-use aozora_i18n::{FluentArgs, t, tf};
+use aozora_i18n::{FluentArgs, LanguageIdentifier, t, tf};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::Ctx;
@@ -98,6 +98,23 @@ fn enabled(ctx: &Ctx) -> bool {
     .shows()
 }
 
+/// Whether the discovery spinner should draw: the batch UI is [`enabled`] *and*
+/// the mode is not the machine-readable one (`--json`), whose stdout must stay
+/// byte-pure. The pure decision behind [`discovery_spinner`]'s real-terminal
+/// guard, split out so the "enabled and not machine" rule is unit-tested rather
+/// than resting on the untestable live-tty probe — mirroring `tui::all_terminals`.
+fn spinner_wanted(enabled: bool, mode: &Mode) -> bool {
+    enabled && !mode.is_machine()
+}
+
+/// Whether the determinate file bar should draw: the batch UI is [`enabled`]
+/// *and* the batch holds more than one file — a one-file bar is noise, not
+/// progress. The pure decision behind [`file_bar`]'s real-terminal guard, split
+/// out for the same unit-testability reason as [`spinner_wanted`].
+fn bar_wanted(enabled: bool, total: usize) -> bool {
+    enabled && total > 1
+}
+
 /// A spinner shown while directory discovery walks the tree — indeterminate,
 /// because the file count is not yet known. `None` (a no-op) when gated out or
 /// when the mode is machine-readable (`--json`), whose stdout must stay pure.
@@ -105,8 +122,13 @@ fn enabled(ctx: &Ctx) -> bool {
 /// The steady tick starts after a short delay, so trivially fast discovery
 /// (a single file, a small tree) completes before the first frame draws and
 /// the user sees nothing — the spinner surfaces only for genuinely slow walks.
+///
+/// Real-terminal only past the [`spinner_wanted`] guard (it builds and steady-
+/// ticks a live [`ProgressBar`]), so the sweep cannot exercise it; its one
+/// decision is the pure predicate, unit-tested below.
+#[cfg_attr(test, mutants::skip)]
 pub(crate) fn discovery_spinner(ctx: &Ctx, mode: &Mode) -> Option<ProgressBar> {
-    if !enabled(ctx) || mode.is_machine() {
+    if !spinner_wanted(enabled(ctx), mode) {
         return None;
     }
     let spinner = ProgressBar::new_spinner();
@@ -123,8 +145,13 @@ pub(crate) fn discovery_spinner(ctx: &Ctx, mode: &Mode) -> Option<ProgressBar> {
 /// gated out or when the batch is a single file — a one-file bar is noise, not
 /// progress. The count is already resolved by the time [`crate::fold_files`]
 /// runs, so a bar (not a spinner) is the right widget here.
+///
+/// Real-terminal only past the [`bar_wanted`] guard (it builds a live
+/// [`ProgressBar`] the caller drives), so the sweep cannot exercise it; its one
+/// decision is the pure predicate, unit-tested below.
+#[cfg_attr(test, mutants::skip)]
 pub(crate) fn file_bar(ctx: &Ctx, total: usize) -> Option<ProgressBar> {
-    if !enabled(ctx) || total <= 1 {
+    if !bar_wanted(enabled(ctx), total) {
         return None;
     }
     let bar = ProgressBar::new(total as u64);
@@ -144,17 +171,30 @@ pub(crate) fn printer(bar: Option<&ProgressBar>) -> Printer {
     Printer { bar: bar.cloned() }
 }
 
-/// Print the localized one-line batch summary to stderr, gated exactly like the
-/// bar. Silent when gated out, so a piped run emits nothing extra.
-pub(crate) fn summary(ctx: &Ctx, tally: &Tally) {
-    if !enabled(ctx) {
-        return;
-    }
+/// Build the localized one-line batch summary — `"N formatted, M unchanged, K
+/// errors"` in the run's language — from the [`Tally`]. Pure over the tally and
+/// language, so the count-to-message mapping is unit-tested apart from the
+/// terminal-gated [`summary`] that writes it.
+fn summary_line(lang: &LanguageIdentifier, tally: &Tally) -> String {
     let mut args = FluentArgs::new();
     args.set("formatted", tally.formatted.to_string());
     args.set("unchanged", tally.unchanged.to_string());
     args.set("errors", tally.errors.to_string());
-    let line = tf(&ctx.lang, "fmt-summary", &args);
+    tf(lang, "fmt-summary", &args)
+}
+
+/// Print the localized one-line batch summary to stderr, gated exactly like the
+/// bar. Silent when gated out, so a piped run emits nothing extra.
+///
+/// The terminal-gated write shell around the pure [`summary_line`]: skipped by
+/// the sweep because the headless host gates it out (nothing to observe), while
+/// [`summary_line`] carries the count-to-message assertions below.
+#[cfg_attr(test, mutants::skip)]
+pub(crate) fn summary(ctx: &Ctx, tally: &Tally) {
+    if !enabled(ctx) {
+        return;
+    }
+    let line = summary_line(&ctx.lang, tally);
     let _drop = writeln!(io::stderr(), "{line}");
 }
 
@@ -199,5 +239,58 @@ mod tests {
         assert!(!gate(true, true), "--quiet suppresses even on a tty");
         assert!(!gate(false, false), "piped stderr → never shown");
         assert!(!gate(false, true), "piped and quiet → never shown");
+    }
+
+    #[test]
+    fn spinner_wanted_needs_enabled_and_a_human_mode() {
+        // The discovery spinner draws only when the batch UI is enabled AND the
+        // mode is not machine-readable (`--json`), whose stdout must stay pure.
+        // The full truth table — over the real `Mode` its live guard passes —
+        // kills the mutants that flip either conjunct or drop the `!is_machine`.
+        use crate::cli::CheckReport;
+        let human = Mode::Stdout;
+        let machine = Mode::Check(CheckReport::Json);
+        assert!(spinner_wanted(true, &human), "enabled, human mode → spins");
+        assert!(
+            !spinner_wanted(true, &machine),
+            "--json suppresses the spinner"
+        );
+        assert!(!spinner_wanted(false, &human), "gated-out UI → no spinner");
+        assert!(
+            !spinner_wanted(false, &machine),
+            "gated out and machine → none"
+        );
+    }
+
+    #[test]
+    fn bar_wanted_needs_enabled_and_more_than_one_file() {
+        // The determinate bar draws only when the batch UI is enabled AND more
+        // than one file is in play — a one-file (or empty) batch is noise, not
+        // progress. Cases straddling the `> 1` threshold with both `enabled`
+        // values kill the mutants that flip the conjunct or move the boundary.
+        assert!(bar_wanted(true, 2), "enabled, many files → bar");
+        assert!(!bar_wanted(true, 1), "a single file is noise, not progress");
+        assert!(!bar_wanted(true, 0), "an empty batch draws no bar");
+        assert!(
+            !bar_wanted(false, 5),
+            "gated-out UI → no bar even for many files"
+        );
+    }
+
+    #[test]
+    fn summary_line_maps_each_count_to_its_slot() {
+        // The English summary places the three counts in a fixed order; distinct
+        // values pin each to its slot, killing a body-drop (empty / stub string)
+        // and any swap of the formatted / unchanged / errors arguments.
+        let lang = aozora_i18n::resolve(None, None, None, None);
+        let tally = Tally {
+            formatted: 2,
+            unchanged: 1,
+            errors: 3,
+        };
+        assert_eq!(
+            summary_line(&lang, &tally),
+            "2 formatted, 1 unchanged, 3 errors",
+        );
     }
 }

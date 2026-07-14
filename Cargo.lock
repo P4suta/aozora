@@ -291,6 +291,7 @@ dependencies = [
  "aozora-i18n",
  "clap",
  "indicatif",
+ "mutants",
  "proptest",
  "serde",
  "serde_json",
