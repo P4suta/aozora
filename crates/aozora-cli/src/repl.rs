@@ -369,6 +369,12 @@ fn step(repl: &mut Repl, line: &str, out: &mut impl Write) -> io::Result<bool> {
 
 /// The terminal path: `rustyline` supplies line editing and in-session history.
 /// Ctrl-C abandons the current line and re-prompts; Ctrl-D (EOF) leaves.
+// mutants::skip — this path only runs on a real terminal (`DefaultEditor` and
+// `readline` require a TTY), so the sweep host cannot exercise it; its sole
+// decision — stop on `step`'s `false`, keep looping otherwise — is the same
+// continue/stop seam the piped-stdin `scripted` twin drives end-to-end and the
+// `step_*` unit tests pin. Reinforcing it would need a pseudo-terminal harness.
+#[cfg_attr(test, mutants::skip)]
 fn interactive(repl: &mut Repl) -> Result<ExitCode> {
     let mut editor = DefaultEditor::new().context("failed to initialise the line editor")?;
     loop {
