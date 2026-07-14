@@ -56,8 +56,8 @@ human renderer in automation.
 | Diagnostics, one line each | `aozora check --format short FILE` | `path:offset: severity[code]: message` |
 | HTML | `aozora render FILE` | semantic HTML5 on stdout |
 | Pandoc AST (→ any format) | `aozora pandoc FILE` | Pandoc JSON on stdout |
-| Wire JSON Schema | `aozora schema {diagnostics\|nodes\|pairs\|container-pairs}` | JSON Schema |
-| Enum/wire-tag tables | `aozora kinds` | tables when stdout is a terminal, else the machine envelope `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` (force with `--format {human,json}`) — the typed contract behind the wire format |
+| Wire JSON Schema | `aozora spec schema {diagnostics\|nodes\|pairs\|container-pairs}` | JSON Schema |
+| Enum/wire-tag tables | `aozora spec kinds` | tables when stdout is a terminal, else the machine envelope `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` (force with `--format {human,json}`) — the typed contract behind the wire format |
 
 `--format` defaults to `human` on a TTY and `json` when piped,
 so a piped `aozora check` already yields machine output without a flag.

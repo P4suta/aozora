@@ -18,25 +18,27 @@
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
 //! - `aozora inspect <kind> FILE` — emit the parsed document's JSON
 //!   for one `aozora::json` envelope (`nodes` / `pairs` /
-//!   `container-pairs` / `diagnostics` / `gaiji`), or the static
-//!   `slugs` catalogue. The data counterpart to `aozora schema
-//!   <kind>`, byte-identical to every binding's `*_json()` output.
+//!   `container-pairs` / `diagnostics` / `gaiji`). The data
+//!   counterpart to `aozora spec schema <kind>`, byte-identical to
+//!   every binding's `*_json()` output.
 //! - `aozora pandoc FILE [--format FMT]` — project the parsed
 //!   document to a Pandoc AST. Without `--format`, prints Pandoc JSON
 //!   to stdout (consumable by `pandoc -f json -t FMT`); with
 //!   `--format`, spawns `pandoc` and pipes the JSON through it.
 //!
 //! Introspection (no input required, prints typed contracts):
-//! - `aozora kinds` — table of every `NodeKind` / `PairKind` /
+//! - `aozora explain <target>` — embedded handbook chapter for a
+//!   `NodeKind` tag or notation concept, or the help / severity / URL
+//!   for a diagnostic code.
+//! - `aozora spec kinds` — table of every `NodeKind` / `PairKind` /
 //!   `Severity` / `DiagnosticSource` / `Sentinel` /
 //!   `InternalCheckCode` variant with its wire tag and a one-line
 //!   summary.
-//! - `aozora schema {diagnostics|nodes|pairs|container-pairs}` —
+//! - `aozora spec schema {diagnostics|nodes|pairs|container-pairs}` —
 //!   pretty-prints the JSON Schema for one of the four
 //!   envelopes. Sourced from `aozora::json::schema_*` (`schema`
 //!   feature on the `aozora` crate).
-//! - `aozora explain <kind>` — embedded handbook chapter for the
-//!   given `NodeKind`, surfaced via `include_str!`.
+//! - `aozora spec slugs` — the static ［＃…］ slug catalogue (no input).
 //!
 //! Onboarding (set up / inspect a working environment):
 //! - `aozora init [DIR]` — scaffold a project: a commented
@@ -114,13 +116,52 @@ use crate::tui::TuiArgs;
 /// accent), cyan literals (flag names and their values), plain placeholders.
 /// clap only emits these ANSI codes when its `color` feature decides colour is
 /// on, so `NO_COLOR` / `CLICOLOR` / a piped stream drop them automatically. The
-/// `kinds` / `schema` tables are comfy-table, not clap, so they stay
+/// `spec kinds` / `spec schema` tables are comfy-table, not clap, so they stay
 /// monochrome regardless.
 const HELP_STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().bold())
     .usage(AnsiColor::Green.on_default().bold())
     .literal(AnsiColor::Cyan.on_default())
     .placeholder(Style::new());
+
+/// Top-level `--help` layout. clap can only file every subcommand under one
+/// flat `Commands:` heading, so the daily verbs and the occasionally-consulted
+/// reference material (`spec`, `explain`) all read as one undifferentiated
+/// wall. This template files them into task-oriented groups instead —
+/// Documents / Interactive / Introspection / Setup & tooling — with a terse
+/// one-line index blurb each (each subcommand's own `--help` still carries the
+/// full prose). `{usage-heading}` keeps clap's styled `Usage:`; the group and
+/// `Options:` headings render through clap's plain-text arg writer, so the
+/// whole block degrades to monochrome on a pipe. A `#[test]` asserts every
+/// visible subcommand appears here, so a newly added command cannot silently
+/// go missing from the grouped index.
+const HELP_TEMPLATE: &str = "\
+{about-with-newline}
+{usage-heading} {usage}
+
+Documents:
+  check        Parse a document and report every diagnostic
+  lint         Report advisory notation-hygiene lints (`--fix` rewrites)
+  fmt          Canonicalise via parse ∘ to_source (`--check` / `--write` / `--diff`)
+  render       Render Aozora notation to HTML on stdout
+  inspect      Emit a document's JSON views (nodes / pairs / gaiji / …)
+  pandoc       Project to a Pandoc AST (50+ output formats)
+
+Interactive:
+  repl         Interactive read-eval-print loop — type notation, see output
+  tui          Full-screen live editor with preview and diagnostics
+
+Introspection:
+  explain      Explain a diagnostic code, NodeKind tag, or notation concept
+  spec         Query the tool's own contracts (kinds / schema / slugs)
+
+Setup & tooling:
+  init         Scaffold a new project (`.aozora.toml` + a sample document)
+  doctor       Runtime self-check — config, PATH tools, terminal capabilities
+  completions  Print a shell completion script (bash / zsh / fish / …)
+
+Options:
+{options}{after-help}";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -129,13 +170,15 @@ const HELP_STYLES: Styles = Styles::styled()
     version = aozora_buildstamp::VERSION,
     propagate_version = true,
     styles = HELP_STYLES,
+    help_template = HELP_TEMPLATE,
     after_long_help = "Examples:
   aozora init myproject              # scaffold a new project
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
-  aozora inspect nodes FILE.txt         # parsed nodes as JSON
+  aozora inspect nodes FILE.txt      # parsed nodes as JSON
   aozora fmt --check FILE.txt        # CI format gate
   aozora explain unclosed_bracket    # explain a diagnostic code
+  aozora spec kinds                  # the parser's typed vocabulary
   aozora completions zsh             # shell completion script
 
 Document subcommands read stdin when given '-' or no path."
@@ -147,7 +190,7 @@ struct Cli {
     /// When to colourise diagnostics: `auto` (colour on a terminal,
     /// honouring `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or
     /// `never`. Global — accepted after any subcommand. Governs `check`'s
-    /// graphical diagnostics; `kinds` tables are always monochrome.
+    /// graphical diagnostics; `spec kinds` tables are always monochrome.
     #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
     color: ColorChoice,
 
@@ -191,20 +234,19 @@ enum Command {
     Render(RenderArgs),
     /// Emit a parsed document's JSON for one `aozora::json`
     /// envelope — `nodes` / `pairs` / `container-pairs` /
-    /// `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
-    /// data counterpart to `schema`: `schema <kind>` prints the JSON
-    /// Schema, `inspect <kind>` prints a document's data in that schema,
-    /// byte-identical to every binding's `*_json()` output.
+    /// `diagnostics` / `gaiji`. The data counterpart to `spec schema`:
+    /// `spec schema <kind>` prints the JSON Schema, `inspect <kind>`
+    /// prints a document's data in that schema, byte-identical to every
+    /// binding's `*_json()` output.
     Inspect(InspectArgs),
-    /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
-    /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode`
-    /// variant with its wire tag.
-    Kinds(KindsArgs),
-    /// Pretty-print the JSON Schema for one of the four JSON envelopes.
-    Schema(SchemaArgs),
     /// Print prose for a `NodeKind` tag or notation concept, or help /
     /// severity / URL for a diagnostic code.
     Explain(ExplainArgs),
+    /// Query the tool's own typed contracts — no document input. Groups the
+    /// introspection subcommands: `kinds` (the enum / wire-tag tables),
+    /// `schema <which>` (a JSON envelope's JSON Schema), and `slugs` (the
+    /// static ［＃…］ catalogue).
+    Spec(SpecArgs),
     /// Project the parsed document to a Pandoc AST.
     /// Without `--format`, prints Pandoc JSON to stdout (consumable
     /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
@@ -412,7 +454,7 @@ struct RenderArgs {
 }
 
 /// `aozora inspect <kind>` — which JSON envelope to emit. The data
-/// counterpart to `SchemaKind`: `schema nodes` prints the contract,
+/// counterpart to `SchemaKind`: `spec schema nodes` prints the contract,
 /// `inspect nodes` prints a document's data in that contract.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum InspectKind {
@@ -427,8 +469,6 @@ enum InspectKind {
     /// Per-外字-reference `{ span, description, mencode, codepoint, resolved }`.
     #[value(name = "gaiji", alias = "gaiji-resolutions")]
     GaijiResolutions,
-    /// The static ［＃…］ slug catalogue — reads no document input.
-    Slugs,
 }
 
 #[derive(Debug, Parser)]
@@ -436,14 +476,12 @@ enum InspectKind {
   aozora inspect nodes src.txt           # source nodes as JSON
   cat src.txt | aozora inspect pairs     # matched pairs from stdin
   aozora inspect gaiji -E sjis file.txt  # resolved gaiji references
-  aozora inspect slugs                   # the static slug catalogue")]
+  aozora spec schema nodes               # the *contract* for `inspect nodes`")]
 struct InspectArgs {
     /// Which JSON envelope to emit.
     #[arg(value_enum)]
     which: InspectKind,
 
-    // `common.file` is unused by `slugs` (a static catalogue with no
-    // document input); every other kind reads it.
     #[command(flatten)]
     common: CommonArgs,
 }
@@ -459,6 +497,35 @@ struct PandocArgs {
     /// JSON itself goes to stdout.
     #[arg(long, short = 't')]
     format: Option<String>,
+}
+
+/// `aozora spec <command>` — introspect the parser's own typed contracts.
+/// These read no document input; each prints a machine contract (the enum /
+/// wire-tag tables, a JSON envelope's JSON Schema, or the static slug
+/// catalogue). Grouping them under one noun keeps the reference material out
+/// of the daily-verb `--help`.
+#[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora spec kinds                # enum / wire-tag tables (json when piped)
+  aozora spec kinds --format json  # force the machine envelope
+  aozora spec schema nodes         # the JSON Schema for the `nodes` envelope
+  aozora spec slugs                # the static ［＃…］ slug catalogue")]
+struct SpecArgs {
+    #[command(subcommand)]
+    command: SpecCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum SpecCommand {
+    /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
+    /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode` variant with its
+    /// wire tag. `--format` selects human tables or the JSON envelope.
+    Kinds(KindsArgs),
+    /// Pretty-print the JSON Schema for one of the four JSON envelopes.
+    Schema(SchemaArgs),
+    /// Print the static ［＃…］ slug catalogue as the shared `aozora::json`
+    /// envelope — reads no document input.
+    Slugs,
 }
 
 fn main() -> ExitCode {
@@ -489,9 +556,8 @@ fn main() -> ExitCode {
         Command::Fmt(opts) => run_fmt(&opts, cli.color, cli.quiet, &lang),
         Command::Render(opts) => run_render(&opts, &lang),
         Command::Inspect(opts) => run_inspect(&opts, &lang),
-        Command::Kinds(opts) => introspect::run_kinds(&opts),
-        Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts, &lang),
+        Command::Spec(opts) => run_spec(&opts),
         Command::Pandoc(opts) => run_pandoc(&opts, &lang),
         Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
         Command::Init(opts) => init::run(&opts, &lang),
@@ -561,9 +627,8 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         Command::Inspect(a) => a.common.cross.config.as_deref(),
         Command::Pandoc(a) => a.common.cross.config.as_deref(),
         Command::Fmt(a) => a.cross.config.as_deref(),
-        Command::Kinds(_)
-        | Command::Schema(_)
-        | Command::Explain(_)
+        Command::Explain(_)
+        | Command::Spec(_)
         | Command::Doctor
         | Command::Init(_)
         | Command::Repl(_)
@@ -872,33 +937,12 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
 }
 
 fn run_inspect(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
-    // `slugs` is a static catalogue that reads no input, so it must stay
-    // usable on a bare terminal — guard only the kinds that read stdin.
-    if inspect_reads_stdin(args.which) {
-        let cmd = inspect_cmd(args.which);
-        if let Some(code) = input::guard_stdin(&args.common.input.file, &cmd, lang) {
-            return Ok(code);
-        }
+    // Every `inspect` kind reads a document (the static slug catalogue is a
+    // `spec slugs` view, not an `inspect` one), so the guard is unconditional.
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "inspect", lang) {
+        return Ok(code);
     }
     run_watched(&args.common, lang, || run_inspect_once(args))
-}
-
-/// Does this `inspect` kind read document input from stdin? Every kind but the
-/// static `slugs` catalogue does — split out so the guard predicate is testable.
-fn inspect_reads_stdin(kind: InspectKind) -> bool {
-    !matches!(kind, InspectKind::Slugs)
-}
-
-/// The stdin-hint command string for an `inspect` kind, e.g.
-/// `inspect nodes` — the value-enum tag mirrors what the user typed, so the
-/// hint's `aozora <cmd> <FILE>` is copy-pasteable.
-fn inspect_cmd(kind: InspectKind) -> String {
-    let tag = kind
-        .to_possible_value()
-        .expect("every non-skipped InspectKind variant has a value-enum name")
-        .get_name()
-        .to_owned();
-    format!("inspect {tag}")
 }
 
 fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
@@ -910,15 +954,11 @@ fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Project the requested JSON envelope to its JSON string. `slugs` is a
-/// static catalogue (no input read); `gaiji` scans raw source; every
-/// other kind walks the parse tree. All arms delegate to
+/// Project the requested JSON envelope to its JSON string. `gaiji` scans raw
+/// source; every other kind walks the parse tree. All arms delegate to
 /// `aozora::json`, the single authority shared with the Python / WASM /
 /// C bindings, so the bytes are identical across every surface.
 fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
-    if matches!(args.which, InspectKind::Slugs) {
-        return Ok(json::slugs());
-    }
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
@@ -932,10 +972,20 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
         InspectKind::Pairs => json::pairs(&tree),
         InspectKind::ContainerPairs => json::container_pairs(&tree),
         InspectKind::Diagnostics => json::diagnostics(tree.diagnostics()),
-        InspectKind::Slugs | InspectKind::GaijiResolutions => {
-            unreachable!("slugs and gaiji are emitted before the parse step")
+        InspectKind::GaijiResolutions => {
+            unreachable!("gaiji is emitted before the parse step")
         }
     }))
+}
+
+/// Dispatch `aozora spec <command>` to the introspection renderers. These read
+/// no document input — each prints a machine contract to stdout.
+fn run_spec(args: &SpecArgs) -> Result<ExitCode> {
+    match &args.command {
+        SpecCommand::Kinds(opts) => introspect::run_kinds(opts),
+        SpecCommand::Schema(opts) => introspect::run_schema(opts),
+        SpecCommand::Slugs => introspect::run_slugs(),
+    }
 }
 
 fn run_pandoc(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
@@ -1079,40 +1129,6 @@ mod tests {
         assert!(watch_target_paths(&paths).is_empty());
     }
 
-    // --- inspect_reads_stdin: run_inspect guard predicate (main.rs:676 `!`) ---
-
-    #[test]
-    fn inspect_reads_stdin_true_for_document_kinds() {
-        assert!(inspect_reads_stdin(InspectKind::Nodes));
-        assert!(inspect_reads_stdin(InspectKind::Pairs));
-        assert!(inspect_reads_stdin(InspectKind::ContainerPairs));
-        assert!(inspect_reads_stdin(InspectKind::Diagnostics));
-        assert!(inspect_reads_stdin(InspectKind::GaijiResolutions));
-    }
-
-    #[test]
-    fn inspect_reads_stdin_false_for_the_static_slugs_catalogue() {
-        // Deleting the `!` would flip both this and the document-kind cases.
-        assert!(!inspect_reads_stdin(InspectKind::Slugs));
-    }
-
-    // --- inspect_cmd: the copy-pasteable stdin hint (main.rs:689 body) ---
-
-    #[test]
-    fn inspect_cmd_returns_exact_command_strings() {
-        // Pins every value-enum tag, killing both String::new() and
-        // "xyzzy".into() whole-body replacements.
-        assert_eq!(inspect_cmd(InspectKind::Nodes), "inspect nodes");
-        assert_eq!(inspect_cmd(InspectKind::Pairs), "inspect pairs");
-        assert_eq!(
-            inspect_cmd(InspectKind::ContainerPairs),
-            "inspect container-pairs"
-        );
-        assert_eq!(inspect_cmd(InspectKind::Diagnostics), "inspect diagnostics");
-        assert_eq!(inspect_cmd(InspectKind::GaijiResolutions), "inspect gaiji");
-        assert_eq!(inspect_cmd(InspectKind::Slugs), "inspect slugs");
-    }
-
     // --- run_pandoc_once: real return differs from the default (main.rs:742) ---
 
     #[test]
@@ -1145,7 +1161,28 @@ mod tests {
     fn command_config_path_is_none_for_configless_subcommands() {
         // The introspection subcommands flatten no `CrossCutArgs`, so they carry
         // no config layer — the `None` arm, not the whole-body mutant.
-        let cli = Cli::try_parse_from(["aozora", "kinds"]).expect("cli parses");
+        let cli = Cli::try_parse_from(["aozora", "spec", "kinds"]).expect("cli parses");
         assert_eq!(command_config_path(&cli.command), None);
+    }
+
+    #[test]
+    fn top_level_help_lists_every_visible_subcommand() {
+        // The grouped `--help` template (`HELP_TEMPLATE`) names each command by
+        // hand, so a newly added subcommand could silently go missing from the
+        // index. Assert every visible subcommand — all but the hidden `man` and
+        // clap's auto-generated `help` — appears in the rendered top-level help.
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let help = cmd.render_long_help().to_string();
+        let missing: Vec<String> = cmd
+            .get_subcommands()
+            .filter(|s| !s.is_hide_set() && s.get_name() != "help")
+            .map(|s| s.get_name().to_owned())
+            .filter(|name| !help.contains(name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "grouped top-level --help omits {missing:?}:\n{help}",
+        );
     }
 }

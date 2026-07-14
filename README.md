@@ -125,7 +125,7 @@ the per-language jump list.
 aozora check FILE.txt           # lex + report diagnostics
 aozora fmt --check FILE.txt     # round-trip parse ∘ to_source check
 aozora render FILE.txt          # render to HTML on stdout
-aozora inspect nodes FILE.txt   # parsed nodes as JSON (pairs / gaiji / slugs …)
+aozora inspect nodes FILE.txt   # parsed nodes as JSON (pairs / gaiji …)
 aozora check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
 ```
 
@@ -152,7 +152,7 @@ consumers usually import only this one.
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan-backed lossless concrete syntax tree. Editor/formatter surface. |
 | [`crates/aozora-query`](./crates/aozora-query) | Tree-sitter-style pattern DSL (`SyntaxKind` + capture) for queries over the CST. |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`Tree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `lint` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `lint` / `fmt` / `render` / `inspect` / `pandoc` / `explain` / `spec` (kinds / schema / slugs) / `completions`. |
 | [`crates/aozora-fmt`](./crates/aozora-fmt) | Standalone idempotent formatter (`aozora-fmt` binary) — the engine behind `aozora fmt`, shared with editors and CI. |
 | [`crates/aozora-lsp`](./crates/aozora-lsp) | Language server (tower-lsp / stdio): diagnostics, formatting, hover, completion, semantic tokens. Bundled in the VS Code extension. |
 | [`crates/tree-sitter-aozora`](./crates/tree-sitter-aozora) | Tree-sitter grammar — the syntactic skeleton `aozora-lsp` queries on every keystroke. |

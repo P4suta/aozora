@@ -30,11 +30,10 @@ cargo install --git https://github.com/P4suta/aozora --locked aozora-cli
 | `lint` | Report notation-hygiene lints (non-canonical near-misses); `--fix` rewrites them. |
 | `fmt` | Round-trip `parse ∘ to_source` to the canonical form (`--check` / `--write` / `--diff`). |
 | `render` | Render to semantic HTML5 on stdout. |
-| `inspect` | Emit a document's JSON (`nodes` / `pairs` / `container-pairs` / `diagnostics` / `gaiji` / `slugs`). |
+| `inspect` | Emit a document's JSON (`nodes` / `pairs` / `container-pairs` / `diagnostics` / `gaiji`). |
 | `pandoc` | Project to the Pandoc AST — 50+ output formats via Pandoc writers. |
-| `kinds` | Tabulate every `NodeKind` / `PairKind` / … variant with its wire tag. |
-| `schema` | Pretty-print the JSON Schema for one of the JSON envelopes. |
-| `explain` | Prose for a `NodeKind` or a diagnostic code. |
+| `explain` | Prose for a `NodeKind` tag, notation concept, or a diagnostic code. |
+| `spec` | Query the tool's own contracts: `kinds` (wire-tag tables) / `schema <which>` (JSON Schema) / `slugs` (static ［＃…］ catalogue). |
 | `completions` | Print a shell completion script (bash / zsh / fish / …). |
 
 All document subcommands accept `-` (or no path) to read from stdin.

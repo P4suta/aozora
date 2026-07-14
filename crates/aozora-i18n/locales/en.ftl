@@ -62,10 +62,10 @@ explain-unknown = unknown explain target `{$target}`
 # (edit-distance match over node tags, concepts, and diagnostic codes).
 # $suggestion is the closest known target — a literal identifier, not localized.
 explain-did-you-mean = did you mean `{$suggestion}`?
-# Tail listing where the valid set lives. `aozora kinds` and the example code
+# Tail listing where the valid set lives. `aozora spec kinds` and the example code
 # are literal shell text and stay the same in every locale.
 explain-unknown-hint =
-    expected a NodeKind tag or notation concept (run `aozora kinds`), or a
+    expected a NodeKind tag or notation concept (run `aozora spec kinds`), or a
     diagnostic code such as `aozora::lex::unclosed_bracket`
 
 ## Notation concepts

@@ -5,7 +5,9 @@
 //! the `{ "schemaVersion": 2, "data": [ … ] }` envelope reaches
 //! stdout. The byte-level shape of each envelope is pinned by the unit
 //! tests in `aozora::json`; here we only confirm the CLI surfaces it
-//! (and that `slugs` needs no input while `gaiji` resolves references).
+//! (and that `gaiji` resolves references while the others walk the tree).
+//! The static `slugs` catalogue is a `spec` view (`aozora spec slugs`,
+//! covered in `introspect.rs`), not an `inspect` document view.
 //!
 //! Pure stdlib (mirrors `smoke.rs`) so the test crate stays dep-light.
 
@@ -116,16 +118,6 @@ fn inspect_gaiji_resolutions_is_an_accepted_alias() {
     let (status, stdout, _) = run(&["inspect", "gaiji-resolutions"], Some("※［＃「々」］"));
     assert!(status.success());
     assert!(stdout.contains(r#""resolved":"々""#), "alias: {stdout:?}");
-}
-
-#[test]
-fn inspect_slugs_needs_no_input() {
-    // `slugs` is a static catalogue: it must succeed with neither stdin
-    // nor a file argument.
-    let (status, stdout, stderr) = run(&["inspect", "slugs"], None);
-    assert!(status.success(), "slugs failed: {stderr:?}");
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
-    assert!(stdout.contains(r#""canonical":"#), "slugs: {stdout:?}");
 }
 
 #[test]

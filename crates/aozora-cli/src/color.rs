@@ -9,7 +9,7 @@
 //! detection.
 //!
 //! Scope and known limitations (intentional, not bugs):
-//! - `comfy-table` (`aozora kinds`) is built with `default-features = false`,
+//! - `comfy-table` (`aozora spec kinds`) is built with `default-features = false`,
 //!   so its colour / TTY logic is compiled out — those tables are always
 //!   monochrome and pipe-safe, and we deliberately do not enable its `tty`
 //!   feature.

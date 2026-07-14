@@ -281,7 +281,7 @@ rowan = "0.16"
 # way; we pick the more active one.
 pandoc_ast = "0.8"
 
-# Unicode-width-aware terminal table rendering — used by `aozora kinds`
+# Unicode-width-aware terminal table rendering — used by `aozora spec kinds`
 # (CLI introspection) to lay out the per-enum tables. Hand-rolled
 # alignment would mis-handle the East-Asian-Wide camelCase tags some
 # `NodeKind` rows carry; comfy-table is the maintained mainstream

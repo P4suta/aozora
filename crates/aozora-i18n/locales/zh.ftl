@@ -50,10 +50,10 @@ explain-unknown = 未知的 explain 对象 `{$target}`
 # 当存在与未知对象相近的候选（对节点标签、概念、诊断代码做编辑距离匹配）时，
 # 追加到上一行。$suggestion 是最接近的已知对象，是字面标识符，不做本地化。
 explain-did-you-mean = 是否想找 `{$suggestion}`?
-# 指明有效集合所在的结尾。`aozora kinds` 与示例代码是原样的 shell 文本，
+# 指明有效集合所在的结尾。`aozora spec kinds` 与示例代码是原样的 shell 文本，
 # 在每种语言中都相同。
 explain-unknown-hint =
-    应为 NodeKind 标签或记法概念（运行 `aozora kinds`），或诸如
+    应为 NodeKind 标签或记法概念（运行 `aozora spec kinds`），或诸如
     `aozora::lex::unclosed_bracket` 的诊断代码
 
 ## 记法概念
