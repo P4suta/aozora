@@ -365,9 +365,18 @@ rustyline = "18.0"
 # the ADR-0017 stable-pin policy. CLI-only, like rustyline / notify / the
 # clap_* generators above; the TUI is a thin shell over the parser engine and
 # reimplements no parse / render / diagnostic logic.
-ratatui = "0.30"
+#
+# Backend selection: both crates ship several backends (crossterm / termion /
+# termwiz / termina) behind features, and their default sets would land the
+# unused termwiz backend — with its wezterm-* subtree and `terminfo` (WTFPL,
+# outside our SPDX allow-list) — in `Cargo.lock`, tripping the lockfile-based
+# dependency-review gate even though nothing compiles it. We use crossterm
+# only, so `default-features = false` + `features = ["crossterm"]` keeps the
+# graph to the one backend we drive and drops that subtree from the lock
+# entirely (only pull what we use).
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
-tui-textarea-2 = "0.12"
+tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
 
 # Localization (aozora-i18n) — the Project Fluent stack, the de-facto Rust
 # i18n standard (Mozilla's localization system, the engine behind Firefox).

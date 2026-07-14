@@ -24,13 +24,15 @@
 //! - `Ctrl-Q` — quit.
 //!
 //! The heart is the pure [`derive()`] function (`source + preview + lang →
-//! preview text + diagnostics`) and the pure [`command_for`] keybind decoder;
-//! the state transitions ([`App::toggle_lang`], [`App::toggle_preview`],
-//! [`App::save`], the [`App::recompute_due`] debounce test) and the
-//! [`render`] layout are all exercised headlessly — over `ratatui`'s
+//! preview text + diagnostics`), the pure [`command_for`] keybind decoder, and
+//! the pure [`all_terminals`] tty guard; the state transitions
+//! ([`App::toggle_lang`], [`App::toggle_preview`], [`App::save`], the
+//! [`App::recompute_due`] debounce test) and the [`render`] layout are all
+//! exercised headlessly — over `ratatui`'s
 //! [`TestBackend`](ratatui::backend::TestBackend) and by direct state calls —
 //! so the whole surface is unit-tested without a terminal. Only the terminal
-//! setup and event loop ([`run_app`] / [`event_loop`]) need a real tty.
+//! I/O shells ([`run`]'s alternate-screen setup and the [`run_app`] /
+//! [`event_loop`] draw / input loop) need a real tty.
 //!
 //! The chrome (pane titles, the keybind legend, save / error status) is
 //! localized through `aozora-i18n`; the preview and diagnostic *bytes* are the
@@ -490,11 +492,27 @@ fn render(app: &App, frame: &mut Frame<'_>) {
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
 }
 
+/// Whether the TUI can run: it reads key events from stdin and draws the panes
+/// to stdout, so it needs **every** stream it drives to be a real terminal — a
+/// pipe on any end (`… | aozora tui` or `aozora tui | …`) means it cannot
+/// operate. Pure over the per-stream tty flags (`[stdin, stdout]` in [`run`]),
+/// so the "all, not any" rule is unit-tested rather than resting on the
+/// untestable real-tty guard.
+fn all_terminals(stream_ttys: [bool; 2]) -> bool {
+    stream_ttys.iter().all(|&is_tty| is_tty)
+}
+
 /// Start the editor: refuse a non-terminal (the TUI needs a tty for rendering
 /// and key input — a piped invocation gets an actionable error, not a hang),
 /// open the optional file, then run the loop. Always exits 0 on a clean quit.
+///
+/// Real-tty only past the guard ([`run_app`] enters raw mode + the alternate
+/// screen), so the sweep cannot exercise it; its one decision — the pure
+/// [`all_terminals`] predicate — is unit-tested, and the refusal path is
+/// covered end-to-end by the `tui_without_a_terminal_refuses` smoke test.
+#[cfg_attr(test, mutants::skip)]
 pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+    if !all_terminals([io::stdin().is_terminal(), io::stdout().is_terminal()]) {
         anyhow::bail!("{}", i18n::t(lang, "tui-no-tty"));
     }
     let app = App::new(args, lang)?;
@@ -702,6 +720,28 @@ mod tests {
         assert_eq!(
             command_for(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             Command::Edit
+        );
+    }
+
+    // --- all_terminals: the tty guard ---
+
+    #[test]
+    fn all_terminals_needs_every_stream() {
+        // Every stream the TUI drives must be a real tty; a pipe on any end (or
+        // both) is not interactive — the "all, not any" rule the `run` guard
+        // rests on. Order is `[stdin, stdout]`.
+        assert!(all_terminals([true, true]), "both ttys → interactive");
+        assert!(
+            !all_terminals([true, false]),
+            "piped stdout → not interactive"
+        );
+        assert!(
+            !all_terminals([false, true]),
+            "piped stdin → not interactive"
+        );
+        assert!(
+            !all_terminals([false, false]),
+            "both piped → not interactive"
         );
     }
 
