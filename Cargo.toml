@@ -341,6 +341,43 @@ notify = "8.2"
 # terminal handling. CLI-only, like the clap_* generators / notify above.
 rustyline = "18.0"
 
+# Full-screen terminal UI for the live `aozora tui` editor. `ratatui` is the
+# de-facto Rust TUI framework — the maintained successor to tui-rs, the widget
+# / layout / immediate-mode-render engine behind gitui, bottom, atuin and
+# countless terminal apps. `crossterm` is its default cross-platform backend
+# (raw mode, the alternate screen, key events; the same terminal layer ratatui
+# re-exports). `tui-textarea-2` is the maintained multi-line editor widget for
+# ratatui — the source EDIT pane, so the TUI reuses a real editor instead of
+# hand-rolling cursor / selection / undo handling.
+#
+# On `tui-textarea-2` vs the upstream `tui-textarea`: the two are the SAME
+# widget (`tui_textarea::TextArea`, identical API); `tui-textarea-2`
+# (github.com/srothgan/tui-textarea) is the fork that tracks current ratatui,
+# and it is the one we can actually use here. Upstream `tui-textarea` 0.7 is
+# pinned to `ratatui ^0.29`, and `ratatui 0.29.0` in turn hard-pins
+# `unicode-width =0.2.0` — which is unsatisfiable alongside the already-shipped
+# `rustyline` (the `aozora repl` line editor), whose `unicode-width ^0.2.2`
+# lives in the same binary's dependency graph. Staying on STABLE, official
+# ratatui therefore means ratatui 0.30 (which relaxes that pin) + crossterm
+# 0.29 + tui-textarea-2 0.12 (its `crossterm` default feature pulls the same
+# ratatui-core / ratatui-widgets 0.30 crates and crossterm 0.29 the umbrella
+# uses). The alternative — pre-release ratatui 0.29.1-alpha — is rejected by
+# the ADR-0017 stable-pin policy. CLI-only, like rustyline / notify / the
+# clap_* generators above; the TUI is a thin shell over the parser engine and
+# reimplements no parse / render / diagnostic logic.
+#
+# Backend selection: both crates ship several backends (crossterm / termion /
+# termwiz / termina) behind features, and their default sets would land the
+# unused termwiz backend — with its wezterm-* subtree and `terminfo` (WTFPL,
+# outside our SPDX allow-list) — in `Cargo.lock`, tripping the lockfile-based
+# dependency-review gate even though nothing compiles it. We use crossterm
+# only, so `default-features = false` + `features = ["crossterm"]` keeps the
+# graph to the one backend we drive and drops that subtree from the lock
+# entirely (only pull what we use).
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
+tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
+
 # Localization (aozora-i18n) — the Project Fluent stack, the de-facto Rust
 # i18n standard (Mozilla's localization system, the engine behind Firefox).
 # Message catalogs are external `.ftl` files so translators never touch Rust

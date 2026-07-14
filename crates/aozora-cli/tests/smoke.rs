@@ -572,3 +572,24 @@ fn repl_surfaces_diagnostics_inline() {
         "diagnostic code shown inline: {stdout}"
     );
 }
+
+// ---------------------------------------------------------------------
+// `aozora tui` — the full-screen editor refuses a non-terminal
+// ---------------------------------------------------------------------
+
+#[test]
+fn tui_without_a_terminal_refuses_with_an_actionable_error() {
+    // The smoke harness always pipes stdout (and the test process's stdin is
+    // not a tty), so the TUI's terminal guard fires immediately instead of
+    // hanging on a render / read it cannot do. It exits non-zero and points
+    // the user at the scriptable alternatives.
+    let (status, _stdout, stderr) = run(&["tui"], None);
+    assert!(
+        !status.success(),
+        "tui must refuse a non-terminal: {status:?} {stderr}"
+    );
+    assert!(
+        stderr.contains("terminal"),
+        "error names the missing terminal: {stderr}"
+    );
+}

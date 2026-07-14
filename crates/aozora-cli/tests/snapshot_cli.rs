@@ -130,3 +130,10 @@ fn snapshot_repl_help() {
         insta::assert_snapshot!(run(&["repl", "--help"]));
     });
 }
+
+#[test]
+fn snapshot_tui_help() {
+    insta::with_settings!({ filters => cli_filters() }, {
+        insta::assert_snapshot!(run(&["tui", "--help"]));
+    });
+}

@@ -77,6 +77,7 @@ mod logging;
 mod manpage;
 mod repl;
 mod timing;
+mod tui;
 mod watch;
 
 use std::env;
@@ -107,6 +108,7 @@ use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
 use crate::repl::ReplArgs;
 use crate::timing::Timer;
+use crate::tui::TuiArgs;
 
 /// Help / usage styling: bold-green headers and usage line (the single
 /// accent), cyan literals (flag names and their values), plain placeholders.
@@ -228,6 +230,13 @@ enum Command {
     /// `:load` / `:help` / `:quit` tune the session; line editing and history
     /// come from rustyline on a terminal, and a piped stdin is scriptable.
     Repl(ReplArgs),
+    /// Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane
+    /// (rendered HTML / nodes / Pandoc), and a DIAGNOSTICS pane, all refreshed
+    /// on every keystroke (debounced) through the same parse / render / json
+    /// engine as the document subcommands. The editor-free counterpart to
+    /// `--watch`. `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the
+    /// preview view, `Ctrl-Q` quits. An optional `[FILE]` opens for editing.
+    Tui(TuiArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
     /// the live command tree, so it always matches the installed
@@ -487,6 +496,7 @@ fn main() -> ExitCode {
         Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
         Command::Init(opts) => init::run(&opts, &lang),
         Command::Repl(opts) => repl::run(&opts, &lang),
+        Command::Tui(opts) => tui::run(&opts, &lang),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -557,6 +567,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         | Command::Doctor
         | Command::Init(_)
         | Command::Repl(_)
+        | Command::Tui(_)
         | Command::Completions(_)
         | Command::Man(_) => None,
     }

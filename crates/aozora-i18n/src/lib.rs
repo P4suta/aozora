@@ -345,6 +345,21 @@ mod tests {
             "repl-label-pandoc",
             "repl-label-diag",
             "repl-diag-none",
+            // `aozora tui` chrome: pane titles, the modified marker, the
+            // clean-parse placeholder, the footer keybind words, the no-file
+            // hint, and the non-tty refusal (the arg-bearing save keys resolve
+            // via `tf` below).
+            "tui-title-source",
+            "tui-title-preview",
+            "tui-title-diagnostics",
+            "tui-modified",
+            "tui-diag-none",
+            "tui-key-save",
+            "tui-key-lang",
+            "tui-key-preview",
+            "tui-key-quit",
+            "tui-no-file",
+            "tui-no-tty",
         ];
         for tag in ["en", "ja", "zh"] {
             let l = lang(tag);
@@ -402,6 +417,14 @@ mod tests {
             usage.set("cmd", "mode");
             usage.set("expected", "nodes, html");
             assert_ne!(tf(&l, "repl-usage", &usage), "repl-usage");
+            // The arg-bearing `aozora tui` save keys resolve through `tf` too.
+            let mut saved = FluentArgs::new();
+            saved.set("path", "book.txt");
+            assert_ne!(tf(&l, "tui-saved", &saved), "tui-saved");
+            let mut save_err = FluentArgs::new();
+            save_err.set("path", "book.txt");
+            save_err.set("error", "boom");
+            assert_ne!(tf(&l, "tui-save-error", &save_err), "tui-save-error");
         }
     }
 

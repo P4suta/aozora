@@ -402,6 +402,39 @@ repl-load-error = cannot read {$path}: {$error}
 repl-unknown-meta = unknown command `:{$cmd}` — type :help for the list
 repl-usage = usage: :{$cmd} {$expected}
 
+## TUI live editor
+##
+## Chrome for the full-screen `aozora tui` editor: the three pane titles, the
+## unsaved-changes marker, the clean-parse placeholder, the footer keybind
+## legend (action words only — the ^S / ^L / ^P / ^Q glyphs and the html /
+## nodes / en literals stay the same in every locale), and the save / error
+## status lines. The pane *contents* — rendered HTML, node JSON, the Pandoc
+## AST, and the English diagnostic report — are the machine axis and are never
+## routed through here (ADR-0033).
+
+# Pane titles (a file path, view tag, or diagnostic count is appended in code).
+tui-title-source = source
+tui-title-preview = preview
+tui-title-diagnostics = diagnostics
+# The unsaved-changes marker appended to the source title.
+tui-modified = modified
+# Placeholder in the diagnostics pane when the parse is clean.
+tui-diag-none = (no diagnostics)
+
+# Footer keybind legend — the action word after each Ctrl glyph.
+tui-key-save = save
+tui-key-lang = lang
+tui-key-preview = preview
+tui-key-quit = quit
+
+# Footer status after Ctrl-S. $path is the saved file; $error is the English
+# OS message. The no-file line fires when the buffer was opened without a path.
+tui-saved = saved {$path}
+tui-save-error = cannot save {$path}: {$error}
+tui-no-file = no file to save — reopen with a path: aozora tui FILE
+# Refusal when stdout / stdin is not a terminal (piped): the TUI needs a tty.
+tui-no-tty = aozora tui needs an interactive terminal (try aozora repl or --watch)
+
 ## LSP editor surface
 ##
 ## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
