@@ -42,6 +42,11 @@ jobs:
           # workspace licence. Listed defensively so a future
           # transitive dep on an MIT-0 crate (the recent crates.io
           # micro-utility trend) does not require a re-review.
+          #
+          # BSL-1.0 (Boost Software License 1.0) is OSI-approved and
+          # permissive; it covers rustyline's Windows-only clipboard
+          # deps (clipboard-win / error-code), which are not linked
+          # into the Linux binary. Mirrors the same entry in deny.toml.
           allow-licenses: >-
             Apache-2.0,
             Apache-2.0 WITH LLVM-exception,
@@ -54,7 +59,8 @@ jobs:
             Unicode-DFS-2016,
             CC0-1.0,
             MPL-2.0,
-            Zlib
+            Zlib,
+            BSL-1.0
 
           # CI-only GitHub Actions are build-time tooling — never linked
           # into or distributed with the published crates — so their

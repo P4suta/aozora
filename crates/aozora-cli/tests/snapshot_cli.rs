@@ -123,3 +123,10 @@ fn snapshot_init_help() {
         insta::assert_snapshot!(run(&["init", "--help"]));
     });
 }
+
+#[test]
+fn snapshot_repl_help() {
+    insta::with_settings!({ filters => cli_filters() }, {
+        insta::assert_snapshot!(run(&["repl", "--help"]));
+    });
+}

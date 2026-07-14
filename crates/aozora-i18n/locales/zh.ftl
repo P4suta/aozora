@@ -336,6 +336,52 @@ init-step-render = 将示例渲染为 HTML
 init-step-check = 报告诊断
 init-step-doctor = 检查生效配置
 
+## repl
+##
+## `aozora repl` — 交互式的读取-求值-打印循环。此处全部为面向人类的外壳:
+## 横幅、区块标签、元命令的回执、帮助与就地错误都会本地化。循环所包裹的视图
+## 内容 — 节点 JSON、渲染后的 HTML、Pandoc AST 与英文诊断报告 — 属于机器轴，
+## 绝不经过此处 (ADR-0033)。`:command` 名称及其字面参数在所有语言中保持一致。
+
+# 启动时显示一次。
+repl-banner = aozora repl — 输入记法即可立即查看 nodes / HTML / 诊断。命令列表见 :help，退出用 :quit。
+
+# `:help` — 元命令一览，仅本地化末尾的说明。
+repl-help =
+    命令:
+      :mode  nodes | html | pandoc | all   选择要显示的视图
+      :lang  en | ja | zh                  此界面的显示语言
+      :encoding  auto | utf8 | sjis        :load 使用的解码器
+      :load  FILE                          解析文件内容
+      :help                                显示此帮助
+      :quit                                退出循环（也可用 Ctrl-D）
+
+    输入一行青空文库记法即可看到解析结果。
+
+# 每个视图与诊断块之前的区块标签。
+repl-label-nodes = 节点:
+repl-label-html = HTML:
+repl-label-pandoc = Pandoc:
+repl-label-diag = 诊断:
+# 解析无误时诊断块中显示的占位文本。
+repl-diag-none = (无诊断)
+
+# `:mode` / `:lang` / `:encoding` 切换后的回执。值 ($mode / $lang / $encoding)
+# 为字面标签，在所有语言中保持一致。
+repl-mode-set = 模式 → {$mode}
+repl-lang-set = 语言 → {$lang}
+repl-encoding-set = 编码 → {$encoding}
+
+# `:load` — 加载文件求值前的标题，以及就地的（非致命）读取/解码错误。
+# $path 为文件，$error 为英文引擎消息。
+repl-loaded = 已加载 {$path}
+repl-load-error = 无法读取 {$path}: {$error}
+
+# 未知的 `:command`（$cmd 不含冒号），以及参数缺失/无效时的用法
+# （$expected 列出可接受的取值）。
+repl-unknown-meta = 未知命令 `:{$cmd}` — 列表见 :help
+repl-usage = 用法: :{$cmd} {$expected}
+
 ## LSP 编辑器外壳
 ##
 ## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、

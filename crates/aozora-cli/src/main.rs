@@ -75,6 +75,7 @@ mod input;
 mod introspect;
 mod logging;
 mod manpage;
+mod repl;
 mod timing;
 mod watch;
 
@@ -104,6 +105,7 @@ use crate::diagnostics_render::DiagFormat;
 use crate::init::InitArgs;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
+use crate::repl::ReplArgs;
 use crate::timing::Timer;
 
 /// Help / usage styling: bold-green headers and usage line (the single
@@ -218,6 +220,14 @@ enum Command {
     /// immediately, and a `.gitignore`. Existing files are kept untouched
     /// unless `--force`; idempotent. `--no-sample` / `--no-gitignore` opt out.
     Init(InitArgs),
+    /// Start an interactive read-eval-print loop: type a line of notation and
+    /// see its parsed nodes, rendered HTML, Pandoc AST, and diagnostics
+    /// immediately (the terminal counterpart to the web playground). Reuses the
+    /// same parse / render / json engine as the document subcommands, so its
+    /// views can never disagree with them. `:mode` / `:lang` / `:encoding` /
+    /// `:load` / `:help` / `:quit` tune the session; line editing and history
+    /// come from rustyline on a terminal, and a piped stdin is scriptable.
+    Repl(ReplArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
     /// the live command tree, so it always matches the installed
@@ -476,6 +486,7 @@ fn main() -> ExitCode {
         Command::Pandoc(opts) => run_pandoc(&opts, &lang),
         Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
         Command::Init(opts) => init::run(&opts, &lang),
+        Command::Repl(opts) => repl::run(&opts, &lang),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -545,6 +556,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         | Command::Explain(_)
         | Command::Doctor
         | Command::Init(_)
+        | Command::Repl(_)
         | Command::Completions(_)
         | Command::Man(_) => None,
     }

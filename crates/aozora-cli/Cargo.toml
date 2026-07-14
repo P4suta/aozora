@@ -44,6 +44,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 notify = { workspace = true }
+rustyline = { workspace = true } # interactive line editor for `aozora repl`
 # stderr-only structured logging for the CLI shell, gated behind `-v`/`-q` /
 # `AOZORA_LOG`. Already in `[workspace.dependencies]` (aozora-lsp is the other
 # consumer); `env-filter` + `fmt` features are inherited from there, so this

@@ -276,6 +276,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exhaustive per-locale key enumeration; splitting the single catalog-parity contract across helpers would scatter it and read worse"
+    )]
     fn shell_keys_present_in_every_locale() {
         // Each shell key must resolve to something other than the bare key
         // (the missing-key signal) in every locale — no accidental gaps.
@@ -332,6 +336,15 @@ mod tests {
             "init-step-render",
             "init-step-check",
             "init-step-doctor",
+            // `aozora repl` chrome: banner, help, section labels, and the
+            // clean-parse placeholder (the arg-bearing keys resolve via `tf`).
+            "repl-banner",
+            "repl-help",
+            "repl-label-nodes",
+            "repl-label-html",
+            "repl-label-pandoc",
+            "repl-label-diag",
+            "repl-diag-none",
         ];
         for tag in ["en", "ja", "zh"] {
             let l = lang(tag);
@@ -365,6 +378,30 @@ mod tests {
             let mut target = FluentArgs::new();
             target.set("target", "bogus");
             assert_ne!(tf(&l, "explain-unknown", &target), "explain-unknown");
+            // The arg-bearing `aozora repl` keys resolve through `tf` too.
+            let mut mode = FluentArgs::new();
+            mode.set("mode", "all");
+            assert_ne!(tf(&l, "repl-mode-set", &mode), "repl-mode-set");
+            let mut msg_lang = FluentArgs::new();
+            msg_lang.set("lang", "ja");
+            assert_ne!(tf(&l, "repl-lang-set", &msg_lang), "repl-lang-set");
+            let mut enc = FluentArgs::new();
+            enc.set("encoding", "utf8");
+            assert_ne!(tf(&l, "repl-encoding-set", &enc), "repl-encoding-set");
+            let mut path = FluentArgs::new();
+            path.set("path", "book.txt");
+            assert_ne!(tf(&l, "repl-loaded", &path), "repl-loaded");
+            let mut load_err = FluentArgs::new();
+            load_err.set("path", "book.txt");
+            load_err.set("error", "boom");
+            assert_ne!(tf(&l, "repl-load-error", &load_err), "repl-load-error");
+            let mut unknown = FluentArgs::new();
+            unknown.set("cmd", "frob");
+            assert_ne!(tf(&l, "repl-unknown-meta", &unknown), "repl-unknown-meta");
+            let mut usage = FluentArgs::new();
+            usage.set("cmd", "mode");
+            usage.set("expected", "nodes, html");
+            assert_ne!(tf(&l, "repl-usage", &usage), "repl-usage");
         }
     }
 

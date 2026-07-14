@@ -352,6 +352,56 @@ init-step-render = render the sample to HTML
 init-step-check = report diagnostics
 init-step-doctor = verify the effective configuration
 
+## repl
+##
+## `aozora repl` — the interactive read-eval-print loop. Everything here is
+## human chrome: the banner, the section labels, the meta-command
+## acknowledgements, the help, and the inline errors are localized. The view
+## *contents* the loop wraps — node JSON, rendered HTML, the Pandoc AST, and the
+## English diagnostic report — are the machine axis and are never routed through
+## here (ADR-0033). The `:command` names and their literal arguments stay the
+## same in every locale.
+
+# Shown once at startup.
+repl-banner = aozora repl — type notation to see nodes / HTML / diagnostics. :help for commands, :quit to exit.
+
+# `:help` — the meta-command reference. Only the trailing descriptions localize.
+repl-help =
+    Commands:
+      :mode  nodes | html | pandoc | all   choose which view(s) to show
+      :lang  en | ja | zh                  message language of this chrome
+      :encoding  auto | utf8 | sjis        decoder used by :load
+      :load  FILE                          parse a file's contents
+      :help                                show this help
+      :quit                                leave the loop (or Ctrl-D)
+
+    Type a line of Aozora notation to see it parsed.
+
+# Section labels prefixing each shown view and the diagnostics block.
+repl-label-nodes = nodes:
+repl-label-html = html:
+repl-label-pandoc = pandoc:
+repl-label-diag = diagnostics:
+# Placeholder in the diagnostics block when the parse is clean.
+repl-diag-none = (no diagnostics)
+
+# Acknowledgements after a `:mode` / `:lang` / `:encoding` switch. The value
+# ($mode / $lang / $encoding) is a literal tag and stays the same in every locale.
+repl-mode-set = mode → {$mode}
+repl-lang-set = language → {$lang}
+repl-encoding-set = encoding → {$encoding}
+
+# `:load` — the header shown before a loaded file's evaluation, and the inline
+# (non-fatal) read/decode error. $path is the file; $error is the English
+# engine message.
+repl-loaded = loaded {$path}
+repl-load-error = cannot read {$path}: {$error}
+
+# An unrecognised `:command` ($cmd, without the leading colon), and the usage
+# line for a missing / invalid argument ($expected lists the accepted values).
+repl-unknown-meta = unknown command `:{$cmd}` — type :help for the list
+repl-usage = usage: :{$cmd} {$expected}
+
 ## LSP editor surface
 ##
 ## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
