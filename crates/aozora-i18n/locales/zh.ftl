@@ -34,6 +34,68 @@ explain-repro-label = 复现示例:
 explain-fixed-label = 修正后:
 explain-see-label = 参见:
 
+# 当 `aozora explain <TARGET>` 指向解析器无法识别的对象时输出（stderr，非零
+# 退出）。$target 是未能识别的参数。
+explain-unknown = 未知的 explain 对象 `{$target}`
+# 当存在与未知对象相近的候选（对节点标签、概念、诊断代码做编辑距离匹配）时，
+# 追加到上一行。$suggestion 是最接近的已知对象，是字面标识符，不做本地化。
+explain-did-you-mean = 是否想找 `{$suggestion}`?
+# 指明有效集合所在的结尾。`aozora kinds` 与示例代码是原样的 shell 文本，
+# 在每种语言中都相同。
+explain-unknown-hint =
+    应为 NodeKind 标签或记法概念（运行 `aozora kinds`），或诸如
+    `aozora::lex::unclosed_bracket` 的诊断代码
+
+## 记法概念
+##
+## `aozora explain <concept>` 的文字。面向读者常输入、但与 NodeKind 手册页并非
+## 一一对应的记法族 —— 缩写（`tcy`）与日文名称（`傍点`、`ルビ` …）。每个族有一组
+## `concept-<slug>-title`（标题）与 `concept-<slug>-body`（简短文字）。其中的青空
+## 记法字形是字面语法，在每种语言中都相同。
+
+concept-ruby-title = 注音 (ルビ / ruby) — 读音注记
+concept-ruby-body =
+    在主文旁标注的小号读音: 青空《あおぞら》。当范围有歧义时，用开头的 `｜`
+    明确指定注音的主文: ｜青空《あおぞら》。
+
+    运行 `aozora explain ruby` 查看完整手册页。
+
+concept-gaiji-title = 外字 (gaiji) — 非 Unicode 字符引用
+concept-gaiji-body =
+    无法用普通 Unicode 书写的字符，写作 ※［＃…］ 引用 —— 通常是 JIS X 0213 的
+    面区点（`第3水準1-15-23`）或 `U+XXXX` 代码。
+
+    运行 `aozora explain gaiji` 查看完整手册页；另见诊断 `unresolved_gaiji`。
+
+concept-kaeriten-title = 返り点 (kaeriten) — 汉文返读符号
+concept-kaeriten-body =
+    用于按日语语序阅读汉文的返读符号，写作 ［＃…］ 注记 —— 有 レ 点以及
+    一/二、上/下、甲/乙 各族。
+
+    运行 `aozora explain kaeriten` 查看完整手册页；另见诊断
+    `bracketed_kaeriten_no_pair`、`kaeriten_outside_kanbun`。
+
+concept-bouten-title = 傍点 (bouten) — 强调点
+concept-bouten-body =
+    标在文字旁的强调点，相当于青空记法中的斜体: ［＃「ここ」に傍点］。同族的
+    傍線 画线而非点。
+
+    运行 `aozora explain bouten` 查看完整手册页；另见诊断 `bouten_target_ambiguous`。
+
+concept-warichu-title = 割注 (warichu) — 行内夹注
+concept-warichu-body =
+    在正文中以半高排成两行的夹注，以 ［＃割り注］ 开始、以 ［＃割り注終わり］
+    结束。
+
+    运行 `aozora explain warichu` 查看完整手册页。
+
+concept-tcy-title = 縦中横 (tate-chu-yoko) — 竖排中的横排
+concept-tcy-body =
+    在竖排文本中把一小段横排 —— 通常是两位数字 —— 直立排布的记法，写作
+    ［＃「25」は縦中横］。
+
+    NodeKind 标签为 `combineUpright`；另见诊断 `tcy_target_not_found`。
+
 ## 诊断文字
 ##
 ## 每个诊断代码有一组 `diag-<slug>-title`（标题）与 `diag-<slug>-body`（详情）；

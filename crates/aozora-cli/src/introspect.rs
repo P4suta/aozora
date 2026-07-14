@@ -17,6 +17,7 @@
 //! Output goes to stdout; non-zero exit only on argument errors.
 
 use std::io::{self, IsTerminal, Write};
+use std::mem;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -92,12 +93,16 @@ pub(crate) struct KindsArgs {
 #[derive(Debug, Args)]
 #[command(after_long_help = "Examples:
   aozora explain ruby                          # NodeKind handbook chapter
+  aozora explain tcy                           # notation concept (縦中横)
   aozora explain aozora::lex::unclosed_bracket # diagnostic code -> help + URL
-  aozora explain unresolved_gaiji              # short form of the code")]
+  aozora explain unresolved_gaiji              # short form of the code
+
+An unrecognised target suggests the nearest known one (\"did you mean …?\").")]
 pub(crate) struct ExplainArgs {
     /// A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run
-    /// `aozora kinds` for the list) or a diagnostic code (e.g.
-    /// `aozora::lex::unclosed_bracket`, or the short `unclosed_bracket`).
+    /// `aozora kinds` for the list), a notation concept (e.g. `tcy`,
+    /// `傍点`), or a diagnostic code (e.g. `aozora::lex::unclosed_bracket`,
+    /// or the short `unclosed_bracket`).
     #[arg(value_name = "TARGET")]
     pub(crate) kind: String,
 }
@@ -232,29 +237,54 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Print the explainer for `args.kind`. Recognises every camelCase
-/// tag exposed by `aozora kinds`. Returns a non-zero exit code when
-/// the tag is unknown, with a hint pointing back at `aozora kinds`.
+/// Print the explainer for `args.kind`. Resolves a `NodeKind` handbook page,
+/// a notation concept, or a diagnostic code (see [`resolve_explain`]). On an
+/// unrecognised target it exits non-zero with a localized message that offers
+/// the nearest known target ("did you mean …?") plus a hint pointing back at
+/// `aozora kinds`.
 pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
-    // NodeKind tags (camelCase, no `_`/`::`) and diagnostic codes (which
-    // always carry `_` and/or `::`) never collide, so try the node page
-    // first and fall back to a diagnostic-code lookup.
-    let prose = explain_kind(&args.kind).or_else(|| explain_diagnostic(&args.kind, lang));
-    let mut stdout = io::stdout().lock();
-    match prose {
+    match resolve_explain(&args.kind, lang) {
         Some(text) => {
+            let mut stdout = io::stdout().lock();
             writeln!(stdout, "{text}").context("write explain to stdout")?;
             Ok(ExitCode::SUCCESS)
         }
-        None => {
-            bail!(
-                "unknown explain target {:?}; expected a NodeKind tag (run \
-                 `aozora kinds`) or a diagnostic code such as \
-                 `aozora::lex::unclosed_bracket`",
-                args.kind
-            );
-        }
+        None => bail!("{}", unknown_target_message(&args.kind, lang)),
     }
+}
+
+/// Resolve `target` to its explainer prose, in the deterministic precedence
+/// `NodeKind tag > concept > diagnostic code`.
+///
+/// The three layers do not collide: node-page and concept keys are disjoint by
+/// construction, and diagnostic codes always carry `_` and/or `::` (which the
+/// node-page / concept keys never do), so a full or short code only ever
+/// reaches the last layer. The order is a guarantee, not a coincidence — a key
+/// that is both a node-page tag and a concept always renders the node page.
+fn resolve_explain(target: &str, lang: &LanguageIdentifier) -> Option<String> {
+    explain_kind(target)
+        .or_else(|| explain_concept(target, lang))
+        .or_else(|| explain_diagnostic(target, lang))
+}
+
+/// The localized "unknown explain target" error, with a "did you mean `Y`?"
+/// tail when a near neighbour exists ([`nearest_target`]) and a hint pointing
+/// at `aozora kinds`. Human-only: the suggestion and prose respect `lang`,
+/// while the exit code (the machine axis) is unchanged — this string is what
+/// `run_explain` bails with.
+fn unknown_target_message(target: &str, lang: &LanguageIdentifier) -> String {
+    let mut args = FluentArgs::new();
+    args.set("target", target.to_owned());
+    let mut msg = i18n::tf(lang, "explain-unknown", &args);
+    if let Some(suggestion) = nearest_target(target) {
+        let mut hint = FluentArgs::new();
+        hint.set("suggestion", suggestion.to_owned());
+        msg.push(' ');
+        msg.push_str(&i18n::tf(lang, "explain-did-you-mean", &hint));
+    }
+    msg.push('\n');
+    msg.push_str(&i18n::t(lang, "explain-unknown-hint"));
+    msg
 }
 
 // ---- table layout ---------------------------------------------------
@@ -452,6 +482,102 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
         out.push_str(url);
     }
     Some(out)
+}
+
+// ---- notation concepts ---------------------------------------------
+//
+// Concept / notation-family keys the reader is likely to type but that are
+// not a one-to-one `NodeKind` handbook page: abbreviations (`tcy`) and
+// Japanese names (`傍点`, `ルビ`, …). Each key routes to a concept slug whose
+// localized title / body prose lives in aozora-i18n as
+// `concept-<slug>-{title,body}` (en / ja / zh). The keys are deliberately
+// disjoint from the `NODE_PAGES` slugs: a term that already has a handbook
+// page (e.g. `ruby`) is served by that page first (see `resolve_explain`),
+// so no concept entry here is ever shadowed / unreachable.
+
+/// `(typed key, concept slug)`. Several keys may share one slug (aliases). The
+/// slug names the `concept-<slug>-{title,body}` catalog keys in aozora-i18n.
+const CONCEPTS: &[(&str, &str)] = &[
+    ("tcy", "tcy"),
+    ("縦中横", "tcy"),
+    ("combineUpright", "tcy"),
+    ("ルビ", "ruby"),
+    ("外字", "gaiji"),
+    ("傍点", "bouten"),
+    ("割注", "warichu"),
+    ("返り点", "kaeriten"),
+    ("kanbun", "kaeriten"),
+];
+
+/// Explain a notation concept: `aozora explain tcy` / `aozora explain 傍点`.
+/// Renders the localized concept title + body from aozora-i18n. `None` when
+/// `key` names no concept.
+fn explain_concept(key: &str, lang: &LanguageIdentifier) -> Option<String> {
+    let slug = CONCEPTS.iter().find(|(k, _)| *k == key).map(|(_, s)| *s)?;
+    let title = i18n::t(lang, &format!("concept-{slug}-title"));
+    let body = i18n::t(lang, &format!("concept-{slug}-body"));
+    Some(format!("{title}\n\n{body}"))
+}
+
+// ---- "did you mean" suggestion -------------------------------------
+
+/// Every target `resolve_explain` accepts, in a fixed order: node-page tags,
+/// concept keys, then each diagnostic code in both its full (`aozora::lex::…`)
+/// and short (trailing token) form. This is exactly the suggestion pool, so a
+/// "did you mean `Y`?" hint always names something `explain` can actually
+/// resolve — the fixed order also makes the nearest-neighbour tie-break
+/// deterministic.
+fn known_targets() -> Vec<&'static str> {
+    let mut targets: Vec<&'static str> = Vec::new();
+    targets.extend(NODE_PAGES.iter().map(|(tag, _)| *tag));
+    targets.extend(CONCEPTS.iter().map(|(key, _)| *key));
+    for &code in &Diagnostic::ALL_CODES {
+        targets.push(code);
+        if let Some((_, short)) = code.rsplit_once("::") {
+            targets.push(short);
+        }
+    }
+    targets
+}
+
+/// The nearest known [`known_targets`] entry to `target` by Levenshtein
+/// distance, or `None` when even the closest is too far to be a plausible
+/// typo. The cutoff is rustc's `find_best_match_for_name` rule —
+/// `max(len, 3) / 3` — so short garbage like `bogus` yields no suggestion
+/// while a one- or two-character slip is caught. Ties resolve to the earliest
+/// entry in [`known_targets`]'s fixed order.
+fn nearest_target(target: &str) -> Option<&'static str> {
+    let threshold = target.chars().count().max(3) / 3;
+    let mut best: Option<(usize, &'static str)> = None;
+    for candidate in known_targets() {
+        let distance = levenshtein(target, candidate);
+        if best.is_none_or(|(current, _)| distance < current) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.filter(|(distance, _)| *distance <= threshold)
+        .map(|(_, candidate)| candidate)
+}
+
+/// The Levenshtein edit distance (insert / delete / substitute, unit cost)
+/// between `a` and `b`, over Unicode scalar values so Japanese concept keys
+/// compare per character rather than per UTF-8 byte. A hand-rolled two-row DP
+/// — no dependency for one small function on the cold error path.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    // `prev[j]` = distance between the processed prefix of `a` and `b[..j]`.
+    // Row 0 is the cost of deleting each prefix of `b` (all inserts).
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let substitute = prev[j] + usize::from(ca != cb);
+            curr[j + 1] = substitute.min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }
 
 #[cfg(test)]
@@ -713,5 +839,151 @@ mod tests {
         for c in InternalCheckCode::ALL {
             assert_ne!(describe_internal(c), fallback, "{c:?} hit the fallback arm");
         }
+    }
+
+    // ---- edit-distance seam --------------------------------------------
+
+    #[test]
+    fn levenshtein_base_cases() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("ruby", "ruby"), 0);
+        // One insert, one delete, one substitute.
+        assert_eq!(levenshtein("ruby", "rubyx"), 1);
+        assert_eq!(levenshtein("rubyx", "ruby"), 1);
+        assert_eq!(levenshtein("ruby", "rubi"), 1);
+        // Distance from the empty string is the other's length.
+        assert_eq!(levenshtein("", "gaiji"), 5);
+        assert_eq!(levenshtein("gaiji", ""), 5);
+    }
+
+    #[test]
+    fn levenshtein_transposition_costs_two_edits() {
+        // A swapped pair is two unit edits under plain Levenshtein — the value
+        // the `unclsoed_bracket` typo relies on staying under threshold.
+        assert_eq!(levenshtein("unclsoed_bracket", "unclosed_bracket"), 2);
+    }
+
+    #[test]
+    fn levenshtein_counts_unicode_scalars_not_bytes() {
+        // Japanese concept keys must compare per character; `傍点` is 6 UTF-8
+        // bytes but two scalars, so a one-character change is distance 1.
+        assert_eq!(levenshtein("傍点", "傍点"), 0);
+        assert_eq!(levenshtein("傍点", "傍線"), 1);
+        assert_eq!(levenshtein("縦中横", "縦横"), 1);
+    }
+
+    #[test]
+    fn nearest_target_suggests_close_typos() {
+        // A one/two-edit slip resolves to the intended target across all three
+        // pools: node-page tag, diagnostic code (short + full), and concept.
+        assert_eq!(nearest_target("rubi"), Some("ruby"));
+        assert_eq!(nearest_target("unclsoed_bracket"), Some("unclosed_bracket"));
+        assert_eq!(nearest_target("tcyy"), Some("tcy"));
+        assert_eq!(
+            nearest_target("aozora::lex::unclosed_bracet"),
+            Some("aozora::lex::unclosed_bracket"),
+        );
+    }
+
+    #[test]
+    fn nearest_target_tie_resolves_to_earliest_pool_entry() {
+        // `ル字` sits at edit distance 1 from exactly two known targets — the
+        // concept keys `ルビ` and `外字` (each a one-substitution slip) — and no
+        // closer, so it is a genuine two-way tie at the global minimum, inside
+        // the length-scaled threshold. The pool visits `ルビ` before `外字`, and
+        // the tie-break keeps the *earliest* entry: a strict `<` update never
+        // displaces an equal-distance incumbent. (Flip it to `<=` and `外字`
+        // would win instead.)
+        assert_eq!(nearest_target("ル字"), Some("ルビ"));
+    }
+
+    #[test]
+    fn nearest_target_declines_when_nothing_is_close() {
+        // `bogus` is far from every known target — no misleading suggestion.
+        assert_eq!(nearest_target("bogus"), None);
+        // The cutoff is length-scaled: a single stray char on a short word is
+        // still too far to guess at.
+        assert_eq!(nearest_target("zzzz"), None);
+    }
+
+    #[test]
+    fn known_targets_are_all_actually_resolvable() {
+        // The suggestion pool must never name a target `explain` cannot resolve
+        // — every entry resolves through one of the three layers.
+        let en = lang_en();
+        for target in known_targets() {
+            assert!(
+                resolve_explain(target, &en).is_some(),
+                "suggestion pool entry `{target}` does not resolve",
+            );
+        }
+    }
+
+    // ---- resolution order: NodeKind tag > concept > diagnostic code ----
+
+    fn lang_en() -> LanguageIdentifier {
+        "en".parse().expect("`en` parses")
+    }
+
+    #[test]
+    fn resolve_explain_prefers_node_page_over_concept() {
+        // `ruby` is both a handbook page and the `ルビ` concept's family; the
+        // node page wins, so the output is the handbook chapter, not the blurb.
+        let text = resolve_explain("ruby", &lang_en()).expect("ruby resolves");
+        assert!(text.contains("NodeKind::Ruby"), "node page: {text:?}");
+    }
+
+    #[test]
+    fn resolve_explain_serves_concepts_that_lack_a_node_page() {
+        // A concept-only key (Japanese alias / abbreviation) resolves to the
+        // localized concept prose, distinct from any node page.
+        let en = lang_en();
+        let ruby_concept = resolve_explain("ルビ", &en).expect("ルビ resolves");
+        assert!(
+            !ruby_concept.contains("NodeKind::Ruby"),
+            "concept, not page"
+        );
+        assert!(
+            ruby_concept.contains("Ruby"),
+            "concept title: {ruby_concept:?}"
+        );
+
+        let tcy = resolve_explain("tcy", &en).expect("tcy resolves");
+        assert!(tcy.to_lowercase().contains("tate"), "tcy prose: {tcy:?}");
+    }
+
+    #[test]
+    fn resolve_explain_falls_through_to_diagnostic_codes() {
+        let en = lang_en();
+        // Full and short code forms both land on the diagnostic layer.
+        for target in ["aozora::lex::unclosed_bracket", "unclosed_bracket"] {
+            let text = resolve_explain(target, &en).expect("code resolves");
+            assert!(
+                text.contains("aozora::lex::unclosed_bracket"),
+                "diagnostic prose for {target}: {text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_explain_returns_none_for_unknown_target() {
+        assert!(resolve_explain("bogus", &lang_en()).is_none());
+    }
+
+    #[test]
+    fn unknown_target_message_offers_suggestion_and_keeps_kinds_hint() {
+        // A near-miss carries the localized "did you mean" tail *and* the
+        // `aozora kinds` pointer the CLI's error-hint test pins.
+        let msg = unknown_target_message("rubi", &lang_en());
+        assert!(msg.contains("rubi"), "echoes the bad target: {msg:?}");
+        assert!(msg.contains("ruby"), "suggests the near neighbour: {msg:?}");
+        assert!(msg.contains("aozora kinds"), "keeps the hint: {msg:?}");
+    }
+
+    #[test]
+    fn unknown_target_message_omits_suggestion_when_far() {
+        let msg = unknown_target_message("bogus", &lang_en());
+        assert!(msg.contains("bogus"), "echoes the bad target: {msg:?}");
+        assert!(msg.contains("aozora kinds"), "still hints: {msg:?}");
     }
 }

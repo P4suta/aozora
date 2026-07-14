@@ -19,7 +19,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … JSON tag. |
 | `schema` | Print the JSON Schema for a JSON envelope. |
-| `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
+| `explain` | Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a diagnostic code. |
 | `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
 The one **global** option is `--color {auto,always,never}` (accepted after
@@ -262,17 +262,24 @@ either). The envelope is
 shape of the `inspect` envelopes; `schemaVersion` is a CLI-local counter,
 distinct from the wire `SCHEMA_VERSION`).
 
-`aozora explain` accepts either a `NodeKind` camelCase tag (printing the
-node's handbook chapter) or a **diagnostic code** — the full
-`aozora::lex::unclosed_bracket` or the short `unclosed_bracket` —
-printing the same severity, help, and docs URL that `aozora check`
-attaches to that diagnostic:
+`aozora explain` accepts a `NodeKind` camelCase tag (printing the node's
+handbook chapter), a **notation concept** — a notation-family key such as
+`tcy` or the Japanese name `傍点`, printing a short localized blurb — or a
+**diagnostic code** — the full `aozora::lex::unclosed_bracket` or the short
+`unclosed_bracket` — printing the same severity, help, and docs URL that
+`aozora check` attaches to that diagnostic. Resolution is deterministic in
+that order (tag → concept → code). An unrecognised target suggests its
+nearest known neighbour ("did you mean …?"):
 
 ```sh
 aozora explain ruby                          # NodeKind handbook chapter
+aozora explain tcy                           # notation concept (縦中横)
 aozora explain aozora::lex::unclosed_bracket # diagnostic code → help + URL
 aozora explain unresolved_gaiji              # short form of the code
 ```
+
+The suggestion and concept prose follow `--lang`; the machine axis (which
+target resolves, and the exit code) does not.
 
 ## Exit codes
 

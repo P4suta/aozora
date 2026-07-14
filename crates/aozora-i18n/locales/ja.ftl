@@ -37,6 +37,70 @@ explain-repro-label = 再現例:
 explain-fixed-label = 修正後:
 explain-see-label = 参照:
 
+# `aozora explain <TARGET>` が解決できない対象を指したときに出す（stderr・非ゼロ
+# 終了）。$target は認識できなかった引数。
+explain-unknown = 不明な explain 対象 `{$target}`
+# 上の行に続けて、対象の近傍が見つかったとき（ノードタグ・概念・診断コードに
+# 対する編集距離一致）に付ける。$suggestion は最も近い既知の対象で、localize
+# しないリテラルな識別子。
+explain-did-you-mean = もしかして `{$suggestion}`?
+# 有効な集合の在処を示す末尾。`aozora kinds` と例のコードはそのままのシェル
+# テキストで、どのロケールでも同じ。
+explain-unknown-hint =
+    NodeKind タグか記法概念（`aozora kinds` を実行）、または
+    `aozora::lex::unclosed_bracket` のような診断コードを想定しています
+
+## 記法概念
+##
+## `aozora explain <concept>` のプロース。読者が入力しがちだが NodeKind の
+## ハンドブックページと 1 対 1 でない記法家系向け — 略語（`tcy`）や日本語名
+## （`傍点`・`ルビ` …）。家系ごとに `concept-<slug>-title`（見出し）と
+## `concept-<slug>-body`（短いプロース）を 1 組。織り込む青空記法のグリフは
+## リテラルな構文で、どのロケールでも同じ。
+
+concept-ruby-title = ルビ (ruby) — 読みの注記
+concept-ruby-body =
+    親文字に添える小さな読み: 青空《あおぞら》。範囲が曖昧なときは先頭の `｜` で
+    親文字を明示する: ｜青空《あおぞら》。
+
+    詳しくは `aozora explain ruby` でハンドブックページを参照。
+
+concept-gaiji-title = 外字 (gaiji) — Unicode 外の文字参照
+concept-gaiji-body =
+    素の Unicode で書けない文字を ※［＃…］ 参照で表したもの — 多くは JIS X 0213 の
+    面区点（`第3水準1-15-23`）や `U+XXXX` コード。
+
+    詳しくは `aozora explain gaiji`。診断 `unresolved_gaiji` も参照。
+
+concept-kaeriten-title = 返り点 (kaeriten) — 漢文の返り記号
+concept-kaeriten-body =
+    漢文を日本語の語順で読むための返り記号。［＃…］ 注記で書き、レ点や
+    一/二・上/下・甲/乙 の各家系がある。
+
+    詳しくは `aozora explain kaeriten`。診断 `bracketed_kaeriten_no_pair`・
+    `kaeriten_outside_kanbun` も参照。
+
+concept-bouten-title = 傍点 (bouten) — 強調の点
+concept-bouten-body =
+    語の傍らに打つ強調の点で、イタリックに相当する青空記法: ［＃「ここ」に傍点］。
+    姉妹家系の 傍線 は点でなく線を引く。
+
+    詳しくは `aozora explain bouten`。診断 `bouten_target_ambiguous` も参照。
+
+concept-warichu-title = 割注 (warichu) — 行内の割り注
+concept-warichu-body =
+    本文の中に半分の高さで二行に組む注。［＃割り注］ で開き ［＃割り注終わり］ で
+    閉じる。
+
+    詳しくは `aozora explain warichu`。
+
+concept-tcy-title = 縦中横 (tate-chu-yoko) — 縦組み中の横組み
+concept-tcy-body =
+    縦組みの中で短い横組み — たいてい二桁の数字 — を正立させる記法。
+    ［＃「25」は縦中横］ と書く。
+
+    NodeKind タグは `combineUpright`。診断 `tcy_target_not_found` も参照。
+
 ## 診断プロース
 ##
 ## 診断コードごとに `diag-<slug>-title`（見出し）と `diag-<slug>-body`（詳細）を
