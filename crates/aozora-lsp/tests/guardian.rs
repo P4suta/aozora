@@ -32,7 +32,7 @@ use std::thread;
 
 use aozora_fmt::format_source;
 use aozora_lsp::internals::{
-    ByteEdit, LineIndex, OpenDocument, byte_offset_to_position, completion_at,
+    ByteEdit, LanguageIdentifier, LineIndex, OpenDocument, byte_offset_to_position, completion_at,
     diagnostics_for_source, document_symbols, emmet_completions, folding_ranges, format_edits,
     format_on_type, hover_at, linked_editing_at, position_to_byte_offset, snippet_completions,
     wrap_selection_actions,
@@ -41,6 +41,13 @@ use proptest::collection::vec as proptest_vec;
 use proptest::prelude::*;
 use proptest::sample::select;
 use tower_lsp::lsp_types::{Position, Range, Url};
+
+/// Pinned message language for the adversarial provider sweeps — they only
+/// assert structural invariants (valid ranges, no panics), so any locale
+/// works; English keeps the sweep deterministic regardless of the host `LANG`.
+fn en() -> LanguageIdentifier {
+    "en".parse().expect("en parses")
+}
 
 // ---------------------------------------------------------------
 // 1. Panic resistance across the public LSP surface.
@@ -124,7 +131,7 @@ fn position_corpus() -> Vec<Position> {
 fn hover_never_panics_on_corpus() {
     for src in adversarial_corpus() {
         for pos in position_corpus() {
-            drop(hover_at(&src, pos));
+            drop(hover_at(&src, pos, &en()));
         }
     }
 }
@@ -133,9 +140,9 @@ fn hover_never_panics_on_corpus() {
 fn completion_never_panics_on_corpus() {
     for src in adversarial_corpus() {
         for pos in position_corpus() {
-            drop(completion_at(&src, pos));
-            drop(emmet_completions(&src, pos));
-            drop(snippet_completions(&src, pos));
+            drop(completion_at(&src, pos, &en()));
+            drop(emmet_completions(&src, pos, &en()));
+            drop(snippet_completions(&src, pos, &en()));
         }
     }
 }
@@ -167,11 +174,11 @@ fn linked_editing_never_panics_on_corpus() {
 #[test]
 fn diagnostics_format_folding_symbol_never_panic_on_corpus() {
     for src in adversarial_corpus() {
-        drop(diagnostics_for_source(&src));
+        drop(diagnostics_for_source(&src, &en()));
         drop(format_edits(&src));
         drop(folding_ranges(&src));
         let idx = LineIndex::new(&src);
-        drop(document_symbols(&src, &idx));
+        drop(document_symbols(&src, &idx, &en()));
     }
 }
 
@@ -215,7 +222,7 @@ fn wrap_actions_never_panic_on_corpus_ranges() {
     for src in adversarial_corpus() {
         let idx = LineIndex::new(&src);
         for r in ranges {
-            drop(wrap_selection_actions(&src, &idx, &uri, r));
+            drop(wrap_selection_actions(&src, &idx, &uri, r, &en()));
         }
     }
 }
@@ -414,7 +421,7 @@ fn snapshot_reads_under_write_pressure_stay_consistent() {
 #[test]
 fn diagnostics_for_source_returns_valid_ranges_for_corpus() {
     for src in adversarial_corpus() {
-        let diags = diagnostics_for_source(&src);
+        let diags = diagnostics_for_source(&src, &en());
         // Every diagnostic's range must round-trip through the
         // line index — i.e. its line/column must resolve back to a
         // valid byte offset. A diagnostic pointing into the void

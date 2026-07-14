@@ -45,6 +45,7 @@ mod formatting;
 mod gaiji_spans;
 mod half_width_emmet;
 mod hover;
+mod i18n;
 mod inlay_hints;
 mod line_index;
 mod linked_editing;
@@ -142,6 +143,12 @@ pub async fn serve() {
 /// `cargo test --features internals`.
 #[doc(hidden)]
 pub mod internals {
+    // Re-exported so the crate's own tests, benches, and examples can build a
+    // `LanguageIdentifier` to pass to the locale-parameterised providers, and
+    // reach the server's resolved UI language when they want production
+    // behaviour rather than a pinned locale.
+    pub use aozora_i18n::LanguageIdentifier;
+
     pub use crate::code_actions::wrap_selection_actions;
     pub use crate::commands::{COMMAND_CANONICALIZE_SLUG, canonicalize_slug_edit};
     pub use crate::completion::completion_at;

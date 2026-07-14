@@ -13,21 +13,31 @@
 //! place each child under the most recent open heading of strictly
 //! lower level.
 
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{DocumentSymbol, Position, Range, SymbolKind};
 
 use crate::line_index::LineIndex;
 
-/// Compute every heading symbol in `source`, nested by level.
+/// Compute every heading symbol in `source`, nested by level, with the
+/// untitled-heading placeholder rendered in `lang`.
 #[must_use]
-pub fn document_symbols(source: &str, line_index: &LineIndex) -> Vec<DocumentSymbol> {
+pub fn document_symbols(
+    source: &str,
+    line_index: &LineIndex,
+    lang: &LanguageIdentifier,
+) -> Vec<DocumentSymbol> {
+    // Resolve the placeholder once for the whole outline. The heading-level
+    // names shown as each symbol's `detail` (大見出し / 中見出し / 小見出し) are
+    // the aozora directive vocabulary itself, so they stay verbatim.
+    let untitled = untitled_placeholder(lang);
     let mut flat: Vec<(HeadingLevel, DocumentSymbol)> = Vec::new();
     for (line_idx, line) in source.lines().enumerate() {
         let Some(level) = heading_level_in(line) else {
             continue;
         };
         let line_idx = u32::try_from(line_idx).unwrap_or(u32::MAX);
-        let title = extract_title(line, source, line_idx, line_index);
-        let symbol = build_symbol(line_idx, line, level, title);
+        let title = extract_title(line, source, line_idx, line_index, &untitled);
+        let symbol = build_symbol(line_idx, line, level, title, &untitled);
         flat.push((level, symbol));
     }
     nest_by_level(flat)
@@ -52,16 +62,17 @@ fn heading_level_in(line: &str) -> Option<HeadingLevel> {
     }
 }
 
-/// Placeholder used when no usable title can be extracted from a
-/// heading line. Surfaces in the outline picker so the user can
-/// still navigate to the heading even before they've typed its
-/// title.
+/// Placeholder used when no usable title can be extracted from a heading line,
+/// rendered in `lang`. Surfaces in the outline picker so the user can still
+/// navigate to the heading even before they've typed its title.
 ///
-/// IMPORTANT: this MUST be non-empty (and non-whitespace) — the LSP
-/// spec for `DocumentSymbol.name` explicitly forbids empty strings,
-/// and VS Code's client-side `DocumentSymbol` constructor throws
+/// IMPORTANT: every catalog value for this key MUST be non-empty (and
+/// non-whitespace) — the LSP spec for `DocumentSymbol.name` explicitly forbids
+/// empty strings, and VS Code's client-side `DocumentSymbol` constructor throws
 /// "name must not be falsy" the moment we hand it one.
-const UNTITLED: &str = "(無題)";
+fn untitled_placeholder(lang: &LanguageIdentifier) -> String {
+    i18n::t(lang, "lsp-outline-untitled")
+}
 
 /// Best-effort title extraction from a heading line.
 ///
@@ -77,7 +88,19 @@ const UNTITLED: &str = "(無題)";
 /// the user typed `「」は大見出し` with no body yet) falls through to
 /// the next shape rather than returning `""`, which would violate
 /// the LSP `DocumentSymbol.name` non-empty contract.
-fn extract_title(line: &str, _source: &str, _line_idx: u32, _line_index: &LineIndex) -> String {
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the source/line context is threaded through even where a shape \
+              doesn't need it (keeping the document_symbols line-index param \
+              live) alongside the localized untitled placeholder"
+)]
+fn extract_title(
+    line: &str,
+    _source: &str,
+    _line_idx: u32,
+    _line_index: &LineIndex,
+    untitled: &str,
+) -> String {
     // Shape 1: quoted title
     if let Some(quote_start) = line.find('「') {
         let after = &line[quote_start + '「'.len_utf8()..];
@@ -97,14 +120,21 @@ fn extract_title(line: &str, _source: &str, _line_idx: u32, _line_index: &LineIn
             return trimmed.to_owned();
         }
     }
-    UNTITLED.to_owned()
+    untitled.to_owned()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the symbol's line/level/title data plus the localized untitled \
+              fallback for an empty title; untitled is cross-cutting, not a \
+              data param to bundle"
+)]
 fn build_symbol(
     line_idx: u32,
     line_text: &str,
     level: HeadingLevel,
     title: String,
+    untitled: &str,
 ) -> DocumentSymbol {
     // LSP `Position.character` is the UTF-16 code-unit offset under
     // the default `PositionEncodingKind::UTF16` (the only encoding
@@ -126,7 +156,7 @@ fn build_symbol(
     // future call site that constructs DocumentSymbols some other
     // way can't reintroduce the bug.
     let name = if title.trim().is_empty() {
-        UNTITLED.to_owned()
+        untitled.to_owned()
     } else {
         title
     };
@@ -221,9 +251,17 @@ impl HeadingLevel {
 mod tests {
     use super::*;
 
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// The canonical English untitled placeholder — the outline `name` a
+    /// heading with no typed title falls back to under the default locale.
+    const UNTITLED_EN: &str = "(untitled)";
+
     fn syms(src: &str) -> Vec<DocumentSymbol> {
         let idx = LineIndex::new(src);
-        document_symbols(src, &idx)
+        document_symbols(src, &idx, &en())
     }
 
     #[test]
@@ -310,7 +348,7 @@ mod tests {
             !s[0].name.trim().is_empty(),
             "name must not be whitespace-only either",
         );
-        assert_eq!(s[0].name, UNTITLED);
+        assert_eq!(s[0].name, UNTITLED_EN);
     }
 
     #[test]
@@ -320,7 +358,7 @@ mod tests {
         let s = syms(src);
         assert_eq!(s.len(), 1);
         assert!(!s[0].name.trim().is_empty());
-        assert_eq!(s[0].name, UNTITLED);
+        assert_eq!(s[0].name, UNTITLED_EN);
     }
 
     #[test]

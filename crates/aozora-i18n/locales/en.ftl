@@ -215,3 +215,67 @@ diag-registry-position-mismatch-body =
     A placeholder registry entry's position disagrees with the expected sentinel (a pipeline-internal consistency error).
 
     This may be a bug in aozora-pipeline. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
+
+## LSP editor surface
+##
+## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
+## code-action titles, and completion detail / documentation. The protocol
+## data axis (custom-method payloads, diagnostic ranges / codes, semantic
+## tokens, formatting edits) is never routed through here. The notation glyphs
+## and Tab-stop templates woven into these strings are literal aozora syntax,
+## the same in every locale; only the surrounding prose is translated.
+
+# Gaiji (外字) reference — hover header and the labels in its Markdown body.
+lsp-hover-gaiji-header = **Gaiji (外字)**
+lsp-hover-resolved-label = Resolved
+lsp-hover-composed-seq-label = composed sequence
+lsp-hover-unresolved = (no dictionary match — showing the description instead)
+lsp-hover-description-label = Description
+# Gaiji inlay-hint tooltip header (the resolved label above is reused).
+lsp-inlay-gaiji-header = **Gaiji**
+
+# Code-action (quick-fix / refactor) titles shown in the editor's lightbulb
+# menu. `SEL` marks where the current selection lands inside the woven glyphs.
+lsp-action-ruby = Add ruby ｜SEL《》
+lsp-action-ruby-double = Add double ruby ｜SEL《《》》
+lsp-action-wrap-quote = Wrap in 「」
+lsp-action-wrap-accent = Wrap in 〔〕 (accent decomposition)
+lsp-action-wrap-annotation = Turn into a ［＃...］ annotation
+lsp-action-bouten = Add emphasis dots ［＃「SEL」に傍点］
+# $close is the missing close glyph, $open the pair's open glyph.
+lsp-action-close-bracket = Insert `{$close}` to close ({$open} pair)
+# $close is the stray close glyph with no matching open.
+lsp-action-delete-unmatched = Delete the unmatched `{$close}`
+# $directive is the full canonical ［＃…］ the near-miss is rewritten to.
+lsp-action-rewrite = Rewrite to `{$directive}`
+# $codepoint is the private-use scalar in `04X` hex (no `U+` prefix).
+lsp-action-delete-pua = Delete private-use character U+{$codepoint}
+
+# Completion detail / documentation fragments.
+lsp-completion-half-to-full-hint = (half-width → full-width)
+lsp-completion-takes-param = (takes a parameter)
+
+# Half-width → full-width "emmet" completion details. Each names the target
+# and the half-width trigger that produces it.
+lsp-emmet-ruby-open = Ruby reading (half-width 『<』 → full-width pair 『《》』)
+lsp-emmet-ruby-close = Ruby reading close (half-width 『>』 → full-width 『》』)
+lsp-emmet-bracket-open = Full-width left bracket (half-width 『[』 → full-width 『［』)
+lsp-emmet-bracket-close = Full-width right bracket (half-width 『]』 → full-width 『］』)
+lsp-emmet-ruby-base = Ruby base marker (half-width 『|』 → full-width 『｜』)
+lsp-emmet-gaiji-marker = Gaiji marker (half-width 『*』 → full-width 『※』)
+# $prefix is the typed half-width char, $glyph the full-width target.
+lsp-emmet-doc = Half-width `{$prefix}` → `{$glyph}`
+
+# Structured-snippet completion detail / documentation. The `${…}` and
+# `<…>` placeholders mirror the Tab-stop slots the snippet body fills in.
+lsp-snippet-empty-wrap-detail = Empty annotation-slug template (edit the body)
+lsp-snippet-empty-wrap-doc = Convert `#` to `［＃<cursor>］`. Press Enter to confirm.
+lsp-snippet-ruby-detail = Ruby ｜base《reading》 (Tab to the reading)
+lsp-snippet-ruby-doc = Insert `<base>《<reading>》` after `｜`. Start at `<base>`, Tab to `<reading>`.
+lsp-snippet-reading-detail = Ruby reading (auto-closes the bracket)
+lsp-snippet-reading-doc = Insert `<reading>》` after `《`. Edit `<reading>`.
+lsp-snippet-gaiji-detail = Gaiji annotation (description, mencode)
+lsp-snippet-gaiji-doc = Insert `［＃「<desc>」、<men>］` after `※`. Start at `<desc>`, Tab to `<men>`.
+
+# Document-outline placeholder for a heading whose title is not yet typed.
+lsp-outline-untitled = (untitled)

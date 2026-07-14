@@ -11,9 +11,17 @@
 //! evolve without churning every snapshot.
 
 use aozora_lsp::internals::{
-    LineIndex, OpenDocument, diagnostics_for_source, document_symbols, semantic_tokens_full,
+    LanguageIdentifier, LineIndex, OpenDocument, diagnostics_for_source, document_symbols,
+    semantic_tokens_full,
 };
 use tower_lsp::lsp_types::{DiagnosticSeverity, DocumentSymbol, NumberOrString};
+
+/// The projections snapshotted here (codes/ranges, token tuples, outline
+/// names) are locale-independent, but the providers are now locale-
+/// parameterised — pin English so the snapshot stays deterministic.
+fn en() -> LanguageIdentifier {
+    "en".parse().expect("en parses")
+}
 
 /// Headings (大見出し / 中見出し) plus ruby — drives the symbol outline.
 const HEADINGS: &str =
@@ -35,7 +43,7 @@ fn severity_label(severity: Option<DiagnosticSeverity>) -> &'static str {
 
 /// `code | severity | startLine:startChar..endLine:endChar` per diagnostic.
 fn diagnostic_view(src: &str) -> Vec<String> {
-    diagnostics_for_source(src)
+    diagnostics_for_source(src, &en())
         .iter()
         .map(|d| {
             let code = match &d.code {
@@ -90,7 +98,11 @@ fn symbol_outline(src: &str) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    walk(&document_symbols(src, &LineIndex::new(src)), 0, &mut out);
+    walk(
+        &document_symbols(src, &LineIndex::new(src), &en()),
+        0,
+        &mut out,
+    );
     out
 }
 

@@ -209,3 +209,65 @@ diag-registry-position-mismatch-body =
     占位符注册表条目的位置信息与预期不符（流水线内部一致性错误）。
 
     这可能是 aozora-pipeline 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
+
+## LSP 编辑器外壳
+##
+## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、
+## 代码操作标题，以及补全的 detail／documentation。协议数据轴（自定义
+## 方法负载、诊断 range／代码、语义 token、格式化编辑）绝不经过此处。
+## 文本中穿插的记法字形与 Tab 停位模板是青空记法本身，各 locale 通用，
+## 只翻译周围的说明文本。
+
+# 外字 (gaiji) 引用 — 悬浮标题与 Markdown 正文中的标签。
+lsp-hover-gaiji-header = **外字 (gaiji)**
+lsp-hover-resolved-label = 解析
+lsp-hover-composed-seq-label = 合成序列
+lsp-hover-unresolved = (未匹配字典 — 改为显示描述文本)
+lsp-hover-description-label = 描述
+# 外字内嵌提示的 tooltip 标题（复用上面的解析标签）。
+lsp-inlay-gaiji-header = **外字**
+
+# 代码操作（快速修复／重构）标题，显示在编辑器的灯泡菜单中。
+# `SEL` 标示当前选区在穿插字形中的落点。
+lsp-action-ruby = 添加注音 ｜SEL《》
+lsp-action-ruby-double = 添加双重注音 ｜SEL《《》》
+lsp-action-wrap-quote = 用 「」 括起
+lsp-action-wrap-accent = 用 〔〕 括起（口音分解）
+lsp-action-wrap-annotation = 转为 ［＃...］ 注记
+lsp-action-bouten = 添加着重点 ［＃「SEL」に傍点］
+# $close 为缺失的闭合字形，$open 为该对的开启字形。
+lsp-action-close-bracket = 补入 `{$close}` 以闭合（{$open} 对）
+# $close 为无匹配开启的多余闭合字形。
+lsp-action-delete-unmatched = 删除无匹配的 `{$close}`
+# $directive 为将该近似写法改写成的完整正规 ［＃…］。
+lsp-action-rewrite = 改写为 `{$directive}`
+# $codepoint 为私用区标量的 `04X` 十六进制（不含 `U+` 前缀）。
+lsp-action-delete-pua = 删除私用区字符 U+{$codepoint}
+
+# 补全 detail／documentation 的片段。
+lsp-completion-half-to-full-hint = (半角→全角)
+lsp-completion-takes-param = (带参数)
+
+# 半角→全角「emmet」补全的 detail，标明目标及产生它的半角触发键。
+lsp-emmet-ruby-open = 注音读音（半角『<』→全角对『《》』）
+lsp-emmet-ruby-close = 注音读音闭合（半角『>』→全角『》』）
+lsp-emmet-bracket-open = 全角左括号（半角『[』→全角『［』）
+lsp-emmet-bracket-close = 全角右括号（半角『]』→全角『］』）
+lsp-emmet-ruby-base = 注音基字标记（半角『|』→全角『｜』）
+lsp-emmet-gaiji-marker = 外字标记（半角『*』→全角『※』）
+# $prefix 为键入的半角字符，$glyph 为全角目标。
+lsp-emmet-doc = 半角 `{$prefix}` → `{$glyph}`
+
+# 结构化片段补全的 detail／documentation。`${…}` 与 `<…>` 表示
+# 片段正文填充的 Tab 停位槽。
+lsp-snippet-empty-wrap-detail = 注记 slug 空模板（编辑内容）
+lsp-snippet-empty-wrap-doc = 将 `#` 转换为 `［＃<光标>］`。按 Enter 确认。
+lsp-snippet-ruby-detail = 注音 ｜base《reading》（Tab 跳到读音）
+lsp-snippet-ruby-doc = 在 `｜` 后插入 `<base>《<reading>》`。从 `<base>` 开始，Tab 跳到 `<reading>`。
+lsp-snippet-reading-detail = 注音读音（自动补全闭括号）
+lsp-snippet-reading-doc = 在 `《` 后插入 `<reading>》`。编辑 `<reading>`。
+lsp-snippet-gaiji-detail = 外字注记（description, mencode）
+lsp-snippet-gaiji-doc = 在 `※` 后插入 `［＃「<desc>」、<men>］`。从 `<desc>` 开始，Tab 跳到 `<men>`。
+
+# 标题尚未输入的大纲占位符。
+lsp-outline-untitled = (无标题)

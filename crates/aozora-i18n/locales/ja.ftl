@@ -212,3 +212,66 @@ diag-registry-position-mismatch-body =
     プレースホルダーレジストリの位置情報が期待と異なっています (pipeline 内部の整合性エラー)。
 
     aozora-pipeline のバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
+
+## LSP エディタ表層
+##
+## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、
+## コードアクションのタイトル、補完の detail／documentation。プロトコルの
+## データ軸（カスタムメソッドの payload、診断の range／コード、semantic
+## token、フォーマット編集）は決してここを通さない。文中の記法グリフや
+## Tab ストップのテンプレートは青空記法そのもので全 locale 共通、周囲の
+## プロースだけを訳す。
+
+# 外字 (gaiji) 参照 — ホバー見出しと Markdown 本文のラベル。
+lsp-hover-gaiji-header = **外字 (gaiji)**
+lsp-hover-resolved-label = 解決
+lsp-hover-composed-seq-label = 合成シーケンス
+lsp-hover-unresolved = (辞書にマッチせず — 記述で代替表示)
+lsp-hover-description-label = 記述
+# 外字インレイヒントのツールチップ見出し（上の解決ラベルを再利用）。
+lsp-inlay-gaiji-header = **外字**
+
+# コードアクション（クイックフィックス／リファクタ）のタイトル。エディタの
+# 電球メニューに出る。`SEL` は選択範囲が入る位置を示す。
+lsp-action-ruby = ルビをふる ｜SEL《》
+lsp-action-ruby-double = 二重ルビをふる ｜SEL《《》》
+lsp-action-wrap-quote = 「」 で囲む
+lsp-action-wrap-accent = 〔〕 で囲む (アクセント分解)
+lsp-action-wrap-annotation = ［＃...］ 注記にする
+lsp-action-bouten = 傍点を付ける ［＃「SEL」に傍点］
+# $close は欠けている閉じグリフ、$open はペアの開きグリフ。
+lsp-action-close-bracket = `{$close}` を補って閉じる ({$open} ペア)
+# $close は対応する開きのない余分な閉じグリフ。
+lsp-action-delete-unmatched = 対応のない `{$close}` を削除する
+# $directive は near-miss を書き換える正準 ［＃…］ 全体。
+lsp-action-rewrite = `{$directive}` に書き換える
+# $codepoint は私用領域スカラーの `04X` 16 進（`U+` 接頭なし）。
+lsp-action-delete-pua = 私用領域文字 U+{$codepoint} を削除する
+
+# 補完の detail／documentation の断片。
+lsp-completion-half-to-full-hint = (半角→全角)
+lsp-completion-takes-param = (パラメータあり)
+
+# 半角→全角「emmet」補完の detail。ターゲットとそれを生む半角トリガを示す。
+lsp-emmet-ruby-open = ルビ読み (半角『<』→全角ペア『《》』)
+lsp-emmet-ruby-close = ルビ読み閉じ (半角『>』→全角『》』)
+lsp-emmet-bracket-open = 全角左ブラケット (半角『[』→全角『［』)
+lsp-emmet-bracket-close = 全角右ブラケット (半角『]』→全角『］』)
+lsp-emmet-ruby-base = ルビベース印 (半角『|』→全角『｜』)
+lsp-emmet-gaiji-marker = 外字マーカー (半角『*』→全角『※』)
+# $prefix は入力した半角文字、$glyph は全角ターゲット。
+lsp-emmet-doc = 半角 `{$prefix}` → `{$glyph}`
+
+# 構造化スニペット補完の detail／documentation。`${…}` と `<…>` は
+# スニペット本文が埋める Tab ストップのスロットを表す。
+lsp-snippet-empty-wrap-detail = 注記スラグの空ひな型 (中身を編集)
+lsp-snippet-empty-wrap-doc = `#` を `［＃<カーソル>］` に変換。Enter で確定。
+lsp-snippet-ruby-detail = ルビ ｜ベース《読み》 (Tab で読みへ移動)
+lsp-snippet-ruby-doc = `｜` の後に `<base>《<reading>》` を挿入。`<base>` から開始、Tab で `<reading>` へ。
+lsp-snippet-reading-detail = ルビ読み (閉じ括弧自動補完)
+lsp-snippet-reading-doc = `《` の後に `<reading>》` を挿入。`<reading>` を編集。
+lsp-snippet-gaiji-detail = 外字注記 (description, mencode)
+lsp-snippet-gaiji-doc = `※` の後に `［＃「<desc>」、<men>］` を挿入。`<desc>` から開始、Tab で `<men>` へ。
+
+# タイトル未入力の見出しに対するアウトラインのプレースホルダ。
+lsp-outline-untitled = (無題)

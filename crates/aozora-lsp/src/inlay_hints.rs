@@ -12,6 +12,7 @@
 //! `O(log lines + visible spans)`, independent of document size.
 
 use aozora_encoding::gaiji;
+use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{
     InlayHint, InlayHintKind, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
     MarkupContent, MarkupKind, Range,
@@ -22,17 +23,25 @@ use std::sync::Arc;
 use crate::gaiji_spans::{GaijiSpan, spans_in_byte_range};
 use crate::line_index::LineIndex;
 
-/// Compute every inlay hint inside `range` (in LSP coordinates).
+/// Compute every inlay hint inside `range` (in LSP coordinates), with each
+/// hint's tooltip prose rendered in `lang`.
 ///
 /// Spans are filtered to the requested viewport via binary search;
 /// each surviving span is resolved through `gaiji::lookup` and
 /// formatted into an `InlayHint`.
 #[must_use]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the viewport query (source, spans, line index, range) plus the \
+              resolved UI language; lang is a cross-cutting locale, not a data \
+              param to bundle"
+)]
 pub fn inlay_hints(
     source: &str,
     spans: &[Arc<GaijiSpan>],
     line_index: &LineIndex,
     range: Range,
+    lang: &LanguageIdentifier,
 ) -> Vec<InlayHint> {
     let Some(start_byte) = line_index.byte_offset(source, range.start) else {
         return Vec::new();
@@ -43,11 +52,16 @@ pub fn inlay_hints(
     let visible = spans_in_byte_range(spans, start_byte, end_byte);
     visible
         .iter()
-        .filter_map(|span| build_hint(span, source, line_index))
+        .filter_map(|span| build_hint(span, source, line_index, lang))
         .collect()
 }
 
-fn build_hint(span: &GaijiSpan, source: &str, line_index: &LineIndex) -> Option<InlayHint> {
+fn build_hint(
+    span: &GaijiSpan,
+    source: &str,
+    line_index: &LineIndex,
+    lang: &LanguageIdentifier,
+) -> Option<InlayHint> {
     let resolved = gaiji::lookup(None, span.mencode.as_deref(), &span.description)?;
 
     let mut display = String::new();
@@ -64,9 +78,13 @@ fn build_hint(span: &GaijiSpan, source: &str, line_index: &LineIndex) -> Option<
             value: format!(" → {display}"),
             tooltip: Some(InlayHintLabelPartTooltip::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
+                // Prose (header + "resolved" label) from the shared catalog;
+                // the description, glyph and `U+XXXX` list are locale-neutral.
                 value: format!(
-                    "**外字**: `{}`\n\n- 解決: `{display}` ({codepoints})",
+                    "{}: `{}`\n\n- {}: `{display}` ({codepoints})",
+                    i18n::t(lang, "lsp-inlay-gaiji-header"),
                     span.description,
+                    i18n::t(lang, "lsp-hover-resolved-label"),
                 ),
             })),
             location: None,
@@ -87,6 +105,20 @@ mod tests {
     use crate::gaiji_spans::extract_gaiji_spans_from_tree;
     use tower_lsp::lsp_types::Position;
     use tree_sitter::Parser;
+
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shim mirroring the pre-i18n `inlay_hints(..)` arity, pinned to English.
+    fn inlay_hints(
+        source: &str,
+        spans: &[Arc<GaijiSpan>],
+        line_index: &LineIndex,
+        range: Range,
+    ) -> Vec<InlayHint> {
+        super::inlay_hints(source, spans, line_index, range, &en())
+    }
 
     fn parse_spans(src: &str) -> Arc<[Arc<GaijiSpan>]> {
         let mut parser = Parser::new();

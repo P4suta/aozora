@@ -32,6 +32,7 @@
 //!   user's accept on the slug catalogue does not race with the
 //!   bracket-only emmet item.
 
+use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position, Range, TextEdit,
@@ -49,8 +50,9 @@ struct EmmetRule {
     snippet: &'static str,
     /// Label shown in the completion popup.
     label: &'static str,
-    /// Detail shown next to the label.
-    detail: &'static str,
+    /// i18n catalog key for the detail shown next to the label. Resolved in
+    /// the server's UI language at build time.
+    detail_key: &'static str,
     /// Plain-text format vs snippet. `true` when the snippet contains
     /// `${0}` or other tabstops.
     is_snippet: bool,
@@ -77,14 +79,14 @@ const EMMET_RULES: &[EmmetRule] = &[
         prefix: "<",
         snippet: "《${0}》",
         label: "《...》",
-        detail: "ルビ読み (半角『<』→全角ペア『《》』)",
+        detail_key: "lsp-emmet-ruby-open",
         is_snippet: true,
     },
     EmmetRule {
         prefix: ">",
         snippet: "》",
         label: "》",
-        detail: "ルビ読み閉じ (半角『>』→全角『》』)",
+        detail_key: "lsp-emmet-ruby-close",
         is_snippet: false,
     },
     // Annotation brackets. The `[#` slug catalogue (in
@@ -94,14 +96,14 @@ const EMMET_RULES: &[EmmetRule] = &[
         prefix: "[",
         snippet: "［",
         label: "［",
-        detail: "全角左ブラケット (半角『[』→全角『［』)",
+        detail_key: "lsp-emmet-bracket-open",
         is_snippet: false,
     },
     EmmetRule {
         prefix: "]",
         snippet: "］",
         label: "］",
-        detail: "全角右ブラケット (半角『]』→全角『］』)",
+        detail_key: "lsp-emmet-bracket-close",
         is_snippet: false,
     },
     // Ruby base marker — explicit-delimiter ruby `｜base《reading》`.
@@ -109,7 +111,7 @@ const EMMET_RULES: &[EmmetRule] = &[
         prefix: "|",
         snippet: "｜",
         label: "｜",
-        detail: "ルビベース印 (半角『|』→全角『｜』)",
+        detail_key: "lsp-emmet-ruby-base",
         is_snippet: false,
     },
     // Gaiji marker — `※[#…]` annotations. `*` is never used as a
@@ -119,7 +121,7 @@ const EMMET_RULES: &[EmmetRule] = &[
         prefix: "*",
         snippet: "※",
         label: "※",
-        detail: "外字マーカー (半角『*』→全角『※』)",
+        detail_key: "lsp-emmet-gaiji-marker",
         is_snippet: false,
     },
 ];
@@ -135,7 +137,11 @@ const SLUG_WINDOW: usize = 256;
 /// Compute emmet completion items at `position`. Returns an empty
 /// vec if no half-width trigger sits immediately before the cursor.
 #[must_use]
-pub fn emmet_completions(source: &str, position: Position) -> Vec<CompletionItem> {
+pub fn emmet_completions(
+    source: &str,
+    position: Position,
+    lang: &LanguageIdentifier,
+) -> Vec<CompletionItem> {
     let Some(cursor) = position_to_byte_offset(source, position) else {
         return Vec::new();
     };
@@ -171,7 +177,7 @@ pub fn emmet_completions(source: &str, position: Position) -> Vec<CompletionItem
                 return None;
             }
             let candidate = &source[start..cursor];
-            (candidate == rule.prefix).then(|| build_item(source, cursor, rule))
+            (candidate == rule.prefix).then(|| build_item(source, cursor, rule, lang))
         })
         .map(|item| vec![item])
         .unwrap_or_default()
@@ -210,7 +216,12 @@ fn in_slug_context(source: &str, cursor: usize) -> bool {
     false
 }
 
-fn build_item(source: &str, cursor: usize, rule: &EmmetRule) -> CompletionItem {
+fn build_item(
+    source: &str,
+    cursor: usize,
+    rule: &EmmetRule,
+    lang: &LanguageIdentifier,
+) -> CompletionItem {
     let plen = rule.prefix.len();
     let edit_start = cursor - plen;
     let range = Range::new(
@@ -239,10 +250,17 @@ fn build_item(source: &str, cursor: usize, rule: &EmmetRule) -> CompletionItem {
         // makes the match exact.
         filter_text: Some(rule.prefix.to_owned()),
         kind: Some(kind),
-        detail: Some(rule.detail.to_owned()),
+        // Detail prose from the shared catalog; the glyph substitution note in
+        // the documentation weaves in the locale-neutral prefix / target glyph.
+        detail: Some(i18n::t(lang, rule.detail_key)),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: format!("半角 `{}` → `{}`", rule.prefix, rule.label),
+            value: {
+                let mut args = FluentArgs::new();
+                args.set("prefix", rule.prefix.to_owned());
+                args.set("glyph", rule.label.to_owned());
+                i18n::tf(lang, "lsp-emmet-doc", &args)
+            },
         })),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range,
@@ -263,6 +281,16 @@ mod tests {
 
     fn pos(line: u32, col: u32) -> Position {
         Position::new(line, col)
+    }
+
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
+
+    /// Shim mirroring the pre-i18n `emmet_completions(source, position)` arity,
+    /// pinned to English so the documentation assertion stays locale-stable.
+    fn emmet_completions(source: &str, position: Position) -> Vec<CompletionItem> {
+        super::emmet_completions(source, position, &en())
     }
 
     fn first_label(source: &str, position: Position) -> Option<String> {
@@ -472,7 +500,34 @@ mod tests {
             panic!("documentation must be Some(MarkupContent), got None/other");
         };
         assert_eq!(mc.kind, MarkupKind::Markdown);
+        assert_eq!(mc.value.as_str(), "Half-width `[` → `［`");
+    }
+
+    #[test]
+    fn emmet_detail_and_doc_localize_by_lang() {
+        // Detail prose and the glyph-substitution doc come from the shared
+        // catalog: `ja` keeps the migrated Japanese, `zh` the new Chinese.
+        let item = |tag: &str| {
+            let lang: LanguageIdentifier = tag.parse().expect("locale parses");
+            super::emmet_completions("[", pos(0, 1), &lang)
+                .into_iter()
+                .next()
+                .expect("one emmet item")
+        };
+        let ja = item("ja");
+        assert_eq!(
+            ja.detail.as_deref(),
+            Some("全角左ブラケット (半角『[』→全角『［』)")
+        );
+        let Some(Documentation::MarkupContent(mc)) = ja.documentation else {
+            panic!("ja documentation present")
+        };
         assert_eq!(mc.value.as_str(), "半角 `[` → `［`");
+        let zh = item("zh");
+        assert_eq!(
+            zh.detail.as_deref(),
+            Some("全角左括号（半角『[』→全角『［』）")
+        );
     }
 
     #[test]

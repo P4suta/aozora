@@ -28,6 +28,7 @@ use crate::doc_line_view::DocLineView;
 use crate::formatting::format_edits;
 use crate::half_width_emmet::emmet_completions;
 use crate::hover::hover_at;
+use crate::i18n::ui_lang;
 use crate::linked_editing::linked_editing_at;
 use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};
 use crate::parse_cache::{MAX_DOCUMENT_BYTES, exceeds_document_cap};
@@ -149,7 +150,9 @@ impl AozoraLanguageServer {
             // lookups, byte-identical to a LineIndex over the raw text since
             // ropey counts only `\n`) — no per-publish line-table rebuild.
             let view = DocLineView::Rope(rope);
-            state.with_parse_cache(|cache| diagnostics_from_aozora(&view, cache.diagnostics()))
+            state.with_parse_cache(|cache| {
+                diagnostics_from_aozora(&view, cache.diagnostics(), ui_lang())
+            })
         });
         self.client.publish_diagnostics(uri, diags, None).await;
     }
@@ -220,7 +223,7 @@ impl AozoraLanguageServer {
         } else {
             // Map spans against the parsed rope directly — the per-keystroke
             // hot path no longer rebuilds an O(doc) line table (Mechanism A).
-            diagnostics_from_aozora(&DocLineView::Rope(&raw), &diagnostics)
+            diagnostics_from_aozora(&DocLineView::Rope(&raw), &diagnostics, ui_lang())
         };
         self.client
             .publish_diagnostics(uri, publish_diags, None)
@@ -687,7 +690,7 @@ impl LanguageServer for AozoraLanguageServer {
         // Wait-free snapshot. `hover_at` only reads the slice, so the
         // Arc<str> from snapshot is sufficient with no extra clone.
         let snap = state.snapshot();
-        Ok(hover_at(snap.doc_text(), position))
+        Ok(hover_at(snap.doc_text(), position, ui_lang()))
     }
 
     // `inlay_hint` deliberately *not* implemented on the
@@ -823,20 +826,21 @@ impl LanguageServer for AozoraLanguageServer {
         // `with_tree` call eliminates a full document re-parse on
         // every keystroke during slug completion — a major win on
         // 40 KB+ documents.
-        let mut items: Vec<CompletionItem> = completion_at(snap.doc_text(), position);
+        let lang = ui_lang();
+        let mut items: Vec<CompletionItem> = completion_at(snap.doc_text(), position, lang);
         // Append the half-width emmet suggestions. They are
         // independent of the parsed tree (the trigger detection is a
         // pure prefix scan), so we don't pay for a `with_tree` call
         // and the slug catalogue + emmet items merge into one
         // response — VS Code's own ranker decides ordering.
-        items.extend(emmet_completions(snap.doc_text(), position));
+        items.extend(emmet_completions(snap.doc_text(), position, lang));
         // Plus the structured-snippet items that fire after the
         // user just typed `#` / `｜` / `《` / `※`. Each item carries
         // a snippet body with `${…}` Tab-stops so accepting expands
         // into a fully-structured form (`［＃改ページ］` etc) and
         // leaves the cursor in the next placeholder for IDE-style
         // Tab navigation (the user-asked feature, 2026-04-29).
-        items.extend(snippet_completions(snap.doc_text(), position));
+        items.extend(snippet_completions(snap.doc_text(), position, lang));
         if items.is_empty() {
             Ok(None)
         } else {
@@ -854,7 +858,8 @@ impl LanguageServer for AozoraLanguageServer {
         // diagnostic carries a `data` payload describing what kind
         // of fix is appropriate; `quick_fix_actions` decodes those
         // and returns concrete `WorkspaceEdit`s.
-        let mut actions = quick_fix_actions(&uri, &p.context.diagnostics);
+        let lang = ui_lang();
+        let mut actions = quick_fix_actions(&uri, &p.context.diagnostics, lang);
         // Plus the wrap-selection actions when the user has a
         // non-empty selection. Both kinds are returned together so
         // the editor's lightbulb / right-click menu shows them in
@@ -865,6 +870,7 @@ impl LanguageServer for AozoraLanguageServer {
             snap.doc_line_index(),
             &uri,
             p.range,
+            lang,
         ));
         if actions.is_empty() {
             Ok(None)
@@ -928,7 +934,8 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        let symbols: Vec<DocumentSymbol> = document_symbols(snap.doc_text(), snap.doc_line_index());
+        let symbols: Vec<DocumentSymbol> =
+            document_symbols(snap.doc_text(), snap.doc_line_index(), ui_lang());
         if symbols.is_empty() {
             Ok(None)
         } else {
