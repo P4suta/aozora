@@ -6,61 +6,33 @@ Aozora Bunko notation parser CLI
 
 Usage: aozora [OPTIONS] <COMMAND>
 
-Commands:
-  check        Run the lexer over a file and report diagnostics
-  lint         Report notation-hygiene lints (`aozora::lint::*`) — non-canonical directive
-               near-misses and their suggested canonical spelling. The authoring-hygiene view
-               (`check` reports every diagnostic); `--fix` rewrites the flagged near-misses in place
-               (the Tier1 autofix)
-  fmt          Format documents: round-trip parse ∘ to_source to the canonical form. Reads stdin,
-               one file, many files, or directories; `--check` / `--diff` / `--list` verify without
-               writing, `--write` rewrites in place, `--fix` also canonicalises flagged directive
-               near-misses
+Documents:
+  check        Parse a document and report every diagnostic
+  lint         Report advisory notation-hygiene lints (`--fix` rewrites)
+  fmt          Canonicalise via parse ∘ to_source (`--check` / `--write` / `--diff`)
   render       Render Aozora notation to HTML on stdout
-  inspect      Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
-               `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
-               data counterpart to `schema`: `schema <kind>` prints the JSON Schema, `inspect
-               <kind>` prints a document's data in that schema, byte-identical to every binding's
-               `*_json()` output
-  kinds        Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel`
-               / `InternalCheckCode` variant with its wire tag
-  schema       Pretty-print the JSON Schema for one of the four JSON envelopes
-  explain      Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a
-               diagnostic code
-  pandoc       Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON
-               to stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
-               pandoc and pipes the JSON through it
-  doctor       Run an end-user runtime self-check: the discovered `.aozora.toml` and the effective
-               settings (with each value's source), whether `pandoc` and `aozora-lsp` are on `PATH`,
-               and the terminal's colour capabilities. Exits 0 when all-green, 1 on a blocking
-               problem (a malformed config). The runtime counterpart to the contributor-facing `just
-               doctor`
-  init         Scaffold a new Aozora notation project into `[DIR]` (default the working directory):
-               a commented `.aozora.toml`, a sample `hon.aozora` exercising ruby / 傍点 / 字下げ so
-               `render` and `check` work immediately, and a `.gitignore`. Existing files are kept
-               untouched unless `--force`; idempotent. `--no-sample` / `--no-gitignore` opt out
-  repl         Start an interactive read-eval-print loop: type a line of notation and see its parsed
-               nodes, rendered HTML, Pandoc AST, and diagnostics immediately (the terminal
-               counterpart to the web playground). Reuses the same parse / render / json engine as
-               the document subcommands, so its views can never disagree with them. `:mode` /
-               `:lang` / `:encoding` / `:load` / `:help` / `:quit` tune the session; line editing
-               and history come from rustyline on a terminal, and a piped stdin is scriptable
-  tui          Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane (rendered
-               HTML / nodes / Pandoc), and a DIAGNOSTICS pane, all refreshed on every keystroke
-               (debounced) through the same parse / render / json engine as the document
-               subcommands. The editor-free counterpart to `--watch`. `Ctrl-S` saves, `Ctrl-L`
-               cycles language, `Ctrl-P` cycles the preview view, `Ctrl-Q` quits. An optional
-               `[FILE]` opens for editing
-  completions  Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` /
-               `nushell`) on stdout. Generated from the live command tree, so it always matches the
-               installed binary; release tarballs also ship these under `completions/`
-  help         Print this message or the help of the given subcommand(s)
+  inspect      Emit a document's JSON views (nodes / pairs / gaiji / …)
+  pandoc       Project to a Pandoc AST (50+ output formats)
+
+Interactive:
+  repl         Interactive read-eval-print loop — type notation, see output
+  tui          Full-screen live editor with preview and diagnostics
+
+Introspection:
+  explain      Explain a diagnostic code, NodeKind tag, or notation concept
+  spec         Query the tool's own contracts (kinds / schema / slugs)
+
+Setup & tooling:
+  init         Scaffold a new project (`.aozora.toml` + a sample document)
+  doctor       Runtime self-check — config, PATH tools, terminal capabilities
+  completions  Print a shell completion script (bash / zsh / fish / …)
 
 Options:
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
           `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
-          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+          subcommand. Governs `check`'s graphical diagnostics; `spec kinds` tables are always
+          monochrome
 
           Possible values:
           - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
@@ -96,9 +68,10 @@ Examples:
   aozora init myproject              # scaffold a new project
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
-  aozora inspect nodes FILE.txt         # parsed nodes as JSON
+  aozora inspect nodes FILE.txt      # parsed nodes as JSON
   aozora fmt --check FILE.txt        # CI format gate
   aozora explain unclosed_bracket    # explain a diagnostic code
+  aozora spec kinds                  # the parser's typed vocabulary
   aozora completions zsh             # shell completion script
 
 Document subcommands read stdin when given '-' or no path.

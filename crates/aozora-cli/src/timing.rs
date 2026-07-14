@@ -52,8 +52,7 @@ impl Timer {
     }
 
     /// Write the collected timings to stderr. A no-op when disabled or
-    /// when nothing was measured (e.g. `inspect slugs`, which neither reads
-    /// nor parses).
+    /// when nothing was measured (`--timing` off, or no phases ran).
     ///
     /// The view auto-selects on the same rule as `check`'s diagnostics: the
     /// aligned `human` report when stderr is a terminal, the machine `json`

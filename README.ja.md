@@ -91,7 +91,7 @@ assert_eq!(tree.to_source_verbatim(), "｜青梅《おうめ》");
 aozora check FILE.txt           # 字句解析・診断を出力
 aozora fmt --check FILE.txt     # parse ∘ to_source の往復チェック
 aozora render FILE.txt          # HTML を標準出力へ
-aozora inspect nodes FILE.txt   # 解析ノードを JSON で出力 (pairs / gaiji / slugs …)
+aozora inspect nodes FILE.txt   # 解析ノードを JSON で出力 (pairs / gaiji …)
 aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 ```
 
@@ -118,7 +118,7 @@ aozora は26クレートの workspace です (加えて `aozora-go` Go モジュ
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan ベースのロスレス具象構文木 (CST)。エディタ/フォーマッタ向け。 |
 | [`crates/aozora-query`](./crates/aozora-query) | tree-sitter 風パターン DSL (`SyntaxKind` + capture)。CST に対するクエリ。 |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`Tree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `lint` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`。 |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `lint` / `fmt` / `render` / `inspect` / `pandoc` / `explain` / `spec` (kinds / schema / slugs) / `completions`。 |
 | [`crates/aozora-fmt`](./crates/aozora-fmt) | スタンドアロンの冪等フォーマッタ (`aozora-fmt` バイナリ)。`aozora fmt` のエンジンで、エディタ / CI と共有。 |
 | [`crates/aozora-lsp`](./crates/aozora-lsp) | 言語サーバ (tower-lsp / stdio): 診断・整形・hover・補完・セマンティックトークン。VS Code 拡張に同梱。 |
 | [`crates/tree-sitter-aozora`](./crates/tree-sitter-aozora) | Tree-sitter 文法。`aozora-lsp` が打鍵ごとに問い合わせる構文スケルトン。 |

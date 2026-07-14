@@ -3,9 +3,9 @@ source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"inspect\", \"--help\"])"
 ---
 Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
-`container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The data counterpart
-to `schema`: `schema <kind>` prints the JSON Schema, `inspect <kind>` prints a document's data in
-that schema, byte-identical to every binding's `*_json()` output
+`container-pairs` / `diagnostics` / `gaiji`. The data counterpart to `spec schema`: `spec schema
+<kind>` prints the JSON Schema, `inspect <kind>` prints a document's data in that schema,
+byte-identical to every binding's `*_json()` output
 
 Usage: aozora inspect [OPTIONS] <WHICH> [FILE]
 
@@ -19,7 +19,6 @@ Arguments:
           - pairs:           Per-matched-pair `{ kind, open, close }`
           - container-pairs: Per-container-pair `{ kind, open, close }` (normalized coordinates)
           - gaiji:           Per-外字-reference `{ span, description, mencode, codepoint, resolved }`
-          - slugs:           The static ［＃…］ slug catalogue — reads no document input
 
   [FILE]
           Input path; pass `-` (or omit) to read from stdin
@@ -57,7 +56,8 @@ Options:
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
           `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
-          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+          subcommand. Governs `check`'s graphical diagnostics; `spec kinds` tables are always
+          monochrome
 
           Possible values:
           - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
@@ -93,4 +93,4 @@ Examples:
   aozora inspect nodes src.txt           # source nodes as JSON
   cat src.txt | aozora inspect pairs     # matched pairs from stdin
   aozora inspect gaiji -E sjis file.txt  # resolved gaiji references
-  aozora inspect slugs                   # the static slug catalogue
+  aozora spec schema nodes               # the *contract* for `inspect nodes`

@@ -1,4 +1,4 @@
-//! End-to-end smoke tests for `aozora kinds` / `aozora schema` /
+//! End-to-end smoke tests for `aozora spec kinds` / `aozora spec schema` /
 //! `aozora explain` (Phase L3).
 //!
 //! Mirrors `smoke.rs` in spawning the *built* binary via
@@ -33,14 +33,14 @@ fn run(args: &[&str]) -> (ExitStatus, String, String) {
 }
 
 // ---------------------------------------------------------------------
-// `aozora kinds`
+// `aozora spec kinds`
 // ---------------------------------------------------------------------
 
 #[test]
 fn kinds_lists_every_enum_section() {
     // `--format human` forces the tables: the captured stdout is piped, where
     // the `auto` default now resolves to json (see `kinds_default_auto_...`).
-    let (status, stdout, stderr) = run(&["kinds", "--format", "human"]);
+    let (status, stdout, stderr) = run(&["spec", "kinds", "--format", "human"]);
     assert!(status.success(), "kinds failed: {stderr:?}");
     for section in [
         "NodeKind",
@@ -59,7 +59,7 @@ fn kinds_lists_every_enum_section() {
 
 #[test]
 fn kinds_lists_concrete_node_tags() {
-    let (status, stdout, _) = run(&["kinds", "--format", "human"]);
+    let (status, stdout, _) = run(&["spec", "kinds", "--format", "human"]);
     assert!(status.success());
     // Spot-check tags that span the camelCase / non-ascii lookup paths.
     for tag in ["ruby", "angleQuote", "containerOpen", "containerClose"] {
@@ -71,7 +71,7 @@ fn kinds_lists_concrete_node_tags() {
 fn kinds_default_auto_is_json_when_stdout_piped() {
     // No `--format`: `auto` resolves to json because the captured stdout is not
     // a terminal — the unification with `check`'s diagnostics auto rule.
-    let (status, stdout, stderr) = run(&["kinds"]);
+    let (status, stdout, stderr) = run(&["spec", "kinds"]);
     assert!(status.success(), "kinds failed: {stderr:?}");
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("piped kinds must default to json");
@@ -86,7 +86,7 @@ fn kinds_default_auto_is_json_when_stdout_piped() {
 
 #[test]
 fn kinds_format_json_emits_valid_envelope() {
-    let (status, stdout, stderr) = run(&["kinds", "--format", "json"]);
+    let (status, stdout, stderr) = run(&["spec", "kinds", "--format", "json"]);
     assert!(status.success(), "kinds --format json failed: {stderr:?}");
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("kinds --format json must be valid JSON");
@@ -123,12 +123,12 @@ fn kinds_format_json_emits_valid_envelope() {
 }
 
 // ---------------------------------------------------------------------
-// `aozora schema`
+// `aozora spec schema`
 // ---------------------------------------------------------------------
 
 #[test]
 fn schema_diagnostics_emits_valid_json() {
-    let (status, stdout, stderr) = run(&["schema", "diagnostics"]);
+    let (status, stdout, stderr) = run(&["spec", "schema", "diagnostics"]);
     assert!(status.success(), "schema diagnostics failed: {stderr:?}");
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("schema output must be valid JSON");
@@ -142,13 +142,31 @@ fn schema_diagnostics_emits_valid_json() {
 #[test]
 fn schema_each_envelope_succeeds() {
     for which in ["diagnostics", "nodes", "pairs", "container-pairs"] {
-        let (status, stdout, stderr) = run(&["schema", which]);
+        let (status, stdout, stderr) = run(&["spec", "schema", which]);
         assert!(status.success(), "schema {which} failed: {stderr:?}");
         assert!(
             serde_json::from_str::<serde_json::Value>(&stdout).is_ok(),
             "schema {which} output is not valid JSON",
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// `aozora spec slugs`
+// ---------------------------------------------------------------------
+
+#[test]
+fn spec_slugs_needs_no_input_and_emits_the_wire_envelope() {
+    // The slug catalogue is static: it must succeed with neither stdin nor a
+    // file argument, emitting the shared `aozora::json` envelope on stdout —
+    // byte-identical to every binding's `slugs_json()` output.
+    let (status, stdout, stderr) = run(&["spec", "slugs"]);
+    assert!(status.success(), "spec slugs failed: {stderr:?}");
+    assert!(
+        stdout.starts_with(r#"{"schemaVersion":2,"#),
+        "wire envelope: {stdout:?}"
+    );
+    assert!(stdout.contains(r#""canonical":"#), "slugs: {stdout:?}");
 }
 
 // ---------------------------------------------------------------------
@@ -180,8 +198,8 @@ fn explain_unknown_kind_fails_with_hint() {
     let (status, _, stderr) = run(&["explain", "bogus"]);
     assert!(!status.success(), "unknown kind must exit non-zero");
     assert!(
-        stderr.contains("aozora kinds"),
-        "expected hint pointing at `aozora kinds`: {stderr:?}",
+        stderr.contains("aozora spec kinds"),
+        "expected hint pointing at `aozora spec kinds`: {stderr:?}",
     );
 }
 

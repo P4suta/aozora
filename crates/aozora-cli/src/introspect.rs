@@ -1,15 +1,17 @@
-//! `aozora kinds` / `aozora schema` / `aozora explain` — shell-level
+//! `aozora spec {kinds,schema,slugs}` / `aozora explain` — shell-level
 //! introspection of the parser's typed contracts.
 //!
 //! No parsing happens here — the goal is to make "what tags can the
 //! JSON format produce?" / "what is the JSON envelope shape?" /
 //! "what does `bouten` mean?" answerable without reading source.
 //!
-//! - `aozora kinds` walks every `pub const ALL: [Self; N]` on the
+//! - `aozora spec kinds` walks every `pub const ALL: [Self; N]` on the
 //!   spec / syntax enums and tabulates them.
-//! - `aozora schema` pretty-prints the generated JSON Schema for
+//! - `aozora spec schema` pretty-prints the generated JSON Schema for
 //!   one of the four JSON envelopes (delegated to
 //!   `aozora::json::schema_*` behind the `schema` Cargo feature).
+//! - `aozora spec slugs` prints the static ［＃…］ slug catalogue as the
+//!   shared `aozora::json` envelope (delegated to `aozora::json::slugs`).
 //! - `aozora explain <kind>` prints the embedded handbook chapter
 //!   for that `NodeKind` — the same `nodes/<kind>.md` rendered by
 //!   mdbook, surfaced in the terminal via `include_str!`.
@@ -27,10 +29,10 @@ use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
 use aozora::{
     Diagnostic, DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Sentinel, Severity,
-    json::{schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
+    json::{self, schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
 };
 
-/// `aozora schema <which>` subcommand argument.
+/// `aozora spec schema <which>` subcommand argument.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum SchemaKind {
     /// `JsonEnvelope<Diagnostic>` — `diagnostics` output shape.
@@ -43,7 +45,7 @@ pub(crate) enum SchemaKind {
     ContainerPairs,
 }
 
-/// Output format for `aozora kinds`: the human tables or the machine
+/// Output format for `aozora spec kinds`: the human tables or the machine
 /// `{"schemaVersion":1,"data":{…}}` envelope, auto-selected by default on the
 /// same rule as `check`'s diagnostics — tables when stdout is a terminal, the
 /// JSON envelope when it is piped. `check`'s richer `DiagFormat` (with `short`)
@@ -79,7 +81,7 @@ impl OutputFormat {
     }
 }
 
-/// `aozora kinds` arguments. The table set is one fixed shape; `--format`
+/// `aozora spec kinds` arguments. The table set is one fixed shape; `--format`
 /// selects the human tables or the JSON envelope (`auto` by default).
 #[derive(Debug, Args)]
 pub(crate) struct KindsArgs {
@@ -100,14 +102,14 @@ pub(crate) struct KindsArgs {
 An unrecognised target suggests the nearest known one (\"did you mean …?\").")]
 pub(crate) struct ExplainArgs {
     /// A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run
-    /// `aozora kinds` for the list), a notation concept (e.g. `tcy`,
+    /// `aozora spec kinds` for the list), a notation concept (e.g. `tcy`,
     /// `傍点`), or a diagnostic code (e.g. `aozora::lex::unclosed_bracket`,
     /// or the short `unclosed_bracket`).
     #[arg(value_name = "TARGET")]
     pub(crate) kind: String,
 }
 
-/// `aozora schema <which>` arguments.
+/// `aozora spec schema <which>` arguments.
 #[derive(Debug, Args)]
 pub(crate) struct SchemaArgs {
     /// Which JSON envelope schema to dump.
@@ -126,7 +128,7 @@ struct KindTable {
 }
 
 /// The six introspection tables, in display order. Single source of truth
-/// for `aozora kinds` (both `--format human` and `--format json`).
+/// for `aozora spec kinds` (both `--format human` and `--format json`).
 fn kind_tables() -> Vec<KindTable> {
     vec![
         KindTable {
@@ -237,11 +239,20 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Print the static ［＃…］ slug catalogue as the shared `aozora::json`
+/// envelope. Reads no document input; byte-identical to every binding's
+/// `slugs_json()` output.
+pub(crate) fn run_slugs() -> Result<ExitCode> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{}", json::slugs()).context("write slugs to stdout")?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Print the explainer for `args.kind`. Resolves a `NodeKind` handbook page,
 /// a notation concept, or a diagnostic code (see [`resolve_explain`]). On an
 /// unrecognised target it exits non-zero with a localized message that offers
 /// the nearest known target ("did you mean …?") plus a hint pointing back at
-/// `aozora kinds`.
+/// `aozora spec kinds`.
 pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     match resolve_explain(&args.kind, lang) {
         Some(text) => {
@@ -269,7 +280,7 @@ fn resolve_explain(target: &str, lang: &LanguageIdentifier) -> Option<String> {
 
 /// The localized "unknown explain target" error, with a "did you mean `Y`?"
 /// tail when a near neighbour exists ([`nearest_target`]) and a hint pointing
-/// at `aozora kinds`. Human-only: the suggestion and prose respect `lang`,
+/// at `aozora spec kinds`. Human-only: the suggestion and prose respect `lang`,
 /// while the exit code (the machine axis) is unchanged — this string is what
 /// `run_explain` bails with.
 fn unknown_target_message(target: &str, lang: &LanguageIdentifier) -> String {
@@ -308,7 +319,7 @@ where
 
 // ---- per-variant prose ---------------------------------------------
 //
-// Short, single-line summaries used by `aozora kinds` rows. The full
+// Short, single-line summaries used by `aozora spec kinds` rows. The full
 // multi-paragraph prose for each `NodeKind` lives in this crate under
 // `src/node-docs/<kind>.md` and is surfaced verbatim by
 // `aozora explain <kind>` via `include_str!`; the handbook borrows the
@@ -973,17 +984,17 @@ mod tests {
     #[test]
     fn unknown_target_message_offers_suggestion_and_keeps_kinds_hint() {
         // A near-miss carries the localized "did you mean" tail *and* the
-        // `aozora kinds` pointer the CLI's error-hint test pins.
+        // `aozora spec kinds` pointer the CLI's error-hint test pins.
         let msg = unknown_target_message("rubi", &lang_en());
         assert!(msg.contains("rubi"), "echoes the bad target: {msg:?}");
         assert!(msg.contains("ruby"), "suggests the near neighbour: {msg:?}");
-        assert!(msg.contains("aozora kinds"), "keeps the hint: {msg:?}");
+        assert!(msg.contains("aozora spec kinds"), "keeps the hint: {msg:?}");
     }
 
     #[test]
     fn unknown_target_message_omits_suggestion_when_far() {
         let msg = unknown_target_message("bogus", &lang_en());
         assert!(msg.contains("bogus"), "echoes the bad target: {msg:?}");
-        assert!(msg.contains("aozora kinds"), "still hints: {msg:?}");
+        assert!(msg.contains("aozora spec kinds"), "still hints: {msg:?}");
     }
 }

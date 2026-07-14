@@ -89,7 +89,7 @@ pub enum NodeKind {
 impl NodeKind {
     /// Every variant in declaration order.
     ///
-    /// Used by `aozora kinds` (CLI introspection) and the
+    /// Used by `aozora spec kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
     pub const ALL: [Self; 25] = [

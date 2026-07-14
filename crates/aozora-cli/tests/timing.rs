@@ -98,21 +98,6 @@ fn timing_json_does_not_pollute_stdout() {
 }
 
 #[test]
-fn slugs_timing_emits_no_phases() {
-    // `wire slugs` neither reads nor parses, so --timing has nothing to
-    // measure: stderr stays empty, the catalogue still lands on stdout.
-    let (stdout, stderr) = run(&["inspect", "slugs", "--timing"], &[]);
-    assert!(
-        stderr.is_empty(),
-        "no phases to report for slugs: {stderr:?}"
-    );
-    assert!(
-        !stdout.is_empty(),
-        "slugs catalogue still emitted: {stdout:?}"
-    );
-}
-
-#[test]
 fn no_timing_flag_writes_nothing_to_stderr() {
     // Without --timing, a clean render writes nothing to stderr.
     let (_, stderr) = run(&["render"], RUBY);

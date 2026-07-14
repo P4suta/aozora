@@ -258,7 +258,7 @@ struct Envelope<'a, T> {
 ///
 /// Schema-feature only. Used by `xtask schema dump` to commit the
 /// schema artefact under `crates/aozora-book/src/json/`, and by the
-/// `aozora schema` CLI subcommand for ad-hoc introspection.
+/// `aozora spec schema` CLI subcommand for ad-hoc introspection.
 #[cfg(feature = "schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]

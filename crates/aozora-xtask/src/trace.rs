@@ -39,7 +39,7 @@ pub(crate) struct TraceArgs {
     pub(crate) cmd: TraceCmd,
 }
 
-/// Output selector for `xtask trace`, mirroring `aozora kinds`'
+/// Output selector for `xtask trace`, mirroring `aozora spec kinds`'
 /// two-value `--format`.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub(crate) enum TraceFormat {

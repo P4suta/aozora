@@ -54,10 +54,10 @@ explain-unknown = 不明な explain 対象 `{$target}`
 # 対する編集距離一致）に付ける。$suggestion は最も近い既知の対象で、localize
 # しないリテラルな識別子。
 explain-did-you-mean = もしかして `{$suggestion}`?
-# 有効な集合の在処を示す末尾。`aozora kinds` と例のコードはそのままのシェル
+# 有効な集合の在処を示す末尾。`aozora spec kinds` と例のコードはそのままのシェル
 # テキストで、どのロケールでも同じ。
 explain-unknown-hint =
-    NodeKind タグか記法概念（`aozora kinds` を実行）、または
+    NodeKind タグか記法概念（`aozora spec kinds` を実行）、または
     `aozora::lex::unclosed_bracket` のような診断コードを想定しています
 
 ## 記法概念

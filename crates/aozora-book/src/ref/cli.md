@@ -15,11 +15,10 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `lint` | Report notation-hygiene lints (`aozora::lint::*`); `--fix` rewrites in place. |
 | `fmt` | Round-trip `parse ∘ to_source` (canonicalise); one or many files. |
 | `render` | Render to HTML on stdout. |
-| `inspect` | Emit a document's JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`) or the static `slugs` catalogue. |
+| `inspect` | Emit a document's JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`). |
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
-| `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … JSON tag. |
-| `schema` | Print the JSON Schema for a JSON envelope. |
 | `explain` | Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a diagnostic code. |
+| `spec` | Query the tool's own contracts: `kinds` (JSON-tag tables), `schema <which>` (a JSON envelope's JSON Schema), `slugs` (the static ［＃…］ catalogue). |
 | `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
 The one **global** option is `--color {auto,always,never}` (accepted after
@@ -167,8 +166,8 @@ aozora inspect <KIND> [OPTIONS] [PATH]
 ```
 
 Emit a parsed document's data as the shared `aozora::json` JSON
-envelope — the **data** counterpart to `aozora schema` (which prints the
-*contract*). The bytes are identical to every binding's `*_json()`
+envelope — the **data** counterpart to `aozora spec schema` (which prints
+the *contract*). The bytes are identical to every binding's `*_json()`
 output (Python `.nodes_json()`, WASM `.nodes_json()`, the C FFI
 `aozora_nodes_json`), so the CLI is a first-class way to get structured
 parser output into a shell pipeline.
@@ -180,20 +179,20 @@ parser output into a shell pipeline.
 | `container-pairs` | Container open/close pairs (normalized coordinates). |
 | `diagnostics` | The diagnostics stream as data (same shape as `check --format json`, but always exit `0`). |
 | `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
-| `slugs` | The static `［＃…］` slug catalogue — needs no input. |
 
 Every envelope is `{ "schemaVersion": 2, "data": [ … ] }`; the per-kind
-item schema is the one `aozora schema <kind>` prints (see
+item schema is the one `aozora spec schema <kind>` prints (see
 [JSON output](../json/overview.md)). `PATH` of `-` (or omitted) reads
-stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike
-`check`, `inspect` is a pure projection — it always exits `0`.
+stdin and `--encoding`/`-E` applies. Unlike `check`, `inspect` is a pure
+projection — it always exits `0`. The static `［＃…］` slug catalogue is not
+a document view; it lives under [`aozora spec slugs`](#aozora-spec).
 
 ```sh
 aozora inspect nodes src.txt               # source nodes as JSON
 cat src.txt | aozora inspect pairs         # matched pairs, from stdin
 aozora inspect gaiji -E sjis crime.txt     # resolved 外字 references
-aozora inspect slugs                       # the static slug catalogue
-aozora schema nodes                        # the *contract* for `inspect nodes`
+aozora spec schema nodes                   # the *contract* for `inspect nodes`
+aozora spec slugs                          # the static slug catalogue
 ```
 
 ## `aozora pandoc`
@@ -245,22 +244,47 @@ The release archive likewise ships man pages under `man/man1/`
 hidden `aozora man [SUBCOMMAND]` subcommand renders a page to stdout if
 you want to install one locally.
 
-## Introspection subcommands
+## `aozora spec`
 
-`kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
-`explain <target>` print typed contracts and need no input file. They
-back the drift-gated JSON artefacts; see [JSON output](../json/overview.md).
-The **data** counterpart to `schema` is [`aozora inspect`](#aozora-inspect),
-which projects a parsed document into those same envelopes.
+```text
+aozora spec <kinds | schema <WHICH> | slugs>
+```
 
-`kinds --format` defaults to **`auto`** — human tables when stdout is a
-terminal, the machine envelope when piped (`--format {human,json}` forces
+Query the tool's own typed contracts — no document input. Groups the
+introspection subcommands that print the parser's vocabulary and wire
+shapes; they back the drift-gated JSON artefacts (see
+[JSON output](../json/overview.md)). The **data** counterpart to
+`spec schema` is [`aozora inspect`](#aozora-inspect), which projects a
+parsed document into those same envelopes.
+
+| Subcommand | What it prints |
+|---|---|
+| `spec kinds` | Every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel` / `InternalCheckCode` variant with its wire tag. |
+| `spec schema {diagnostics\|nodes\|pairs\|container-pairs}` | The JSON Schema for one of the four `aozora::json` envelopes. |
+| `spec slugs` | The static `［＃…］` slug catalogue as the shared `aozora::json` envelope. |
+
+`spec kinds --format` defaults to **`auto`** — human tables when stdout is
+a terminal, the machine envelope when piped (`--format {human,json}` forces
 either). The envelope is
 `{"schemaVersion":1,"data":{"nodeKinds":[{"tag","summary"}],
 "pairKinds":[…],"severities":[…],"diagnosticSources":[…],"sentinels":[…],
 "internalCheckCodes":[…]}}` (one line, sharing the two-key `{schemaVersion,data}`
 shape of the `inspect` envelopes; `schemaVersion` is a CLI-local counter,
-distinct from the wire `SCHEMA_VERSION`).
+distinct from the wire `SCHEMA_VERSION`). `spec schema` and `spec slugs`
+emit machine JSON on every stream; only `spec kinds` has a human view.
+
+```sh
+aozora spec kinds                # enum / wire-tag tables (json when piped)
+aozora spec kinds --format json  # force the machine envelope
+aozora spec schema nodes         # the JSON Schema for the `nodes` envelope
+aozora spec slugs                # the static ［＃…］ slug catalogue
+```
+
+## `aozora explain`
+
+```text
+aozora explain <TARGET>
+```
 
 `aozora explain` accepts a `NodeKind` camelCase tag (printing the node's
 handbook chapter), a **notation concept** — a notation-family key such as

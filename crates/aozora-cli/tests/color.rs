@@ -164,14 +164,14 @@ fn color_auto_respects_clicolor_force() {
 }
 
 // ---------------------------------------------------------------------
-// `aozora kinds` is monochrome by construction (comfy-table built
+// `aozora spec kinds` is monochrome by construction (comfy-table built
 // without its tty feature) regardless of flag or env.
 // ---------------------------------------------------------------------
 
 #[test]
 fn kinds_is_always_monochrome() {
     let out = run(
-        &["kinds", "--color", "always"],
+        &["spec", "kinds", "--color", "always"],
         &[("CLICOLOR_FORCE", "1")],
         None,
     );
