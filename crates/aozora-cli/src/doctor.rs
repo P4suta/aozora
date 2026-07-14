@@ -746,6 +746,11 @@ fn find_on_path(paths: &OsStr, program: &str) -> Option<PathBuf> {
         .find(|candidate| is_executable_file(candidate))
 }
 
+// mutants::skip — the Windows PATHEXT expansion is cfg-dead on the Linux
+// sweep host, so cargo-mutants cannot exercise it here; the non-Windows
+// counterpart below carries the swept assertions. Reinforcing this variant
+// would need a separate Windows mutation pass.
+#[cfg_attr(test, mutants::skip)]
 #[cfg(windows)]
 fn executable_candidates(dir: &Path, program: &str) -> Vec<PathBuf> {
     // The bare name (for an already-suffixed program), then each PATHEXT entry.
@@ -769,6 +774,10 @@ fn is_executable_file(path: &Path) -> bool {
         .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
+// mutants::skip — the non-unix fallback is cfg-dead on the Linux sweep host;
+// the `#[cfg(unix)]` variant above carries the swept assertions. Reinforcing
+// this variant would need a separate non-unix mutation pass.
+#[cfg_attr(test, mutants::skip)]
 #[cfg(not(unix))]
 fn is_executable_file(path: &Path) -> bool {
     path.is_file()
