@@ -22,17 +22,23 @@ path = "src/lib.rs"
 [dependencies]
 aozora = { workspace = true }
 aozora-encoding = { workspace = true } # Shift_JIS / UTF-8 source decode
+aozora-i18n = { workspace = true } # Fluent catalog for the localized batch summary
 clap = { workspace = true }
 anyhow = { workspace = true }
 similar = { workspace = true } # unified diff for --diff
 walkdir = { workspace = true } # directory recursion
 anstream = { workspace = true } # TTY-aware stdout for coloured diffs
 anstyle = { workspace = true } # diff colour styling
+indicatif = { workspace = true } # TTY-gated batch progress bar / spinner (stderr)
 serde = { workspace = true } # --json report
 serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# `#[cfg_attr(test, mutants::skip)]` no-op attribute for the terminal-only
+# progress-UI shells in `progress.rs`, whose pure decision seams are the
+# unit-tested surface; a plain dev-dependency, inert outside `cargo mutants`.
+mutants = { workspace = true }
 
 [lints]
 workspace = true

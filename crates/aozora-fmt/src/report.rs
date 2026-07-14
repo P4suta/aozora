@@ -39,6 +39,26 @@ impl Outcome {
     }
 }
 
+/// One file's contribution to a directory batch: its severity (for exit-code
+/// folding) plus whether the formatter changed it. The `changed` flag is what
+/// the batch summary needs and the `outcome` alone cannot supply — in `--write`
+/// mode a rewritten file and an already-canonical one both fold to
+/// [`Outcome::Ok`], so "formatted vs unchanged" must be carried explicitly.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct FileOutcome {
+    /// The file's severity, folded with `max` into the run's aggregate.
+    pub(crate) outcome: Outcome,
+    /// Whether the formatter changed (or would change) this file.
+    pub(crate) changed: bool,
+}
+
+impl FileOutcome {
+    /// Pair a per-file `outcome` with whether the file `changed`.
+    pub(crate) fn new(outcome: Outcome, changed: bool) -> Self {
+        Self { outcome, changed }
+    }
+}
+
 /// Build the stdout stream for coloured output, honouring `--color`. `anstream`
 /// strips ANSI when the choice (or TTY detection, for `auto`) says no colour.
 ///

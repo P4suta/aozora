@@ -121,6 +121,16 @@ pub(crate) enum Mode {
     List,
 }
 
+impl Mode {
+    /// True for the machine-readable output mode (`--check --json`) — the one
+    /// mode whose stdout is a byte-stable contract, so the human batch progress
+    /// UI must never draw for it (the discovery spinner is skipped; the bar and
+    /// summary already never reach it, as `--json` bypasses `fold_files`).
+    pub(crate) fn is_machine(&self) -> bool {
+        matches!(self, Self::Check(CheckReport::Json))
+    }
+}
+
 /// How `--check` reports files that are not already formatted.
 pub(crate) enum CheckReport {
     /// One `<path> would be reformatted` line per file, on stderr.
@@ -226,5 +236,20 @@ mod tests {
             a.serialize_options().directives,
             DirectiveNormalization::Canonical
         );
+    }
+
+    #[test]
+    fn is_machine_is_exactly_check_json() {
+        // The machine-readable mode is `--check --json` alone: its stdout is a
+        // byte-stable contract, so it is the one mode that reports `true` and
+        // suppresses the human batch UI. Pinning `Json` true and every other
+        // mode false kills the `-> true` / `-> false` body replacements.
+        assert!(Mode::Check(CheckReport::Json).is_machine());
+        assert!(!Mode::Check(CheckReport::Plain).is_machine());
+        assert!(!Mode::Check(CheckReport::Diff).is_machine());
+        assert!(!Mode::Stdout.is_machine());
+        assert!(!Mode::Write { list: false }.is_machine());
+        assert!(!Mode::Write { list: true }.is_machine());
+        assert!(!Mode::List.is_machine());
     }
 }

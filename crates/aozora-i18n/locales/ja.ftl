@@ -21,6 +21,16 @@ stdin-empty =
 # `--watch` の再実行の合間に端末へ出すバナー。$path は監視中のファイル。
 watch-banner = ── 監視中 {$path}（Ctrl-C で終了）──
 
+## fmt バッチ UX
+
+# ディレクトリ探索中に表示するスピナー（ファイル数は未確定）。
+fmt-progress-discovering = ソースファイルを探索中…
+
+# ディレクトリ fmt 実行後のバッチサマリ。$formatted は整形（--check / --list
+# では整形対象）件数、$unchanged は変更なし件数、$errors は読み取り／整形に
+# 失敗した件数。
+fmt-summary = 整形 {$formatted} 件、変更なし {$unchanged} 件、エラー {$errors} 件
+
 ## explain
 
 # `aozora check` の人間向け診断のあとに出すフッタ。読者を

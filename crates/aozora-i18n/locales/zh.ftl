@@ -20,6 +20,16 @@ stdin-empty =
 # `--watch` 每次重新运行之间打印到终端的横幅。$path 是被监视的文件。
 watch-banner = ── 正在监视 {$path}（Ctrl-C 停止）──
 
+## fmt 批处理 UX
+
+# 遍历目录查找源文件时显示的旋转指示器（文件数尚未确定）。
+fmt-progress-discovering = 正在查找源文件…
+
+# 目录 fmt 运行结束后的批处理摘要。$formatted 为已格式化（在 --check / --list
+# 下为将会格式化）的文件数，$unchanged 为已是规范形式的文件数，$errors 为无法
+# 读取或格式化的文件数。
+fmt-summary = 已格式化 {$formatted} 个，未更改 {$unchanged} 个，错误 {$errors} 个
+
 ## explain
 
 # `aozora check` 的人类可读诊断之后的脚注，引导读者使用

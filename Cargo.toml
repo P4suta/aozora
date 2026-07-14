@@ -239,6 +239,17 @@ walkdir = "2.5"
 similar = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
 anstyle = "1.0"
+# Batch progress reporting for directory `aozora fmt` (the `fold_files` loop):
+# a discovery spinner and a per-file bar, plus a clean way to interleave the
+# formatter's own stdout/stderr lines with the bar (`suspend`). indicatif is
+# the de-facto Rust progress crate — the reporter behind cargo, rustup, and
+# wasm-pack. It draws to stderr and is TTY-aware, so the whole UI stays silent
+# the moment output is piped (which is exactly the strict gate we want: shown
+# only on an interactive stderr, off under `--quiet`, never over `--json`). It
+# reuses `console` (already in the graph via insta) for terminal width, so no
+# new transitive terminal layer. Default features only — no extra unicode
+# subtree; `console` already measures East-Asian-Wide filenames correctly.
+indicatif = "0.18"
 
 # aozora-lsp runtime (language server: tower-lsp over tokio stdio)
 tower-lsp = "0.20"

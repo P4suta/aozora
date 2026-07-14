@@ -22,6 +22,22 @@ stdin-empty =
 # Printed to a terminal between `--watch` re-runs. $path is the watched file.
 watch-banner = ── watching {$path} (Ctrl-C to stop) ──
 
+## fmt batch UX
+##
+## Chrome for a directory `aozora fmt` run, drawn to stderr and gated to an
+## interactive terminal (off under `--quiet`, never over `--json`). Only these
+## strings localize: the progress bar/spinner structure, the formatted output,
+## the `--json` envelope, and the exit code are the machine axis (ADR-0033).
+
+# Spinner message while `aozora fmt DIR/` walks directories for source files —
+# indeterminate, since the file count is not yet known.
+fmt-progress-discovering = discovering source files…
+
+# End-of-run batch summary. $formatted files were changed (or, under --check /
+# --list, would change), $unchanged were already canonical, $errors could not
+# be read or formatted.
+fmt-summary = {$formatted} formatted, {$unchanged} unchanged, {$errors} errors
+
 ## explain
 
 # Footer after `aozora check`'s human diagnostics, pointing the reader at
