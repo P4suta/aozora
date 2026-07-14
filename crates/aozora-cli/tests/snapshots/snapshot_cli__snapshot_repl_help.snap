@@ -1,0 +1,80 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"repl\", \"--help\"])"
+---
+Start an interactive read-eval-print loop: type a line of notation and see its parsed nodes,
+rendered HTML, Pandoc AST, and diagnostics immediately (the terminal counterpart to the web
+playground). Reuses the same parse / render / json engine as the document subcommands, so its views
+can never disagree with them. `:mode` / `:lang` / `:encoding` / `:load` / `:help` / `:quit` tune the
+session; line editing and history come from rustyline on a terminal, and a piped stdin is scriptable
+
+Usage: aozora repl [OPTIONS]
+
+Options:
+      --mode <MODE>
+          Which view(s) to show for each line: `nodes`, `html`, `pandoc`, or `all` (the default).
+          Changeable in-session with `:mode`
+
+          Possible values:
+          - nodes:  The parsed source nodes as JSON (as `aozora inspect nodes`)
+          - html:   The rendered HTML (as `aozora render`)
+          - pandoc: The Pandoc AST as JSON (as `aozora pandoc`)
+          - all:    Every view at once: nodes, HTML, and Pandoc
+          
+          [default: all]
+
+  -E, --encoding <ENCODING>
+          Source encoding for `:load`: `auto` (default), `utf8`, or `sjis`. Typed lines are already
+          UTF-8, so this only governs file loads. Changeable in-session with `:encoding`
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [default: auto]
+
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
+  -v, --verbose...
+          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
+          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
+          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+
+  -q, --quiet
+          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
+          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
+          Global
+
+      --lang <LOCALE>
+          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
+          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
+          (json / short / codes / exit / schema) or `--encoding`. Global
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  aozora repl                    # start the loop (all views)
+  aozora repl --mode html        # start showing only rendered HTML
+  aozora repl -E sjis            # decode :load files as Shift_JIS
+
+Inside the loop, type notation to see it parsed, or a :command:
+  :mode html   :lang ja   :encoding sjis   :load FILE   :help   :quit

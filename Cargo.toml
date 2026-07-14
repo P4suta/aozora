@@ -333,6 +333,13 @@ clap_mangen = "0.3"
 # notify is the de-facto cross-platform watcher (inotify / FSEvents /
 # ReadDirectoryChangesW); CLI-only, like the clap_* generators above.
 notify = "8.2"
+# Line editor for the interactive `aozora repl` — the de-facto Rust readline
+# (a Linenoise port; the line-editing / history backbone behind nushell,
+# sqlx-cli, rusqlite's shell, and countless REPLs). Gives Emacs/vi key
+# bindings, in-session history, and a graceful non-tty fallback for free, so
+# the REPL stays a thin shell over the parser engine rather than reimplementing
+# terminal handling. CLI-only, like the clap_* generators / notify above.
+rustyline = "18.0"
 
 # Localization (aozora-i18n) — the Project Fluent stack, the de-facto Rust
 # i18n standard (Mozilla's localization system, the engine behind Firefox).

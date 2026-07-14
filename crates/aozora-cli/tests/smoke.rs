@@ -529,3 +529,46 @@ fn render_auto_detects_sjis_without_encoding_flag() {
         "auto-detected text missing from render"
     );
 }
+
+// ---------------------------------------------------------------------
+// `aozora repl` — scripted (piped-stdin) read-eval-print loop
+// ---------------------------------------------------------------------
+
+#[test]
+fn repl_evaluates_piped_lines_then_quits() {
+    // A piped stdin is not a terminal, so the loop falls through to its plain
+    // line reader: feed a notation line, a `:mode` switch, another line, and
+    // `:quit`. Every view is the same engine output the document subcommands
+    // emit — the REPL reimplements no parsing / rendering.
+    let script = "｜青空《あおぞら》\n:mode html\n青梅《おうめ》\n:quit\n";
+    let (status, stdout, stderr) = run(&["repl"], Some(script));
+    assert!(
+        status.success(),
+        "scripted repl exits 0: {status:?} {stderr}"
+    );
+    // The startup banner points the reader at `:help`.
+    assert!(stdout.contains(":help"), "banner shown: {stdout}");
+    // The first line renders (the default `all` view includes HTML).
+    assert!(stdout.contains("青空"), "first line evaluated: {stdout}");
+    // The `:mode html` switch is acknowledged and applied to the next line.
+    assert!(
+        stdout.contains("青梅"),
+        "second line evaluated after :mode: {stdout}"
+    );
+}
+
+#[test]
+fn repl_surfaces_diagnostics_inline() {
+    // A private-use sentinel reliably fires a diagnostic; the loop shows the
+    // engine's namespaced code verbatim (the machine axis, un-localized).
+    let script = "bad \u{E001} char\n:quit\n";
+    let (status, stdout, stderr) = run(&["repl"], Some(script));
+    assert!(
+        status.success(),
+        "repl exits 0 even with diagnostics: {stderr}"
+    );
+    assert!(
+        stdout.contains("aozora::"),
+        "diagnostic code shown inline: {stdout}"
+    );
+}

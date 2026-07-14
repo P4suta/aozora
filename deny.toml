@@ -44,6 +44,10 @@ allow = [
   "CC0-1.0",
   "MPL-2.0",
   "Zlib",
+  # BSL-1.0 (Boost Software License 1.0) covers rustyline's Windows-only
+  # clipboard-win/error-code deps — OSI-approved, permissive, and not
+  # shipped in the Linux binary.
+  "BSL-1.0",
 ]
 confidence-threshold = 0.9
 

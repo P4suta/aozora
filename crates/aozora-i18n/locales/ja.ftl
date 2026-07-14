@@ -343,6 +343,54 @@ init-step-render = サンプルを HTML に変換
 init-step-check = 診断を表示
 init-step-doctor = 実効設定を確認
 
+## repl
+##
+## `aozora repl` —対話的な read-eval-print ループ。ここはすべて人間向けの装飾:
+## バナー・セクションのラベル・メタコマンドの応答・ヘルプ・その場のエラーを
+## ローカライズする。ループが包む表示内容 — ノード JSON・レンダリング済み HTML・
+## Pandoc AST・英語の診断レポート — は機械軸であり、ここを通さない (ADR-0033)。
+## `:command` 名とその字面引数はどの言語でも同一。
+
+# 起動時に一度表示。
+repl-banner = aozora repl — 記法を入力すると nodes / HTML / 診断をすぐに表示します。コマンド一覧は :help、終了は :quit。
+
+# `:help` — メタコマンド一覧。末尾の説明のみローカライズする。
+repl-help =
+    コマンド:
+      :mode  nodes | html | pandoc | all   表示するビューを選ぶ
+      :lang  en | ja | zh                  この画面表示の言語
+      :encoding  auto | utf8 | sjis        :load で使うデコーダ
+      :load  FILE                          ファイルの内容を解析する
+      :help                                このヘルプを表示する
+      :quit                                ループを抜ける (Ctrl-D も可)
+
+    青空文庫記法の行を入力すると解析結果が表示されます。
+
+# 各ビューと診断ブロックの前に付くセクションラベル。
+repl-label-nodes = ノード:
+repl-label-html = HTML:
+repl-label-pandoc = Pandoc:
+repl-label-diag = 診断:
+# 解析がクリーンなときに診断ブロックへ表示するプレースホルダ。
+repl-diag-none = (診断なし)
+
+# `:mode` / `:lang` / `:encoding` 切り替え後の応答。値 ($mode / $lang /
+# $encoding) は字面のタグでどの言語でも同一。
+repl-mode-set = モード → {$mode}
+repl-lang-set = 言語 → {$lang}
+repl-encoding-set = エンコーディング → {$encoding}
+
+# `:load` — 読み込んだファイルの評価前に表示するヘッダと、その場の
+# (致命的でない) 読み込み/デコードエラー。$path はファイル、$error は英語の
+# エンジンメッセージ。
+repl-loaded = 読み込み {$path}
+repl-load-error = {$path} を読み込めません: {$error}
+
+# 未知の `:command` ($cmd はコロンなし) と、引数が不足/不正なときの使い方
+# ($expected は受理される値の一覧)。
+repl-unknown-meta = 不明なコマンド `:{$cmd}` — 一覧は :help
+repl-usage = 使い方: :{$cmd} {$expected}
+
 ## LSP エディタ表層
 ##
 ## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、
