@@ -1,46 +1,55 @@
 # Release secrets & Trusted Publishing
 
-This is the operational runbook for aozora's release credentials. It
-follows the **official guidance** of each platform — GitHub Actions
-security hardening, and the Trusted Publishing (OIDC) flows of crates.io,
-PyPI, and npm — rather than any bespoke scheme. See the [References](#references)
-at the bottom for every primary source.
+The operational runbook for the release credentials. Almost none of this
+is visible in the tree: it is GitHub-server-side and registry-side state,
+so this page is its only record.
 
-The goal: **no long-lived publish token sits in the repository.** Where
-the registry supports OIDC Trusted Publishing we mint a short-lived token
-at publish time; where it does not (VS Code Marketplace, Open VSX) the
-token lives as a GitHub *Environment* secret behind an approval gate, not
-as a repository secret.
+The goal: **no long-lived publish token sits in the repository.** Where a
+registry supports OIDC Trusted Publishing we mint a short-lived token at
+publish time. Where it does not (VS Code Marketplace, Open VSX) the token
+lives as an *Environment* secret behind an approval gate, never as a
+repository secret.
+
+Everything below follows each platform's official guidance; the
+[references](#references) are the primary sources.
 
 ## Security model
 
-Every workflow that can publish or create a release splits into an
-**ungated `build` job** (no credentials) and a **gated `publish` job**
-that runs in the `release` GitHub Environment:
+Two environments, deliberately different:
 
-- The publish job pauses for **required-reviewer approval** before it is
-  sent to a runner. Per GitHub's docs, *"a job cannot access environment
-  secrets until one of the required reviewers approves it"* and *"any
-  protection rules … must pass before a job referencing the environment
-  is sent to a runner."* So neither environment secrets **nor** the OIDC
-  token are reachable until you approve.
-- The environment restricts **deployment branches and tags** to `main`
-  (dispatch-triggered publishes run from `main`) plus the `v*` /
-  `vscode-v*` release tags. An OIDC token minted under the environment
-  carries `…:environment:release` in its `sub` claim, so the registry's
-  trusted-publisher rule can require that environment.
-- `dry_run: true` is the default on every manual workflow, so a stray
-  "Run workflow" click only runs the ungated dry-run.
+| | reviewer | branches / tags | why |
+| --- | --- | --- | --- |
+| `release` | required | `main`, `v*`, `vscode-v*` | you approve each publish batch |
+| `release-plz` | **none** | `main` | the gate is the Release-PR merge; a second approval would only stall an unattended publish |
+
+A job cannot reach environment secrets **or** the OIDC token until the
+protection rules pass, because GitHub does not send it to a runner before
+then. An OIDC token minted under an environment carries
+`…:environment:<name>` in its `sub` claim, which is what the registry's
+publisher rule matches.
+
+What stops a stray **Run workflow** click is not one mechanism but three,
+and it is worth knowing which one you are relying on:
+
+- `release.yml` — an event guard: the publish job requires a `refs/tags/`
+  push, so a dispatch builds and stops.
+- `publish-pypi` / `publish-npm` / `publish-extism-wasm` — `dry_run: true`
+  is the input default.
+- `release-plz.yml` — **neither**. Its `workflow_dispatch` takes no inputs
+  and `release-plz-release` has no event guard, so a dispatch on `main` is
+  equivalent to a push on `main`. It is safe only because release-plz is
+  idempotent against crates.io: it publishes what is not yet published.
+  Once activated, treat the button as live.
 
 ## One-time setup
 
-### 1. Create the `release` environment
+> A workflow naming an environment that does not exist yet **auto-creates
+> it without protection rules** on the first run. Create the environments
+> before the first gated run, not after.
 
-Already scriptable with `gh` (repo admin required). Settings →
-Environments → `release`, or:
+### 1. The `release` environment
 
 ```sh
-# required reviewer = the maintainer; restrict to release refs
 uid=$(gh api user --jq .id)
 gh api -X PUT repos/P4suta/aozora/environments/release --input - <<EOF
 {"wait_timer":0,
@@ -53,20 +62,9 @@ gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-polici
 gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='vscode-v*' -f type=tag
 ```
 
-> A workflow that names an environment which does **not** exist yet
-> auto-creates it **without** protection rules on first run. Always
-> create the environment (above) **before** the first gated run.
-
-### 1b. Create the `release-plz` environment + GitHub App
-
-release-plz (`release-plz.yml`) runs in its **own** environment, distinct from
-`release`: it publishes crates.io and cuts the `v*` tag **unattended** right
-after the Release PR merges, so it has **no required reviewer** (the deliberate
-gate is the labelled squash-merge, not a second approval). It is still scoped to
-`main` so a feature-branch workflow cannot read the App key.
+### 2. The `release-plz` environment + GitHub App
 
 ```sh
-# no reviewers, main-only — the merge is the gate
 gh api -X PUT repos/P4suta/aozora/environments/release-plz --input - <<EOF
 {"wait_timer":0,
  "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
@@ -74,183 +72,135 @@ EOF
 gh api -X POST repos/P4suta/aozora/environments/release-plz/deployment-branch-policies -f name='main' -f type=branch
 ```
 
-release-plz must push the `v*` tag as a **GitHub App** (a tag pushed by the
-default `GITHUB_TOKEN` does not trigger the downstream `release.yml` /
-`publish-*` workflows). Create an App (org or personal) with repository
-permissions **Contents: R/W** + **Pull requests: R/W**, no webhook; install it
-on `P4suta/aozora`; generate a private key and note both the **Client ID** and
-the numeric **App ID**. Both release-plz jobs declare `environment: release-plz`,
-so the credentials live as **environment secrets** on it (scoped to its
-main-only branch policy — unreadable from a push on any other branch). The
-`HAS_APP` gate in `release-plz.yml` reads them; until both exist it no-ops green:
+release-plz must push the `v*` tag as a **GitHub App** — a tag pushed by
+the default `GITHUB_TOKEN` does not trigger the downstream workflows.
+Create an App (org or personal) with repository permissions **Contents:
+R/W** + **Pull requests: R/W** and no webhook, install it on
+`P4suta/aozora`, generate a private key, and note **both** the Client ID
+and the numeric App ID — they are used in different places.
 
 ```sh
-gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the App's Client ID (Iv23…)
+gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the Client ID (Iv23…)
 gh secret set RELEASE_PLZ_APP_PRIVATE_KEY --env release-plz # the .pem contents
 ```
 
-The two ruleset changes key on the App's numeric **App ID** (distinct from the
-Client ID above): signature bypass on the `release-plz-*` branch + the `v*`
-tag-creation lock; apply them per the runbook in `.github/rulesets/README.md`.
+`release-plz.yml`'s `HAS_APP` gate reads these; until both exist the whole
+pipeline no-ops green, which is why the scaffolding could land long before
+the App existed.
 
-### 2. crates.io — Trusted Publishing
+The two ruleset changes — signature bypass on `release-plz-*`, and the
+`v*` tag-creation lock — key on the numeric **App ID**, not the Client ID.
+Apply them per `.github/rulesets/README.md`. **Apply the tag lock last:**
+earlier it would block the manual tag flow that is still in use.
 
-release-plz owns crates.io publishing (`publish-crates.yml` is retired). In
-steady state it publishes tokenlessly via OIDC from the `release-plz`
-environment: no `CARGO_REGISTRY_TOKEN` exists, and `rust-lang/crates-io-auth-action`
-is not used — release-plz performs the OIDC exchange itself.
+### 3. crates.io
+
+Steady state is tokenless OIDC from the `release-plz` environment.
+release-plz performs the OIDC exchange itself, so there is no
+`CARGO_REGISTRY_TOKEN` and `crates-io-auth-action` is not used.
 
 Getting there costs one token, once, because of two crates.io facts:
 
-- **Trusted publishing cannot create a crate.** The first publish of a new crate
-  needs an API token. PyPI's pending-publisher (§3) has no crates.io equivalent;
+- **Trusted publishing cannot create a crate.** The first publish of a new
+  crate needs a token.
   [RFC 3691](https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html)
-  lists it only as a future possibility.
-- **A publisher is bound to an exact workflow filename + environment**, because
-  that is what the OIDC `sub` claim is matched against. Anything registered under
-  the retired workflow no longer matches.
+  lists crate creation only as a future possibility; PyPI's pending
+  publisher has no crates.io equivalent.
+- **A publisher is bound to an exact workflow filename + environment**,
+  because that is what the `sub` claim is matched against.
 
-**Bootstrap: run the next release on a token.**
+Bootstrap:
 
-1. Add `CARGO_REGISTRY_TOKEN` (scopes: publish-new **and** publish-update) as a
-   `release-plz` environment secret, and reference it from
+1. Add `CARGO_REGISTRY_TOKEN` (scopes: publish-new **and** publish-update)
+   as a `release-plz` environment secret and reference it from
    `release-plz-release`'s `env:`.
-2. Merge the Release PR as usual. release-plz publishes every crate in dependency
-   order — and because it is authenticated by token, this is the one run that can
-   bring new crates into existence.
-3. Remove the `env:` line (a PR), delete the environment secret, revoke the token.
+2. Merge the Release PR. Authenticated by token, this is the one run that
+   can bring new crates into existence.
+3. Remove the `env:` line, delete the secret, revoke the token.
 
-Do **not** try to pre-create the new crates by hand against the previous release
-tag. They did not exist at that tag, and those depending on the umbrella cannot
-compile against its published version — `cargo publish` verifies against the
-registry, so it fails before uploading anything.
+Do **not** hand-pre-create the new crates against the previous release
+tag. They did not exist at that tag, so dependents cannot compile against
+the umbrella's published version — `cargo publish` verifies against the
+registry and fails before uploading.
 
-**Register the publishers.** For every publishable crate: crates.io → the crate →
-Settings → Trusted Publishing → Add → GitHub, with
+Register a publisher per publishable crate (crate → Settings → Trusted
+Publishing → Add → GitHub): owner `P4suta`, repository `aozora`, workflow
+**`release-plz.yml`**, environment **`release-plz`**. Crates carried over
+from the retired `publish-crates.yml` still point at it, and crates.io has
+no edit UI — **delete and re-add** those.
 
-- Repository owner: `P4suta`, repository name: `aozora`
-- Workflow filename: **`release-plz.yml`**
-- Environment: **`release-plz`**
+Then enable **Trusted Publishing only** per crate, so a leaked token
+cannot publish aozora. Do this *after* a green OIDC release, never before:
+a failed OIDC publish would otherwise leave no way back in.
 
-Crates carried over from the retired workflow already have a publisher aimed at
-`publish-crates.yml` / `release`. crates.io has no edit, so **delete and re-add**
-those.
+### 4. PyPI — tokenless from day one
 
-**Then lock it down.** Once an OIDC release has actually gone green, enable
-**Trusted Publishing only** on each crate: token publishing is rejected outright
-from then on, so a leaked token cannot publish aozora. Do this *after* the green
-run, never before — a failed OIDC publish would otherwise leave no way back in.
+PyPI has a **pending publisher**, so no bootstrap. Add one (Publishing →
+pending publisher) with the distribution name of `aozora-py`, owner
+`P4suta`, repository `aozora`, workflow `publish-pypi.yml`, environment
+`release`.
 
-### 3. PyPI — Trusted Publishing (tokenless from day one)
+Then publish promptly — a pending publisher does **not** reserve the name
+until first use, so register and publish back to back. The first OIDC
+upload creates the project and promotes the publisher.
 
-PyPI supports a **"pending publisher"**, so a brand-new project needs no
-token bootstrap.
+### 5. npm — bootstrap required
 
-1. PyPI → Your projects → Publishing → add a **pending publisher**:
-   - PyPI Project Name: the distribution name of `aozora-py`
-   - Owner: `P4suta`, Repository: `aozora`
-   - Workflow name: `publish-pypi.yml`
-   - Environment name: `release`
-2. Publish promptly — a pending publisher does **not** reserve the name
-   until first use, so register-then-publish back to back.
-   ```sh
-   gh workflow run publish-pypi.yml -f dry_run=false   # then approve
-   ```
-   The first OIDC upload creates the project and promotes the pending
-   publisher to a normal one. No `PYPI_TOKEN` is ever stored.
+Unlike PyPI, npm requires the package to **already exist** before a
+trusted publisher can be configured, and the account needs 2FA. So npm
+needs a one-time token, like crates.io. (Trusted Publishing also needs npm
+CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the runner.)
 
-### 4. npm — Trusted Publishing
+1. Create a granular-access token that can publish `aozora-wasm`, add it
+   as the `NPM_TOKEN` secret on the `release` environment.
+2. `gh workflow run publish-npm.yml -f dry_run=false -f use_oidc=false`
+3. Register the trusted publisher: package → Settings → Trusted Publisher
+   → GitHub Actions, workflow `publish-npm.yml`, environment `release`.
+4. Delete the `NPM_TOKEN` secret. From then on a `v*` tag publishes
+   automatically and npm attaches provenance itself.
 
-Like crates.io, npm requires the package to **already exist** before a
-trusted publisher can be configured (*"Package must exist"*), and the
-account must have **2FA enabled**. So npm is a one-time token bootstrap.
+### 6. VS Code Marketplace & Open VSX — no OIDC
 
-> Trusted Publishing needs **npm CLI ≥ 11.5.1** and **Node ≥ 22.14.0**;
-> the workflow upgrades npm on the runner.
-
-**Bootstrap (once):**
-
-1. Create an npm **granular access / automation** token that can publish
-   `aozora-wasm`.
-2. Add it as the `NPM_TOKEN` **Environment** secret on `release`.
-3. Bootstrap and approve:
-   ```sh
-   gh workflow run publish-npm.yml -f dry_run=false -f use_oidc=false
-   ```
-
-**Switch to OIDC:**
-
-4. npmjs.com → the package → Settings → Trusted Publisher → GitHub
-   Actions, with owner/repo, workflow `publish-npm.yml`, and
-   Environment name `release`.
-5. Delete the `NPM_TOKEN` environment secret. Steady-state releases run
-   `gh workflow run publish-npm.yml -f dry_run=false`; npm attaches a
-   provenance attestation automatically (no `--provenance` flag needed).
-
-### 5. VS Code Marketplace & Open VSX (no OIDC)
-
-These have no OIDC publishing, so the tokens stay — but as **Environment**
-secrets behind the approval gate, never as repository secrets:
+No OIDC publishing exists, so these tokens persist. They live on the
+environment, behind the approval gate:
 
 ```sh
 gh secret set VSCE_PAT --env release   # Azure DevOps PAT (Marketplace)
 gh secret set OVSX_PAT --env release   # Open VSX token (optional)
 ```
 
-The `release-vscode.yml` publish job already references these names; they
-now resolve from the environment.
+### 7. Delete the repository-level copies
 
-### 6. Delete the old repository secrets
-
-Repository-level secrets weaken the environment gate (any workflow run
-can read them), so once the values live on the `release` environment,
-remove the repo copies:
+Repository secrets are readable by any workflow run, so they silently
+defeat the environment gate. Once the values live on `release`:
 
 ```sh
 gh secret delete VSCE_PAT
 gh secret delete OVSX_PAT
-gh secret delete CARGO_TOKEN   # if it ever existed at repo level
-gh secret delete NPM_TOKEN     # ditto
+gh secret delete NPM_TOKEN
 ```
-
-## Routine release (steady state)
-
-1. Squash-merge the release-plz **Release PR** as described in
-   [Release process](release.md). release-plz publishes crates.io and pushes
-   `vX.Y.Z` unattended from the `release-plz` environment — no token handling.
-2. The `v*` tag fans out to `release.yml` + `publish-pypi` / `publish-npm` /
-   `publish-extism-wasm` (and a `vscode-v*` tag drives `release-vscode.yml`).
-3. **Approve** their `publish` jobs once in the `release` environment-deployment
-   prompt (Actions → the run → Review deployments).
-4. Done — no token handling.
 
 ## Verification
 
 ```sh
-# environment holds the non-OIDC tokens; repo does NOT
-gh secret list --env release
-gh secret list                       # VSCE_PAT/OVSX_PAT must be absent
-
-# the deployment policy only allows release refs
+gh secret list --env release          # holds the non-OIDC tokens
+gh secret list                        # VSCE_PAT / OVSX_PAT must be ABSENT
 gh api repos/P4suta/aozora/environments/release/deployment-branch-policies
-
-# build provenance (SLSA Build L2) on a released artefact
-gh attestation verify <archive> --repo P4suta/aozora
 ```
 
-A green `Scorecard supply-chain security` workflow (code scanning) keeps
-the Token-Permissions and Pinned-Dependencies posture from regressing.
+The `Scorecard supply-chain security` workflow keeps the Token-Permissions
+and Pinned-Dependencies posture from regressing.
+
+The release itself is in [Release process](release.md) — from there, the
+only manual step is approving the publish batch once.
 
 ## References
 
-- GitHub — Security hardening for GitHub Actions:
-  <https://docs.github.com/en/actions/reference/security/secure-use>
-- GitHub — Managing environments / deployment protection rules:
-  <https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments>
-- GitHub — Security hardening with OpenID Connect:
-  <https://docs.github.com/en/actions/concepts/security/openid-connect>
-- crates.io — Trusted Publishing: <https://crates.io/docs/trusted-publishing>
-- release-plz — trusted publishing: <https://release-plz.dev/docs/github/quickstart>
-- PyPI — Trusted Publishers: <https://docs.pypi.org/trusted-publishers/>
-- npm — Trusted Publishers: <https://docs.npmjs.com/trusted-publishers/>
-- OpenSSF Scorecard: <https://github.com/ossf/scorecard>
+- GitHub — [security hardening](https://docs.github.com/en/actions/reference/security/secure-use),
+  [environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
+  [OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect)
+- [crates.io](https://crates.io/docs/trusted-publishing) ·
+  [release-plz](https://release-plz.dev/docs/github/quickstart) ·
+  [PyPI](https://docs.pypi.org/trusted-publishers/) ·
+  [npm](https://docs.npmjs.com/trusted-publishers/)
+- [OpenSSF Scorecard](https://github.com/ossf/scorecard)
