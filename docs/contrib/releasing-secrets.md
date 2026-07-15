@@ -10,6 +10,12 @@ publish time. Where it does not (VS Code Marketplace, Open VSX) the token
 lives as an *Environment* secret behind an approval gate, never as a
 repository secret.
 
+Why it is shaped this way is in
+[ADR-0020](../adr/0020-release-secret-hardening-trusted-publishing.md)
+and [ADR-0038](../adr/0038-release-plz-owns-versioning-and-crates-io-publishing.md)
+— the latter covers crates.io and the two environments. This page is the
+how.
+
 Everything below follows each platform's official guidance; the
 [references](#references) are the primary sources.
 

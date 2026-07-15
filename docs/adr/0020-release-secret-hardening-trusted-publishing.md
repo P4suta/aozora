@@ -1,6 +1,7 @@
 # 0020. Release secret hardening via Trusted Publishing and environment gates
 
-- Status: accepted
+- Status: accepted; decision 2's crates.io line superseded by
+  [ADR-0038](0038-release-plz-owns-versioning-and-crates-io-publishing.md)
 - Date: 2026-06-26
 - Deciders: @P4suta
 - Tags: release, security, ci, supply-chain

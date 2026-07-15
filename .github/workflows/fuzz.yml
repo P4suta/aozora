@@ -1,7 +1,7 @@
 # Scheduled fuzz soak (G3).
 #
-# The nightly cargo-fuzz harnesses (`docs/fuzz-workflow.md`, seven targets)
-# have a LOCAL release-preflight gate — `just fuzz-all-deep`, a 5-minute
+# The nightly cargo-fuzz harnesses (see the Justfile's fuzz recipes) have
+# a LOCAL release-preflight gate — `just fuzz-all-deep`, a 5-minute
 # soak per target a developer runs before cutting a release — plus a
 # `tests/fuzz_regressions.rs` replay of every promoted crash that rides
 # `just test` on every push. This workflow is the CONTINUOUS complement to
