@@ -165,8 +165,8 @@ Earlier this repo cut releases by hand (`cargo set-version` + an annotated
 `git tag`) and reviewed it as the right call for a single-author project. Two
 things changed the calculus:
 
-- **The workspace is now multi-crate and crates.io-published.** Eighteen public
-  crates must bump and publish in lockstep, in dependency order. release-plz does
+- **The workspace is now multi-crate and crates.io-published.** Every public
+  crate must bump and publish in lockstep, in dependency order. release-plz does
   exactly that natively from `version.workspace = true` — one
   `[workspace.package].version` bump cascades to every crate and it publishes
   them topologically. The previous hand-maintained ladder in `publish-crates.yml`
@@ -226,23 +226,20 @@ rust:<ver>-bookworm`. None of that touches the release contract.
 
 ## Publishing to crates.io
 
-Live since the first crates.io publish; owned by **release-plz**. When the Release PR merges, the
-`release-plz-release` job publishes every publishable crate at the new version
-in dependency order, tokenless via **crates.io OIDC trusted publishing** (no
-`CARGO_REGISTRY_TOKEN` — release-plz performs the OIDC exchange itself). Members
-marked `publish = false` (`aozora-corpus`, `aozora-conformance`, `aozora-bench`,
-`aozora-trace`, `aozora-xtask`, plus the `aozora-wasm` / `aozora-ffi` /
-`aozora-py` / `aozora-extism` drivers that ship through npm / GitHub Releases /
-PyPI) are skipped automatically.
+**Dormant until release-plz is activated** — the crates already on crates.io were
+published by the retired hand-run ladder. From activation on it is owned by
+**release-plz**: when the Release PR merges, `release-plz-release` publishes every
+publishable crate at the new version in dependency order, tokenless via
+**crates.io OIDC trusted publishing** (no `CARGO_REGISTRY_TOKEN` — release-plz
+performs the OIDC exchange itself). Members marked `publish = false` — the
+npm / PyPI / GitHub-Release drivers, and the dev-only crates — are skipped
+automatically. `just publish-check` keeps that set and `release-plz.toml` in
+agreement, so neither list needs restating here.
 
-**Single front door, still.** The parser is built from many internal crates
-(`aozora-spec`, `aozora-syntax`, `aozora-pipeline`, `aozora-render`,
-`aozora-encoding`, `aozora-scan`, `aozora-veb`, `aozora-cst`, `aozora-query`,
-`aozora-proptest`, `aozora-fmt`, `tree-sitter-aozora`).
-They are on crates.io so the umbrella `aozora` crate and the `aozora-lsp` /
-`aozora-cli` binaries can depend on them, but they carry **no API-stability
-contract** — their crate descriptions say so, and downstream consumers should
-depend on `aozora` alone.
+**Single front door, still.** The parser is built from many internal crates. They
+are on crates.io so the umbrella `aozora` crate and the binaries can depend on
+them, but they carry **no API-stability contract** — their crate descriptions say
+so, and downstream consumers should depend on `aozora` alone.
 
 The per-crate trusted-publisher setup (and the one-time first-publish bootstrap
 for brand-new crates, which crates.io requires to go through a token) is in the
@@ -292,10 +289,10 @@ exercise — all of it manual, in this order. The two ruleset commands live in
    unattended; the Release-PR merge is the human gate).
 4. **Apply the signature bypass** on `require-signed-commits` (the App pushes the
    bump commit unsigned to its `release-plz-*` branch). See the rulesets README.
-5. **Bootstrap the new crates** on crates.io (trusted publishing can't do a
-   first publish) and **register the trusted publishers** for all 18 crates
-   against `release-plz.yml` / the `release-plz` environment — see the
-   [release secrets runbook](releasing-secrets.md).
+5. **Bootstrap crates.io** — the first release runs on a token because trusted
+   publishing cannot create a crate, then every publisher is registered against
+   `release-plz.yml` / the `release-plz` environment and the token is retired.
+   See the [release secrets runbook](releasing-secrets.md).
 6. **Trigger release-plz** (`gh workflow run release-plz.yml`) to open the first
    Release PR, add `release: approved`, and squash-merge it. Verify the chain:
    crates.io publishes, the `vX.Y.Z` tag is pushed, `release.yml` + the downstream
