@@ -213,9 +213,10 @@ fn explain_diagnostic_code_prints_severity_and_url() {
     );
     assert!(stdout.contains("error"), "severity axis: {stdout:?}");
     assert!(
-        stdout
-            .contains("https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"),
-        "docs url: {stdout:?}"
+        stdout.contains(
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unclosed-bracket"
+        ),
+        "docs url points at the specification, which defines this diagnostic: {stdout:?}"
     );
 }
 
@@ -308,7 +309,7 @@ fn explain_title_and_body_prose_localize_with_lang() {
         assert!(out.contains("error · source"), "axes: {out:?}");
         assert!(
             out.contains(
-                "https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"
+                "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unclosed-bracket"
             ),
             "url: {out:?}"
         );
