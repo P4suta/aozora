@@ -58,6 +58,7 @@ changelog_include = [
   "aozora-cst",
   "aozora-encoding",
   "aozora-fmt",
+  "aozora-i18n",
   "aozora-lsp",
   "aozora-pandoc",
   "aozora-pipeline",

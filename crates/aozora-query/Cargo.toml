@@ -24,7 +24,7 @@ thiserror = { workspace = true }
 aozora = { path = "../aozora", features = ["cst", "query"] }
 # tests/integration.rs sanitises input via `aozora_pipeline::lexer::sanitize`
 # (internal, no-contract surface not re-exported by the umbrella).
-aozora-pipeline = { workspace = true }
+aozora-pipeline = { path = "../aozora-pipeline" }
 proptest = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
 

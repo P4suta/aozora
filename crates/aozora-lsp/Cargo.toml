@@ -55,7 +55,7 @@ shuttle = { workspace = true, optional = true }
 # Dev-only: the formatter is no longer a runtime dependency (the handler calls
 # `aozora` directly), but `tests/guardian.rs` cross-checks the server's output
 # against `aozora_fmt::format_source`, so it stays in the test graph only.
-aozora-fmt = { workspace = true }
+aozora-fmt = { path = "../aozora-fmt" }
 proptest = { workspace = true }
 criterion = { version = "0.8", features = ["html_reports"] }
 # In-process LSP harness (backend.rs `#[cfg(test)] mod e2e`): drives the
