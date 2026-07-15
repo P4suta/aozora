@@ -3,9 +3,7 @@
 //! source-ordered side table editor surfaces use for semantic tokens
 //! and document symbols.
 //!
-//! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
-//! (Library Quickstart → Walking the AST). Uses only the `aozora`
-//! umbrella surface.
+//! Needs nothing beyond the umbrella crate.
 //!
 //! Run with:
 //!

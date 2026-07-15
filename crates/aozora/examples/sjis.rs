@@ -3,9 +3,8 @@
 //! [`aozora::encoding::decode_sjis`], then parse + serialize the
 //! resulting UTF-8 text.
 //!
-//! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
-//! (Library Quickstart → Shift_JIS input). Uses only the `aozora`
-//! umbrella surface (`aozora::encoding` re-exports the decode entry points).
+//! `aozora::encoding` re-exports the decode entry points, so this needs
+//! nothing beyond the umbrella crate.
 //!
 //! Run with:
 //!
