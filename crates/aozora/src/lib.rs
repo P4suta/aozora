@@ -47,9 +47,7 @@
 //! parsed-AST types live at the crate root ([`Document`], [`Tree`],
 //! [`Node`], [`NodeRef`], [`LexOutput`], …); the [`syntax::ast`] /
 //! [`render`] / [`encoding`] / [`json`] modules expose the few extra
-//! types those surfaces document as stable. See the
-//! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
-//! for the layered design.
+//! types those surfaces document as stable.
 //!
 //! ---
 //!
