@@ -25,6 +25,7 @@ Introspection:
 Setup & tooling:
   init         Scaffold a new project (`.aozora.toml` + a sample document)
   doctor       Runtime self-check — config, PATH tools, terminal capabilities
+  lsp          Delegate to the aozora-lsp language server (forwards --stdio / …)
   completions  Print a shell completion script (bash / zsh / fish / …)
 
 Options:
