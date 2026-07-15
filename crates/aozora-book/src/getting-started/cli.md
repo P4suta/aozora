@@ -69,7 +69,7 @@ Running `check` on a one-line `input.txt` whose only content is `｜青空《》
 (an explicit ruby base with an empty `《》` reading) prints:
 
 ```text
-aozora::lex::empty_ruby_reading (https://p4suta.github.io/aozora/notation/diagnostics.html#empty-ruby-reading)
+aozora::lex::empty_ruby_reading (https://p4suta.github.io/aozora-notation-spec/diagnostics.html#empty-ruby-reading)
 
   × ruby base given but reading is empty
    ╭─[input.txt:1:1]

@@ -282,7 +282,7 @@ pub enum Diagnostic {
     #[error("source contains lexer PUA sentinel codepoint {codepoint:?}")]
     #[diagnostic(
         code("aozora::lex::source_contains_pua"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#source-contains-pua"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#source-contains-pua"),
         severity(Warning),
         help(
             "the lexer reserves U+E001..U+E004 as inline/block markers; \
@@ -307,7 +307,7 @@ pub enum Diagnostic {
     #[error("unclosed Aozora {kind:?} bracket")]
     #[diagnostic(
         code("aozora::lex::unclosed_bracket"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unclosed-bracket"),
         help(
             "the opener has no matching close delimiter — either the close \
              was omitted or an earlier close matched a nested opener"
@@ -331,7 +331,7 @@ pub enum Diagnostic {
     #[error("unmatched Aozora {kind:?} close delimiter")]
     #[diagnostic(
         code("aozora::lex::unmatched_close"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#unmatched-close"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unmatched-close"),
         help(
             "no matching open on the pairing stack — either the open was \
              omitted or an inner unmatched close consumed it"
@@ -359,7 +359,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::accent_decomposition_applied"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#accent-decomposition-applied"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#accent-decomposition-applied"
         ),
         severity(Advice),
         help(
@@ -384,7 +384,7 @@ pub enum Diagnostic {
     #[error("gaiji reference resolved to neither Unicode nor JIS X 0213")]
     #[diagnostic(
         code("aozora::lex::unresolved_gaiji"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#unresolved-gaiji"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unresolved-gaiji"),
         severity(Warning),
         help(
             "no JIS X 0213 men-ku-ten or U+XXXX reference matched and the \
@@ -414,7 +414,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::mismatched_container_close"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#mismatched-container-close"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#mismatched-container-close"
         ),
         help(
             "the close directive names a different container family than the \
@@ -443,6 +443,11 @@ pub enum Diagnostic {
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
         code("aozora::lint::non_canonical_directive"),
+        // Stays on the handbook while the other sixteen move to the
+        // specification: this lint is aozora's own hygiene layer (ADR-0022),
+        // not a fact of the notation, so the spec neither describes it nor
+        // should. Its home is the hygiene page, and it follows that page
+        // wherever it lands.
         url("https://p4suta.github.io/aozora/notation/diagnostics.html#non-canonical-directive"),
         severity(Warning),
         help(
@@ -470,7 +475,7 @@ pub enum Diagnostic {
     #[error("ruby base given but reading is empty")]
     #[diagnostic(
         code("aozora::lex::empty_ruby_reading"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#empty-ruby-reading"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#empty-ruby-reading"),
         help(
             "the `《…》` reading after the `｜` base is empty — supply a reading \
              or remove the `｜…《》` markers to keep the base as plain text"
@@ -493,7 +498,7 @@ pub enum Diagnostic {
     #[error("ruby reading contains a nested ruby")]
     #[diagnostic(
         code("aozora::lex::nested_ruby"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#nested-ruby"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#nested-ruby"),
         help(
             "ruby cannot nest — close the outer reading before the inner `《`, \
              or remove the inner `《…》`"
@@ -518,7 +523,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::unrecognised_container_directive"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#unrecognised-container-directive"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unrecognised-container-directive"
         ),
         severity(Warning),
         help(
@@ -544,7 +549,7 @@ pub enum Diagnostic {
     #[error("縦中横 target not found in the preceding text")]
     #[diagnostic(
         code("aozora::lex::tcy_target_not_found"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#tcy-target-not-found"),
+        url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#tcy-target-not-found"),
         severity(Warning),
         help(
             "the quoted 縦中横 target must occur earlier in the line — check the \
@@ -570,7 +575,9 @@ pub enum Diagnostic {
     #[error("ambiguous bouten target: more than one candidate run precedes it")]
     #[diagnostic(
         code("aozora::lex::bouten_target_ambiguous"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#bouten-target-ambiguous"),
+        url(
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#bouten-target-ambiguous"
+        ),
         severity(Warning),
         help(
             "the quoted target appears more than once before the `［＃…］` — the \
@@ -599,7 +606,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::forward_referent_not_stylable"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#forward-referent-not-stylable"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#forward-referent-not-stylable"
         ),
         severity(Warning),
         help(
@@ -630,7 +637,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::break_in_single_line_container"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#break-in-single-line-container"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#break-in-single-line-container"
         ),
         severity(Warning),
         help(
@@ -663,7 +670,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::bracketed_kaeriten_no_pair"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#bracketed-kaeriten-no-pair"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#bracketed-kaeriten-no-pair"
         ),
         help(
             "a return mark needs its family base somewhere in the document — \
@@ -691,7 +698,9 @@ pub enum Diagnostic {
     #[error("kaeriten outside a 漢文-like context")]
     #[diagnostic(
         code("aozora::lex::kaeriten_outside_kanbun"),
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#kaeriten-outside-kanbun"),
+        url(
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#kaeriten-outside-kanbun"
+        ),
         severity(Warning),
         help(
             "this is the only kaeriten in the document and its surroundings \
@@ -721,7 +730,7 @@ pub enum Diagnostic {
     #[diagnostic(
         code("aozora::lex::mismatched_bouten_container"),
         url(
-            "https://p4suta.github.io/aozora/notation/diagnostics.html#mismatched-bouten-container"
+            "https://p4suta.github.io/aozora-notation-spec/diagnostics.html#mismatched-bouten-container"
         ),
         help(
             "close a 傍点 range with `［＃傍点終わり］` (any 点 variant) and a 傍線 \
@@ -754,6 +763,13 @@ pub enum Diagnostic {
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
+        // Stays on the handbook while the sixteen source-level diagnostics
+        // move to the specification: this is a bug in aozora, not a property
+        // of the notation, so the spec neither describes it nor should. Note
+        // this url is shared — every `InternalCheckCode` in `ALL_CODES`
+        // (residual_annotation_marker, unregistered_sentinel, …) explains
+        // through this one variant, so dropping it blinds four catalogued
+        // codes, not one.
         url("https://p4suta.github.io/aozora/notation/diagnostics.html#internal"),
         help(
             "this is a pipeline-internal sanity check; appearance \
