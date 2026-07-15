@@ -97,44 +97,49 @@ tag-creation lock; apply them per the runbook in `.github/rulesets/README.md`.
 
 release-plz owns crates.io publishing (`publish-crates.yml` is retired). In
 steady state it publishes tokenlessly via OIDC from the `release-plz`
-environment. Two one-time wrinkles: crates.io **cannot** Trusted-Publish a crate
-that does not exist yet (*"initial publish requires an API token."*), and a
-trusted publisher is bound per-crate to an exact **workflow filename**, so the
-14 crates already live under the old workflow must be re-pointed.
+environment: no `CARGO_REGISTRY_TOKEN` exists, and `rust-lang/crates-io-auth-action`
+is not used — release-plz performs the OIDC exchange itself.
 
-**Bootstrap the new crates (once).** Fourteen `aozora*` crates are already on
-crates.io; the rest are new — `aozora-buildstamp`, `aozora-fmt`,
-`tree-sitter-aozora`, `aozora-lsp`. Publish each once, by hand, in
-dependency order, so they exist before OIDC can take over:
+Getting there costs one token, once, because of two crates.io facts:
 
-```sh
-# a crates.io API token with publish-new + publish-update scopes
-export CARGO_REGISTRY_TOKEN=cio_xxx
-for c in aozora-buildstamp aozora-fmt tree-sitter-aozora aozora-lsp; do
-  cargo publish -p "$c"            # their library deps are already on crates.io
-done
-unset CARGO_REGISTRY_TOKEN
-```
+- **Trusted publishing cannot create a crate.** The first publish of a new crate
+  needs an API token. PyPI's pending-publisher (§3) has no crates.io equivalent;
+  [RFC 3691](https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html)
+  lists it only as a future possibility.
+- **A publisher is bound to an exact workflow filename + environment**, because
+  that is what the OIDC `sub` claim is matched against. Anything registered under
+  the retired workflow no longer matches.
 
-(crates.io throttles new crates — burst 5, then ~1 / 10 min — so a retry may be
-needed.) The first release-plz release then bumps all 18 to the new version and
-publishes them together via OIDC.
+**Bootstrap: run the next release on a token.**
 
-**Register the trusted publishers (all 18).** For **each** publishable crate:
-crates.io → the crate → Settings → Trusted Publishing → Add → GitHub, with
+1. Add `CARGO_REGISTRY_TOKEN` (scopes: publish-new **and** publish-update) as a
+   `release-plz` environment secret, and reference it from
+   `release-plz-release`'s `env:`.
+2. Merge the Release PR as usual. release-plz publishes every crate in dependency
+   order — and because it is authenticated by token, this is the one run that can
+   bring new crates into existence.
+3. Remove the `env:` line (a PR), delete the environment secret, revoke the token.
 
-- Repository owner: `P4suta`
-- Repository name: `aozora`
+Do **not** try to pre-create the new crates by hand against the previous release
+tag. They did not exist at that tag, and those depending on the umbrella cannot
+compile against its published version — `cargo publish` verifies against the
+registry, so it fails before uploading anything.
+
+**Register the publishers.** For every publishable crate: crates.io → the crate →
+Settings → Trusted Publishing → Add → GitHub, with
+
+- Repository owner: `P4suta`, repository name: `aozora`
 - Workflow filename: **`release-plz.yml`**
 - Environment: **`release-plz`**
 
-The 14 crates carried over from the previous release already have a publisher pointing at the
-retired `publish-crates.yml` / `release` environment — **update** those to
-`release-plz.yml` / `release-plz` (the OIDC `sub` claim is matched against the
-exact workflow + environment). The 5 bootstrapped crates get a fresh
-registration. No `CARGO_REGISTRY_TOKEN` secret is stored in steady state —
-release-plz performs the OIDC exchange itself, so `rust-lang/crates-io-auth-action`
-is not used.
+Crates carried over from the retired workflow already have a publisher aimed at
+`publish-crates.yml` / `release`. crates.io has no edit, so **delete and re-add**
+those.
+
+**Then lock it down.** Once an OIDC release has actually gone green, enable
+**Trusted Publishing only** on each crate: token publishing is rejected outright
+from then on, so a leaked token cannot publish aozora. Do this *after* the green
+run, never before — a failed OIDC publish would otherwise leave no way back in.
 
 ### 3. PyPI — Trusted Publishing (tokenless from day one)
 
@@ -245,7 +250,7 @@ the Token-Permissions and Pinned-Dependencies posture from regressing.
 - GitHub — Security hardening with OpenID Connect:
   <https://docs.github.com/en/actions/concepts/security/openid-connect>
 - crates.io — Trusted Publishing: <https://crates.io/docs/trusted-publishing>
-  · `rust-lang/crates-io-auth-action`: <https://github.com/rust-lang/crates-io-auth-action>
+- release-plz — trusted publishing: <https://release-plz.dev/docs/github/quickstart>
 - PyPI — Trusted Publishers: <https://docs.pypi.org/trusted-publishers/>
 - npm — Trusted Publishers: <https://docs.npmjs.com/trusted-publishers/>
 - OpenSSF Scorecard: <https://github.com/ossf/scorecard>
