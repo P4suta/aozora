@@ -300,7 +300,7 @@ msrv-local:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a

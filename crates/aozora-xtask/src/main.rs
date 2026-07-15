@@ -55,6 +55,7 @@ mod ci;
 mod conformance;
 mod corpus;
 mod deps;
+mod docs;
 mod grammar;
 mod msrv;
 mod publish;
@@ -147,10 +148,28 @@ enum Cmd {
     /// `Cargo.toml`'s `rust-version` (the PUBLIC CONTRACT, a measured
     /// floor) are two authorities holding deliberately different numbers
     /// (ADR-0034). Checks that every other pin follows the right one, that
-    /// the handbook names a Rust version in exactly one page, that the
+    /// `docs/contrib/` names a Rust version in exactly one page, that the
     /// READMEs derive the MSRV badge rather than writing it down, and that
     /// the contract stays at least six months behind the channel.
     Msrv(MsrvArgs),
+    /// Dangling-reference gate: every `docs/**.md` that a CI workflow or
+    /// the Justfile tells a reader to open must exist. Deleting a page
+    /// does not break the reference to it — it makes the reference wrong
+    /// while everything stays green.
+    Docs(DocsArgs),
+}
+
+#[derive(Args)]
+struct DocsArgs {
+    #[command(subcommand)]
+    op: DocsOp,
+}
+
+#[derive(Subcommand)]
+enum DocsOp {
+    /// Fail when CI or the Justfile names a doc page that is not there.
+    /// Wired into `drift-gate`.
+    Check,
 }
 
 #[derive(Args)]
@@ -423,6 +442,9 @@ fn main() {
         Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
         Cmd::Publish(args) => publish::dispatch(&args),
         Cmd::Msrv(args) => msrv::dispatch(&args),
+        Cmd::Docs(args) => match args.op {
+            DocsOp::Check => docs::check(),
+        },
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

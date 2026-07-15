@@ -102,7 +102,7 @@ jobs:
         run: |
           echo "::notice::release-plz is dormant — set RELEASE_PLZ_APP_CLIENT_ID and"
           echo "RELEASE_PLZ_APP_PRIVATE_KEY (a GitHub App) to activate."
-          echo "See docs/contrib/release.md."
+          echo "See docs/contrib/releasing-secrets.md."
 
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
