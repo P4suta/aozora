@@ -3,8 +3,6 @@
 //! [`aozora::Diagnostic`]. Here we feed it an unclosed `［＃` annotation
 //! bracket and print every diagnostic's stable code, severity, and span.
 //!
-//! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
-//! (Library Quickstart → Diagnostics). Uses only the `aozora` umbrella
 //! surface.
 //!
 //! Run with:
