@@ -442,13 +442,13 @@ pub enum Diagnostic {
     /// `--strict`). See [`codes::NON_CANONICAL_DIRECTIVE`].
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
-        // No `url`: this lint is aozora's own hygiene layer (ADR-0022), not a
-        // fact of the notation, so the specification does not describe it and
-        // should not pretend to. `aozora explain aozora::lint::non_canonical_directive`
-        // already prints the full account — title, cause, fix, before/after —
-        // offline, which is strictly more than a link could give a reader who
-        // is looking at a terminal.
         code("aozora::lint::non_canonical_directive"),
+        // Stays on the handbook while the other sixteen move to the
+        // specification: this lint is aozora's own hygiene layer (ADR-0022),
+        // not a fact of the notation, so the spec neither describes it nor
+        // should. Its home is the hygiene page, and it follows that page
+        // wherever it lands.
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#non-canonical-directive"),
         severity(Warning),
         help(
             "this ［＃…］ body matches a recognized directive spelled \
@@ -762,11 +762,15 @@ pub enum Diagnostic {
     /// [`source`](Self::source) instead.
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
-        // No `url`: this is a bug in aozora, not a property of the notation,
-        // so the specification has nothing to say about it. The reader's next
-        // action is to report it, and `help` below already carries the tracker
-        // link — a `url` would only print the same address twice.
         code("aozora::internal"),
+        // Stays on the handbook while the sixteen source-level diagnostics
+        // move to the specification: this is a bug in aozora, not a property
+        // of the notation, so the spec neither describes it nor should. Note
+        // this url is shared — every `InternalCheckCode` in `ALL_CODES`
+        // (residual_annotation_marker, unregistered_sentinel, …) explains
+        // through this one variant, so dropping it blinds four catalogued
+        // codes, not one.
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#internal"),
         help(
             "this is a pipeline-internal sanity check; appearance \
              indicates a bug in aozora — please report at \
