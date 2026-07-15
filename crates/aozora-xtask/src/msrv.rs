@@ -182,7 +182,7 @@ static HANDBOOK_VERSION: LazyLock<Regex> = LazyLock::new(|| {
 /// `/badge/rust-<ver>`, the derived one `/crates/msrv/aozora`.
 const STATIC_MSRV_BADGE: &str = "img.shields.io/badge/rust-";
 
-const READMES: &[&str] = &["README.md", "README.ja.md", "crates/aozora/README.md"];
+const READMES: &[&str] = &["README.md", "crates/aozora/README.md"];
 const MSRV_PAGE: &str = "crates/aozora-book/src/contrib/msrv.md";
 const HANDBOOK_SRC: &str = "crates/aozora-book/src";
 
