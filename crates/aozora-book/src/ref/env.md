@@ -8,7 +8,9 @@ container plumbing.
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `NO_COLOR` | `aozora-cli` | If set (any value), disable ANSI colour output. Same as `--color never`. |
+| `NO_COLOR` | `aozora-cli` | If set (any value), disable ANSI colour output — but only where the colour policy is `auto`, which is what it means to leave the decision to the terminal. A decided `always` (from `--color` or `.aozora.toml`) still colours. |
+| `CLICOLOR` / `CLICOLOR_FORCE` | `aozora-cli` | The other two terminal colour signals, consulted on the `auto` path only: `CLICOLOR_FORCE` (non-`0`) forces colour on, `CLICOLOR=0` forces it off. Like `NO_COLOR`, neither overrides a decided `always` / `never`. |
+| `FORCE_COLOR` | `aozora-cli` (via `miette`) | Read by miette's `supports-color` backend and, on the `auto` path, **outranks all three** vars above (`FORCE_COLOR=0` disables; any other value forces colour on). Not part of aozora's own surface — documented because it is easy to mistake its effect for a bug. |
 | `AOZORA_ENCODING` | `aozora-cli` | Source-encoding fallback for `-E/--encoding`: `auto` (default), `utf8`, or `sjis`. Lower precedence than the flag, higher than `.aozora.toml`. |
 | `AOZORA_STRICT` | `aozora-cli` | Fallback for `check` / `lint` `--strict`: any diagnostic exits non-zero. |
 | `AOZORA_FORMAT` | `aozora-cli` | Fallback for `check` / `lint` `--format`: `auto` / `human` / `json` / `short`. |

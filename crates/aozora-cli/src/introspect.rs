@@ -12,9 +12,10 @@
 //!   `aozora::json::schema_*` behind the `schema` Cargo feature).
 //! - `aozora spec slugs` prints the static ［＃…］ slug catalogue as the
 //!   shared `aozora::json` envelope (delegated to `aozora::json::slugs`).
-//! - `aozora explain <kind>` prints the embedded handbook chapter
-//!   for that `NodeKind` — the same `nodes/<kind>.md` rendered by
-//!   mdbook, surfaced in the terminal via `include_str!`.
+//! - `aozora explain <kind>` prints the embedded prose page for that
+//!   `NodeKind` — this crate's `src/node-docs/<kind>.md`, the single
+//!   authority, embedded via `include_str!` and borrowed by the handbook
+//!   through `{{#include}}`.
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 

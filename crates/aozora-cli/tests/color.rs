@@ -9,10 +9,16 @@
 //! Colour is asserted by the presence of an ESC byte (`0x1b`) in the raw
 //! output — the same technique as `aozora-fmt`'s `--diff --color` test.
 //!
-//! Every spawn clears the three colour-control env vars first, so the ambient
-//! test environment cannot perturb an auto-detection assertion; each test
-//! then sets only the vars it means to exercise. Pure stdlib, no extra
+//! Every spawn clears the colour-control env vars (`NO_COLOR` / `CLICOLOR` /
+//! `CLICOLOR_FORCE` / `FORCE_COLOR`) first, so the ambient test environment
+//! cannot perturb an auto-detection assertion; each test then sets only the
+//! vars it means to exercise. The message language is pinned to
+//! `en` for the same reason (`explain`'s chrome is localized, and the
+//! byte-identity assertions below compare its output). Pure stdlib, no extra
 //! dev-dep — matching the `smoke.rs` house style.
+//!
+//! The `.aozora.toml` `color` layer beneath the flag is covered in
+//! `tests/config.rs`, which owns the tempdir + config-file machinery.
 //!
 //! Note on the interactive-TTY guard: the test harness's stdin is never a
 //! terminal, so [`aozora check`] with no input under `cargo test` takes the
@@ -43,9 +49,20 @@ struct Output {
 fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
     let mut cmd = Command::new(BIN);
     cmd.args(args)
+        // Pin the message language: `explain`'s human chrome is localized, so a
+        // developer's real `LANG=ja_JP.UTF-8` would otherwise decide what the
+        // byte-identity assertions below compare.
+        .env("AOZORA_LANG", "en")
+        .env_remove("LANG")
+        .env_remove("LC_ALL")
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR")
         .env_remove("CLICOLOR_FORCE")
+        // `supports-color` (miette's backend) reads FORCE_COLOR *above* all
+        // three, so a developer shell exporting it (common — many tool
+        // wrappers do) would otherwise colour every `auto` case and fail the
+        // monochrome assertions below.
+        .env_remove("FORCE_COLOR")
         // `check` loads `.aozora.toml`, including the global (XDG) layer, so
         // pin XDG_CONFIG_HOME at an empty, test-scoped dir — otherwise a
         // developer's real ~/.config/aozora/ could flip these exit codes.
@@ -182,6 +199,117 @@ fn kinds_is_always_monochrome() {
     );
     assert!(!has_ansi(&out.stdout), "kinds stdout must never emit ANSI");
     assert!(!has_ansi(&out.stderr), "kinds stderr must never emit ANSI");
+}
+
+// ---------------------------------------------------------------------
+// The colour axis is a human preference and nothing more: no way of
+// expressing one — the flag or any terminal signal — may move a byte of
+// machine output, on whichever stream that output lives.
+// ---------------------------------------------------------------------
+
+/// Which stream carries a command's machine contract.
+#[derive(Clone, Copy, Debug)]
+enum Machine {
+    Stdout,
+    Stderr,
+}
+
+impl Machine {
+    /// The contract-bearing stream of `out`.
+    fn of(self, out: &Output) -> &[u8] {
+        match self {
+            Self::Stdout => &out.stdout,
+            Self::Stderr => &out.stderr,
+        }
+    }
+}
+
+/// Every machine contract the colour axis must leave untouched, paired with the
+/// stdin it needs and the stream it actually speaks on.
+///
+/// The stream is spelled out per command rather than assumed, because it is not
+/// uniform: `check` emits its diagnostics — `json` and `short` alike — on
+/// **stderr** and leaves stdout empty, so asserting stdout for it would compare
+/// nothing to nothing and pin no contract at all.
+const MACHINE_CONTRACTS: &[(&[&str], Option<&str>, Machine)] = &[
+    (&["inspect", "nodes"], Some(DIRTY), Machine::Stdout),
+    (
+        &["spec", "kinds", "--format", "json"],
+        None,
+        Machine::Stdout,
+    ),
+    (&["explain", "ruby"], None, Machine::Stdout),
+    (&["check", "--format", "json"], Some(DIRTY), Machine::Stderr),
+    (
+        &["check", "--format", "short"],
+        Some(DIRTY),
+        Machine::Stderr,
+    ),
+];
+
+/// Every way the environment can voice an opinion about colour. Each is applied
+/// to machine contracts that must not have one.
+const COLOUR_ENVIRONMENTS: &[(&str, &str)] = &[
+    ("NO_COLOR", "1"),
+    ("CLICOLOR", "0"),
+    ("CLICOLOR_FORCE", "1"),
+    ("FORCE_COLOR", "1"),
+];
+
+#[test]
+fn the_colour_axis_cannot_touch_machine_output() {
+    for (args, stdin, stream) in MACHINE_CONTRACTS {
+        let baseline = run(args, &[], *stdin);
+        assert!(
+            baseline.status.success(),
+            "baseline `{args:?}` must exit 0: {:?}",
+            String::from_utf8_lossy(&baseline.stderr)
+        );
+        let expected = stream.of(&baseline);
+        // Anti-vacuity guard: an empty contract stream would make every
+        // byte-identity assertion below trivially true. This is the assertion
+        // that keeps the table honest about which stream carries what.
+        assert!(
+            !expected.is_empty(),
+            "`{args:?}` must carry its machine output on {stream:?}, else the \
+             byte-identity assertions below pin nothing"
+        );
+        assert!(
+            !has_ansi(expected),
+            "`{args:?}` machine output must never be coloured"
+        );
+
+        for (key, value) in COLOUR_ENVIRONMENTS {
+            let out = run(args, &[(key, value)], *stdin);
+            assert!(
+                out.status.success(),
+                "{key}={value} must not break `{args:?}`; got {:?}: {:?}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                stream.of(&out),
+                expected,
+                "{key}={value} must leave `{args:?}` {stream:?} byte-identical"
+            );
+        }
+
+        for choice in ["auto", "always", "never"] {
+            let mut with_flag = args.to_vec();
+            with_flag.extend_from_slice(&["--color", choice]);
+            let out = run(&with_flag, &[], *stdin);
+            assert!(
+                out.status.success(),
+                "--color {choice} must not break `{args:?}`: {:?}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                stream.of(&out),
+                expected,
+                "--color {choice} must leave `{args:?}` {stream:?} byte-identical"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------

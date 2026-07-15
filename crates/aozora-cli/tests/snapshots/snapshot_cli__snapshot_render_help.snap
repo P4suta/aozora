@@ -57,17 +57,15 @@ Options:
 
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
-          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
-          subcommand. Governs `check`'s graphical diagnostics; `spec kinds` tables are always
-          monochrome
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Falls back to the `color` key in
+          `.aozora.toml`, then `auto`. Global — accepted after any subcommand. Governs `check`'s
+          graphical diagnostics and `fmt --diff`; `spec kinds` tables are always monochrome
 
           Possible values:
           - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
             `CLICOLOR_FORCE`)
           - always: Always colour, even when piped
           - never:  Never colour
-          
-          [default: auto]
 
   -v, --verbose...
           Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
