@@ -97,7 +97,7 @@ aozora lint [OPTIONS] [PATH]
 Report the advisory **notation-hygiene** lints (the `aozora::lint::*`
 namespace, currently `non_canonical_directive`) — the authoring-hygiene view,
 where `check` reports *every* diagnostic. See
-[Notation hygiene](../notation/hygiene.md).
+[Notation hygiene](https://github.com/P4suta/aozora/blob/main/docs/hygiene.md).
 
 | Option | Effect |
 |---|---|
@@ -161,7 +161,7 @@ Render the parsed tree to HTML on stdout. Accepts `--encoding`/`-E`.
 | Option | Effect |
 |---|---|
 | `--normalize` | Render verified Tier1 near-misses as their canonical spelling (e.g. `［＃「梅」は小書き］` as small-letter emphasis instead of an inert span). Read-only; never rewrites source. |
-| `--degraded` | Additionally reduce the lossy / judgment **Tier2** forms Tier1 refuses (e.g. `［＃ここから最後まで３字下げ］` as an indent to the document end). Implies `--normalize`, render-only. See [Notation hygiene](../notation/hygiene.md). |
+| `--degraded` | Additionally reduce the lossy / judgment **Tier2** forms Tier1 refuses (e.g. `［＃ここから最後まで３字下げ］` as an indent to the document end). Implies `--normalize`, render-only. See [Notation hygiene](https://github.com/P4suta/aozora/blob/main/docs/hygiene.md). |
 
 ```sh
 aozora render src.txt > out.html

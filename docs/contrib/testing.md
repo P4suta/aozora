@@ -110,8 +110,8 @@ real-world idiom the maintained corpus has accumulated over 25
 years of volunteer encoding choices. It's the parser's
 truth-from-the-field.
 
-See [Performance → Corpus sweeps](../perf/corpus.md) for the corpus
-structure, archive format, and parallel loader details.
+Point `AOZORA_CORPUS_ROOT` at a checkout to enable the sweeps; `just
+corpus-sweep` and the `*-gate` recipes skip when it is unset.
 
 ## Layer 4: fuzz
 
@@ -185,7 +185,7 @@ not that a wrong result on it would fail a test. Mutation testing
 closes that gap — `just mutants` (cargo-mutants) deliberately breaks
 the source and checks the suite goes red, surfacing the missing
 assertions coverage is blind to. See
-[ADR-0031](https://github.com/P4suta/aozora/blob/main/docs/adr/0031-mutation-testing-for-assertion-strength.md).
+[ADR-0031](../adr/0031-mutation-testing-for-assertion-strength.md).
 In CI it runs two ways: a PR-scoped `mutants-in-diff` job mutates only
 the lines a pull request changes (advisory — it nudges review without
 blocking merge), and a scheduled weekly `mutants` workflow sweeps each
@@ -239,5 +239,3 @@ the `.snap` file.
 ## See also
 
 - [Development loop](dev.md) — `just test` and friends.
-- [Performance → Corpus sweeps](../perf/corpus.md) — how the corpus
-  layer 3 works in practice.

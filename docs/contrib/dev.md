@@ -83,7 +83,7 @@ The two exceptions to Docker-only:
 
 - **samply profiling.** `perf_event_open(2)` doesn't survive the
   container seccomp profile; the `samply-*` recipes invoke the host
-  toolchain (see [Profiling with samply](../perf/samply.md#why-these-run-on-the-host-not-docker)).
+  toolchain.
 - **Release builds.** GitHub Actions runners build the release
   binaries natively per OS (the cross-target binary needs to match
   its runner OS exactly).
@@ -188,8 +188,6 @@ End-to-end TDD flow:
 ## See also
 
 - [Testing strategy](testing.md) — what each test layer asserts.
-- [Profiling with samply](../perf/samply.md) — host-side perf profiling
-  of the parser's hot paths (and the `perf_event_paranoid` prerequisite).
 - [Troubleshooting & gate recovery](troubleshooting.md) — `just doctor`
   and the gate-failure recovery table.
 - [Release process](release.md) — how a tag becomes a published

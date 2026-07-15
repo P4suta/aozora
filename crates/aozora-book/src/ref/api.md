@@ -90,5 +90,5 @@ just book-serve                 # live-preview at localhost:3000
 just book-linkcheck             # lychee link verification
 ```
 
-See [Contributing → Development loop](../contrib/dev.md) for the
+See [Contributing → Development loop](https://github.com/P4suta/aozora/blob/main/docs/contrib/dev.md) for the
 full toolchain.

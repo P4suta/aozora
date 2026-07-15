@@ -100,8 +100,7 @@ to its recovery recipe:
 For the schema / types gates, the regenerate-then-commit step is the
 fix — the gate only checks that the committed artefact matches what the
 generator would emit, so a stale checkout fails until you regenerate
-and stage it. See [JSON output](../json/overview.md) for what schema /
-`.d.ts` / langs each cover.
+and stage it.
 
 ### strict-code violations
 

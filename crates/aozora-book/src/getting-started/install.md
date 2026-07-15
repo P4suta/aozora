@@ -140,7 +140,7 @@ See [Bindings → Python](../bindings/python.md) for the API and the
 ## Toolchain
 
 To *use* aozora you need any Rust from the last six months — see
-[MSRV policy](../contrib/msrv.md) for the current floor and why it is
+[MSRV policy](https://github.com/P4suta/aozora/blob/main/docs/contrib/msrv.md) for the current floor and why it is
 where it is. crates.io and `docs.rs` show the exact value.
 
 To *develop* aozora, `rust-toolchain.toml` selects the channel
