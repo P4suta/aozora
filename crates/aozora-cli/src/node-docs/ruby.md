@@ -41,9 +41,8 @@ pub struct Ruby<'src> {
 }
 ```
 
-`base` and `reading` are [`NonEmpty<Content>`](../arch/arena.md#non-empty-content);
-empty base or reading is rejected upstream and never produces a
-`Ruby` node.
+`base` and `reading` are `NonEmpty<Content>`; empty base or reading is
+rejected upstream and never produces a `Ruby` node.
 
 ## When emitted
 

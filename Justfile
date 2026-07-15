@@ -337,7 +337,7 @@ verify-spec-vectors:
     cargo run -q --release -p aozora-xtask -- spec-vectors check --allow-missing
 
 # Property-based tests only. Default 128 cases per proptest block
-# (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
+# (AOZORA_PROPTEST_CASES override via aozora-proptest::config). Fast
 # enough to live in `just ci` — see `just prop-deep` for a stress run.
 prop:
     {{_dev}} cargo nextest run --workspace --all-features --test 'property_*' --run-ignored default

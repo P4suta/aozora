@@ -107,9 +107,9 @@ impl TriggerKind {
 /// "branch-free O(1), strictly better than a `match` chain". A
 /// flamegraph of a ruby-dense document disproved that: `phf::Map::get`
 /// hashes the key with `SipHash`-1-3, and a `SipHash` over three bytes
-/// costs far more than a handful of byte comparisons over an 11-entry set
-/// — the hash alone accounted for ≈0.8 % of total render time (≈5 % of
-/// the parser's own time).
+/// costs far more than a handful of byte comparisons over a set this
+/// small — the hash alone accounted for ≈0.8 % of total render time
+/// (≈5 % of the parser's own time).
 ///
 /// The 13 trigrams carry a trivial discriminator — the leading byte
 /// splits them into `0xE2` (three: ※ ≪ ≫, by middle + trailing byte),
@@ -155,7 +155,8 @@ pub const TRIGGER_LEADING_BYTES: [u8; 3] = [0xE2, 0xE3, 0xEF];
 /// text; used by the structural-bitmap scan strategy.
 pub const TRIGGER_MIDDLE_BYTES: [u8; 4] = [0x80, 0x89, 0xBC, 0xBD];
 
-/// All 11 single-character trigger trigrams as raw UTF-8 byte arrays.
+/// Every single-character trigger trigram as raw UTF-8 byte arrays —
+/// one per [`TriggerKind`] variant.
 ///
 /// In PHF-table iteration order. Consumed by the multi-pattern scan
 /// backends (Teddy, multi-pattern DFA) which need the

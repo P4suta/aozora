@@ -1,7 +1,7 @@
 # SIMD scanner backends
 
 The tokenize stage of the lexer is a multi-pattern byte scan: find every
-occurrence of the 11 Aozora trigger characters (`｜《》＃※［］〔〕「」`)
+occurrence of the Aozora trigger characters (`｜《》≪≫＃※［］〔〕「」`)
 in the source. On a typical Japanese corpus document — where every
 codepoint is a 3-byte UTF-8 sequence and trigger characters appear
 on the order of 1–2 % of bytes — the *scan* dominates the
@@ -16,7 +16,7 @@ and plugged into per-ISA inner kernels. The split is the spine of
 the crate:
 
 - `crate::kernel::teddy` — algorithm side. Defines the const-built
-  bucket LUTs (one bit per pattern; the 11 triggers fit comfortably
+  bucket LUTs (one bit per pattern; the triggers fit comfortably
   in the 16-bit mask), the verify table, the `TeddyInner` trait
   every kernel implements, and `teddy_outer` — the platform-
   agnostic chunk loop + verify pass.
@@ -78,8 +78,8 @@ Switching to a self-rolled Teddy:
 - **No external SIMD deps.** `aho_corasick` and `regex_automata`
   are gone from the default dep tree. The `aozora-scan` build no
   longer pulls in `regex-automata`'s ~600 KB of state-table code.
-- **One-bit-per-pattern bucket layout.** The 11 triggers fit in
-  the lower 11 bits of a `u16`; we don't pay for the
+- **One-bit-per-pattern bucket layout.** Every trigger gets its own
+  bit of a `u16`, with room to spare; we don't pay for the
   collision-verify pass Hyperscan's "fat-finger" packing requires.
 - **`OffsetSink` visitor.** Every kernel writes through the same
   generic sink, so the tokenizer's trigger-offset `Vec<u32>` receives
