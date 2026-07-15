@@ -1,16 +1,7 @@
 # aozora
 
-<p align="center">
-  <a href="https://crates.io/crates/aozora"><img alt="crates.io" src="https://img.shields.io/crates/v/aozora.svg"></a>
-  <a href="https://docs.rs/aozora"><img alt="docs.rs" src="https://img.shields.io/docsrs/aozora"></a>
-  <a href="https://github.com/P4suta/aozora/blob/main/LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
-  <a href="https://github.com/P4suta/aozora/blob/main/docs/contrib/msrv.md"><img alt="msrv" src="https://img.shields.io/crates/msrv/aozora"></a>
-</p>
-
-A parser for **青空文庫記法** (Aozora Bunko notation): ruby (`｜青梅《おうめ》`),
-bouten (`［＃「X」に傍点］`), 縦中横, 外字 (`※［＃…、第3水準1-85-54］`),
-kunten / kaeriten, indent containers, and page breaks. Reads Shift_JIS or UTF-8;
-emits HTML, JSON, or canonical source.
+A parser for **青空文庫記法** (Aozora Bunko notation). Reads Shift_JIS or
+UTF-8; emits HTML, JSON, or canonical source.
 
 ```rust
 use aozora::Document;
@@ -22,27 +13,15 @@ let html = tree.to_html();
 let diagnostics = tree.diagnostics();
 ```
 
-```sh
-cargo add aozora
-```
-
-Shift_JIS decoding, the CST, the query DSL, and JSON Schema export are behind
-cargo features — see the [feature list](https://docs.rs/aozora).
-
-**Depend on this crate alone.** It is the stable seam over the build-block
-crates (`aozora-syntax`, `aozora-pipeline`, …), which are published only so this
-one can depend on them and carry no API-stability contract of their own.
+Depend on this crate alone. The build-block crates it sits over carry no
+stability contract of their own.
 
 ## Documentation
 
-- [API reference](https://docs.rs/aozora)
-- [Handbook](https://p4suta.github.io/aozora/) — notation reference, recipes, other bindings
+- [API reference](https://docs.rs/aozora) — including which features gate what
+- [Examples](https://github.com/P4suta/aozora/tree/main/crates/aozora/examples)
+- [Notation specification](https://p4suta.github.io/aozora-notation-spec/)
 - [Playground](https://p4suta.github.io/aozora/playground/) — try it in the browser
-
-For other languages there is a [CLI](https://crates.io/crates/aozora-cli),
-[npm](https://www.npmjs.com/package/aozora-wasm), [PyPI](https://pypi.org/project/aozora-py/),
-Go, a C ABI, and an [Extism](https://extism.org) plugin — all one parser, so the
-output is byte-identical whichever you pick.
 
 ## License
 

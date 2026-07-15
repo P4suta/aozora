@@ -9,14 +9,9 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/P4suta/aozora"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/P4suta/aozora/badge"></a>
 </p>
 
-A parser for **青空文庫記法** (Aozora Bunko notation): ruby (`｜青梅《おうめ》`),
-bouten (`［＃「X」に傍点］`), 縦中横, 外字 (`※［＃…、第3水準1-85-54］`),
-kunten / kaeriten, indent containers, and page breaks. Reads Shift_JIS or UTF-8;
-emits HTML, JSON, canonical source, or — via Pandoc — EPUB, LaTeX, DOCX and the
-rest.
-
-Usable from Rust, the command line, JavaScript, Python, Go, C, and any
-[Extism](https://extism.org) host.
+A parser for **青空文庫記法** (Aozora Bunko notation). Reads Shift_JIS or
+UTF-8; emits HTML, JSON, or canonical source — and, via Pandoc, EPUB,
+LaTeX, DOCX and the rest.
 
 ## Install
 
@@ -24,10 +19,10 @@ Usable from Rust, the command line, JavaScript, Python, Go, C, and any
 cargo install aozora-cli --locked   # command line
 cargo add aozora                    # Rust library
 npm install aozora-wasm             # JavaScript
-pip install aozora-py               # Python
+pip install aozora                  # Python
 ```
 
-Pre-built CLI binaries for Linux, macOS, and Windows are on the
+Pre-built CLI binaries are on the
 [releases page](https://github.com/P4suta/aozora/releases).
 
 ## Use
@@ -38,8 +33,8 @@ aozora render FILE.txt     # HTML on stdout
 aozora fmt FILE.txt        # rewrite to canonical form
 ```
 
-Every subcommand reads stdin when given `-` or no path. `-E sjis` reads
-Shift_JIS.
+Every subcommand reads stdin when given `-` or no path. Encoding is
+detected; `-E sjis` forces it. `aozora --help` lists the rest.
 
 ```rust
 use aozora::Document;
@@ -54,7 +49,6 @@ let diagnostics = tree.diagnostics();
 ## Documentation
 
 - [Playground](https://p4suta.github.io/aozora/playground/) — try it in the browser
-- [Handbook](https://p4suta.github.io/aozora/) — notation reference, recipes, bindings
 - [API reference](https://docs.rs/aozora)
 - [Notation specification](https://p4suta.github.io/aozora-notation-spec/) — the normative spec this parser is tested against
 

@@ -443,12 +443,17 @@ pub enum Diagnostic {
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
         code("aozora::lint::non_canonical_directive"),
-        // Stays on the handbook while the other sixteen move to the
-        // specification: this lint is aozora's own hygiene layer (ADR-0022),
-        // not a fact of the notation, so the spec neither describes it nor
-        // should. Its home is the hygiene page, and it follows that page
-        // wherever it lands.
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#non-canonical-directive"),
+        // ADR-0022, where the other sixteen point at the specification.
+        // The spec cannot host this one and should not: it is aozora's
+        // own hygiene layer, not a fact of the notation. `help` says how
+        // to fix it; the ADR is the only thing that says why a lint
+        // exists for it at all. Every catalogued code carries an https
+        // url (`explain_covers_every_catalogued_code`) — the url is the
+        // best authority for *that* code, not always the spec.
+        url(
+            "https://github.com/P4suta/aozora/blob/main/docs/adr/\
+             0022-notation-hygiene-layer-roles.md"
+        ),
         severity(Warning),
         help(
             "this ［＃…］ body matches a recognized directive spelled \
@@ -763,14 +768,15 @@ pub enum Diagnostic {
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
-        // Stays on the handbook while the sixteen source-level diagnostics
-        // move to the specification: this is a bug in aozora, not a property
-        // of the notation, so the spec neither describes it nor should. Note
-        // this url is shared — every `InternalCheckCode` in `ALL_CODES`
+        // The issue tracker, where the sixteen source-level diagnostics
+        // point at the specification. This one is a bug in aozora, not a
+        // property of the notation, so the spec neither describes it nor
+        // should — and the only useful next step is to report it. Shared:
+        // every `InternalCheckCode` in `ALL_CODES`
         // (residual_annotation_marker, unregistered_sentinel, …) explains
-        // through this one variant, so dropping it blinds four catalogued
+        // through this one variant, so this url serves four catalogued
         // codes, not one.
-        url("https://p4suta.github.io/aozora/notation/diagnostics.html#internal"),
+        url("https://github.com/P4suta/aozora/issues"),
         help(
             "this is a pipeline-internal sanity check; appearance \
              indicates a bug in aozora — please report at \
