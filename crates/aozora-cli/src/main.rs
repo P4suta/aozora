@@ -197,10 +197,12 @@ struct Cli {
 
     /// When to colourise diagnostics: `auto` (colour on a terminal,
     /// honouring `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or
-    /// `never`. Global — accepted after any subcommand. Governs `check`'s
-    /// graphical diagnostics; `spec kinds` tables are always monochrome.
-    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
-    color: ColorChoice,
+    /// `never`. Falls back to the `color` key in `.aozora.toml`, then `auto`.
+    /// Global — accepted after any subcommand.
+    /// Governs `check`'s graphical diagnostics and `fmt --diff`; `spec kinds`
+    /// tables are always monochrome.
+    #[arg(long, global = true, value_name = "WHEN", value_enum)]
+    color: Option<ColorChoice>,
 
     /// Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv`
     /// trace. Logs go to stderr only, so stdout — and the JSON / short
@@ -553,27 +555,44 @@ fn main() -> ExitCode {
     // during `parse_from`, so this never runs for them.)
     logging::init(cli.verbose, cli.quiet);
 
+    // Read the `.aozora.toml` layers once, up front: both decisions below are
+    // config-backed and both must be settled before any subcommand runs, so
+    // the file is resolved here rather than twice. Tolerant by design — see
+    // `early_config`.
+    let cfg = early_config(&cli.command);
+
     // Install the colour hook before any diagnostic `Report` is constructed:
     // miette captures its handler at construction time (see `color::install`).
-    color::install(cli.color);
+    // Precedence: `--color > .aozora.toml color` (project over global), then
+    // `auto` — at which point `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and
+    // the stderr TTY decide. Colour has no `AOZORA_*` rung of its own; see
+    // `color`'s module docs.
+    let color = color::resolve(cli.color, cfg.color);
+    color::install(color);
 
     // Resolve the human-message language once, up front, so every surface
     // (stdin guard, watch banner, explain footer / labels) speaks the same
     // language. Precedence: `--lang > AOZORA_LANG > .aozora.toml lang > LANG`,
-    // then English. The machine axis never consults it. (Introspection
-    // subcommands that read no config resolve without a config layer.)
-    let lang = resolve_lang(cli.lang.as_deref(), &cli.command);
+    // then English. The machine axis never consults it.
+    let lang = resolve_lang(cli.lang.as_deref(), cfg.lang.as_deref());
 
     let result = match cli.command {
         Command::Check(opts) => run_check(&opts, &lang),
         Command::Lint(opts) => run_lint(&opts, &lang),
-        Command::Fmt(opts) => run_fmt(&opts, cli.color, cli.quiet, &lang),
+        Command::Fmt(opts) => run_fmt(&opts, color, cli.quiet, &lang),
         Command::Render(opts) => run_render(&opts, &lang),
         Command::Inspect(opts) => run_inspect(&opts, &lang),
         Command::Explain(opts) => introspect::run_explain(&opts, &lang),
         Command::Spec(opts) => run_spec(&opts),
         Command::Pandoc(opts) => run_pandoc(&opts, &lang),
-        Command::Doctor => doctor::run(cli.color, cli.lang.as_deref(), &lang),
+        Command::Doctor => doctor::run(
+            doctor::ColorFacts {
+                flag: cli.color,
+                resolved: color,
+            },
+            cli.lang.as_deref(),
+            &lang,
+        ),
         Command::Init(opts) => init::run(&opts, &lang),
         Command::Repl(opts) => repl::run(&opts, &lang),
         Command::Tui(opts) => tui::run(&opts, &lang),
@@ -608,27 +627,33 @@ fn main() -> ExitCode {
 ///
 /// `explicit` is the parsed `--lang`. `AOZORA_LANG` and `LANG` are read from
 /// the environment — `LANG` for *message* language only, never for encoding
-/// (ADR-0033). The config `lang` comes from a tolerant load of the same
-/// `.aozora.toml` layers the subcommand will use.
-fn resolve_lang(explicit: Option<&str>, command: &Command) -> LanguageIdentifier {
-    let config_lang = config_lang(command);
+/// (ADR-0033). `config_lang` is the `lang` key from [`early_config`].
+fn resolve_lang(explicit: Option<&str>, config_lang: Option<&str>) -> LanguageIdentifier {
     i18n::resolve(
         explicit,
         env::var("AOZORA_LANG").ok().as_deref(),
-        config_lang.as_deref(),
+        config_lang,
         env::var("LANG").ok().as_deref(),
     )
 }
 
-/// The `lang` key from the effective `.aozora.toml` for `command`, or `None`.
-/// Best-effort: any error (unreadable cwd, malformed config) resolves to `None`
-/// so language resolution stays infallible — the subcommand re-loads the config
-/// and surfaces a malformed file through its own normal error path.
-fn config_lang(command: &Command) -> Option<String> {
-    let cwd = env::current_dir().ok()?;
-    config::ConfigFile::resolve(command_config_path(command), &cwd)
-        .ok()?
-        .lang
+/// The effective `.aozora.toml` for `command`, read *tolerantly* — the file
+/// layer of the two settings `main` must decide before any subcommand runs:
+/// the colour hook (miette captures its handler at construction time) and the
+/// message language. Honours the subcommand's own `--config PATH`, so the early
+/// decisions read the very file the subcommand will.
+///
+/// Any error (an unreadable working directory, a malformed file) yields an
+/// all-default config, keeping both decisions infallible. Nothing is swallowed:
+/// the subcommand re-loads the same layers through
+/// [`CommonArgs::load_config`] and surfaces a malformed file as its own hard
+/// error there — colour and language simply must not be the surface that
+/// reports it, since the reporting itself depends on them.
+fn early_config(command: &Command) -> config::ConfigFile {
+    env::current_dir()
+        .ok()
+        .and_then(|cwd| config::ConfigFile::resolve(command_config_path(command), &cwd).ok())
+        .unwrap_or_default()
 }
 
 /// The `--config PATH` override carried by `command`, if it takes one. Only the
@@ -1158,12 +1183,12 @@ mod tests {
         run_pandoc_once(&args).unwrap_err();
     }
 
-    // --- command_config_path: threads --config into language resolution
-    //     (main.rs:510 body) ---
+    // --- command_config_path: threads --config into the early colour /
+    //     language resolution ---
 
     #[test]
     fn command_config_path_carries_a_document_subcommands_override() {
-        // A document subcommand's `--config PATH` must reach `config_lang`; the
+        // A document subcommand's `--config PATH` must reach `early_config`; the
         // whole-body `None` mutant would silently drop every explicit config.
         let cli = Cli::try_parse_from(["aozora", "check", "--config", "custom.toml", "-"])
             .expect("cli parses");

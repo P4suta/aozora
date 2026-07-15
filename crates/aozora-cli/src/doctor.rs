@@ -38,16 +38,34 @@ use crate::diagnostics_render::DiagFormat;
 use crate::which::which;
 use crate::{ColorChoice, Encoding};
 
+/// Everything `main` already decided about colour: the flag layer it decided
+/// *from* that doctor cannot re-read for itself, and the choice it installed.
+///
+/// Passed whole rather than re-derived, because a second derivation could drift
+/// from the hook this process is actually running under. The raw flag
+/// attributes the settings row to its [`Source`]; `resolved` is what the report
+/// states as effective and what the terminal section weighs.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ColorFacts {
+    /// The parsed global `--color`.
+    pub(crate) flag: Option<ColorChoice>,
+    /// The choice [`color::resolve`](crate::color::resolve) folded from that
+    /// flag plus the config, and installed process-wide.
+    pub(crate) resolved: ColorChoice,
+}
+
 /// Run the runtime self-check: gather the facts, render the localized report to
 /// stdout, and exit 0 (all-green) or 1 (a blocking problem — a malformed
-/// config). `color_flag` is the global `--color`; `lang_flag` the raw
-/// `--lang`; `lang` the already-resolved message language.
+/// config).
+///
+/// `lang` is likewise passed both raw and resolved, for the reason [`ColorFacts`]
+/// documents: `lang_flag` attributes the row, `lang` states it.
 pub(crate) fn run(
-    color_flag: ColorChoice,
+    color: ColorFacts,
     lang_flag: Option<&str>,
     lang: &LanguageIdentifier,
 ) -> Result<ExitCode> {
-    let doctor = Doctor::gather(color_flag, lang_flag, lang);
+    let doctor = Doctor::gather(color, lang_flag, lang);
     let (report, blocking) = doctor.render(lang);
     let mut stdout = io::stdout().lock();
     stdout
@@ -65,7 +83,7 @@ pub(crate) fn run(
 /// `flag > env > project > global > default` order).
 #[derive(Debug, Clone, Copy)]
 enum Source {
-    /// A command-line flag (`--color`).
+    /// A command-line flag (`--color` / `--lang`).
     Flag,
     /// An environment variable, named for the report.
     Env(&'static str),
@@ -176,11 +194,14 @@ impl Doctor {
     /// Probe the environment: load the config layers, resolve the effective
     /// settings and their sources, probe the PATH tools, and read the terminal
     /// capabilities.
-    fn gather(color_flag: ColorChoice, lang_flag: Option<&str>, lang: &LanguageIdentifier) -> Self {
+    fn gather(color: ColorFacts, lang_flag: Option<&str>, lang: &LanguageIdentifier) -> Self {
         let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let (config, layers) = load_config(&cwd);
-        let settings = resolve_settings(&layers, color_flag, lang_flag, lang);
-        let terminal = terminal_report(color_flag);
+        let settings = resolve_settings(&layers, color, lang_flag, lang);
+        // The colour `main` resolved, not the raw flag: the terminal section
+        // reports what this run would actually emit, so it must weigh the
+        // config layer the hook was installed from.
+        let terminal = terminal_report(color.resolved);
         Self {
             config,
             settings,
@@ -405,11 +426,18 @@ fn load_config(cwd: &Path) -> (ConfigReport, Layers) {
 ///   and a config `strict = false` is indistinguishable from unset. The env is
 ///   parsed with clap's bool parser (exactly `true` / `false`). See
 ///   [`resolve_strict`].
-/// - `color` reads the flag only; `lang` follows the `--lang > AOZORA_LANG >
-///   config.lang > LANG` chain.
+/// - `color` and `lang` are the two settings doctor carries a flag for (both
+///   `--color` / `--lang` are global), so `main` has already resolved each for
+///   this very process: their values are reported as passed in and only
+///   *attributed* here — `color` over `flag > project > global > default`
+///   ([`colour_source`]), `lang` over `--lang > AOZORA_LANG > config.lang >
+///   LANG` ([`lang_source`]). Neither can produce the
+///   [`Resolution::RejectedEnv`] row the subcommand-local env vars above can:
+///   colour reads no environment variable at all, and an unknown `AOZORA_LANG`
+///   locale negotiates rather than fails.
 fn resolve_settings(
     layers: &Layers,
-    color_flag: ColorChoice,
+    color: ColorFacts,
     lang_flag: Option<&str>,
     lang: &LanguageIdentifier,
 ) -> Vec<SettingRow> {
@@ -432,9 +460,12 @@ fn resolve_settings(
         layers.project.strict,
         layers.global.strict,
     );
+    // The colour `main` resolved, reported as-is: re-deriving the value here
+    // could drift from the hook actually installed. Only its attribution is
+    // recomputed, from the same layers `color::resolve` folded.
     let color = Resolution::Resolved {
-        value: enum_tag(&color_flag),
-        source: colour_source(color_flag),
+        value: enum_tag(&color.resolved),
+        source: colour_source(color.flag, layers.project.color, layers.global.color),
     };
     let lang_res = Resolution::Resolved {
         value: lang.to_string(),
@@ -474,6 +505,12 @@ fn resolve_settings(
 /// [`Resolution`]. A set-but-invalid env is a [`Resolution::RejectedEnv`] (the
 /// runtime rejects it); otherwise the first present layer wins, tagged with its
 /// [`Source`].
+///
+/// Used for the settings doctor *simulates* rather than resolves — `encoding` /
+/// `format`, whose flags belong to the document subcommands, so doctor reads
+/// their env vars itself to answer "what would `aozora check` use here?".
+/// `color` / `lang` are real resolutions this process already performed, so
+/// they attribute through [`colour_source`] / [`lang_source`] instead.
 #[allow(
     clippy::too_many_arguments,
     reason = "the four layers (env outcome + var name, project, global, default) are each independent; a bundle struct would move the arity without clarifying it"
@@ -595,16 +632,27 @@ fn present(source: Option<&str>) -> bool {
     source.is_some_and(|value| !value.trim().is_empty())
 }
 
-/// The [`Source`] of the effective colour choice. The runtime colour hook
-/// (`color::install`) reads only the `--color` flag — `.aozora.toml color` is
-/// not consulted and there is no colour env var — so a non-`auto` choice came
-/// from the flag; `auto` is reported as the default (an explicit `--color auto`
-/// is indistinguishable from the default and has the identical effect).
-fn colour_source(flag: ColorChoice) -> Source {
-    if matches!(flag, ColorChoice::Auto) {
-        Source::Default
-    } else {
+/// The [`Source`] that decides the colour choice, mirroring `color::resolve`
+/// layer for layer: `--color`, then the project / global `color` key, then the
+/// built-in `auto`.
+///
+/// There is no environment rung between the flag and the file — colour defers
+/// to the standard `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` signals on the
+/// `auto` path instead of carrying an `AOZORA_*` variable — so this walks the
+/// very layers the installed hook was folded from and cannot drift from them.
+fn colour_source(
+    flag: Option<ColorChoice>,
+    project: Option<ColorChoice>,
+    global: Option<ColorChoice>,
+) -> Source {
+    if flag.is_some() {
         Source::Flag
+    } else if project.is_some() {
+        Source::Project
+    } else if global.is_some() {
+        Source::Global
+    } else {
+        Source::Default
     }
 }
 
@@ -678,13 +726,15 @@ fn enum_tag<T: ValueEnum>(value: &T) -> String {
 }
 
 /// Read the terminal-capability facts and resolve the effective colour.
-fn terminal_report(color_flag: ColorChoice) -> TerminalReport {
+/// `choice` is the colour `main` already resolved through the full layer chain
+/// (`color::resolve`), so the reported `colour_on` is this run's real outcome.
+fn terminal_report(choice: ColorChoice) -> TerminalReport {
     let stderr_tty = io::stderr().is_terminal();
     let no_color = env::var("NO_COLOR").ok();
     let clicolor = env::var("CLICOLOR").ok();
     let clicolor_force = env::var("CLICOLOR_FORCE").ok();
     let colour_on = colour_on(
-        color_flag,
+        choice,
         stderr_tty,
         env::var_os("NO_COLOR").is_some(),
         clicolor.as_deref(),
@@ -947,18 +997,57 @@ mod tests {
     // ---- colour resolution ----
 
     #[test]
-    fn colour_source_is_flag_only_when_not_auto() {
+    fn colour_source_walks_flag_then_project_then_global_then_default() {
+        // Each layer in turn is the highest one set, so each must decide once.
         assert!(
-            matches!(colour_source(ColorChoice::Always), Source::Flag),
-            "always -> flag"
+            matches!(
+                colour_source(
+                    Some(ColorChoice::Always),
+                    Some(ColorChoice::Never),
+                    Some(ColorChoice::Never)
+                ),
+                Source::Flag
+            ),
+            "the flag outranks every layer beneath it"
         );
         assert!(
-            matches!(colour_source(ColorChoice::Never), Source::Flag),
-            "never -> flag"
+            matches!(
+                colour_source(None, Some(ColorChoice::Never), Some(ColorChoice::Always)),
+                Source::Project
+            ),
+            "the project .aozora.toml beats the global config"
         );
         assert!(
-            matches!(colour_source(ColorChoice::Auto), Source::Default),
-            "auto -> default"
+            matches!(
+                colour_source(None, None, Some(ColorChoice::Always)),
+                Source::Global
+            ),
+            "the global config decides when the project leaves colour unset"
+        );
+        assert!(
+            matches!(colour_source(None, None, None), Source::Default),
+            "nothing set -> the built-in default"
+        );
+    }
+
+    #[test]
+    fn colour_source_reads_the_layer_that_is_set_not_the_value_it_holds() {
+        // An explicit `--color auto` is a real choice, not the default: it is
+        // the flag layer deciding.
+        assert!(
+            matches!(
+                colour_source(Some(ColorChoice::Auto), Some(ColorChoice::Never), None),
+                Source::Flag
+            ),
+            "an explicit --color auto is the flag deciding, not the default"
+        );
+        // Likewise a config `color = "auto"` is the project layer deciding.
+        assert!(
+            matches!(
+                colour_source(None, Some(ColorChoice::Auto), None),
+                Source::Project
+            ),
+            "a config auto is the project deciding, not the default"
         );
     }
 

@@ -73,9 +73,10 @@ const CONFIG_TEMPLATE: &str = r#"# .aozora.toml — project configuration for th
 # on; `false` is indistinguishable from leaving it unset.
 # strict = false
 
-# When to colourise diagnostics.
+# When to colourise diagnostics and `fmt --diff`. Outranked by --color.
 #   "auto" (default) — colour on a terminal, honouring NO_COLOR / CLICOLOR
-#   "always" | "never"
+#   "always" | "never" — a decided choice, so it outranks NO_COLOR / CLICOLOR
+#                        exactly as `--color always` / `--color never` do
 # color = "auto"
 
 # Language for human messages only (never affects machine output or encoding).

@@ -98,10 +98,11 @@ pub struct FmtArgs {
 /// subcommands share one colour policy with the formatter. `Deserialize`
 /// (lowercase, mirroring [`Encoding`]) lets it back the `color` key in
 /// `.aozora.toml`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorChoice {
     /// Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`).
+    #[default]
     Auto,
     /// Always colour, even when piped.
     Always,

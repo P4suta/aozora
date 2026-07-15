@@ -50,6 +50,11 @@ pub(crate) struct ConfigFile {
     pub encoding: Option<Encoding>,
     pub format: Option<DiagFormat>,
     pub strict: Option<bool>,
+    /// When to colourise diagnostics — the `color` layer of `--color >
+    /// config.color`, folded by [`color::resolve`](crate::color::resolve).
+    /// A decided `always` / `never` outranks `NO_COLOR` / `CLICOLOR` /
+    /// `CLICOLOR_FORCE`, which are inputs to `auto` rather than a layer of this
+    /// chain.
     pub color: Option<ColorChoice>,
     /// Human-message language (`en` / `ja` / `zh`, or any BCP-47 tag) — the
     /// `config.lang` layer of `--lang > AOZORA_LANG > config.lang > LANG`.

@@ -29,12 +29,27 @@ subcommands accept `-` (or no path) to read **stdin**.
 | Common flag | Subcommands | Effect |
 |---|---|---|
 | `-E`, `--encoding {auto,utf8,sjis}` | check / lint / fmt / render / inspect / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
-| `--color {auto,always,never}` | global | ANSI colour policy. `auto` honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and whether the stream is a terminal. |
+| `--color {auto,always,never}` | global | ANSI colour policy. `auto` honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and whether the stream is a terminal. Falls back to the `color` key in `.aozora.toml`. |
 | `--timing` | check / lint / fmt / render / inspect / pandoc | Print per-phase timing to stderr — aligned `human` lines on a TTY, the `{"schemaVersion":1,"data":{phases,totalNanos}}` envelope when piped; stdout stays byte-identical. |
 | `--config PATH` / `--watch` | check / lint / fmt / render / inspect / pandoc | Use a specific `.aozora.toml`; re-run on file change (needs a path). |
 
 There is no `--color` *disable* flag beyond `--color never`; the
 `NO_COLOR` environment variable disables colour too.
+
+Colour resolves on **two levels**. First the usual layering picks a policy —
+`--color` > project `.aozora.toml` `color` > global (XDG) `config.toml` >
+`auto`. Only then, if that policy is `auto`, are `NO_COLOR` / `CLICOLOR` /
+`CLICOLOR_FORCE` and the stream's terminal-ness consulted. So those three never
+override a *decided* `always` / `never`, whichever layer decided it:
+`color = "never"` in `.aozora.toml` beats `CLICOLOR_FORCE` exactly as
+`--color never` does.
+
+Colour is the one setting with **no `AOZORA_*` variable** between the flag and
+the file: the ecosystem already standardises the colour environment, so `auto`
+defers to `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` rather than aozora adding a
+fourth spelling beside them. (`AOZORA_ENCODING` / `AOZORA_STRICT` /
+`AOZORA_FORMAT` / `AOZORA_LANG` back their own flags, which have no such
+convention to defer to.)
 
 ## `aozora check`
 

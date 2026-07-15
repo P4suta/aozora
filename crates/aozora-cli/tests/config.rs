@@ -5,12 +5,13 @@
 //! (XDG) layer, and the flag > env > project > global > default precedence
 //! are exercised end to end.
 //!
-//! Hermeticity: every run clears `AOZORA_*` and pins `XDG_CONFIG_HOME` to a
-//! throwaway empty tempdir, so neither the host environment nor the
-//! developer's real `~/.config/aozora/` can perturb an assertion. A test
-//! that means to exercise the global layer points `XDG_CONFIG_HOME` at its
-//! own tempdir (holding `aozora/config.toml`) via `envs`, which — applied
-//! last — overrides the empty default.
+//! Hermeticity: every run clears `AOZORA_*` and the `NO_COLOR` / `CLICOLOR` /
+//! `CLICOLOR_FORCE` / `FORCE_COLOR` set, and pins `XDG_CONFIG_HOME` to a throwaway empty
+//! tempdir, so neither the host environment nor the developer's real
+//! `~/.config/aozora/` can perturb an assertion. A test that means to exercise
+//! the global layer points `XDG_CONFIG_HOME` at its own tempdir (holding
+//! `aozora/config.toml`) via `envs`, which — applied last — overrides the
+//! empty default.
 
 use std::fs;
 use std::io::Write;
@@ -38,6 +39,15 @@ fn run_in(dir: &Path, args: &[&str], envs: &[(&str, &str)], stdin: &[u8]) -> (Op
         .env_remove("AOZORA_STRICT")
         .env_remove("AOZORA_ENCODING")
         .env_remove("AOZORA_FORMAT")
+        // The colour-control vars miette consults on the `auto` path: cleared
+        // so an ambient NO_COLOR / FORCE_COLOR (CI runners and developer shells
+        // commonly export one) cannot decide a colour assertion. A test that
+        // means to exercise one sets it back through `envs`, applied after
+        // these.
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("FORCE_COLOR")
         .env("XDG_CONFIG_HOME", empty_xdg.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -165,23 +175,85 @@ fn explicit_config_path_is_used() {
     assert_eq!(code, Some(1), "--config PATH applied → strict exit 1");
 }
 
-// --- the `color` key: parsed and validated even while wiring is deferred ---
+// --- the `color` key: a real layer of the colour chain ---
+//
+// Colour is asserted by the presence of an ESC byte in stderr, the technique
+// `tests/color.rs` uses for the flag. `--format human` is passed throughout so
+// miette actually renders a graphical report (the piped default is `json`,
+// which is machine output and never coloured).
+//
+// Every case pins a *decided* `always` / `never`, never `auto`: on a piped
+// stderr `auto` and `never` are both monochrome, so only `always` proves the
+// key had an effect at all.
+
+/// True if `stderr` carries an ANSI escape introducer (ESC, `0x1b`).
+fn has_ansi(stderr: &str) -> bool {
+    stderr.contains('\u{1b}')
+}
+
+/// `check --format human` in `dir` under `envs`, fed one-PUA input, returning
+/// stderr — where the rendered diagnostic (and its colour) lands.
+fn check_human_stderr(dir: &Path, envs: &[(&str, &str)]) -> String {
+    let (_, stderr) = run_in(dir, &["check", "--format", "human"], envs, ONE_PUA);
+    stderr
+}
 
 #[test]
-fn color_key_is_accepted() {
+fn config_color_always_colourises_a_piped_stderr() {
+    let dir = TempDir::new().expect("tempdir");
+    write_config(dir.path(), "color = \"always\"\n");
+    // A piped stderr is not a TTY, so `auto` would leave it monochrome: only
+    // the config key reaching the colour hook can put ANSI here. That is what
+    // makes this the test that the key is wired, not merely accepted.
+    let stderr = check_human_stderr(dir.path(), &[]);
+    assert!(
+        has_ansi(&stderr),
+        "config color=always must colourise even a piped stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn config_color_never_suppresses_colour() {
     let dir = TempDir::new().expect("tempdir");
     write_config(dir.path(), "color = \"never\"\n");
-    // `color` is a known field, so it parses cleanly (deny_unknown_fields
-    // does not fire); it must not be rejected the way a mistyped key is.
-    let (code, stderr) = run_in(dir.path(), &["check"], &[], ONE_PUA);
-    assert_eq!(
-        code,
-        Some(0),
-        "color=never parses, diagnostic tolerated: {stderr:?}"
+    // CLICOLOR_FORCE would colour an `auto` run (tests/color.rs pins that), so
+    // a monochrome stderr here can only be the config key deciding `never`.
+    // A decided choice outranks the terminal env vars, which are inputs to
+    // `auto` — the same rule that makes `--color never` beat CLICOLOR_FORCE.
+    let stderr = check_human_stderr(dir.path(), &[("CLICOLOR_FORCE", "1")]);
+    assert!(
+        !has_ansi(&stderr),
+        "config color=never must suppress colour: {stderr:?}"
+    );
+}
+
+#[test]
+fn flag_beats_config_color() {
+    let dir = TempDir::new().expect("tempdir");
+    write_config(dir.path(), "color = \"never\"\n");
+    let (_, stderr) = run_in(
+        dir.path(),
+        &["check", "--format", "human", "--color", "always"],
+        &[],
+        ONE_PUA,
     );
     assert!(
-        !stderr.contains("invalid config"),
-        "the known `color` key must not be rejected: {stderr:?}"
+        has_ansi(&stderr),
+        "explicit --color always beats config never: {stderr:?}"
+    );
+}
+
+#[test]
+fn project_color_beats_the_global_layer() {
+    let cwd = TempDir::new().expect("cwd tempdir");
+    let xdg = TempDir::new().expect("xdg tempdir");
+    write_global_config(xdg.path(), "color = \"never\"\n");
+    write_config(cwd.path(), "color = \"always\"\n");
+    let env = xdg_env(&xdg);
+    let stderr = check_human_stderr(cwd.path(), &[(env.0, env.1.as_str())]);
+    assert!(
+        has_ansi(&stderr),
+        "the project .aozora.toml colour beats the global one: {stderr:?}"
     );
 }
 
