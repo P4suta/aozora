@@ -91,7 +91,7 @@ aozora supports any Rust release from the last six months, and raises
 the floor only when a new stable feature is actually needed. The current
 value lives in the crate's `rust-version` (crates.io and `docs.rs` both
 display it); the policy and the reasoning are in
-[MSRV policy](../contrib/msrv.md).
+[MSRV policy](https://github.com/P4suta/aozora/blob/main/docs/contrib/msrv.md).
 
 ## Public API stability
 

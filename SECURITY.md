@@ -98,7 +98,7 @@ Release credentials follow published standards, not a homegrown scheme:
   scanning.
 
 The operational details are in the
-[release secrets runbook](https://p4suta.github.io/aozora/contrib/releasing-secrets.html)
+[release secrets runbook](https://github.com/P4suta/aozora/blob/main/docs/contrib/releasing-secrets.md)
 and [ADR-0020](https://github.com/P4suta/aozora/blob/main/docs/adr/0020-release-secret-hardening-trusted-publishing.md).
 
 ## Supported versions

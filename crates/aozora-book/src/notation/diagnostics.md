@@ -340,7 +340,7 @@ construct. The lint suggests the canonical spelling in its message; the body
 itself is left untouched (Unknown round-trips verbatim). The catalogue is a
 closed, parser-verified map, so genuine editorial notes never fire. **Fix:**
 rewrite to the canonical form — `aozora lint --fix` or `aozora fmt --fix` does
-it in place. See [Notation hygiene](hygiene.md) for the full layer model.
+it in place. See [Notation hygiene](https://github.com/P4suta/aozora/blob/main/docs/hygiene.md) for the full layer model.
 
 # Internal
 

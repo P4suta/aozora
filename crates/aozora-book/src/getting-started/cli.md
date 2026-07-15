@@ -98,7 +98,7 @@ a single, predictable failure mode in shell pipelines:
   `--strict` for "no diagnostics allowed").
 - `lint` is `check` filtered to the advisory notation-hygiene lints
   (`aozora::lint::*`); `--fix` applies the Tier1 autofix in place. See
-  [Notation hygiene](../notation/hygiene.md).
+  [Notation hygiene](https://github.com/P4suta/aozora/blob/main/docs/hygiene.md).
 - `fmt` is a *pure-text* transform: stdin in, canonical text out.
   `--check` upgrades it to a CI gate without forking a second binary.
 - `render` is a *pure-text-to-HTML* transform with the same

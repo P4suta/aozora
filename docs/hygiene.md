@@ -51,7 +51,7 @@ The catalogues split by whether the repair **preserves meaning**:
   measurement vocabularies folded via a typographic identity). These are
   **render-only** (`render --degraded`): a Tier2 reduction can reach only the
   rendered HTML, and can never rewrite your source. See
-  [ADR-0026](https://github.com/P4suta/aozora/blob/main/docs/adr/0026-notation-hygiene-restratification.md).
+  [ADR-0026](adr/0026-notation-hygiene-restratification.md).
 
 ## Worked examples
 
@@ -107,7 +107,7 @@ warning[aozora::lint::non_canonical_directive]: non-canonical directive; the can
 ```
 
 See
-[ADR-0027](https://github.com/P4suta/aozora/blob/main/docs/adr/0027-core-parser-notation-purification.md)
+[ADR-0027](adr/0027-core-parser-notation-purification.md)
 for the full list of the forms the core promotes or declines, and the
 [Diagnostics catalogue](diagnostics.md#non-canonical-directive) for the
 `non_canonical_directive` lint itself.

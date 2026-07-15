@@ -116,7 +116,7 @@ channel is not the contract.
 
 ## See also
 
-- [ADR-0034](https://github.com/P4suta/aozora/blob/main/docs/adr/0034-separate-toolchain-channel-from-msrv.md)
+- [ADR-0034](../adr/0034-separate-toolchain-channel-from-msrv.md)
   — why the two numbers are separate, and the arithmetic behind the
   six-month rule.
 - [Release process](release.md) — where the MSRV sits in the release

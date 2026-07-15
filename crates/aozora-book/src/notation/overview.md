@@ -72,6 +72,6 @@ opener that names no known container also emits
 Adding full support is a one-PR job once a real corpus document needs it.
 
 Near-miss spellings of *recognised* constructs (`字下げ終わり`, `ゴチック`) are
-also kept `Unknown`, but the opt-in [notation-hygiene](hygiene.md) layers can
+also kept `Unknown`, but the opt-in [notation-hygiene](https://github.com/P4suta/aozora/blob/main/docs/hygiene.md) layers can
 flag, canonicalise, or degraded-render them on request — the parser itself
 never guesses.

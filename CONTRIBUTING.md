@@ -95,7 +95,7 @@ regression doesn't stay hidden.
 
 For the full symptom → recovery table covering every gate (coverage,
 clippy/fmt, the drift gates, typos, deny/audit), see the handbook's
-[Troubleshooting & gate recovery](crates/aozora-book/src/contrib/troubleshooting.md)
+[Troubleshooting & gate recovery](docs/contrib/troubleshooting.md)
 chapter.
 
 ## Development loop
@@ -276,7 +276,7 @@ edits.
 ## Pull requests
 
 Doing a docs change or a small fix? The handbook's
-[Your first PR](crates/aozora-book/src/contrib/first-pr.md) chapter walks
+[Your first PR](docs/contrib/first-pr.md) chapter walks
 the lightweight path — no parser code, no TDD flow, just the two quick
 doc gates (`just typos` / `just book-build`) and a signed `docs:` commit.
 The checklist below is the full gate every PR is held to.

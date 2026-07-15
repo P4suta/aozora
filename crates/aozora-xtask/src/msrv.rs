@@ -10,7 +10,7 @@
 //! There is no rule that they match. The rule is that every *other* pin
 //! follows the right one of the two, and that `M` stays far enough behind
 //! `T` to honour the six-month policy. See ADR-0034 and
-//! `crates/aozora-book/src/contrib/msrv.md`.
+//! `docs/contrib/msrv.md`.
 //!
 //! ## Why a gate rather than care
 //!
@@ -21,10 +21,9 @@
 //! at once, and "a dozen places, by hand, every time" is not a policy.
 //!
 //! The existing `version-literal-gate` (`Justfile`) cannot cover this: it
-//! requires a `v` prefix, so `Rust 1.96.0` never matches, and it only
-//! walks `crates/aozora-book/src`, so the READMEs are out of scope. It
-//! polices release-tag literals; this polices version pins. Different
-//! facts, different gates.
+//! requires a `v` prefix, so `Rust 1.96.0` never matches, and its scope
+//! excludes the READMEs. It polices release-tag literals; this polices
+//! version pins. Different facts, different gates.
 
 use std::fmt::{self, Display, Formatter};
 use std::fs;
@@ -168,11 +167,11 @@ fn scrape(root: &Path, pin: &Pin) -> Result<Version, String> {
     parse_version(found.as_str()).map_err(|err| format!("{}: {err}", pin.path))
 }
 
-/// Handbook pages may not name a Rust version — `contrib/msrv.md` is the
-/// single place that does. Matches `1.NN` only near a rust/MSRV word so a
-/// crate version (`aozora = "0.4"`) or a dep pin (`toml = "1.1"`) does not
-/// trip it.
-static HANDBOOK_VERSION: LazyLock<Regex> = LazyLock::new(|| {
+/// Maintained docs may not name a Rust version — `docs/contrib/msrv.md`
+/// is the single place that does. Matches `1.NN` only near a rust/MSRV
+/// word so a crate version (`aozora = "0.4"`) or a dep pin
+/// (`toml = "1.1"`) does not trip it.
+static MAINTAINED_DOC_VERSION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(rust|msrv)[^\n]{0,20}?\b1\.(8[5-9]|9[0-9]|[1-9][0-9]{2})\b")
         .expect("static pattern")
 });
@@ -183,37 +182,54 @@ static HANDBOOK_VERSION: LazyLock<Regex> = LazyLock::new(|| {
 const STATIC_MSRV_BADGE: &str = "img.shields.io/badge/rust-";
 
 const READMES: &[&str] = &["README.md", "crates/aozora/README.md"];
-const MSRV_PAGE: &str = "crates/aozora-book/src/contrib/msrv.md";
-const HANDBOOK_SRC: &str = "crates/aozora-book/src";
+const MSRV_PAGE: &str = "docs/contrib/msrv.md";
 
-fn check_handbook(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
-    let src = root.join(HANDBOOK_SRC);
+/// Prose we maintain, and therefore prose that must not restate the MSRV.
+///
+/// `docs/adr/` is deliberately absent. An accepted ADR is a dated record,
+/// never edited (`docs/ADR_INDEX.md`), so the Rust version inside one is
+/// history rather than a fact anybody keeps current — ADR-0031 says "rust
+/// 1.96.0" and is *correct* to, because that is what it was. Scanning
+/// them would turn every honest record into a violation.
+const MAINTAINED_DOCS: &[&str] = &["docs/contrib", "docs/hygiene.md"];
+
+fn check_docs(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let mut offenders = Vec::new();
-    for entry in walkdir::WalkDir::new(&src)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "md") {
-            continue;
+    for dir in MAINTAINED_DOCS {
+        let src = root.join(dir);
+        // A missing path is an error, not an absence of violations. The
+        // gate that silently passes when its subject disappears is the
+        // gate that is not there.
+        if !src.exists() {
+            return Err(format!(
+                "{dir}: not found — MAINTAINED_DOCS is stale, so this gate is \
+                 checking nothing"
+            ));
         }
-        let rel = path
-            .strip_prefix(root)
-            .map_err(|err| format!("strip_prefix {}: {err}", path.display()))?;
-        if rel == Path::new(MSRV_PAGE) {
-            continue;
-        }
-        let text =
-            fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
-        for (n, line) in text.lines().enumerate() {
-            if HANDBOOK_VERSION.is_match(line) {
-                offenders.push(format!("{}:{}: {}", rel.display(), n + 1, line.trim()));
+        for entry in walkdir::WalkDir::new(&src) {
+            let entry = entry.map_err(|err| format!("walk {dir}: {err}"))?;
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "md") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|err| format!("strip_prefix {}: {err}", path.display()))?;
+            if rel == Path::new(MSRV_PAGE) {
+                continue;
+            }
+            let text = fs::read_to_string(path)
+                .map_err(|err| format!("read {}: {err}", path.display()))?;
+            for (n, line) in text.lines().enumerate() {
+                if MAINTAINED_DOC_VERSION.is_match(line) {
+                    offenders.push(format!("{}:{}: {}", rel.display(), n + 1, line.trim()));
+                }
             }
         }
     }
     if !offenders.is_empty() {
         violations.push(format!(
-            "{} handbook line(s) name a Rust version outside {MSRV_PAGE}:\n    {}\n\
+            "{} maintained doc line(s) name a Rust version outside {MSRV_PAGE}:\n    {}\n\
              -> link to the MSRV policy page instead; it is the one place the number lives",
             offenders.len(),
             offenders.join("\n    "),
@@ -311,7 +327,7 @@ fn check() -> Result<(), String> {
     }
 
     // I5 / I6 — the number lives in exactly one page, and the badge is derived.
-    check_handbook(&root, &mut violations)?;
+    check_docs(&root, &mut violations)?;
     check_badges(&root, &mut violations)?;
 
     if violations.is_empty() {
@@ -378,31 +394,31 @@ mod tests {
     }
 
     #[test]
-    fn handbook_pattern_matches_a_pinned_rust_version() {
+    fn maintained_doc_pattern_matches_a_pinned_rust_version() {
         assert!(
-            HANDBOOK_VERSION.is_match("aozora pins **Rust 1.96.0** as its MSRV"),
+            MAINTAINED_DOC_VERSION.is_match("aozora pins **Rust 1.96.0** as its MSRV"),
             "must catch the prose that motivated this gate"
         );
         assert!(
-            HANDBOOK_VERSION.is_match("the MSRV is 1.89"),
+            MAINTAINED_DOC_VERSION.is_match("the MSRV is 1.89"),
             "must catch a bare MSRV mention"
         );
     }
 
     #[test]
-    fn handbook_pattern_ignores_unrelated_versions() {
+    fn maintained_doc_pattern_ignores_unrelated_versions() {
         // The blind spot that let the READMEs drift was over-narrow
         // matching; the opposite failure is matching everything.
         assert!(
-            !HANDBOOK_VERSION.is_match(r#"aozora = "0.4""#),
+            !MAINTAINED_DOC_VERSION.is_match(r#"aozora = "0.4""#),
             "a crate version is not a Rust version"
         );
         assert!(
-            !HANDBOOK_VERSION.is_match(r#"toml = "1.1""#),
+            !MAINTAINED_DOC_VERSION.is_match(r#"toml = "1.1""#),
             "a dep pin is not a Rust version"
         );
         assert!(
-            !HANDBOOK_VERSION.is_match("Keep a Changelog 1.1.0"),
+            !MAINTAINED_DOC_VERSION.is_match("Keep a Changelog 1.1.0"),
             "an unrelated 1.x is not a Rust version"
         );
     }

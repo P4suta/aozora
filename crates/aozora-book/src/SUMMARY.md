@@ -40,7 +40,6 @@
 - [Indent & align containers (字下げ)](notation/indent.md)
 - [Page & section breaks (改ページ・改丁)](notation/breaks.md)
 - [Diagnostics catalogue](notation/diagnostics.md)
-- [Notation hygiene (canonicalization & degraded rendering)](notation/hygiene.md)
 
 # Architecture
 
@@ -101,10 +100,3 @@
 
 # Contributing
 
-- [Your first PR](contrib/first-pr.md)
-- [Development loop](contrib/dev.md)
-- [Testing strategy](contrib/testing.md)
-- [Troubleshooting & gate recovery](contrib/troubleshooting.md)
-- [Release process](contrib/release.md)
-- [Release secrets & Trusted Publishing](contrib/releasing-secrets.md)
-- [MSRV policy](contrib/msrv.md)
