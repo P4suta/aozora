@@ -12,33 +12,18 @@ are stacked into a single line of the surrounding text.
 ## Rendered HTML
 
 ```html
-<span class="aozora-warichu">
-  <span class="aozora-warichu-upper">上の段</span>
-  <span class="aozora-warichu-lower">下の段</span>
-</span>
+<p><span class="aozora-warichu">上の段／下の段</span></p>
 ```
 
 ## Source output
 
 Round-trips to the explicit `［＃割り注］...／...［＃割り注終わり］`.
 
-## AST shape
-
-```rust,ignore
-pub struct Warichu<'src> {
-    pub upper: Content<'src>,
-    pub lower: Content<'src>,
-}
-```
-
-`upper` / `lower` are plain [`Content`](https://docs.rs/aozora/latest/aozora/ast/enum.Content.html);
-empty halves are valid (one-sided warichu).
-
 ## When emitted
 
 The single-line `［＃割り注］...［＃割り注終わり］` form is
-inline-classified; multi-line `［＃割注］` containers become a
-[Container](container.md) of kind `Warichu`.
+inline-classified, with the `／` kept as written; multi-line `［＃割注］`
+containers become a `container` instead.
 
 ## Diagnostics
 
@@ -46,4 +31,4 @@ None on well-formed input.
 
 ## Related kinds
 
-- [Container](container.md) — multi-line counterpart.
+- `container` — multi-line counterpart.

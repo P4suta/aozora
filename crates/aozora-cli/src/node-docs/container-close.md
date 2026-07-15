@@ -2,7 +2,7 @@
 
 Inspect tag: `containerClose` — paired-container close boundary marker.
 
-`NodeRef`-only counterpart of [ContainerOpen](container-open.md).
+`NodeRef`-only counterpart of `containerOpen`.
 
 ## Source examples
 
@@ -14,18 +14,12 @@ body
 
 ## Rendered HTML
 
-Routed through `visit_container_close`; the default renderer emits
-the closing `</div>` of the
-`<div class="aozora-container-...">` opened by the matching
-`ContainerOpen`.
+The closing `</div>` of the `<div class="aozora-container-...">`
+that the matching `containerOpen` opened.
 
 ## Source output
 
 Round-trips with the matching open.
-
-## AST shape
-
-`NodeRef::BlockClose(ContainerKind)`.
 
 ## When emitted
 
@@ -40,5 +34,5 @@ through as plain.
 
 ## Related kinds
 
-- [ContainerOpen](container-open.md) — open-side counterpart.
-- [Container](container.md) — structural payload.
+- `containerOpen` — open-side counterpart.
+- `container` — structural payload.

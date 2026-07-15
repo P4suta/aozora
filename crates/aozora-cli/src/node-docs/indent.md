@@ -12,8 +12,11 @@ Inspect tag: `indent` — single-line `［＃N字下げ］` indent marker.
 ## Rendered HTML
 
 ```html
-<span class="aozora-indent" data-amount="2"></span>
+<p><span class="aozora-indent aozora-indent-2" data-amount="2"></span>本文</p>
 ```
+
+The amount appears twice: as a modifier class for CSS and as
+`data-amount` for anything reading the DOM.
 
 CSS controls the actual padding (typically `padding-inline-start: Nem`).
 
@@ -21,19 +24,11 @@ CSS controls the actual padding (typically `padding-inline-start: Nem`).
 
 Round-trips to `［＃N字下げ］`.
 
-## AST shape
-
-```rust,ignore
-pub struct Indent {
-    pub amount: u8,
-}
-```
-
 ## When emitted
 
 The classify stage matches the digraph plus a numeric prefix and emits a
 single inline marker. For *paired* indent regions (`［＃ここから2字下げ］`
-… `［＃ここで字下げ終わり］`), see [Container](container.md).
+… `［＃ここで字下げ終わり］`), see `container`.
 
 ## Diagnostics
 
@@ -41,6 +36,6 @@ None on well-formed input.
 
 ## Related kinds
 
-- [Container](container.md) — paired indent / dedent regions
-  (`ContainerKind::Indent`).
-- [AlignEnd](align-end.md) — right-edge alignment counterpart.
+- `container` — paired indent / dedent regions
+  (`RegionFormat::Indent`).
+- `alignEnd` — right-edge alignment counterpart.

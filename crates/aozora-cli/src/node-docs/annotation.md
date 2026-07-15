@@ -1,6 +1,6 @@
 # NodeKind::Directive
 
-Inspect tag: `annotation` — generic `［＃...］` annotation that no
+Inspect tag: `directive` — generic `［＃...］` annotation that no
 specific recogniser claimed.
 
 ## Source examples
@@ -13,28 +13,15 @@ text［＃ふりがな付きの説明］more
 ## Rendered HTML
 
 ```html
-<span class="aozora-directive" title="..."></span>
+<p>text<span class="aozora-directive" hidden>［＃任意のメモ］</span>more</p>
 ```
 
-The default renderer suppresses the body; downstream filters can
-match on `aozora-directive` to surface the comment.
+The raw text stays in the DOM and `hidden` keeps it off the page, so a
+filter can match `aozora-directive` and surface it.
 
 ## Source output
 
 Round-trips to `［＃<raw>］`.
-
-## AST shape
-
-```rust,ignore
-pub struct Directive<'src> {
-    pub raw: NonEmptyStr<'src>,
-    pub kind: DirectiveKind,
-}
-```
-
-`DirectiveKind` discriminates the recognised sub-variants
-(`Unknown`, `Sic`, `BaseTextVariant`, …); `raw`
-carries the raw bracket body for any further analysis.
 
 ## When emitted
 
@@ -50,6 +37,6 @@ directives. A genuine invalid-bracket diagnostic
 
 ## Related kinds
 
-- [Bouten](bouten.md) — recognised variant.
-- [Kaeriten](kaeriten.md) — recognised variant.
-- [Illustration](sashie.md) — recognised variant.
+- `bouten` — recognised variant.
+- `kaeriten` — recognised variant.
+- `illustration` — recognised variant.

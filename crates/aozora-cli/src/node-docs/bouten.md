@@ -27,20 +27,6 @@ text, `left` for the rare under-side variant).
 
 Round-trips to the explicit `［＃「target」に<kind>傍点］` form.
 
-## AST shape
-
-```rust,ignore
-pub struct Bouten<'src> {
-    pub kind: BoutenKind,
-    pub target: NonEmpty<Content<'src>>,
-    pub position: BoutenPosition,
-}
-```
-
-`BoutenKind` enumerates the visual variants (Goma, WhiteSesame,
-Circle, …); `BoutenPosition` is `Right` (default for vertical text)
-or `Left`.
-
 ## When emitted
 
 The classify stage sees `［＃「QUOTE」に <slug>傍点］` / `［＃「QUOTE」に <slug>傍線］`,
@@ -51,9 +37,9 @@ node with the matched span.
 
 - `aozora::lex::unclosed_bracket` — annotation `［＃` opened with no
   matching `］`.
-- `Directive` (fallback) — quote target unresolved.
+- `directive` — the fallback when the quote target is unresolved.
 
 ## Related kinds
 
-- [Directive](annotation.md) — fallback when the target cannot be
+- `directive` — fallback when the target cannot be
   matched.

@@ -23,10 +23,6 @@ CSS gives the div a `page-break-before: always` for paged media
 
 Round-trips to `［＃改ページ］\n`.
 
-## AST shape
-
-`Node::PageBreak` is a unit variant — no payload.
-
 ## When emitted
 
 The classify stage sees `［＃改ページ］` and emits a single `BlockLeaf`
@@ -38,4 +34,4 @@ None on well-formed input.
 
 ## Related kinds
 
-- [SectionBreak](section-break.md) — `［＃改丁］` family.
+- `sectionBreak` — `［＃改丁］` family.

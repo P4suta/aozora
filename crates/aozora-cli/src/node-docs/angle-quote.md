@@ -28,24 +28,13 @@ stylesheets target `.aozora-angle-quote` for any further treatment.
 
 Round-trips to the input form `≪content≫` (U+226A/U+226B).
 
-## AST shape
-
-```rust,ignore
-pub struct AngleQuote<'src> {
-    pub content: NonEmpty<Content<'src>>,
-}
-```
-
-`content` is `NonEmpty` — empty `≪≫` is rejected upstream and falls
-through to plain text rather than producing an empty node.
-
 ## When emitted
 
 The tokenize stage tokenises `≪` / `≫` (U+226A/U+226B) as ordinary
 single-character triggers; the classify stage pairs `≪…≫` into one
 `AngleQuote` node. A stray
 底本-style `《《…》》` is **not** this node — it is two ruby openers and
-yields a `nested-ruby` diagnostic with plain fallback.
+yields an `aozora::lex::nested_ruby` diagnostic with plain fallback.
 
 ## Diagnostics
 
@@ -54,4 +43,4 @@ yields a `nested-ruby` diagnostic with plain fallback.
 
 ## Related kinds
 
-- [Ruby](ruby.md) — `《…》` reading marker (the colliding notation).
+- `ruby` — `《…》` reading marker (the colliding notation).

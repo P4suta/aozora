@@ -13,9 +13,8 @@
 //! - `aozora spec slugs` prints the static ［＃…］ slug catalogue as the
 //!   shared `aozora::json` envelope (delegated to `aozora::json::slugs`).
 //! - `aozora explain <kind>` prints the embedded prose page for that
-//!   `NodeKind` — this crate's `src/node-docs/<kind>.md`, the single
-//!   authority, embedded via `include_str!` and borrowed by the handbook
-//!   through `{{#include}}`.
+//!   `NodeKind` — this crate's `src/node-docs/<kind>.md`, embedded via
+//!   `include_str!`.
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 
@@ -339,6 +338,9 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::LineFontSize => "絶対サイズ line marker — ［＃大文字］ ほか.",
         NodeKind::PageBreak => "改ページ.",
         NodeKind::SectionBreak => "Section break.",
+        NodeKind::BodyEnd => "本文終わり — the main body ends; a colophon follows.",
+        NodeKind::ForcedBreak => "改行 — a forced line break inside a paragraph.",
+        NodeKind::Emphasis => "太字 / 斜体 — bold or italic emphasis.",
         NodeKind::Heading => "Aozora heading (見出し).",
         NodeKind::HeadingHint => "Heading hint informing downstream rendering.",
         NodeKind::Illustration => "挿絵 — illustration reference.",
@@ -349,7 +351,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Container => "Inline-attached container (字下げ系の wrap).",
         NodeKind::ContainerOpen => "NodeRef::BlockOpen — paired-container open sentinel.",
         NodeKind::ContainerClose => "NodeRef::BlockClose — paired-container close sentinel.",
-        _ => "(unrecognised NodeKind variant — handbook out of date).",
+        _ => "(unrecognised NodeKind variant — this build is missing a summary; please report it).",
     }
 }
 
@@ -360,7 +362,7 @@ fn describe_pair(k: PairKind) -> &'static str {
         PairKind::AngleQuote => "≪ … ≫ — double-angle quotation (displays as 《…》).",
         PairKind::Tortoise => "〔 … 〕 — accent-decomposition segment.",
         PairKind::Quote => "「 … 」 — quoted literal inside annotation bodies.",
-        _ => "(unrecognised PairKind variant — handbook out of date).",
+        _ => "(unrecognised PairKind variant — this build is missing a summary; please report it).",
     }
 }
 
@@ -369,7 +371,7 @@ fn describe_severity(s: Severity) -> &'static str {
         Severity::Error => "Hard failure; downstream cannot proceed.",
         Severity::Warning => "Recoverable; output is still produced.",
         Severity::Note => "Informational hint; never blocks compilation.",
-        _ => "(unrecognised Severity variant — handbook out of date).",
+        _ => "(unrecognised Severity variant — this build is missing a summary; please report it).",
     }
 }
 
@@ -377,7 +379,9 @@ fn describe_source(s: DiagnosticSource) -> &'static str {
     match s {
         DiagnosticSource::Source => "Issue rooted in user input.",
         DiagnosticSource::Internal => "Library-internal sanity-check failure (bug).",
-        _ => "(unrecognised DiagnosticSource variant — handbook out of date).",
+        _ => {
+            "(unrecognised DiagnosticSource variant — this build is missing a summary; please report it)."
+        }
     }
 }
 
@@ -409,18 +413,26 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
         InternalCheckCode::RegistryPositionMismatch => {
             "registry entry position disagrees with sentinel kind"
         }
-        _ => "(unrecognised InternalCheckCode — handbook out of date)",
+        _ => "(unrecognised InternalCheckCode — this build is missing a summary; please report it)",
     }
 }
 
-/// Embedded prose pages for `aozora explain <tag>`. Index keyed by
-/// camelCase wire tag → file slug; the markdown body is loaded at
-/// compile time via `include_str!` from this crate's `src/node-docs/`
-/// — the single authority, which the handbook borrows via `{{#include}}`.
+/// Embedded prose pages for `aozora explain <tag>`, keyed by the
+/// `NodeKind::as_json_tag` wire tag — the same string `aozora spec kinds`
+/// prints and every driver crate emits. Bodies are `include_str!`d from
+/// this crate's `src/node-docs/`.
+///
+/// The key must be the wire tag and nothing else. Three entries used to
+/// be keyed by their filename instead (`tateChuYoko`, `sashie`,
+/// `annotation`), so `aozora spec kinds` advertised `combineUpright` /
+/// `illustration` / `directive` and `aozora explain` rejected all three
+/// — while the pages sat right here, reachable only under names the CLI
+/// never printed. `explain_reaches_every_documented_kind` pins the
+/// round-trip now.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("node-docs/ruby.md")),
     ("bouten", include_str!("node-docs/bouten.md")),
-    ("tateChuYoko", include_str!("node-docs/tate-chu-yoko.md")),
+    ("combineUpright", include_str!("node-docs/tate-chu-yoko.md")),
     ("gaiji", include_str!("node-docs/gaiji.md")),
     ("indent", include_str!("node-docs/indent.md")),
     ("alignEnd", include_str!("node-docs/align-end.md")),
@@ -429,9 +441,9 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ("sectionBreak", include_str!("node-docs/section-break.md")),
     ("heading", include_str!("node-docs/aozora-heading.md")),
     ("headingHint", include_str!("node-docs/heading-hint.md")),
-    ("sashie", include_str!("node-docs/sashie.md")),
+    ("illustration", include_str!("node-docs/sashie.md")),
     ("kaeriten", include_str!("node-docs/kaeriten.md")),
-    ("annotation", include_str!("node-docs/annotation.md")),
+    ("directive", include_str!("node-docs/annotation.md")),
     ("angleQuote", include_str!("node-docs/angle-quote.md")),
     ("container", include_str!("node-docs/container.md")),
     ("containerOpen", include_str!("node-docs/container-open.md")),
@@ -441,11 +453,24 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The prose page for a wire tag, falling back to the one-line summary
+/// `aozora spec kinds` prints for kinds that have no page.
+///
+/// Without the fallback the two commands contradict each other: `explain`
+/// rejects `center` and tells the reader to run `spec kinds`, which lists
+/// `center` with a summary. Seven kinds are in that position. A tag the
+/// tool advertises must explain to something.
 fn explain_kind(tag: &str) -> Option<String> {
-    NODE_PAGES
-        .iter()
-        .find(|(t, _)| *t == tag)
-        .map(|(_, body)| (*body).to_owned())
+    if let Some((_, body)) = NODE_PAGES.iter().find(|(t, _)| *t == tag) {
+        return Some((*body).to_owned());
+    }
+    let kind = NodeKind::ALL.iter().find(|k| k.as_json_tag() == tag)?;
+    Some(format!(
+        "# {tag}\n\n{}\n\nNo detailed page for this kind yet. \
+         `aozora spec kinds` lists every tag, and the notation itself is at \
+         https://p4suta.github.io/aozora-notation-spec/\n",
+        describe_node(*kind)
+    ))
 }
 
 /// Explain a diagnostic code: `aozora explain aozora::lex::unclosed_bracket`
@@ -498,20 +523,23 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
 // ---- notation concepts ---------------------------------------------
 //
 // Concept / notation-family keys the reader is likely to type but that are
-// not a one-to-one `NodeKind` handbook page: abbreviations (`tcy`) and
-// Japanese names (`傍点`, `ルビ`, …). Each key routes to a concept slug whose
+// not a one-to-one `NodeKind` page: abbreviations (`tcy`) and Japanese
+// names (`傍点`, `ルビ`, …). Each key routes to a concept slug whose
 // localized title / body prose lives in aozora-i18n as
-// `concept-<slug>-{title,body}` (en / ja / zh). The keys are deliberately
-// disjoint from the `NODE_PAGES` slugs: a term that already has a handbook
-// page (e.g. `ruby`) is served by that page first (see `resolve_explain`),
-// so no concept entry here is ever shadowed / unreachable.
+// `concept-<slug>-{title,body}` (en / ja / zh).
+//
+// No key here may be a `NodeKind` wire tag. `resolve_explain` tries node
+// pages first, so such an entry is unreachable — and worse, it hides the
+// node page when that page is keyed by anything else. `combineUpright` sat here
+// and did exactly that: the page was registered as `tateChuYoko`, so the
+// tag `aozora spec kinds` prints resolved to this short concept blurb
+// instead of the node page. `concepts_never_shadow_a_node_page` pins it.
 
 /// `(typed key, concept slug)`. Several keys may share one slug (aliases). The
 /// slug names the `concept-<slug>-{title,body}` catalog keys in aozora-i18n.
 const CONCEPTS: &[(&str, &str)] = &[
     ("tcy", "tcy"),
     ("縦中横", "tcy"),
-    ("combineUpright", "tcy"),
     ("ルビ", "ruby"),
     ("外字", "gaiji"),
     ("傍点", "bouten"),
@@ -746,9 +774,96 @@ mod tests {
 
     #[test]
     fn describe_pair_covers_every_variant_without_fallback() {
-        let fallback = "(unrecognised PairKind variant — handbook out of date).";
+        let fallback =
+            "(unrecognised PairKind variant — this build is missing a summary; please report it).";
         for k in PairKind::ALL {
             assert_ne!(describe_pair(k), fallback, "{k:?} hit the fallback arm");
+        }
+    }
+
+    /// `NodeKind` is `#[non_exhaustive]`, so `describe_node`'s `_` arm is
+    /// mandatory from this crate and the compiler can never flag a missing
+    /// variant. `BodyEnd` / `ForcedBreak` / `Emphasis` fell through it for
+    /// as long as they existed, and `aozora spec kinds` printed the
+    /// apology to users as those variants' summary. Only a walk of `ALL`
+    /// catches that — which is why `describe_pair` has had this test and
+    /// `describe_node` only had one asserting the variants it remembered.
+    #[test]
+    fn describe_node_covers_every_variant_without_fallback() {
+        let fallback =
+            "(unrecognised NodeKind variant — this build is missing a summary; please report it).";
+        for k in NodeKind::ALL {
+            assert_ne!(describe_node(k), fallback, "{k:?} hit the fallback arm");
+        }
+    }
+
+    /// Every `NODE_PAGES` key must be the wire tag `aozora spec kinds`
+    /// prints — the name `explain`'s own error tells the reader to look up.
+    /// Three pages were keyed by their filename instead, so the tags
+    /// `combineUpright` / `illustration` / `directive` were rejected while
+    /// their pages sat in the binary.
+    #[test]
+    fn node_pages_are_keyed_by_wire_tag() {
+        let tags: Vec<&str> = NodeKind::ALL.iter().map(|k| k.as_json_tag()).collect();
+        for (key, _) in NODE_PAGES {
+            assert!(
+                tags.contains(key),
+                "NODE_PAGES key `{key}` is not a NodeKind wire tag, so \
+                 `aozora spec kinds` never prints it and nothing points at \
+                 this page"
+            );
+        }
+    }
+
+    /// Each page opens with `Inspect tag: `x``, which is the command the
+    /// reader is meant to type next. It must be the key that reaches the
+    /// page. Three pages named their old filename-derived key, so the page
+    /// you reached by `aozora explain directive` told you to run
+    /// `aozora explain annotation`, which is rejected.
+    #[test]
+    fn each_page_states_the_tag_that_reaches_it() {
+        for (key, body) in NODE_PAGES {
+            let line = body
+                .lines()
+                .find(|l| l.starts_with("Inspect tag:"))
+                .unwrap_or_else(|| panic!("`{key}`'s page has no `Inspect tag:` line"));
+            assert!(
+                line.contains(&format!("`{key}`")),
+                "`{key}`'s page says `{line}` — it names a tag that does not \
+                 reach it"
+            );
+        }
+    }
+
+    /// The round-trip the CLI promises: `explain`'s error says to run
+    /// `spec kinds`, so every tag that command advertises must explain to
+    /// something. Nine of twenty-five did not — and `explain` answered
+    /// seven of those by telling the reader to consult the very list they
+    /// came from.
+    #[test]
+    fn every_advertised_tag_explains() {
+        for k in NodeKind::ALL {
+            let tag = k.as_json_tag();
+            assert!(
+                explain_kind(tag).is_some(),
+                "`aozora spec kinds` advertises `{tag}` but \
+                 `aozora explain {tag}` has nothing to say"
+            );
+        }
+    }
+
+    /// `resolve_explain` tries node pages before concepts, so a concept
+    /// keyed on a wire tag is dead — and hides the node page whenever that
+    /// page is keyed by anything else. `combineUpright` was both at once.
+    #[test]
+    fn concepts_never_shadow_a_node_page() {
+        let tags: Vec<&str> = NodeKind::ALL.iter().map(|k| k.as_json_tag()).collect();
+        for (key, slug) in CONCEPTS {
+            assert!(
+                !tags.contains(key),
+                "concept `{key}` -> `{slug}` is a NodeKind wire tag; node \
+                 pages resolve first, so this entry is unreachable"
+            );
         }
     }
 
@@ -770,7 +885,8 @@ mod tests {
 
     #[test]
     fn describe_severity_covers_every_variant_without_fallback() {
-        let fallback = "(unrecognised Severity variant — handbook out of date).";
+        let fallback =
+            "(unrecognised Severity variant — this build is missing a summary; please report it).";
         for s in Severity::ALL {
             assert_ne!(describe_severity(s), fallback, "{s:?} hit the fallback arm");
         }
@@ -790,7 +906,7 @@ mod tests {
 
     #[test]
     fn describe_source_covers_every_variant_without_fallback() {
-        let fallback = "(unrecognised DiagnosticSource variant — handbook out of date).";
+        let fallback = "(unrecognised DiagnosticSource variant — this build is missing a summary; please report it).";
         for s in DiagnosticSource::ALL {
             assert_ne!(describe_source(s), fallback, "{s:?} hit the fallback arm");
         }
@@ -846,7 +962,8 @@ mod tests {
 
     #[test]
     fn describe_internal_covers_every_variant_without_fallback() {
-        let fallback = "(unrecognised InternalCheckCode — handbook out of date)";
+        let fallback =
+            "(unrecognised InternalCheckCode — this build is missing a summary; please report it)";
         for c in InternalCheckCode::ALL {
             assert_ne!(describe_internal(c), fallback, "{c:?} hit the fallback arm");
         }

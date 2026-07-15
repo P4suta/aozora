@@ -3,7 +3,7 @@
 Inspect tag: `containerOpen` — paired-container open boundary marker.
 
 This variant only appears in `NodeRef`-flavoured JSON output (e.g.
-`nodes`); the structural [`Node::Container`](container.md)
+`nodes`); the structural `container`
 payload covers the wrapping construct itself.
 
 ## Source examples
@@ -16,19 +16,13 @@ indented body
 
 ## Rendered HTML
 
-The default HTML renderer routes the open / close pair through
-`visit_container_open` / `visit_container_close` and emits the
-opening `<div class="aozora-container-...">` wrapping the body.
+The opening `<div class="aozora-container-...">` that wraps the
+body, closed by the matching `containerClose`.
 
 ## Source output
 
 Round-trips together with the matching close to the
 `［＃ここから…］...［＃ここで…終わり］` form.
-
-## AST shape
-
-`NodeRef::BlockOpen(ContainerKind)` — see
-[ContainerKind](container.md).
 
 ## When emitted
 
@@ -42,5 +36,5 @@ opener so the registry can dispatch the open event during walking.
 
 ## Related kinds
 
-- [ContainerClose](container-close.md) — paired close-side counterpart.
-- [Container](container.md) — the structural payload variant.
+- `containerClose` — paired close-side counterpart.
+- `container` — the structural payload variant.

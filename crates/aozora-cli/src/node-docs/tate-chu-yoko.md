@@ -1,18 +1,21 @@
 # NodeKind::CombineUpright
 
-Inspect tag: `tateChuYoko` — horizontal text inside a vertical
+Inspect tag: `combineUpright` — horizontal text inside a vertical
 writing-mode run (縦中横, "vertical-with-horizontal-inside").
 
 ## Source examples
 
+The directive follows its target — it points back at text already
+written, so `昭和［＃「12」は縦中横］年` matches nothing.
+
 ```text
-昭和［＃「12」は縦中横］年
+昭和12年［＃「12」は縦中横］
 ```
 
 ## Rendered HTML
 
 ```html
-<span class="aozora-combine-upright">12</span>
+<p>昭和<span class="aozora-combine-upright">12</span>年</p>
 ```
 
 Downstream CSS gives the span `text-combine-upright: all` for proper
@@ -21,14 +24,6 @@ vertical-writing display.
 ## Source output
 
 Round-trips to `［＃「target」は縦中横］`.
-
-## AST shape
-
-```rust,ignore
-pub struct CombineUpright<'src> {
-    pub text: NonEmpty<Content<'src>>,
-}
-```
 
 ## When emitted
 
@@ -41,4 +36,4 @@ TARGET in preceding text, then emits with the matched span.
 
 ## Related kinds
 
-- [Directive](annotation.md) — fallback if target resolution fails.
+- `directive` — fallback if target resolution fails.

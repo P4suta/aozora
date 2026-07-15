@@ -8,55 +8,48 @@ glyphs.
 ## Source examples
 
 ```text
-※［＃「木＋吶のつくり」、第3水準1-85-54］
+※［＃「木＋世」、第3水準1-85-54］
 ```
 
 The `※` (`U+203B`) flags the construct; `［＃description、mencode］`
-carries the human description and a structured Mojikyō / JIS / U+
-identifier.
+carries a human description and a structured JIS / Unicode
+identifier. The mencode is what resolves — the description is a
+label for a reader.
 
 ## Rendered HTML
 
+Resolved, which is the common case:
+
 ```html
-<span class="aozora-gaiji" title="木＋吶のつくり" data-mencode="第3水準1-85-54">〓</span>
+<p><span class="aozora-gaiji" data-codepoint="U+6798">枘</span></p>
 ```
 
-The fallback glyph `〓` (U+3013, "geta mark") is the conventional
-Japanese typesetting placeholder for missing glyphs. When the
-resolver finds a Unicode mapping the inner text becomes the
-resolved character instead of the geta mark.
+Unresolved — no mencode, or one no table knows:
+
+```html
+<p><span class="aozora-gaiji" data-description="変な字">変な字</span></p>
+```
+
+Both carry the glyph or the description as the element's text, so a
+reader with no stylesheet still sees something. `data-codepoint` lists
+one `U+XXXX` per scalar, space-separated, because a resolved gaiji may
+be a combining sequence.
 
 ## Source output
 
 Round-trips to `※［＃description、mencode］`.
 
-## AST shape
-
-```rust,ignore
-pub struct Gaiji<'src> {
-    pub description: &'src str,
-    pub ucs: Option<Resolved>,
-    pub mencode: Option<&'src str>,
-}
-```
-
-`Resolved` is either a single Unicode scalar or one of 25
-predefined static combining sequences (e.g. か゚ — `か` + the IPA
-voicing-pair-mark — kept as a static constant so the owned-AST
-stays `Copy`).
-
 ## When emitted
 
-The classify stage sees the `※[#…]` digraph and parses the description /
-mencode payload. The encoding crate's gaiji resolver lifts the
-mencode reference into a Unicode character when one exists.
+The classify stage sees the `※［＃…］` digraph and parses the
+description / mencode payload. The encoding crate's resolver lifts the
+mencode into a Unicode character when a table has one.
 
 ## Diagnostics
 
-None on a well-formed `※[#...]`. Ambiguous descriptions land as
-`Directive::Unknown` instead of `Gaiji`.
+None on a well-formed `※［＃…］`. An unresolvable reference is not an
+error — it renders as its description.
 
 ## Related kinds
 
-- [Directive](annotation.md) — fallback when description is
-  malformed.
+- `directive` — fallback when the body is malformed.
