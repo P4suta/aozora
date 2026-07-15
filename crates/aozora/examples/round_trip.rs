@@ -3,8 +3,6 @@
 //! `aozora fmt --check` exercises in CI and the corpus sweep verifies
 //! across the whole Aozora Bunko catalogue.
 //!
-//! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
-//! (Library Quickstart → Round-trip and canonicalisation). Uses only
 //! the `aozora` umbrella surface.
 //!
 //! Run with:
