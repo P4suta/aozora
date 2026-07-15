@@ -39,14 +39,14 @@ use crate::Implementation;
 use crate::grammar;
 
 const FIXTURE_REL: &str = "crates/aozora-conformance/fixtures/render";
-const RESULTS_REL: &str = "crates/aozora-book/src/conformance-results.json";
+const RESULTS_REL: &str = "crates/aozora-conformance/conformance-results.json";
 const SPEC_VECTORS_REL: &str = "crates/aozora-conformance/spec-vectors/vectors";
 
 /// Per-fixture S-expression snapshot for the tree-sitter implementation,
 /// stored alongside the render goldens (`expected.html`, …).
 const TS_GOLDEN: &str = "expected.tree-sitter.txt";
 /// Published per-case pass / fail artefact for the tree-sitter run.
-const TS_RESULTS_REL: &str = "crates/aozora-book/src/conformance-results-tree-sitter.json";
+const TS_RESULTS_REL: &str = "crates/aozora-conformance/conformance-results-tree-sitter.json";
 /// S-expression snapshot of the tree-sitter parse of every spec vector's
 /// `source`. Lives at the top of `spec-vectors/` — outside the vendored
 /// `vectors/` subtree that `sync-spec-vectors` / `verify-spec-vectors`

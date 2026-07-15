@@ -107,7 +107,7 @@ enum Cmd {
     Ci(CiArgs),
     /// JSON Schema artefact dump / drift gate for the `aozora::json`
     /// envelopes. Generates schema files under
-    /// `crates/aozora-book/src/json/schema-*.json` and CI-checks
+    /// `crates/aozora-conformance/json/schema-*.json` and CI-checks
     /// that they stay in sync with the live wire shape.
     Schema(SchemaArgs),
     /// TypeScript types artefact dump / drift gate. Generates
@@ -213,7 +213,7 @@ struct SchemaArgs {
 #[derive(Subcommand)]
 enum SchemaOp {
     /// Generate the four wire-format schemas and write them to
-    /// `crates/aozora-book/src/json/schema-*.json`. Overwrites
+    /// `crates/aozora-conformance/json/schema-*.json`. Overwrites
     /// existing files; commit the diff.
     Dump,
     /// Compare on-disk schemas against freshly-generated ones; exit
@@ -269,7 +269,7 @@ enum ConformanceOp {
     /// `rust` (default) is the canonical parser: it compares each
     /// fixture's `to_html()` / `to_source()` to the committed goldens,
     /// writes a per-case results.json under
-    /// `crates/aozora-book/src/conformance-results.json`, and exits
+    /// `crates/aozora-conformance/conformance-results.json`, and exits
     /// non-zero on any `must`-tier failure.
     ///
     /// `tree-sitter` runs the reference grammar

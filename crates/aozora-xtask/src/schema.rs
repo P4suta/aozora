@@ -1,13 +1,16 @@
 //! JSON Schema artefact dump / drift gate.
 //!
-//! Bridges `aozora::json::schema_*` → `crates/aozora-book/src/json/schema-*.json`.
-//! `xtask schema dump` regenerates the four schema files; `xtask
-//! schema check` exits non-zero when the on-disk artefact has
-//! drifted from the live wire types.
+//! Bridges `aozora::json::schema_*` →
+//! `crates/aozora-conformance/json/schema-*.json`. `xtask schema dump`
+//! regenerates the four schema files; `xtask schema check` exits
+//! non-zero when the on-disk artefact has drifted from the live wire
+//! types.
 //!
-//! The artefact lives in the handbook source tree so external
-//! consumers (downstream filter / plugin authors) can fetch the
-//! schema from a stable URL once GitHub Pages publishes the handbook.
+//! The artefact sits beside the conformance suite because that is what
+//! consumes it. It used to live in the handbook source tree so GitHub
+//! Pages would publish it at a stable URL — but nothing ever referenced
+//! that URL, and `aozora spec schema <name>` prints the same bytes from
+//! the binary, offline.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,19 +31,19 @@ pub(crate) type SchemaGen = fn() -> serde_json::Value;
 /// artefacts as the single source of truth for `quicktype` codegen.
 pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
-        "crates/aozora-book/src/json/schema-diagnostics.json",
+        "crates/aozora-conformance/json/schema-diagnostics.json",
         json::schema_diagnostics,
     ),
     (
-        "crates/aozora-book/src/json/schema-nodes.json",
+        "crates/aozora-conformance/json/schema-nodes.json",
         json::schema_nodes,
     ),
     (
-        "crates/aozora-book/src/json/schema-pairs.json",
+        "crates/aozora-conformance/json/schema-pairs.json",
         json::schema_pairs,
     ),
     (
-        "crates/aozora-book/src/json/schema-container-pairs.json",
+        "crates/aozora-conformance/json/schema-container-pairs.json",
         json::schema_container_pairs,
     ),
 ];

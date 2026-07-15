@@ -257,7 +257,7 @@ struct Envelope<'a, T> {
 /// [`diagnostics`] envelope output.
 ///
 /// Schema-feature only. Used by `xtask schema dump` to commit the
-/// schema artefact under `crates/aozora-book/src/json/`, and by the
+/// schema artefact under `crates/aozora-conformance/json/`, and by the
 /// `aozora spec schema` CLI subcommand for ad-hoc introspection.
 #[cfg(feature = "schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "schema")))]

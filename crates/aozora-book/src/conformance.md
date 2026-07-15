@@ -30,7 +30,7 @@ xtask conformance run --implementation tree-sitter --update  # refresh its snaps
 ```
 
 A successful run also writes
-`crates/aozora-book/src/conformance-results.json` with per-case
+`crates/aozora-conformance/conformance-results.json` with per-case
 detail. The JSON shape is stable; downstream dashboards / shields
 parse it.
 
