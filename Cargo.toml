@@ -422,7 +422,7 @@ pretty_assertions = "1.4.1"
 # allocation-capacity hints) can be excluded from the mutation sweep with an
 # in-source justification. Used only under `#[cfg_attr(test, …)]`, so it is a
 # dev-dependency at each use site. See https://mutants.rs/attrs.html.
-mutants = "0.0.3"
+mutants = "0.0.4"
 
 # Instruction-count (Valgrind/Callgrind) micro-benchmarks — the G6 perf
 # gate (`aozora-bench/benches/perf_gate`). Wall-clock timing on shared GHA
