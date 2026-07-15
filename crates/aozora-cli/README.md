@@ -34,6 +34,7 @@ cargo install --git https://github.com/P4suta/aozora --locked aozora-cli
 | `pandoc` | Project to the Pandoc AST — 50+ output formats via Pandoc writers. |
 | `explain` | Prose for a `NodeKind` tag, notation concept, or a diagnostic code. |
 | `spec` | Query the tool's own contracts: `kinds` (wire-tag tables) / `schema <which>` (JSON Schema) / `slugs` (static ［＃…］ catalogue). |
+| `lsp` | Exec-delegate to the `aozora-lsp` language server (forwards `--stdio` / … verbatim). |
 | `completions` | Print a shell completion script (bash / zsh / fish / …). |
 
 All document subcommands accept `-` (or no path) to read from stdin.

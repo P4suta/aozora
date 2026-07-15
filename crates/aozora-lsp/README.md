@@ -8,6 +8,13 @@ Language Server (tower-lsp) for
 [VS Code extension](https://github.com/P4suta/aozora/tree/main/editors/vscode)
 or any LSP-capable editor (Neovim, Helix, Emacs, Zed, …).
 
+You can launch it directly (`aozora-lsp --stdio`) or through the main CLI:
+`aozora lsp [ARGS…]` is a git-`<x>`-style exec-delegate that locates this
+binary — on `PATH`, else next to the `aozora` executable — and hands the
+process over to it, forwarding every argument untouched. Editors may spawn
+either; the delegate keeps the LSP dependencies (tokio, tower-lsp) out of the
+`aozora` binary itself.
+
 ## Capabilities
 
 | LSP method                       | Behaviour |

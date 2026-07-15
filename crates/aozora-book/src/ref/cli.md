@@ -19,6 +19,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
 | `explain` | Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a diagnostic code. |
 | `spec` | Query the tool's own contracts: `kinds` (JSON-tag tables), `schema <which>` (a JSON envelope's JSON Schema), `slugs` (the static ［＃…］ catalogue). |
+| `lsp` | Exec-delegate to the `aozora-lsp` language server, forwarding every argument (`--stdio`, …) verbatim. |
 | `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
 The one **global** option is `--color {auto,always,never}` (accepted after
@@ -304,6 +305,33 @@ aozora explain unresolved_gaiji              # short form of the code
 
 The suggestion and concept prose follow `--lang`; the machine axis (which
 target resolves, and the exit code) does not.
+
+## `aozora lsp`
+
+```text
+aozora lsp [ARGS]...
+```
+
+Delegate to the `aozora-lsp` language-server daemon — a git-`<x>`-style
+exec-delegate. `aozora lsp` locates the `aozora-lsp` binary (on `PATH`, else
+next to the `aozora` executable) and hands the whole process over to it,
+forwarding every argument (e.g. `--stdio`) verbatim; on Unix it `exec`s, so no
+wrapper lingers for the editor session. The CLI bundles no LSP machinery of its
+own — no tokio, no tower-lsp — so an editor can spawn `aozora lsp` and reach the
+same server it would by running `aozora-lsp` directly.
+
+Because the arguments pass straight through, `aozora lsp --help` prints the
+*daemon's* help, not this shim's — the shim's own summary is `aozora help lsp`.
+
+If `aozora-lsp` is not installed, `aozora lsp` prints an actionable hint and
+exits `2` (a usage error — "the server is not installed", distinct from the
+generic failure `1` a crash would give). The daemon ships alongside `aozora` in
+the release tarball; for other setups, `cargo install --git … aozora-lsp`.
+
+```sh
+aozora lsp --stdio                 # what an editor spawns (LSP over stdio)
+aozora lsp --help                  # forwarded: prints aozora-lsp's own help
+```
 
 ## Exit codes
 

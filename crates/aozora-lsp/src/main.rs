@@ -5,6 +5,10 @@
 //! reserved for the LSP JSON-RPC wire protocol. Set
 //! `RUST_LOG=aozora_lsp=debug` (or similar) to see tracing events; the
 //! default filter is `warn` so quiet editor integrations stay quiet.
+//!
+//! This binary can be invoked directly (`aozora-lsp --stdio`) or reached
+//! through the main CLI: `aozora lsp` locates and execs this daemon,
+//! forwarding argv. Either entry point runs the same server.
 
 #![forbid(unsafe_code)]
 

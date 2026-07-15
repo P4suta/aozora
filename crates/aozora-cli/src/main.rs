@@ -48,6 +48,10 @@
 //!   and terminal colour capabilities.
 //!
 //! Tooling:
+//! - `aozora lsp [ARGS…]` — locate the `aozora-lsp` language-server
+//!   daemon and hand off to it (a git-`<x>`-style exec-delegate),
+//!   forwarding every argument (e.g. `--stdio`) untouched. The CLI
+//!   bundles no LSP machinery of its own.
 //! - `aozora completions <shell>` — print a shell completion script
 //!   (bash / zsh / fish / powershell / elvish / nushell), generated
 //!   from the live command tree.
@@ -76,11 +80,13 @@ mod init;
 mod input;
 mod introspect;
 mod logging;
+mod lsp;
 mod manpage;
 mod repl;
 mod timing;
 mod tui;
 mod watch;
+mod which;
 
 use std::env;
 use std::ffi::OsString;
@@ -107,6 +113,7 @@ use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::init::InitArgs;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
+use crate::lsp::LspArgs;
 use crate::manpage::ManArgs;
 use crate::repl::ReplArgs;
 use crate::timing::Timer;
@@ -158,6 +165,7 @@ Introspection:
 Setup & tooling:
   init         Scaffold a new project (`.aozora.toml` + a sample document)
   doctor       Runtime self-check — config, PATH tools, terminal capabilities
+  lsp          Delegate to the aozora-lsp language server (forwards --stdio / …)
   completions  Print a shell completion script (bash / zsh / fish / …)
 
 Options:
@@ -279,6 +287,12 @@ enum Command {
     /// `--watch`. `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the
     /// preview view, `Ctrl-Q` quits. An optional `[FILE]` opens for editing.
     Tui(TuiArgs),
+    /// Delegate to the `aozora-lsp` language-server daemon, forwarding every
+    /// argument (e.g. `--stdio`) verbatim — a git-`<x>`-style exec-delegate.
+    /// The CLI bundles no LSP machinery of its own; it locates `aozora-lsp` on
+    /// `PATH` (or next to this binary) and hands the process over to it. When
+    /// the daemon is not installed it prints an actionable hint and exits 2.
+    Lsp(LspArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
     /// the live command tree, so it always matches the installed
@@ -563,6 +577,7 @@ fn main() -> ExitCode {
         Command::Init(opts) => init::run(&opts, &lang),
         Command::Repl(opts) => repl::run(&opts, &lang),
         Command::Tui(opts) => tui::run(&opts, &lang),
+        Command::Lsp(opts) => lsp::run(&opts),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
         Command::Man(opts) => manpage::run_man(&opts),
     };
@@ -633,6 +648,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         | Command::Init(_)
         | Command::Repl(_)
         | Command::Tui(_)
+        | Command::Lsp(_)
         | Command::Completions(_)
         | Command::Man(_) => None,
     }
