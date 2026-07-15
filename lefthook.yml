@@ -201,7 +201,7 @@ pre-push:
         and attach a `just throughput` run showing wall-clock is in budget.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
-    # smoke-ffi / deny / audit / shear / coverage / book-build /
+    # smoke-ffi / deny / audit / shear / coverage /
     # playground-typecheck / playground-test). The three CI-only jobs
     # that need extra runtime (pandoc-smoke / wasm-build /
     # python-wheel) stay unreachable here — the dev image
@@ -217,14 +217,12 @@ pre-push:
       fail_text: |
         `just ci-parallel` failed. The `::error title=<gate>::` line above
         names the gate that bombed (a foreground gate aborts immediately;
-        background gates — deny / audit / book-linkcheck / smoke-ffi /
+        background gates — deny / audit / smoke-ffi /
         playground-* / fmt-check / typos / strict-code — are reaped at the
         end, each with its captured log).
 
         - Re-run the single gate for a clean repro, e.g. `just clippy`,
-          `just coverage`, `just conformance`, `just book-linkcheck`.
-        - book-linkcheck needs `crates/aozora-book/mermaid.min.js` —
-          `just mermaid-install` regenerates it (runs automatically).
+          `just coverage`, `just conformance`.
         - prop-deep (the 4096-case sweep) runs in the background INSIDE
           `ci-parallel`. If it trips a pre-existing CORE regression
           unrelated to your change, opt out with `SKIP_TAGS=deep git push`

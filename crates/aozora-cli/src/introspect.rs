@@ -323,8 +323,7 @@ where
 // Short, single-line summaries used by `aozora spec kinds` rows. The full
 // multi-paragraph prose for each `NodeKind` lives in this crate under
 // `src/node-docs/<kind>.md` and is surfaced verbatim by
-// `aozora explain <kind>` via `include_str!`; the handbook borrows the
-// same bytes with `{{#include}}` from `aozora-book/src/nodes/<kind>.md`.
+// `aozora explain <kind>` via `include_str!`.
 
 fn describe_node(k: NodeKind) -> &'static str {
     match k {

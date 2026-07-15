@@ -133,11 +133,11 @@ RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
 #
 # All tools land in /usr/local/cargo/bin (cargo's default install root).
 # The single-RUN form is intentional: with binstall the whole batch
-# completes in under a minute, so the previous "split bacon /
-# git-cliff / lychee into separate layers" trick (which existed
-# purely to keep tool-version bumps from invalidating the
-# multi-hour source-build layer) is no longer needed. One layer is
-# simpler and the build-time cost is now tiny either way.
+# completes in under a minute, so the previous "split the slow tools
+# into separate layers" trick (which existed purely to keep
+# tool-version bumps from invalidating the multi-hour source-build
+# layer) is no longer needed. One layer is simpler and the build-time
+# cost is now tiny either way.
 RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
     cargo binstall --no-confirm --no-symlinks --locked \
         --strategies crate-meta-data,quick-install \
@@ -154,10 +154,7 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         cargo-outdated \
         cargo-fuzz \
         typos-cli \
-        mdbook \
-        mdbook-mermaid \
         git-cliff \
-        lychee \
         sccache \
         wasm-pack
 
@@ -219,8 +216,7 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
 #
 # Built from source rather than binstalled: tree-sitter's prebuilt Linux
 # release binary is linked against glibc 2.39 and dies at runtime on this
-# bookworm base (glibc 2.36) with `GLIBC_2.39 not found` — the same
-# newer-glibc problem the `book` stage documents for lychee, and there is no
+# bookworm base (glibc 2.36) with `GLIBC_2.39 not found`, and there is no
 # musl-static or quick-install-mirror build for 0.26.10. A source build links
 # against the image's own glibc and takes ~75 s (it embeds a QuickJS engine
 # via rquickjs to evaluate grammar.js, so no node is needed at generate time).
@@ -380,48 +376,3 @@ CMD ["bash"]
 # Stage: ci — same image as dev; named separately so CI pins an explicit target
 ########################################################################
 FROM dev AS ci
-
-########################################################################
-# Stage: book — lean image for `mdbook build` / `mdbook serve` only.
-# No Rust toolchain, no sccache: copies in the prebuilt mdbook +
-# mdbook-mermaid + lychee binaries from `cargo-tools` and stops there.
-#
-# Base is ubuntu:24.04 (glibc 2.39) rather than debian:bookworm-slim
-# (glibc 2.36) because lychee's prebuilt binaries on its GitHub
-# Releases page have been built against newer glibc since 0.20.x —
-# they fail at runtime on bookworm with `GLIBC_2.38 / 2.39 not found`.
-# The mdbook / mdbook-mermaid binaries from cargo-tools (built on
-# debian:bookworm) keep working here because glibc is forwards-
-# compatible: an older-glibc-built ELF runs fine on a newer glibc.
-#
-# Pinned by digest (see the toolchain-stage note above); Dependabot's
-# docker ecosystem bumps the tag + sha together. Refresh via
-# `docker buildx imagetools inspect ubuntu:26.04`.
-########################################################################
-# ubuntu:26.04 (digest pinned; tag kept for humans / Dependabot)
-FROM ubuntu:26.04@sha256:b7f48194d4d8b763a478a621cdc81c27be222ba2206ca3ca6bc42b49685f3d9e AS book
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        git \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=cargo-tools /usr/local/bin/mdbook         /usr/local/bin/mdbook
-COPY --from=cargo-tools /usr/local/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
-COPY --from=cargo-tools /usr/local/bin/lychee         /usr/local/bin/lychee
-
-# Run mdbook as non-root so book output written into the /workspace bind
-# mount is host-owned, not root. The ubuntu:24.04 base already ships a
-# UID/GID-1000 `ubuntu` user, so reuse it (matches the dev stage's UID
-# 1000) rather than creating a colliding `dev` user. The CI `book` job
-# invokes this image via raw `docker run --user 0:0` (root) because its
-# checkout is runner-owned; local `docker compose run book` keeps 1000.
-ENV HOME=/home/ubuntu
-
-WORKDIR /workspace/crates/aozora-book
-USER ubuntu
-EXPOSE 3000
-CMD ["mdbook", "serve", "--hostname", "0.0.0.0", "--port", "3000"]

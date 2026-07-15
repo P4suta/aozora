@@ -29,11 +29,10 @@ members = [
   "crates/tree-sitter-aozora",
   "crates/aozora-lsp",
 ]
-# `aozora-book` is the mdbook source tree and `aozora-go` is a standalone
-# Go module (host SDK) — neither has a Cargo manifest. Listed in `exclude`
-# so `cargo` ignores them during workspace globbing even if a stray
-# `Cargo.toml` is added to either directory by accident.
-exclude = ["crates/aozora-book", "crates/aozora-go"]
+# `aozora-go` is a standalone Go module (host SDK) with no Cargo manifest.
+# Listed in `exclude` so `cargo` ignores it during workspace globbing even
+# if a stray `Cargo.toml` is added there by accident.
+exclude = ["crates/aozora-go"]
 
 [workspace.package]
 version = "0.4.1"
@@ -217,7 +216,7 @@ serde_json = "1.0"
 # JSON Schema generation for the wire format. Used by aozora's
 # `schema` feature to dump schemas of Diagnostic / Node /
 # Pair / ContainerPair — the artefacts ship in
-# `crates/aozora-book/src/json/` and are CI drift-gated.
+# `crates/aozora-conformance/json/` and are CI drift-gated.
 schemars = { version = "1.0", features = ["preserve_order"] }
 toml = "1.1"
 flate2 = "1.1"

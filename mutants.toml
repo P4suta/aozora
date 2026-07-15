@@ -83,6 +83,5 @@ exclude_globs = [
   "crates/aozora-proptest/**",
   "crates/aozora-trace/**",
   "crates/aozora-go/**",
-  "crates/aozora-book/**",
   "crates/tree-sitter-aozora/**",
 ]
