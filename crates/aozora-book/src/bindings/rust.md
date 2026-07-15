@@ -10,9 +10,6 @@ lives in the [install chapter](../getting-started/install.html#rust-library).
 Keeping the pin in one place avoids drift between this doc and the
 install page when a new release lands.
 
-crates.io publication tracks the v1.0 API freeze; until then, the git
-tag form documented there is the canonical entry point.
-
 ## Surface
 
 The public surface is small by design — three types and four

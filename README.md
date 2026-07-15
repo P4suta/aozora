@@ -52,7 +52,6 @@ for the tag-pinned form.)
 The `Cargo.toml` snippet (with the current release tag) lives in the
 [install chapter](https://p4suta.github.io/aozora/getting-started/install.html#as-a-rust-library) —
 keeping it in one place avoids version-pin drift across multiple READMEs.
-crates.io publication tracks the 1.0 API freeze.
 
 For WASM / C ABI / Python bindings see the
 [Bindings chapters](https://p4suta.github.io/aozora/bindings/rust.html) of

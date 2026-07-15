@@ -54,8 +54,7 @@ cargo install --git https://github.com/P4suta/aozora --locked aozora-cli
 `Cargo.toml` のスニペット (現行リリース tag 入り) は
 [install 章](https://p4suta.github.io/aozora/getting-started/install.html#as-a-rust-library)
 に集約しています — 複数の README に tag を分散させるとリリース毎に書き換え
-漏れが出るため、handbook の 1 箇所だけで管理する形にしています。crates.io
-公開は v1.0 API 確定後の予定です。
+漏れが出るため、handbook の 1 箇所だけで管理する形にしています。
 
 WASM / C ABI / Python バインディングについては
 [ハンドブックの Bindings 章](https://p4suta.github.io/aozora/bindings/rust.html)

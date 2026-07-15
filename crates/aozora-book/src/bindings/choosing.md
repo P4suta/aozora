@@ -20,20 +20,14 @@ trade-offs behind it.
 
 | You are…                                   | Use                                        | Why                                                                       | Distribution            |
 | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------- | ----------------------- |
-| Writing Rust                               | umbrella [`aozora`](rust.md) library       | Owned, lifetime-free AST, full type safety, the fastest path. No serialise. | crates.io¹              |
+| Writing Rust                               | umbrella [`aozora`](rust.md) library       | Owned, lifetime-free AST, full type safety, the fastest path. No serialise. | crates.io               |
 | At a shell / in CI / scripting             | the [`aozora`](../ref/cli.md) binary       | `check` / `render` / `fmt` / `pandoc`, reads stdin, exits with a code.     | GitHub release          |
 | In the browser, Node, or TypeScript        | [`aozora-wasm`](wasm.md)                    | wasm-bindgen `Document` class; runs client-side and at the edge.          | npm                     |
-| Writing Python                             | [`aozora-py`](python.md) (PyO3)             | In-process native module via maturin; idiomatic Python API.               | build-from-source²      |
+| Writing Python                             | [`aozora-py`](python.md) (PyO3)             | In-process native module via maturin; idiomatic Python API.               | PyPI                    |
 | Writing Go                                 | [`aozora-go`](go.md)                        | Pure-Go [wazero](https://wazero.io) host — no cgo, no C toolchain.        | `go get`                |
 | Embedding from C / C++ / another native FFI | [`aozora-ffi`](c.md) C ABI                  | Opaque handle + JSON over a stable C header; link it like any library.    | GitHub release          |
 | Writing Java, PHP, Ruby, or the long tail  | [`aozora-extism`](extism.md) host SDK       | One portable `aozora.wasm` loaded by any [Extism](https://extism.org) SDK. | GitHub release          |
 | Producing anything other than HTML (EPUB, LaTeX/PDF, DOCX, …) | [`aozora pandoc`](pandoc.md) | Projects to the Pandoc AST; 50+ output formats via Pandoc writers.        | GitHub release (CLI)    |
-
-¹ crates.io publication tracks the v1.0 API freeze; until then the git-tag
-form in the [install chapter](../getting-started/install.md#rust-library)
-is the canonical entry point.
-² PyPI wheels are pending; pre-1.0 the Python binding builds from source
-via maturin.
 
 ## In-process vs host-runtime
 
