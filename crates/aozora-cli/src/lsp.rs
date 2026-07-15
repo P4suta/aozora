@@ -104,6 +104,11 @@ fn delegate(bin: &Path, args: &[OsString]) -> Result<ExitCode> {
 
 /// The non-Unix hand-off: no `exec`, so spawn the daemon, wait, and forward its
 /// exit status (a signal death maps to the generic failure code).
+// mutants::skip — this non-unix spawn-and-wait hand-off is cfg-dead on the
+// Linux sweep host; the `#[cfg(unix)]` exec counterpart above carries the
+// swept assertion (the end-to-end delegation test kills its `Ok(default)`
+// mutant). Reinforcing this variant would need a separate non-unix pass.
+#[cfg_attr(test, mutants::skip)]
 #[cfg(not(unix))]
 fn delegate(bin: &Path, args: &[OsString]) -> Result<ExitCode> {
     let status = Process::new(bin)

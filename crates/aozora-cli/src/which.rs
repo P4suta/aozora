@@ -14,6 +14,12 @@ use std::path::{Path, PathBuf};
 /// Find `program` on the process `PATH`, returning the first executable
 /// candidate — the convenience wrapper over [`find_on_path`] that reads the
 /// live `PATH`.
+// mutants::skip — a thin adapter over the live process `PATH`: it only reads
+// `PATH` and hands off to [`find_on_path`], which carries the swept search
+// assertions. A live-`PATH` read cannot be exercised deterministically without
+// mutating the global process environment — ruled out here by
+// `#![forbid(unsafe_code)]` (env mutation is `unsafe` on edition 2024).
+#[cfg_attr(test, mutants::skip)]
 pub(crate) fn which(program: &str) -> Option<PathBuf> {
     find_on_path(&env::var_os("PATH")?, program)
 }

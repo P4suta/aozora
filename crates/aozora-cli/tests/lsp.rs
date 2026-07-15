@@ -67,6 +67,46 @@ fn lsp_delegates_to_the_daemon_forwarding_argv() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn lsp_finds_the_daemon_next_to_the_binary_when_not_on_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+    // The release-tarball layout: `aozora` and `aozora-lsp` sit side by side in
+    // a directory that need not be on PATH. Copy the CLI into an isolated dir,
+    // drop an executable `aozora-lsp` stub beside it, and run with PATH removed
+    // so ONLY the "next to this binary" fallback (env::current_exe's dir) can
+    // resolve the daemon — proving that fallback actually fires.
+    let xdg = TempDir::new().expect("xdg dir");
+    let home = TempDir::new().expect("isolated home");
+    let exe = home.path().join(exe_name());
+    fs::copy(BIN, &exe).expect("copy the aozora binary");
+    make_executable(&exe);
+    // The sibling daemon stub echoes a marker plus the argv it received; its
+    // `#!/bin/sh` shebang is an absolute path, so it runs with PATH unset.
+    let stub = home.path().join("aozora-lsp");
+    fs::write(&stub, b"#!/bin/sh\nprintf 'stub-lsp:%s\\n' \"$*\"\n").expect("write stub");
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).expect("chmod +x");
+
+    let mut cmd = Command::new(&exe);
+    hermetic(&mut cmd, xdg.path());
+    let output = cmd
+        .args(["lsp", "--stdio"])
+        .env_remove("PATH")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn the isolated aozora binary");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "the sibling daemon is reached with no PATH involved: {output:?}"
+    );
+    assert!(
+        stdout.contains("stub-lsp:") && stdout.contains("--stdio"),
+        "the sibling daemon ran with argv forwarded verbatim: {stdout:?}"
+    );
+}
+
 #[test]
 fn lsp_missing_daemon_is_an_actionable_exit_2() {
     // Copy the binary into an isolated dir so the "next to this binary"
