@@ -743,8 +743,6 @@ perf-gate:
 #      `just test` run — no nightly required for the regression case.
 #   6. `just fuzz-status` is the at-a-glance count of pending crashes
 #      vs pinned regressions per target.
-#
-# See `docs/fuzz-workflow.md` for the long-form description.
 
 # cargo-fuzz is binstalled as a musl-static binary (Dockerfile), so its
 # built-in default `--target` is its own musl triple — for which no std ships
@@ -1109,7 +1107,6 @@ strict-code:
     #                    tree-sitter-language pattern (`unsafe extern "C"`
     #                    for the generated `tree_sitter_aozora()` symbol,
     #                    `LanguageFn::from_raw` to wrap it)
-    #   - aozora-scan  : x86_64 AVX2 intrinsics (SIMD scanner)
     #   - aozora-xtask : dev-tooling binary; `#[allow(reason=...)]`
     #                    for narrow clippy carve-outs is acceptable
     #                    here per Rust 1.81+ stable convention
@@ -1122,7 +1119,7 @@ strict-code:
     # universal "no unsafe" gate.
     is_unsafe_exempt() {
         case "$1" in
-            crates/aozora-ffi/*|crates/tree-sitter-aozora/*|crates/aozora-scan/*|crates/aozora-xtask/*) return 0 ;;
+            crates/aozora-ffi/*|crates/tree-sitter-aozora/*|crates/aozora-xtask/*) return 0 ;;
             crates/*/fuzz/*) return 0 ;;
             *) return 1 ;;
         esac

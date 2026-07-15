@@ -191,10 +191,20 @@ const MSRV_PAGE: &str = "docs/contrib/msrv.md";
 /// history rather than a fact anybody keeps current — ADR-0031 says "rust
 /// 1.96.0" and is *correct* to, because that is what it was. Scanning
 /// them would turn every honest record into a violation.
-const MAINTAINED_DOCS: &[&str] = &["docs/contrib", "docs/hygiene.md"];
+const MAINTAINED_DOCS: &[&str] = &["docs/contrib"];
 
 fn check_docs(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let mut offenders = Vec::new();
+    // The exemption below is only sound while its subject exists. Without
+    // this, deleting the page turns `MSRV_PAGE` into a dead constant and
+    // leaves the gate green — the same silent pass the directory check
+    // guards against.
+    if !root.join(MSRV_PAGE).exists() {
+        return Err(format!(
+            "{MSRV_PAGE}: not found — the page every other doc defers to is \
+             gone, so this gate is exempting nothing"
+        ));
+    }
     for dir in MAINTAINED_DOCS {
         let src = root.join(dir);
         // A missing path is an error, not an absence of violations. The
