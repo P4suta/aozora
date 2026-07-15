@@ -72,7 +72,7 @@ pre-commit:
       run: just typos
       fail_text: |
         `typos` found a probable typo. Re-run `just typos` to see the
-        candidate fixes, or add an exception to `.typos.toml` if the
+        candidate fixes, or add an exception to `_typos.toml` if the
         flagged token is intentional (proper noun, identifier, etc.).
     # Playground frontend type-check. Fast (< 2 s) and runs only when
     # TS / TSX / JSON files under `playground/` actually changed.

@@ -37,7 +37,7 @@ pub struct Bouten<'src> {
 }
 ```
 
-`BoutenKind` enumerates the 11 visual variants (Goma, WhiteSesame,
+`BoutenKind` enumerates the visual variants (Goma, WhiteSesame,
 Circle, …); `BoutenPosition` is `Right` (default for vertical text)
 or `Left`.
 

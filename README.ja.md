@@ -101,7 +101,7 @@ aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 
 ## クレート構成
 
-aozora は26クレートの workspace です (加えて `aozora-go` Go モジュール)。
+aozora は複数クレートの workspace です (加えて `aozora-go` Go モジュール)。
 [`crates/aozora`](./crates/aozora) が公開ファサードで、ライブラリ
 利用者は通常このひとつだけインポートします。
 

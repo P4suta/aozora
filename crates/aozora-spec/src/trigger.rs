@@ -155,7 +155,8 @@ pub const TRIGGER_LEADING_BYTES: [u8; 3] = [0xE2, 0xE3, 0xEF];
 /// text; used by the structural-bitmap scan strategy.
 pub const TRIGGER_MIDDLE_BYTES: [u8; 4] = [0x80, 0x89, 0xBC, 0xBD];
 
-/// All 11 single-character trigger trigrams as raw UTF-8 byte arrays.
+/// Every single-character trigger trigram as raw UTF-8 byte arrays —
+/// one per [`TriggerKind`] variant.
 ///
 /// In PHF-table iteration order. Consumed by the multi-pattern scan
 /// backends (Teddy, multi-pattern DFA) which need the

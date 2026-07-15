@@ -25,6 +25,19 @@
 no_progress = true
 verbose = "info"
 
+# --- fragments ---------------------------------------------------------
+# Check `#anchor` fragments, not just paths. Without this lychee resolves
+# the file and stops, so a link to a heading that no longer exists reads
+# as healthy. That blind spot shipped: `node-docs/ruby.md` pointed at
+# `arch/arena.md#non-empty-content`, a heading that never existed, and
+# `aozora explain ruby` printed it to end users.
+#
+# This belongs in the GATE (not just the AUDIT): fragments of LOCAL files
+# resolve from the rendered HTML we just built, so the check stays
+# offline and deterministic. `anchor-only` skips `#:~:text=` fragments,
+# which the handbook does not use.
+include_fragments = "anchor-only"
+
 # --- concurrency / timing ---------------------------------------------
 # 16 simultaneous requests: lychee defaults to a per-host throttle, so
 # raising the global concurrency does not flood any single domain. The

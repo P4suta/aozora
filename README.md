@@ -135,7 +135,7 @@ for the full subcommand reference.
 
 ## Crate layout
 
-aozora is a 26-crate workspace (plus the `aozora-go` Go module).
+aozora is a multi-crate workspace (plus the `aozora-go` Go module).
 [`crates/aozora`](./crates/aozora) is the public facade — library
 consumers usually import only this one.
 
