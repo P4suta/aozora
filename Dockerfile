@@ -5,26 +5,29 @@
 # Layered so dependency bumps rebuild minimal surface.
 #
 # Base images are pinned by immutable digest (supply-chain hardening,
-# C2/F9): a tag like `rust:1.96.0-bookworm` is mutable and can be
+# C2/F9): a tag like `rust:1.97.0-bookworm` is mutable and can be
 # re-pushed, so we pin the manifest-list digest and keep the
 # human-readable tag inline for legibility. Resolve a fresh digest with
 # `docker buildx imagetools inspect <tag>`.
 #
 # The rust base is held at the SAME version as rust-toolchain.toml's
-# pinned channel (the workspace MSRV) on purpose: rust-toolchain.toml
-# makes every `cargo` invocation select that channel, so a base on any
-# other version would ship a second, never-used toolchain (pure DL +
-# image bloat). Dependabot's `docker` ecosystem is told to IGNORE the
-# `rust` image (.github/dependabot.yml) so it cannot drift ahead of the
-# MSRV — bump BOTH this FROM pin and rust-toolchain.toml together when
-# raising the MSRV. Dependabot still bumps the `ubuntu` base of the
-# `book` stage automatically.
+# pinned channel on purpose: rust-toolchain.toml makes every `cargo`
+# invocation select that channel, so a base on any other version would
+# ship a second, never-used toolchain (pure DL + image bloat).
+#
+# That channel is the DEV toolchain — it tracks latest stable and is NOT
+# the MSRV (ADR-0034). The MSRV is `rust-version` in the root Cargo.toml
+# and moves on its own, far slower, cadence; nothing here touches it.
+# So dependabot IS allowed to bump this image: a `rust` PR is a useful
+# signal that a new stable shipped. `xtask msrv check` holds that PR red
+# until rust-toolchain.toml is synced in the same PR — which is the
+# intended workflow, not a defect.
 
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
 ########################################################################
-# rust:1.96.0-bookworm (digest pinned; tag kept for humans; == rust-toolchain.toml)
-FROM rust:1.96.0-bookworm@sha256:19817ead3289c8c631c73df281e18b59b172f6a31f4f563290f69cddd06c30e9 AS toolchain
+# rust:1.97.0-bookworm (digest pinned; tag kept for humans; == rust-toolchain.toml's channel)
+FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS toolchain
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \

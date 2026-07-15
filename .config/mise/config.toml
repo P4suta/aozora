@@ -4,10 +4,17 @@
 # aozora's canonical build/test environment is the Docker image (the
 # dev-image CI builds and runs every job inside it); this manifest lets
 # contributors run the fast inner loop on the host via mise, while
-# `just ci` in the container stays the authoritative merge gate. The rust
-# version mirrors rust-toolchain.toml. cargo-shear (stable) is the
-# unused-dependency gate — it runs both in the host inner loop and the
-# audit workflow, replacing the former nightly-only cargo-udeps.
+# `just ci` in the container stays the authoritative merge gate.
+#
+# There is deliberately NO `rust = "..."` entry: mise reads
+# rust-toolchain.toml natively, so leaving rust out makes the host lane
+# derive the channel instead of restating it. A pin here would WIN over
+# rust-toolchain.toml, so the two could drift apart silently and the host
+# would build with a different rustc than the container.
+#
+# cargo-shear (stable) is the unused-dependency gate — it runs both in the
+# host inner loop and the audit workflow, replacing the former
+# nightly-only cargo-udeps.
 #
 # cargo-mutants is PINNED, not `latest`, unlike the tools above: the
 # mutation ratchet (mutants-baseline.json, ADR-0031) is only sound if the
@@ -17,7 +24,6 @@
 # only while both run the identical version — the host mise pin here and
 # the Dockerfile `cargo install --version` must move together (grep both).
 [tools]
-rust = "1.96.0"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-deny" = "latest"

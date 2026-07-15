@@ -38,6 +38,8 @@ back.
 | [0029](./adr/0029-broken-pipe-exit-semantics.md)                                     | Broken-pipe exit semantics                                             | accepted |
 | [0030](./adr/0030-stray-bracket-is-line-scoped.md)                                   | A stray `［` is line-scoped in the pair stage                          | accepted |
 | [0031](./adr/0031-mutation-testing-for-assertion-strength.md)                        | Mutation testing as an assertion-strength gate                        | accepted |
+| [0033](./adr/0033-cli-output-language-policy.md)                                     | CLI output language policy                                            | accepted |
+| [0034](./adr/0034-separate-toolchain-channel-from-msrv.md)                           | Separate the toolchain channel from the MSRV                          | accepted |
 
 ## Authoring a new ADR
 

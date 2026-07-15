@@ -670,10 +670,9 @@ impl RecogniseCtx<'_, '_> {
             (BoutenPosition::Right, r)
         } else if let Some(r) = after.strip_prefix("の左に") {
             (BoutenPosition::Left, r)
-        } else if let Some(r) = after.strip_prefix("の両側に") {
-            (BoutenPosition::Both, r)
         } else {
-            return None;
+            let r = after.strip_prefix("の両側に")?;
+            (BoutenPosition::Both, r)
         };
         let kind = bouten_kind_from_suffix(kind_suffix)?;
         let &PairEvent::PairOpen {
@@ -713,10 +712,9 @@ impl RecogniseCtx<'_, '_> {
             (BoutenPosition::Right, rest)
         } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
             (BoutenPosition::Left, rest)
-        } else if let Some(rest) = extracted.suffix.strip_prefix("の両側に") {
-            (BoutenPosition::Both, rest)
         } else {
-            return None;
+            let rest = extracted.suffix.strip_prefix("の両側に")?;
+            (BoutenPosition::Both, rest)
         };
         let kind = bouten_kind_from_suffix(kind_suffix)?;
         let &PairEvent::PairOpen {
@@ -1382,10 +1380,9 @@ impl RecogniseCtx<'_, '_> {
                 .strip_prefix("の左に「")
                 .or_else(|| inner.strip_prefix("に「"))?;
             (MarginNoteKind::Gloss, note)
-        } else if let Some(inner) = extracted.suffix.strip_suffix("」の傍記") {
-            (MarginNoteKind::Marginal, inner.strip_prefix("に「")?)
         } else {
-            return None;
+            let inner = extracted.suffix.strip_suffix("」の傍記")?;
+            (MarginNoteKind::Marginal, inner.strip_prefix("に「")?)
         };
         if note_text.is_empty() {
             return None;
@@ -1528,13 +1525,12 @@ impl RecogniseCtx<'_, '_> {
         // serializer canonicalises both particles to `」は`.
         let attr = if let Some(rest) = extracted.suffix.strip_prefix("は") {
             forward_attr_from_suffix(rest)?
-        } else if let Some(rest) = extracted.suffix.strip_prefix("に") {
+        } else {
+            let rest = extracted.suffix.strip_prefix("に")?;
             match forward_attr_from_suffix(rest)? {
                 framed @ ForwardAttr::Framed(_) => framed,
                 _ => return None,
             }
-        } else {
-            return None;
         };
         let [only] = extracted.targets.as_slice() else {
             return None;

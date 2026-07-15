@@ -137,9 +137,13 @@ maturin build   -F extension-module --release    # produce a redistributable whe
 See [Bindings → Python](../bindings/python.md) for the API and the
 `unsendable` thread-safety contract.
 
-## Toolchain pin
+## Toolchain
 
-aozora pins **Rust 1.96.0** as its MSRV (`rust-toolchain.toml`). CI
-enforces it via a dedicated `msrv` job. If you run `rustup show`
-inside the repo and see something else, your local override needs
-updating.
+To *use* aozora you need any Rust from the last six months — see
+[MSRV policy](../contrib/msrv.md) for the current floor and why it is
+where it is. crates.io and `docs.rs` show the exact value.
+
+To *develop* aozora, `rust-toolchain.toml` selects the channel
+automatically. That channel tracks latest stable and is deliberately not
+the MSRV, so `rustup show` inside the repo reporting something newer than
+the floor is expected, not a misconfiguration.

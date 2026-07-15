@@ -421,10 +421,10 @@ mod tests {
     #[test]
     fn headline_labels_delegate_to_inner() {
         let h = headline_over(pua_diagnostic());
-        let labels: Vec<_> = miette::Diagnostic::labels(&h)
+        let label_count = miette::Diagnostic::labels(&h)
             .expect("the headline forwards the inner caret label")
-            .collect();
-        assert_eq!(labels.len(), 1, "the PUA diagnostic has one caret label");
+            .count();
+        assert_eq!(label_count, 1, "the PUA diagnostic has one caret label");
     }
 
     #[test]

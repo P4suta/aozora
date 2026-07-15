@@ -5,7 +5,7 @@
   <a href="https://docs.rs/aozora"><img alt="docs.rs" src="https://img.shields.io/docsrs/aozora"></a>
   <a href="https://p4suta.github.io/aozora/"><img alt="handbook" src="https://img.shields.io/badge/handbook-mdbook-blue"></a>
   <a href="https://github.com/P4suta/aozora/blob/main/LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
-  <a href="https://github.com/P4suta/aozora/blob/main/rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.96-orange"></a>
+  <a href="https://p4suta.github.io/aozora/contrib/msrv.html"><img alt="msrv" src="https://img.shields.io/crates/msrv/aozora"></a>
 </p>
 
 Pure-functional Rust parser for **青空文庫記法** (Aozora Bunko

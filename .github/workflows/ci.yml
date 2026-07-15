@@ -106,22 +106,41 @@ jobs:
   msrv:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    # Verify that the pinned MSRV (1.96.0) still builds. Uses the
-    # native runner toolchain rather than the dev image, because the
-    # point is exercising a clean rustc 1.96.0 install, which the
-    # image has no mechanism to downgrade to.
-    name: msrv (rust 1.96.0)
+    # Verify the declared MSRV still builds — the one gate that enforces
+    # the public contract (ADR-0034). Uses the native runner toolchain
+    # rather than the dev image: the image ships rust-toolchain.toml's
+    # channel (latest stable, NOT the MSRV) and has no mechanism to
+    # downgrade, which is exactly why the two must not share a number.
+    #
+    # The version is read out of Cargo.toml rather than pinned here, so
+    # this job cannot drift from the contract it is checking.
+    name: msrv
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - name: Install Rust 1.96.0 (MSRV)
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: echo "version=$(awk -F'"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.msrv.outputs.version }} (MSRV)
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: msrv
-      - run: cargo check --workspace --all-targets
+      # Two lanes, because the contract is "every feature a crates.io
+      # consumer can turn on" — which the old bare `--all-targets` never
+      # covered (`aozora/schema`, `aozora-syntax/serde`, … went unchecked).
+      #
+      # `aozora-extism` is excluded from the --all-features lane and
+      # checked on default features instead: it is `publish = false`, and
+      # its dev-only `host-smoke` feature drags in wasmtime, which
+      # DECLARES rust-version 1.91. A dev-only test feature must not get
+      # to set the public floor. (Measured 2026-07-15: wasmtime compiles
+      # fine on the MSRV — its declaration is simply conservative — but
+      # cargo enforces the declaration, so the exclusion is required.)
+      - run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
+      - run: cargo check --locked -p aozora-extism --all-targets
 
   commitlint:
     runs-on: ubuntu-latest
@@ -526,7 +545,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm
-      # `rust-toolchain.toml` pins the channel (1.96.0), so the
+      # `rust-toolchain.toml` pins the channel, so the
       # `dtolnay/rust-toolchain` `targets:` parameter — which installs the
       # std component into `stable` — does NOT add the target to the
       # toolchain cargo actually selects here. clippy then fails with

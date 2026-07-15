@@ -87,10 +87,11 @@ and so no contention point.
 
 ## MSRV policy
 
-aozora pins **Rust 1.96.0**. The MSRV advances roughly once per
-quarter, when a new stable feature is needed and the workspace
-moves to it. The `msrv` job in CI gates every PR; Dependabot is
-configured to *not* auto-bump the MSRV pin (manual decision).
+aozora supports any Rust release from the last six months, and raises
+the floor only when a new stable feature is actually needed. The current
+value lives in the crate's `rust-version` (crates.io and `docs.rs` both
+display it); the policy and the reasoning are in
+[MSRV policy](../contrib/msrv.md).
 
 ## Public API stability
 

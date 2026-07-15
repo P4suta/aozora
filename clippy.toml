@@ -53,9 +53,17 @@ enum-variant-size-threshold = 256
 # projects (tokio, serde, ripgrep) adapted for our constraints.
 # ---------------------------------------------------------------------------
 
-# MSRV — let clippy know our floor so it doesn't flag idioms we can't use
-# yet. Matches rust-toolchain.toml.
-msrv = "1.96.0"
+# MSRV — the public contract's floor. Two jobs: clippy withholds idioms we
+# cannot use yet, and `clippy::incompatible_msrv` flags any std API newer
+# than this. That second one makes `just clippy-strict` the fast MSRV gate
+# — it names the offending line before CI's msrv job ever compiles.
+#
+# This tracks Cargo.toml's `rust-version`, NOT rust-toolchain.toml's
+# channel (ADR-0034). Pointing it at the channel would set the floor to
+# whatever we happen to develop on, `incompatible_msrv` would have nothing
+# left to detect, and the lint would go quietly dead. `xtask msrv check`
+# keeps this equal to `rust-version`.
+msrv = "1.89.0"
 
 # Tests are allowed to be expressive about failure: unwrap / expect / panic
 # are diagnostic shortcuts, not bugs. Production code remains strict.
