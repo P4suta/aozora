@@ -16,7 +16,7 @@
 # GitHub App: a short-lived installation token is minted at runtime from two
 # secrets — RELEASE_PLZ_APP_CLIENT_ID and RELEASE_PLZ_APP_PRIVATE_KEY. With those unset
 # every step is skipped and the jobs run green and no-op. The scaffolding ships
-# now; the App lights it up later. See crates/aozora-book/src/contrib/release.md.
+# now; the App lights it up later. See docs/contrib/release.md.
 #
 # Action pinning: third-party actions are pinned to a full commit SHA (the
 # `# vX.Y.Z` trailer is the human-readable tag); Dependabot bumps them weekly.
@@ -102,7 +102,7 @@ jobs:
         run: |
           echo "::notice::release-plz is dormant — set RELEASE_PLZ_APP_CLIENT_ID and"
           echo "RELEASE_PLZ_APP_PRIVATE_KEY (a GitHub App) to activate."
-          echo "See crates/aozora-book/src/contrib/release.md."
+          echo "See docs/contrib/release.md."
 
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:

@@ -25,8 +25,7 @@ hooks ever stop firing later, re-run `just hooks` (see
 ## The lightweight path (a doc / typo fix)
 
 1. **Pick a small fix.** A typo, a stale link, an unclear sentence in
-   the handbook (`crates/aozora-book/src/…`) or a top-level doc. Keep
-   it to a single logical change.
+   `docs/` or a top-level doc. Keep it to a single logical change.
 
 2. **Branch.** `main` is branch-protected — never commit to it
    directly.

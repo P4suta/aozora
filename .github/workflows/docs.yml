@@ -1,26 +1,24 @@
-# Publish the aozora handbook + rustdoc + playground to GitHub Pages.
+# Publish the playground + rustdoc to GitHub Pages.
 #
 # docs.rs renders the API for each released version. This site carries
-# what docs.rs cannot: the handbook, the playground, and a rustdoc build
-# of the development tip — ahead of whatever the latest crates.io
-# release renders. So we build rustdoc on the runner, build the mdbook
-# handbook from `crates/aozora-book/`, build the Solid + Vite + WASM
-# playground from `playground/`, layer them under `/aozora/`, and deploy
-# the whole site to GitHub Pages.
+# what docs.rs cannot: the playground, and a rustdoc build of the
+# development tip — ahead of whatever the latest crates.io release
+# renders.
 #
 # Layout produced:
-#   https://p4suta.github.io/aozora/                ← mdbook handbook
+#   https://p4suta.github.io/aozora/                ← redirect to the playground
 #   https://p4suta.github.io/aozora/api/            ← rustdoc landing redirect
 #   https://p4suta.github.io/aozora/api/aozora/     ← cargo doc landing for the top-level facade
 #   https://p4suta.github.io/aozora/playground/     ← interactive Aozora notation playground
 #
+# The handbook used to be the site root. It is gone: the notation lives
+# in the specification (p4suta.github.io/aozora-notation-spec), the API
+# in docs.rs, the CLI in `aozora --help`, and the runbooks in docs/.
+#
 # Docs builds use the native runner toolchain rather than the dev
 # Docker image, because the Pages deploy actions expect artefacts on
-# the runner filesystem. mdbook is installed via the upstream
-# `peaceiris/actions-mdbook` action; the mermaid preprocessor is
-# installed manually since the action does not bundle preprocessors.
-# `wasm-pack` is needed for the playground's WASM bundle and lands via
-# the rustwasm installer script.
+# the runner filesystem. `wasm-pack` is needed for the playground's
+# WASM bundle and lands via the rustwasm installer script.
 
 name: docs
 
@@ -70,26 +68,6 @@ jobs:
         with:
           version: 'v0.15.0'
 
-      - uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08  # v2.0.0
-        with:
-          mdbook-version: latest
-
-      - name: Install mdbook-mermaid
-        # Prebuilt binary via install-action (binstall-backed) instead of
-        # a ~1-2 min `cargo install` source build on every Pages deploy.
-        # mdbook-mermaid ships prebuilts — the same source the dev image's
-        # `cargo binstall` uses (Dockerfile cargo-tools stage).
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3  # v2
-        with:
-          tool: mdbook-mermaid
-
-      - name: Install mermaid assets into the book directory
-        # Writes `mermaid.min.js` + `mermaid-init.js` next to `book.toml`
-        # so the `additional-js = [...]` declaration in book.toml resolves.
-        # Those files are .gitignored in the source tree (vendor JS that
-        # the preprocessor regenerates), so CI has to install them on the
-        # runner before `mdbook build` runs.
-        run: mdbook-mermaid install crates/aozora-book
 
       - name: Build rustdoc
         env:
@@ -100,9 +78,6 @@ jobs:
         # intermittently while documenting the umbrella `aozora` crate's
         # re-export pages. Matches the `just doc` recipe's fix.
         run: cargo doc --workspace --no-deps --document-private-items --all-features --jobs 1
-
-      - name: Build mdbook handbook
-        run: mdbook build crates/aozora-book
 
       - name: Build aozora-wasm
         run: wasm-pack build --target web --release crates/aozora-wasm
@@ -122,7 +97,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site
-          cp -r crates/aozora-book/book/. site/
           mkdir -p site/api
           cp -r target/doc/. site/api/
           mkdir -p site/playground
@@ -136,7 +110,21 @@ jobs:
           <link rel="canonical" href="./aozora/index.html">
           <p>Redirecting to <a href="./aozora/index.html">aozora API reference</a>.</p>
           HTML
-          # GitHub Pages otherwise runs Jekyll and hides paths like `_sources`.
+          # The handbook used to be the site root. Without something here
+          # the root 404s, and every published crate's `homepage` points at
+          # it — so send visitors to the playground, the one thing on this
+          # site you cannot get from docs.rs or the specification.
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>aozora</title>
+          <meta http-equiv="refresh" content="0; url=./playground/">
+          <link rel="canonical" href="./playground/">
+          <p>Redirecting to the <a href="./playground/">aozora playground</a>.</p>
+          HTML
+          # GitHub Pages otherwise runs Jekyll and hides paths like
+          # `_sources`. Needed by rustdoc's static.files/ — not a handbook
+          # leftover.
           touch site/.nojekyll
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0

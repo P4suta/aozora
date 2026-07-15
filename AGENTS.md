@@ -1,98 +1,42 @@
-# AGENTS.md — machine contract for automation
+# AGENTS.md
 
-This is the terse, machine-facing contract for agents and CI driving the
-aozora repo. The prose guide for humans — the architecture and the
-workspace map — lives in the handbook under `crates/aozora-book/`
-(published at <https://p4suta.github.io/aozora/>); start with the
-Architecture chapters [Pipeline overview](crates/aozora-book/src/arch/pipeline.md)
-and [Crate map](crates/aozora-book/src/arch/crates.md) — read those first;
-this file only pins the commands, outputs, and exit codes you can rely on.
+Contracts an agent cannot derive from the tree. Everything else is in
+`just --list`, `aozora --help`, and the code.
 
-## Execution surface
+## Running anything
 
-- **Docker only.** Every dev task runs through `just`, which wraps
-  `docker compose run …`. Never invoke `cargo` / `wasm-pack` / `mdbook`
-  on the host. `just` itself runs on the host (it shells into containers).
-- First run on a fresh clone: `./bootstrap` (or `just setup`) — checks
-  prerequisites, builds the dev image, installs hooks, runs the tests.
-- `just --list` is the authoritative, self-documenting task index.
+Docker only. `just` wraps `docker compose run`; never call `cargo` /
+`wasm-pack` on the host. `./bootstrap` on a fresh clone. `just
+ci-parallel` is the full gate and runs on every push — it prints
+`::error title=<gate>::` naming whichever failed.
 
-## Gates — what to run and how to read the result
+Commits must be signed and Conventional. Do not reach for `LEFTHOOK=0`
+or `--no-verify`.
 
-Each gate exits `0` on success, non-zero on failure. Run a single gate
-for a clean repro; run the whole suite before a push.
+## The `aozora` CLI
 
-| Goal | Command | Notes |
-|---|---|---|
-| Does it compile? (fastest) | `just check` | `cargo check --all-targets`, sub-second warm |
-| Run all tests | `just test` | nextest; `just t <FILTER>` for one test |
-| Run one test / pattern | `just t <FILTER>` | nextest filterset `test(<FILTER>)` |
-| Lint | `just clippy` | light; `just lint-full` for the `--all-targets` surface |
-| Format check | `just fmt-check` | `just fmt` to auto-fix |
-| **Full pre-push suite (fast)** | `just ci-parallel` | every gate, parallelised; the lefthook pre-push gate |
-| Full pre-push suite (sequential) | `just ci` | same gates, serial — easier to read on failure |
-| Wire/type drift | `just drift-gate` | regenerate with `just schema` / `just types` / `just types-langs` |
-| Conformance | `just conformance` | byte-identical render gate |
-| Docs build + links | `just book-build` then `just book-linkcheck` | |
+Deterministic, stdin→stdout, stable exit codes. Output carries no
+timestamps or randomness, so diffs are clean. Every document subcommand
+takes `-` for stdin.
 
-`ci-parallel` prints `::error title=<gate>::` naming the gate that
-failed. A foreground gate aborts immediately; background gates
-(deny / audit / book-linkcheck / smoke-ffi / playground-* / fmt-check /
-typos / strict-code) are reaped at the end with their captured log.
-`SKIP_TAGS=deep` opts out of the 4096-case property sweep.
-
-Pushing requires **signed commits** (the pre-push `signing-check` runs
-first and is non-negotiable; do not use `LEFTHOOK=0`). Conventional
-Commits are enforced by `commit-msg`.
-
-## The `aozora` CLI — machine interface
-
-Deterministic, stdin→stdout, stable exit codes. Prefer JSON over the
-human renderer in automation.
-
-| Want | Command | Output |
-|---|---|---|
-| Diagnostics as data | `aozora check --format json FILE` | `{"schemaVersion":N,"data":[…]}` on stderr; same envelope every binding emits |
-| Diagnostics, one line each | `aozora check --format short FILE` | `path:offset: severity[code]: message` |
-| HTML | `aozora render FILE` | semantic HTML5 on stdout |
-| Pandoc AST (→ any format) | `aozora pandoc FILE` | Pandoc JSON on stdout |
-| Wire JSON Schema | `aozora spec schema {diagnostics\|nodes\|pairs\|container-pairs}` | JSON Schema |
-| Enum/wire-tag tables | `aozora spec kinds` | tables when stdout is a terminal, else the machine envelope `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` (force with `--format {human,json}`) — the typed contract behind the wire format |
-
-`--format` defaults to `human` on a TTY and `json` when piped,
-so a piped `aozora check` already yields machine output without a flag.
-**Agents should pass `--format json` (or `short`) explicitly**
-and never parse the `human` graphical render (it is width/colour
-dependent — the only non-deterministic output surface).
-
-### `aozora check` exit-code contract
-
-| Code | Meaning |
+| code | meaning |
 |---|---|
-| `0` | Parse succeeded; diagnostics may have printed but were tolerated. |
-| `1` | `--strict` and at least one diagnostic. |
-| `2` | Usage error (bad flag, unreadable file, decode failure). |
-| `3` | An `Internal`-source diagnostic fired — a library bug, distinct from bad input. |
+| `0` | parsed; diagnostics may have printed but were tolerated |
+| `1` | `--strict` and at least one diagnostic |
+| `2` | usage error — bad flag, unreadable file, decode failure |
+| `3` | an `Internal` diagnostic fired: a bug in aozora, not bad input |
 
-A reader that closes stdout early — `aozora render FILE | head` — is a normal
-success: the broken pipe is swallowed and the command exits `0` with no stderr
-(ADR-0029), so it never masquerades as a `1`/`2` failure in a pipeline.
+`aozora render FILE | head` exits `0`. A closed pipe is success, not
+failure (ADR-0029), so it never masquerades as a `1`/`2`.
 
-Encoding is auto-detected (UTF-8 → else Shift_JIS); force with
-`-E {utf8,sjis}`. Every document subcommand accepts `-` for stdin.
+**`--format` defaults to `human` on a TTY and `json` when piped**, so a
+piped `aozora check` already yields machine output. Pass `--format json`
+(or `short`) explicitly anyway, and **never parse the `human` render** —
+it is width- and colour-dependent, the one non-deterministic surface.
 
-## Determinism
+## Where decisions live
 
-HTML, `serialize`, the wire JSON envelopes, `schema`, and `kinds` carry
-no timestamps or randomness — output is stable across runs, so diffs are
-clean. (`ci` / `ci-parallel` write transient logs under `/tmp` and clean
-them up; that is not output.)
+`docs/adr/` — read the ADR governing an area before changing it. Once
+accepted, an ADR is never edited; a later one supersedes it.
 
-## See also
-
-- [Pipeline overview](crates/aozora-book/src/arch/pipeline.md) and
-  [Crate map](crates/aozora-book/src/arch/crates.md) — architecture and
-  the workspace crate map (handbook, `crates/aozora-book/`).
-- [`README.md`](README.md) — project overview and quickstart.
-- `docs/adr/` — the decision records (e.g. ADR-0007 parallel pre-push,
-  ADR-0008 diagnostic rendering & this output contract).
+`docs/contrib/` — development loop, testing strategy, release runbooks.

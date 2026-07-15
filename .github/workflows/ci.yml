@@ -48,17 +48,16 @@ env:
 
 jobs:
   # Classify the PR diff so the heavy Rust / SIMD / wasm / Python matrix
-  # only runs when code that affects it changed. A docs-only, playground-
-  # only, or handbook-only PR skips straight to the lightweight checks +
-  # the `ci-success` gate. Conservative by design: ANY change under
-  # crates/ (except the handbook), the Cargo manifests, the toolchain,
-  # Docker, the Justfile, or CI wiring flips `rust` true and runs the
-  # full matrix — so a config/CI change is always validated end-to-end.
+  # only runs when code that affects it changed. A docs-only or
+  # playground-only PR skips straight to the lightweight checks + the
+  # `ci-success` gate. Conservative by design: ANY change under crates/,
+  # the Cargo manifests, the toolchain, Docker, the Justfile, or CI wiring
+  # flips `rust` true and runs the full matrix — so a config/CI change is
+  # always validated end-to-end.
   changes:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
-      book: ${{ steps.filter.outputs.book }}
       playground: ${{ steps.filter.outputs.playground }}
       vscode: ${{ steps.filter.outputs.vscode }}
     steps:
@@ -69,7 +68,6 @@ jobs:
           filters: |
             rust:
               - 'crates/**'
-              - '!crates/aozora-book/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -88,8 +86,6 @@ jobs:
               # the Rust matrix — classify as `rust` (mirrors ci-classify.sh
               # treating scripts/* as infra).
               - 'scripts/**'
-            book:
-              - 'crates/aozora-book/**'
             # The Solid + Vite + WASM frontend. Its parse engine
             # (`crates/aozora-wasm/**`) already lives under the `rust` filter,
             # so the `playground-checks` job ORs `rust` to also validate the
@@ -338,8 +334,9 @@ jobs:
 
   # Phase L4 — wire-format / TS-types drift gate.
   #
-  # Both artefacts are committed to the repo (`crates/aozora-book/src/json/
-  # schema-*.json` and `crates/aozora-wasm/types/aozora_types.d.ts`)
+  # Both artefacts are committed to the repo
+  # (`crates/aozora-conformance/json/schema-*.json` and
+  # `crates/aozora-wasm/types/aozora_types.d.ts`)
   # and must stay in sync with the live Rust types they're generated
   # from. This job re-runs codegen and `git diff`-style asserts the
   # output is byte-identical to what's checked in. Forgetting to
@@ -746,85 +743,22 @@ jobs:
       - name: Run the test suite
         run: pytest crates/aozora-py/tests -q
 
-  # mdbook handbook build verification — builds `crates/aozora-book/`
-  # in a lean container so a missing chapter, broken include, or
-  # SUMMARY desync surfaces on PR rather than at deploy time.
-  # Independent buildx cache scope (`book`) keeps this job decoupled
-  # from the heavier dev image.
-  book:
+  # `readme-gate` (F9): every publishable crate ships a README whose links
+  # are absolute, so they survive being rendered on crates.io.
+  #
+  # This used to ride along with `version-literal-gate` in a `book-versions`
+  # job. That gate policed the handbook's one canonical version pin and
+  # retired with the handbook; readme-gate has nothing to do with either and
+  # would have been deleted by association.
+  readme:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.book == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
-        with:
-          context: .
-          target: book
-          tags: aozora-book:local
-          load: true
-          cache-from: type=gha,scope=book
-          cache-to: type=gha,mode=max,scope=book
-      - name: Install mermaid assets into the book directory
-        # `mermaid.min.js` + `mermaid-init.js` are .gitignored vendor JS
-        # that mdbook-mermaid regenerates from its own embedded copy.
-        # `book.toml` lists them as `additional-js`, so `mdbook build`
-        # fails with "failed to open mermaid.min.js for hashing" unless
-        # we install them first.
-        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
-      - name: mdbook build
-        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
-      - name: lychee internal-link verification (offline)
-        # The PR/push gate runs OFFLINE: it checks only internal links
-        # (relative `.html` cross-references + local assets), which is
-        # fully deterministic. External URLs are deliberately NOT probed
-        # here — network reachability (host outages, rate limits, UA
-        # gating) is the sole source of flaky link-check failures, and a
-        # transient external blip must never block an unrelated PR. The
-        # external surface is audited out-of-band by `link-audit.yml`
-        # (weekly cron, non-blocking, opens an issue on rot). Shared
-        # config lives in `crates/aozora-book/lychee.toml` (same file
-        # `just book-linkcheck` reads); `--offline` is the only
-        # gate-vs-audit difference.
-        run: |
-          docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
-            lychee --offline --config lychee.toml 'book/**/*.html'
-
-  # Handbook code-example gate. The `book` job above only `mdbook build`s
-  # (lean image, no cargo); this compiles + runs the handbook's plain
-  # `rust` code blocks as doctests against the live aozora rlib, so an
-  # example that drifts from the API fails the PR. Runs in the dev image
-  # (cargo + mdbook) via `just book-test`. Gated on `rust` (not `book`)
-  # because it needs the dev image — handbook-only edits can't break the
-  # examples without an API change, and pre-push `ci-parallel` runs it
-  # unconditionally as the local backstop.
-  book-test:
-    needs: [changes, dev-image]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: ./.github/actions/setup-dev-image
-      - run: just book-test
-
-  # Host-side hygiene grep gates — no dev image, no cargo — so they run on
-  # the bare host with just installed. `version-literal-gate` (ADR-0009):
-  # handbook keeps one canonical version pin. `readme-gate` (F9): every
-  # publishable crate ships a README with absolute (non-404) links.
-  # Gated on `rust || book` (NOT the `rust`-only `lint` matrix): a
-  # handbook-only PR, the change most likely to introduce a stray `vX.Y.Z`,
-  # still runs it. Pre-push `ci-parallel` runs both always.
-  book-versions:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.book == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3  # v2.82.9
         with:
           tool: just
-      - run: just version-literal-gate
       - run: just readme-gate
 
   # Single required status check. Every ci.yml job feeds in; this gate
@@ -858,9 +792,7 @@ jobs:
       - cross-aarch64
       - wasm-test
       - python-wheel
-      - book
-      - book-test
-      - book-versions
+      - readme
       - playground-checks
       - e2e
       - vscode

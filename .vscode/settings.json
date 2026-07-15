@@ -26,7 +26,6 @@
     "**/pkg": true,
     "**/dist": true,
     "**/node_modules": true,
-    "**/coverage": true,
-    "crates/aozora-book/book": true
+    "**/coverage": true
   }
 }

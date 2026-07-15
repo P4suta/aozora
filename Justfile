@@ -204,7 +204,7 @@ render-gate-update:
     {{_dev}} env UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 
 # Phase L1 — regenerate the wire JSON Schema artefacts under
-# crates/aozora-book/src/json/. Run after touching any wire struct
+# crates/aozora-conformance/json/. Run after touching any wire struct
 # or `aozora::json::SCHEMA_VERSION`; commit the resulting diff so
 # `schema-check` (drift gate) stays green.
 schema:
@@ -264,7 +264,7 @@ publish-check:
 # Drift gate: rust-toolchain.toml's channel (the DEV toolchain) and
 # Cargo.toml's rust-version (the PUBLIC CONTRACT) are two authorities
 # holding deliberately different numbers (ADR-0034). Fail if a pin follows
-# the wrong one, if the handbook names a Rust version outside
+# the wrong one, if a maintained doc names a Rust version outside
 # contrib/msrv.md, if a README hand-writes the MSRV badge, or if the
 # contract drifts within six months of the channel. Wired into `drift-gate`.
 msrv-check:
@@ -321,8 +321,8 @@ new-adr TITLE:
 # Phase O4 — WPT-style conformance runner. Four passes in one container:
 #   1. `conformance run`     — walks aozora-conformance/fixtures/render/,
 #                              compares against the parser's own goldens,
-#                              writes a per-case results.json into the
-#                              handbook source tree.
+#                              writes a per-case results.json beside the
+#                              suite that produced it.
 #   2. `conformance vectors` — runs the vendored specification vectors
 #                              (spec-vectors/, synced from the sibling
 #                              aozora-notation-spec) and holds the parser
@@ -1319,34 +1319,6 @@ strict-code:
     fi
     echo "strict-code: clean (expect-count $expect_count / baseline $expect_baseline)"
 
-# Forbid version literals (vX.Y.Z) in the handbook outside install.md, so the
-# single-source-of-truth rule (ADR-0009) can't rot back into hand-maintained
-# version pins. install.md is the one canonical place a concrete version/tag is
-# written; every other page links to it or stays version-neutral. Pure grep, so
-# it runs on the bare host (no dev image) — matching the `book-versions` CI job.
-version-literal-gate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # The one page allowed to pin a concrete version: its copy-paste install
-    # snippet is the whole reason it exists.
-    exempt="crates/aozora-book/src/getting-started/install.md"
-    hits=$(grep -HrnE 'v[0-9]+\.[0-9]+\.[0-9]+' --include='*.md' crates/aozora-book/src 2>/dev/null || true)
-    filtered=""
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        path="${line%%:*}"
-        [[ "$path" == "$exempt" ]] && continue
-        filtered+="${line}"$'\n'
-    done <<< "$hits"
-    if [[ -n "$filtered" ]]; then
-        echo "==> forbidden: version literal (vX.Y.Z) in the handbook outside install.md" >&2
-        echo "    ADR-0009: the handbook keeps one canonical version pin (install.md)." >&2
-        echo "    Link to it, or use version-neutral phrasing (releases/latest, vX.Y.Z)." >&2
-        printf '%s' "$filtered" >&2
-        exit 1
-    fi
-    echo "version-literal-gate: clean"
-
 # Every publishable crate (one that is NOT `publish = false`) must ship a
 # README.md — otherwise its crates.io page renders empty (F9). And that README
 # may not carry repo-relative links: crates.io / docs.rs resolve links against
@@ -1653,78 +1625,6 @@ parity-wasm:
 # changelog locally, run `release-plz update` (writes Cargo.toml / CHANGELOG.md
 # in place; discard the spike with `git restore`).
 
-# --- mdbook handbook ---------------------------------------------------------
-# `crates/aozora-book` is rendered by mdbook with the `mdbook-mermaid`
-# preprocessor (architecture pipeline / arena lifetime diagrams). Link
-# verification uses `lychee` rather than `mdbook-linkcheck`, because the
-# latter chronically lags upstream mdbook's RenderContext schema.
-_book := "docker compose run --rm book"
-
-# Install the mdbook-mermaid preprocessor assets (mermaid.min.js +
-# mermaid-init.js) next to `crates/aozora-book/book.toml`. The files
-# are .gitignored (vendor JS that the preprocessor regenerates), so
-# every local dev / CI invocation has to drop them in before mdbook
-# can render the book — `book.toml`'s `additional-js = [...]` would
-# otherwise fail on a "file not found" at render time.
-#
-# Idempotent — re-running just overwrites the same two files. Ships
-# from the `book` service so the host doesn't need `mdbook-mermaid`
-# installed locally.
-mermaid-install:
-    {{_book}} mdbook-mermaid install .
-
-# Build the handbook into crates/aozora-book/book/.
-book-build: mermaid-install
-    {{_book}} mdbook build
-
-# Live-preview at http://localhost:3000. Re-renders on every save.
-book-serve: mermaid-install
-    docker compose up book
-
-# Verify the rendered handbook's INTERNAL links (offline, deterministic).
-# This is the gating check — it mirrors the `book` CI job and crawls the
-# generated HTML (not the source Markdown) so cross-page links are
-# validated post-render. `--offline` skips every network probe: external
-# URLs are NOT the gate's concern (a host outage / rate-limit must never
-# block a PR), only internal `.html` cross-references + local assets are.
-# Shared policy (excludes, accept codes) lives in
-# `crates/aozora-book/lychee.toml`; external rot is audited separately
-# (see `book-linkcheck-external` and `.github/workflows/link-audit.yml`).
-book-linkcheck: mermaid-install
-    {{_book}} mdbook build
-    {{_book}} lychee --offline --config lychee.toml 'book/**/*.html'
-
-# Audit EXTERNAL links too (online) — the local mirror of the weekly
-# `link-audit.yml` workflow. NOT part of any gate: external reachability
-# is non-deterministic, so this is a manual / scheduled check (run it at
-# release review). Same `lychee.toml` config as the offline gate, minus
-# `--offline`, so retries / accept(429,999) / exclude policy all apply.
-book-linkcheck-external: mermaid-install
-    {{_book}} mdbook build
-    {{_book}} lychee --config lychee.toml 'book/**/*.html'
-
-# Compile + run the handbook's plain `rust` code blocks as doctests,
-# linking against the freshly-built aozora rlib. Catches handbook example
-# drift the same way `test-doc` catches rustdoc drift. Runs in the dev
-# image (not the lean `book` image) because `mdbook test` needs cargo's
-# target/deps.
-#
-# aozora is built into a DEDICATED target dir so the search path holds
-# exactly ONE `libaozora` rlib. The shared `/cargo/target/debug/deps`
-# accumulates many hash-suffixed `libaozora-*.rlib` (one per feature /
-# profile build across the workspace), and `mdbook test` only forwards
-# `-L` to rustdoc — never `--extern` — so an `extern crate aozora;` in an
-# example would hit E0464 "multiple candidates" against the shared dir.
-# The keep-newest sweep guards the dedicated dir against a stale rlib
-# lingering after a source change. Build + sweep + test share ONE
-# container so the test sees the freshly-pruned deps.
-#
-# Each runnable example therefore opens with a hidden `# extern crate
-# aozora;` (edition 2024 won't auto-link, and `--extern` is unavailable);
-# illustrative / internal-crate blocks are marked `rust,ignore`.
-book-test:
-    {{_dev}} bash -c 'set -euo pipefail; cargo build -p aozora --all-features --target-dir /cargo/target/book-test; ls -t /cargo/target/book-test/debug/deps/libaozora-*.rlib | tail -n +2 | xargs -r rm -f; mdbook test crates/aozora-book -L /cargo/target/book-test/debug/deps'
-
 # --- ci instrumentation (host-only — uses gh CLI auth) ----------------
 # `aozora-xtask ci …` is the data-driven CI surface: profile a finished
 # workflow run, run every CI job locally before pushing, or replay a
@@ -1783,18 +1683,12 @@ test-wasm:
 # not need an external runtime (pandoc, wasm-pack, maturin) which the
 # dev image deliberately omits — those three CI-only jobs stay
 # unreachable from local.
-#
-# `book-linkcheck` ends the chain because lychee's network probes are
-# the slowest gate and the only one that depends on external availability;
-# putting it last means a transient pyo3.rs / docs.rs hiccup doesn't
-# delay the deterministic gates' failure signal.
 ci:
     #!/usr/bin/env bash
     set -euo pipefail
-    # The three independent gates that don't share cargo's `target/`
-    # lock — `cargo deny` / `cargo audit` are metadata-only and
-    # `book-linkcheck` is a lychee network probe — run in the
-    # background so their wall-time hides behind the cargo chain
+    # The two independent gates that don't share cargo's `target/`
+    # lock — `cargo deny` / `cargo audit` are metadata-only — run in
+    # the background so their wall-time hides behind the cargo chain
     # below instead of stacking on top of it. Verified
     # non-contending against the foreground cargo recipes by manual
     # `just ci` runs; cargo metadata holds an advisory file lock
@@ -1803,8 +1697,6 @@ ci:
     deny_pid=$!
     just audit          > /tmp/aozora-ci-bg-audit.log 2>&1 &
     audit_pid=$!
-    just book-linkcheck > /tmp/aozora-ci-bg-book.log 2>&1 &
-    book_pid=$!
 
     # Foreground cargo chain in the same cheap-to-expensive order
     # that the original sequential `ci` used, so an early failure
@@ -1834,7 +1726,6 @@ ci:
     just test
     just test-doc
     just test-doc-all
-    just book-test
     just prop
     just shear
     just coverage
@@ -1867,12 +1758,7 @@ ci:
         cat /tmp/aozora-ci-bg-audit.log
         failed=1
     fi
-    if ! wait $book_pid; then
-        echo "::error title=book-linkcheck::just book-linkcheck failed (output below)"
-        cat /tmp/aozora-ci-bg-book.log
-        failed=1
-    fi
-    rm -f /tmp/aozora-ci-bg-{deny,audit,book}.log
+    rm -f /tmp/aozora-ci-bg-{deny,audit}.log
     [[ $failed -eq 0 ]] || exit 1
 
 # Parallel pre-push pipeline — same gates as `ci`, but fast.
@@ -1886,7 +1772,7 @@ ci:
 #      compile instead of three.
 #   2. Every gate that does NOT take the container's /cargo/target build
 #      lock runs in the BACKGROUND so its wall-time hides behind the
-#      foreground cargo chain: deny / audit (metadata), book-linkcheck
+#      foreground cargo chain: deny / audit (metadata)
 #      (network), smoke-ffi (host-side target/), playground-typecheck /
 #      playground-test (bun), and the non-compiling lint gates
 #      fmt-check / typos / strict-code.
@@ -1969,13 +1855,11 @@ ci-parallel:
         fi
     fi
     # want <category> — 0 = run this gate, 1 = skip. Full mode runs all;
-    # `book` runs when book content OR Rust (doctests) changed.
     want() {
         [[ "$run_all" -eq 1 ]] && return 0
         case "$1" in
             code) [[ " $cats " == *" code "* ]] ;;
             play) [[ " $cats " == *" play "* ]] ;;
-            book) [[ " $cats " == *" code "* || " $cats " == *" book "* ]] ;;
             *) return 0 ;;
         esac
     }
@@ -1986,11 +1870,10 @@ ci-parallel:
     # vendored spec-vectors/ against the sibling spec repo, a no-op
     # (--allow-missing) where the spec isn't checked out.
     for g in deny audit smoke-ffi verify-spec-vectors; do want code && launch "$g" just "$g"; done
-    want book && launch book-linkcheck just book-linkcheck
-    # fmt-check / typos / strict-code / version-literal-gate / readme-gate are
+    # fmt-check / typos / strict-code / readme-gate are
     # cheap and apply to any file — always run. ci-fast-selftest guards the
     # change-aware classifier itself (instant host bash).
-    for g in fmt-check typos strict-code version-literal-gate readme-gate ci-fast-selftest; do launch "$g" just "$g"; done
+    for g in fmt-check typos strict-code readme-gate ci-fast-selftest; do launch "$g" just "$g"; done
     # playground-typecheck + playground-test share one `node_modules`
     # volume; launching them as two concurrent gates makes their
     # `_playground-ensure` (`bun install`) hard-link into that volume in
@@ -2024,9 +1907,8 @@ ci-parallel:
         else
             echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
-        for gate in shear test-doc test-doc-all book-test extism-build parity-wasm smoke-go doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all extism-build parity-wasm smoke-go doc corpus-sweep; do
             case "$gate" in
-                book-test) want book || { skip "$gate"; continue; } ;;
                 *) want code || { skip "$gate"; continue; } ;;
             esac
             if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
@@ -2075,7 +1957,6 @@ ci-fast-selftest:
     check "Cargo manifest"     "code"       "crates/aozora/Cargo.toml"
     check "conformance vector" "code"       "crates/aozora-conformance/spec-vectors/x.json"
     check "playground only"    "play"       "playground/src/App.tsx"
-    check "handbook md"        "book"       "crates/aozora-book/src/recipes/walk-ast.md"
     check "ADR / docs"         "book"       "docs/adr/0017-x.md"
     check "root README"        "code"       "README.md"
     check "Justfile = infra"   "infra"      "Justfile"

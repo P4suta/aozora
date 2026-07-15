@@ -9,9 +9,9 @@
 #           is not provably play / book / infra lands here, so the heavy
 #           gates run unless the change is confined to an isolated area.
 #   play  — playground/** (the isolated Solid + Vite + WASM frontend).
-#   book  — handbook / ADR markdown (docs/**, crates/aozora-book/**) — book
-#           content with no Rust-doctest impact. (A Rust *doc comment* lives
-#           in crates/**/src/*.rs and is therefore `code`, not `book`.)
+#   book  — prose under docs/** (ADRs, contributor runbooks) with no
+#           Rust-doctest impact. (A Rust *doc comment* lives in
+#           crates/**/src/*.rs and is therefore `code`, not `book`.)
 #   infra — the gate definitions themselves (Justfile / lefthook / CI /
 #           docker). When present the caller MUST run the full matrix: the
 #           skip map itself may be changing, so trusting it would be circular.
@@ -27,7 +27,7 @@ while IFS= read -r f; do
     case "$f" in
         playground/*) play=1 ;;
         Justfile | lefthook.yml | .github/* | scripts/* | compose*.y*ml | docker/* | *Dockerfile*) infra=1 ;;
-        docs/* | crates/aozora-book/*) book=1 ;;
+        docs/*) book=1 ;;
         *) code=1 ;;
     esac
 done
