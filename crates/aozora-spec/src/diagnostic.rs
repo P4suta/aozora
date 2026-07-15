@@ -443,11 +443,17 @@ pub enum Diagnostic {
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
         code("aozora::lint::non_canonical_directive"),
-        // No `url`. The other sixteen point at the specification, which
-        // cannot host this one: it is aozora's own hygiene layer
-        // (ADR-0022), not a fact of the notation. `help` below and
-        // `aozora explain` already say everything a reader can act on, so
-        // a link would only be somewhere else to put the same sentence.
+        // ADR-0022, where the other sixteen point at the specification.
+        // The spec cannot host this one and should not: it is aozora's
+        // own hygiene layer, not a fact of the notation. `help` says how
+        // to fix it; the ADR is the only thing that says why a lint
+        // exists for it at all. Every catalogued code carries an https
+        // url (`explain_covers_every_catalogued_code`) — the url is the
+        // best authority for *that* code, not always the spec.
+        url(
+            "https://github.com/P4suta/aozora/blob/main/docs/adr/\
+             0022-notation-hygiene-layer-roles.md"
+        ),
         severity(Warning),
         help(
             "this ［＃…］ body matches a recognized directive spelled \
