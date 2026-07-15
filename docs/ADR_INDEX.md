@@ -40,6 +40,8 @@ back.
 | [0031](./adr/0031-mutation-testing-for-assertion-strength.md)                        | Mutation testing as an assertion-strength gate                        | accepted |
 | [0033](./adr/0033-cli-output-language-policy.md)                                     | CLI output language policy                                            | accepted |
 | [0034](./adr/0034-separate-toolchain-channel-from-msrv.md)                           | Separate the toolchain channel from the MSRV                          | accepted |
+| [0035](./adr/0035-delegate-the-trigger-scan-to-aho-corasick.md)                      | Delegate the trigger scan to aho-corasick                             | accepted |
+| [0036](./adr/0036-index-owned-ast-replaces-the-arena.md)                             | An index-owned AST replaces the arena                                 | accepted |
 
 ## Authoring a new ADR
 
