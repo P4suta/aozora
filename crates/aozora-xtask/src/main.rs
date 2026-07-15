@@ -56,6 +56,7 @@ mod conformance;
 mod corpus;
 mod deps;
 mod grammar;
+mod publish;
 mod schema;
 mod spec_vectors;
 mod trace;
@@ -132,6 +133,28 @@ enum Cmd {
     /// when the vendored copy has drifted (`--allow-missing` skips where the
     /// sibling isn't checked out, i.e. the dev container / cloud CI).
     SpecVectors(SpecVectorsArgs),
+    /// crates.io publish-path ledger drift gate. Offline — never contacts
+    /// a registry; it reads manifests only. Cross-checks the workspace's
+    /// publishable members against `release-plz.toml`'s `changelog_include`
+    /// (a crate added to the workspace but not to that list drops out of
+    /// the aggregated CHANGELOG), and enforces the manifest hygiene rules
+    /// the root `Cargo.toml` already states in prose: path-only internal
+    /// dev-deps, and no registry `version` on a `publish = false` member.
+    Publish(PublishArgs),
+}
+
+#[derive(Args)]
+struct PublishArgs {
+    #[command(subcommand)]
+    op: PublishOp,
+}
+
+#[derive(Subcommand)]
+enum PublishOp {
+    /// Fail when the publish ledger has drifted — `release-plz.toml`
+    /// disagreeing with the workspace's publish set, or a manifest
+    /// breaking the publish-path hygiene rules. Wired into `drift-gate`.
+    Check,
 }
 
 #[derive(Args)]
@@ -374,6 +397,7 @@ fn main() {
         Cmd::Conformance(args) => conformance::dispatch(&args),
         Cmd::Version(args) => version::dispatch(&args),
         Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
+        Cmd::Publish(args) => publish::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

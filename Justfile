@@ -251,9 +251,19 @@ grammar:
 grammar-check:
     {{_dev}} cargo run -p aozora-xtask -q -- conformance grammar --check
 
+# Drift gate: fail if release-plz.toml's `changelog_include` has drifted
+# from the workspace's publishable members (a crate added to the
+# workspace but not to that list drops out of the aggregated CHANGELOG),
+# or if a manifest breaks the publish-path hygiene rules the root
+# Cargo.toml states in prose: path-only internal dev-deps, and no
+# registry version on a `publish = false` member.
+# Offline — never contacts crates.io. Wired into `drift-gate`.
+publish-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- publish check
+
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
-# job: schema + types + tree-sitter grammar in one shot. Use locally
-# before pushing.
+# job: schema + types + tree-sitter grammar + publish ledger in one
+# shot. Use locally before pushing.
 #
 # Inlined as a single `docker compose run` rather than a recipe-deps
 # chain (`drift-gate: schema-check types-check grammar-check`) so every
@@ -263,7 +273,7 @@ grammar-check:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a
