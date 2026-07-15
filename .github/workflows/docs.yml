@@ -1,10 +1,12 @@
 # Publish the aozora handbook + rustdoc + playground to GitHub Pages.
 #
-# aozora does not currently publish to crates.io, so docs.rs is not an
-# option for the API reference. Instead we build rustdoc on the runner,
-# build the mdbook handbook from `crates/aozora-book/`, build the
-# Solid + Vite + WASM playground from `playground/`, layer them under
-# `/aozora/`, and deploy the whole site to GitHub Pages.
+# docs.rs renders the API for each released version. This site carries
+# what docs.rs cannot: the handbook, the playground, and a rustdoc build
+# of the development tip — ahead of whatever the latest crates.io
+# release renders. So we build rustdoc on the runner, build the mdbook
+# handbook from `crates/aozora-book/`, build the Solid + Vite + WASM
+# playground from `playground/`, layer them under `/aozora/`, and deploy
+# the whole site to GitHub Pages.
 #
 # Layout produced:
 #   https://p4suta.github.io/aozora/                ← mdbook handbook

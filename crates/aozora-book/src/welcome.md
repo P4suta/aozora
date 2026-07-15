@@ -62,10 +62,9 @@ out, not just *what the code does*.
 
 Released versions track [GitHub Releases](https://github.com/P4suta/aozora/releases);
 the bindings — the CLI, the Rust library, WASM, the C ABI, Go, Python,
-and the Extism host-SDK — all build and pass CI smoke tests. Public
-crates.io publication is gated on the v1.0 API freeze; in the
-meantime, depend on a tagged commit (see
-[Install](getting-started/install.md) for the current pin).
+and the Extism host-SDK — all build and pass CI smoke tests. See
+[Install](getting-started/install.md) for how to depend on a release,
+and [Choosing a binding](bindings/choosing.md) for where each one ships.
 
 A live build of this site lives at
 <https://p4suta.github.io/aozora/>; the rustdoc API reference is
