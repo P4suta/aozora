@@ -21,12 +21,15 @@ where `schemaVersion` is the major version of the JSON contract and
 
 The four endpoint envelopes are:
 
-| Endpoint                    | Entry shape                                        | JSON Schema                                                |
-| --------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
-| `diagnostics`     | `{ kind, severity, source, span, codepoint? }`     | [`schema-diagnostics.json`](schema-diagnostics.json)       |
-| `nodes`           | `{ kind, span: { start, end } }`                   | [`schema-nodes.json`](schema-nodes.json)                   |
-| `pairs`           | `{ kind, open: { start, end }, close: { … } }`     | [`schema-pairs.json`](schema-pairs.json)                   |
-| `container_pairs` | `{ kind, open: { offset }, close: { offset } }`    | [`schema-container-pairs.json`](schema-container-pairs.json) |
+| Endpoint          | Entry shape                                     |
+| ----------------- | ----------------------------------------------- |
+| `diagnostics`     | `{ kind, severity, source, span, codepoint? }`  |
+| `nodes`           | `{ kind, span: { start, end } }`                |
+| `pairs`           | `{ kind, open: { start, end }, close: { … } }`  |
+| `container_pairs` | `{ kind, open: { offset }, close: { offset } }` |
+
+`aozora spec schema {diagnostics|nodes|pairs|container-pairs}` prints the
+JSON Schema for any of them.
 
 ## SCHEMA_VERSION
 
