@@ -56,6 +56,7 @@ mod conformance;
 mod corpus;
 mod deps;
 mod grammar;
+mod msrv;
 mod publish;
 mod schema;
 mod spec_vectors;
@@ -141,6 +142,29 @@ enum Cmd {
     /// the root `Cargo.toml` already states in prose: path-only internal
     /// dev-deps, and no registry `version` on a `publish = false` member.
     Publish(PublishArgs),
+    /// MSRV / toolchain pin coherence gate. `rust-toolchain.toml`'s
+    /// channel (the DEV toolchain, tracking latest stable) and
+    /// `Cargo.toml`'s `rust-version` (the PUBLIC CONTRACT, a measured
+    /// floor) are two authorities holding deliberately different numbers
+    /// (ADR-0034). Checks that every other pin follows the right one, that
+    /// the handbook names a Rust version in exactly one page, that the
+    /// READMEs derive the MSRV badge rather than writing it down, and that
+    /// the contract stays at least six months behind the channel.
+    Msrv(MsrvArgs),
+}
+
+#[derive(Args)]
+struct MsrvArgs {
+    #[command(subcommand)]
+    op: MsrvOp,
+}
+
+#[derive(Subcommand)]
+enum MsrvOp {
+    /// Fail when a version pin follows the wrong authority, or when the
+    /// MSRV drifts within six months of the dev channel. Wired into
+    /// `drift-gate`.
+    Check,
 }
 
 #[derive(Args)]
@@ -398,6 +422,7 @@ fn main() {
         Cmd::Version(args) => version::dispatch(&args),
         Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
         Cmd::Publish(args) => publish::dispatch(&args),
+        Cmd::Msrv(args) => msrv::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

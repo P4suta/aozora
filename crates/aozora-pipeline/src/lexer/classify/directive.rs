@@ -1466,16 +1466,14 @@ fn classify_sashie_body(body: &str, alloc: &mut Allocator) -> Option<EmitKind> {
     // `「caption」入る`. Any other shape declines (→ `Directive{Unknown}`).
     let caption = if tail == "入る" {
         None
-    } else if let Some(inner) = tail
-        .strip_prefix('「')
-        .and_then(|t| t.strip_suffix("」入る"))
-    {
+    } else {
+        let inner = tail
+            .strip_prefix('「')
+            .and_then(|t| t.strip_suffix("」入る"))?;
         if inner.is_empty() {
             return None;
         }
         Some(alloc.content_plain(inner))
-    } else {
-        return None;
     };
     Some(EmitKind::Aozora(
         alloc.sashie(file, number, dimensions, caption),
@@ -1877,10 +1875,9 @@ fn parse_line_font_size(body: &str) -> Option<(AbsoluteSize, bool)> {
         (AbsoluteSize::Large, r)
     } else if let Some(r) = body.strip_prefix("中文字") {
         (AbsoluteSize::Medium, r)
-    } else if let Some(r) = body.strip_prefix("小文字") {
-        (AbsoluteSize::Small, r)
     } else {
-        return None;
+        let r = body.strip_prefix("小文字")?;
+        (AbsoluteSize::Small, r)
     };
     let bold = match rest {
         "" => false,

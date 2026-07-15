@@ -261,9 +261,36 @@ grammar-check:
 publish-check:
     {{_dev}} cargo run -p aozora-xtask -q -- publish check
 
+# Drift gate: rust-toolchain.toml's channel (the DEV toolchain) and
+# Cargo.toml's rust-version (the PUBLIC CONTRACT) are two authorities
+# holding deliberately different numbers (ADR-0034). Fail if a pin follows
+# the wrong one, if the handbook names a Rust version outside
+# contrib/msrv.md, if a README hand-writes the MSRV badge, or if the
+# contract drifts within six months of the channel. Wired into `drift-gate`.
+msrv-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- msrv check
+
+# Verify the declared MSRV actually builds — the local mirror of CI's
+# `msrv` job. Runs on the HOST, not the dev image: the image ships
+# rust-toolchain.toml's channel (latest stable, NOT the MSRV) and has no
+# way to downgrade. Reads the version from Cargo.toml so it cannot drift
+# from the contract it checks. See contrib/msrv.md to re-measure the floor.
+msrv-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    v=$(awk -F'"' '/^rust-version/ { print $2; exit }' Cargo.toml)
+    rustup toolchain install "$v" --profile minimal
+    # Two lanes: every feature a crates.io consumer can enable, then
+    # aozora-extism on defaults only (publish=false; its dev-only
+    # host-smoke feature pulls wasmtime, which declares a higher floor
+    # than it needs — a test feature does not get to set the contract).
+    cargo "+$v" check --locked --workspace --all-targets --all-features --exclude aozora-extism
+    cargo "+$v" check --locked -p aozora-extism --all-targets
+    echo "msrv-local: workspace builds on $v"
+
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
-# job: schema + types + tree-sitter grammar + publish ledger in one
-# shot. Use locally before pushing.
+# job: schema + types + tree-sitter grammar + publish ledger + MSRV pins
+# in one shot. Use locally before pushing.
 #
 # Inlined as a single `docker compose run` rather than a recipe-deps
 # chain (`drift-gate: schema-check types-check grammar-check`) so every
@@ -273,7 +300,7 @@ publish-check:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a
@@ -1018,7 +1045,7 @@ mutants *ARGS:
         dev cargo mutants --config mutants.toml {{ARGS}}
 
 # Host-native mutation sweep — the FAST inner loop for reinforcing a crate.
-# Same cargo-mutants (pinned 27.1.0 via mise) + nextest + rust 1.96.0 as the
+# Same cargo-mutants (pinned 27.1.0 via mise) + nextest + rust channel as the
 # Docker `just mutants` above, so it enumerates the identical mutant set and
 # the baseline it produces holds in CI (see ADR-0031 "host lane"). Docker
 # `just mutants` stays the authoritative CI/parity mirror; this trades the

@@ -210,16 +210,19 @@ aozora is currently in the `0.x` series. The contract:
 - `0.x.y` → `1.0.0`: the API freeze. Post-1.0, breaking changes collect on a
   `next` branch and ship in a major bump.
 
-The MSRV pin (`rust-toolchain.toml`) advances on its own cadence, roughly
-quarterly. MSRV bumps are *not* breaking under our pre-1.0 contract — consumers
-that need a frozen MSRV pin a release tag.
+The MSRV (`Cargo.toml`'s `rust-version`) is a *measured* floor and moves only
+when a new stable feature is needed — see [MSRV policy](./msrv.md). Bumps are
+*not* breaking under our pre-1.0 contract, and the six-month rule is what makes
+that claim mean something: any toolchain from the last six months keeps
+working, so a bump is predictable rather than a surprise you can only absorb by
+pinning a tag.
 
-When you raise the MSRV, bump the **Dockerfile `FROM rust:` base in the same
-commit** so the dev image keeps building on exactly the pinned channel (one
-toolchain, no dead second one). Dependabot deliberately ignores the `rust` base
-image (`.github/dependabot.yml`) precisely so it cannot drift ahead of
-`rust-toolchain.toml`, so this base bump is manual. Resolve the new digest with
-`docker buildx imagetools inspect rust:<ver>-bookworm`.
+The dev toolchain (`rust-toolchain.toml`'s channel) is a **separate** number
+that tracks latest stable, and the Dockerfile `FROM rust:` base follows **it**,
+not the MSRV (ADR-0034). Dependabot may bump that base on its own; `xtask msrv
+check` holds the PR red until `rust-toolchain.toml` is synced in the same PR.
+Resolve the new digest with `docker buildx imagetools inspect
+rust:<ver>-bookworm`. None of that touches the release contract.
 
 ## Publishing to crates.io
 

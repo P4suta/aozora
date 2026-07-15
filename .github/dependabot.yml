@@ -29,8 +29,20 @@ updates:
 
   - package-ecosystem: docker
     # Bumps Dockerfile FROM pins. Currently: rust (toolchain stage) and
-    # ubuntu (book stage). The rust base is held at the MSRV and must NOT
-    # auto-bump — see the ignore below.
+    # ubuntu (book stage).
+    #
+    # The `rust` base follows rust-toolchain.toml's channel — the DEV
+    # toolchain, which is deliberately NOT the MSRV (ADR-0034). It is
+    # therefore *supposed* to track stable, so the former `ignore` here is
+    # gone: a dependabot `rust` PR is now a useful signal that a new stable
+    # shipped. The MSRV (Cargo.toml's `rust-version`) is a separate,
+    # measured number that none of this touches.
+    #
+    # Such a PR lands RED on purpose. Dependabot cannot edit
+    # rust-toolchain.toml or the mise manifest, so `xtask msrv check` (in
+    # drift-gate) fails until a maintainer syncs the channel in the same
+    # PR. That gate is what makes the un-ignore safe — do not re-add the
+    # ignore without also removing the gate's reason to exist.
     directory: "/"
     schedule:
       interval: weekly
@@ -38,15 +50,6 @@ updates:
     groups:
       docker-base-images:
         patterns: ["*"]
-    ignore:
-      # The rust base must equal rust-toolchain.toml's pinned channel (the
-      # MSRV): rust-toolchain.toml makes every cargo build select that
-      # channel, so a newer base only ships a dead, never-used second
-      # toolchain — and an auto-bump would silently advance the MSRV. Bump
-      # the `FROM rust:` pin by hand TOGETHER with rust-toolchain.toml when
-      # raising the MSRV. (Same rationale as the dtolnay/rust-toolchain
-      # ignore in the github-actions ecosystem above. `ubuntu` still bumps.)
-      - dependency-name: "rust"
 
   - package-ecosystem: devcontainers
     directory: "/"

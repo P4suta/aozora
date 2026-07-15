@@ -38,7 +38,13 @@ exclude = ["crates/aozora-book", "crates/aozora-go"]
 [workspace.package]
 version = "0.4.1"
 edition = "2024"
-rust-version = "1.96.0"
+# MSRV — the public contract, and a MEASURED floor, not a mirror of the
+# toolchain we develop on (that is rust-toolchain.toml's channel; the two
+# are deliberately different numbers — ADR-0034). Raised only when a new
+# stable feature is actually needed. 1.89 is set by `rustyline`'s use of
+# `file_lock`; our own code needs 1.88 (let-chains). Policy and the
+# re-measurement recipe: crates/aozora-book/src/contrib/msrv.md.
+rust-version = "1.89.0"
 license = "Apache-2.0 OR MIT"
 description = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
 repository = "https://github.com/P4suta/aozora"

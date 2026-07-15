@@ -22,9 +22,11 @@
 //! the parity with `ci.yml` is preserved.
 //!
 //! Skipped on purpose:
-//! - `msrv`: needs a different rustc pin than the dev image carries;
-//!   would force a second toolchain install. Run on demand with
-//!   `cargo +1.96.0 check --workspace --all-targets`.
+//! - `msrv`: the dev image carries rust-toolchain.toml's channel, which
+//!   is deliberately NOT the MSRV (ADR-0034), and has no mechanism to
+//!   downgrade — running it here would force a second toolchain install.
+//!   Run on demand with `just msrv-local`, which reads the version out of
+//!   Cargo.toml so it cannot drift from the contract.
 //! - `commitlint`: PR-only.
 
 use std::cmp::Reverse;

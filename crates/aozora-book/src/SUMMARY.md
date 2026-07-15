@@ -107,3 +107,4 @@
 - [Troubleshooting & gate recovery](contrib/troubleshooting.md)
 - [Release process](contrib/release.md)
 - [Release secrets & Trusted Publishing](contrib/releasing-secrets.md)
+- [MSRV policy](contrib/msrv.md)
