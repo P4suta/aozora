@@ -1,35 +1,27 @@
 # NodeKind::Heading
 
-Inspect tag: `heading` — Aozora 見出し (window / sub heading).
+Inspect tag: `heading` — Aozora 見出し.
 
 ## Source examples
 
+The keyword names the level. Bare `見出し` is not one of them.
+
 ```text
-［＃見出し］序章［＃見出し終わり］
+［＃中見出し］序章［＃中見出し終わり］
 ```
 
 ## Rendered HTML
 
 ```html
-<h2 class="aozora-heading aozora-heading-window">序章</h2>
+<h2 class="aozora-heading aozora-heading-medium">序章</h2>
 ```
 
-The Pandoc projection uses level 2 for `Window`, level 3 for `Sub`.
+大見出し / 中見出し / 小見出し render as `h1` / `h2` / `h3`. The
+window / sub distinction is a separate, orthogonal axis.
 
 ## Source output
 
 Round-trips to `［＃<kind>見出し］...［＃<kind>見出し終わり］`.
-
-## AST shape
-
-```rust,ignore
-pub struct Heading<'src> {
-    pub kind: HeadingKind,
-    pub text: NonEmpty<Content<'src>>,
-}
-```
-
-`HeadingKind` is `Window` (窓見出し) or `Sub` (副見出し).
 
 ## When emitted
 
@@ -41,5 +33,5 @@ None on well-formed input.
 
 ## Related kinds
 
-- [HeadingHint](heading-hint.md) — forward-reference style heading
+- `headingHint` — forward-reference style heading
   hint.

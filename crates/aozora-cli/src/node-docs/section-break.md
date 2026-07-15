@@ -23,14 +23,6 @@ The second class slot carries the variant slug (`kaicho`, `kaidan`,
 
 Round-trips to `［＃改丁］` etc.
 
-## AST shape
-
-```rust,ignore
-Node::SectionBreak(SectionKind)
-```
-
-`SectionKind` is `Choho` (改丁) / `Dan` (改段) / `Spread` (改見開き).
-
 ## When emitted
 
 The classify stage matches each directive; the kind enum captures which.
@@ -41,4 +33,4 @@ None on well-formed input.
 
 ## Related kinds
 
-- [PageBreak](page-break.md) — finer-grained `［＃改ページ］` variant.
+- `pageBreak` — finer-grained `［＃改ページ］` variant.

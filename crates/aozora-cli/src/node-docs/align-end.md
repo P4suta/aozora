@@ -21,19 +21,11 @@ Inspect tag: `alignEnd` — right-edge alignment marker (字上げ).
 
 Round-trips to `［＃地付き］` / `［＃地からN字上げ］`.
 
-## AST shape
-
-```rust,ignore
-pub struct AlignEnd {
-    pub offset: u8,
-}
-```
-
 ## When emitted
 
 The classify stage matches the directive form. Paired alignment regions
 (`［＃ここから地から N 字上げ］` … `［＃ここで字上げ終わり］`) are
-[Container](container.md) instead.
+`container` instead.
 
 ## Diagnostics
 
@@ -41,6 +33,6 @@ None.
 
 ## Related kinds
 
-- [Indent](indent.md) — left-edge counterpart.
-- [Container](container.md) — paired regions
-  (`ContainerKind::AlignEnd`).
+- `indent` — left-edge counterpart.
+- `container` — paired regions
+  (`RegionFormat::AlignEnd`).

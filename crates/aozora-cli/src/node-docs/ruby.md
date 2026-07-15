@@ -27,22 +27,9 @@ still display a readable fallback.
 
 `to_source()` emits the **canonical bare** form `base《reading》`,
 adding an explicit `｜` only when a bare reading would re-parse to a
-different base (see ADR 0002/0003). The parse → to_source → parse
+different base. The parse → to_source → parse
 round-trip is a fixed point regardless of which form the source used;
 `to_source_verbatim()` instead replays the author's exact bytes.
-
-## AST shape
-
-```rust,ignore
-pub struct Ruby<'src> {
-    pub base: NonEmpty<Content<'src>>,
-    pub reading: NonEmpty<Content<'src>>,
-    pub side: RubySide,   // Right for ｜《》/implicit; Left for 左ルビ (saidoku)
-}
-```
-
-`base` and `reading` are `NonEmpty<Content>`; empty base or reading is
-rejected upstream and never produces a `Ruby` node.
 
 ## When emitted
 
@@ -58,7 +45,7 @@ opener.
 
 ## Related kinds
 
-- [AngleQuote](angle-quote.md) — `≪…≫` double-angle quotation
+- `angleQuote` — `≪…≫` double-angle quotation
   (displays as `《…》`).
 
 Malformed ruby (empty `《》` reading, nested `《`, an unclosed

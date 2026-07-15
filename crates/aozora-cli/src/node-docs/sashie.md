@@ -24,18 +24,6 @@ When a caption is present it lands as a `<figcaption>` next to the
 
 Round-trips to `［＃挿絵（path[、caption]）入る］`.
 
-## AST shape
-
-```rust,ignore
-pub struct Illustration<'src> {
-    pub file: NonEmptyStr<'src>,
-    pub caption: Option<Content<'src>>,
-}
-```
-
-Empty `file` is rejected upstream — the construct cannot ship a
-nameless image.
-
 ## When emitted
 
 The classify stage matches the `挿絵（…）入る` digraph and parses out the path
@@ -47,5 +35,5 @@ None on well-formed input.
 
 ## Related kinds
 
-- [Directive](annotation.md) — fallback when the directive is
+- `directive` — fallback when the directive is
   malformed.

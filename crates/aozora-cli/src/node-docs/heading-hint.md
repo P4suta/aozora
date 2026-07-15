@@ -25,18 +25,6 @@ emits a structural marker comment.
 
 Round-trips to `［＃「target」は<level>見出し］`.
 
-## AST shape
-
-```rust,ignore
-pub struct HeadingHint<'src> {
-    pub level: u8,
-    pub target: NonEmptyStr<'src>,
-}
-```
-
-`level` follows the Aozora convention: 1=大見出し, 2=中見出し,
-3=小見出し.
-
 ## When emitted
 
 The classify stage matches the directive and records the level + target. Empty
@@ -48,4 +36,4 @@ None on well-formed input.
 
 ## Related kinds
 
-- [Heading](aozora-heading.md) — direct heading-marker variant.
+- `heading` — direct heading-marker variant.

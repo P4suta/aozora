@@ -23,38 +23,19 @@ Inspect tag: `container` — paired-container wrapping
 ## Rendered HTML
 
 ```html
-<div class="aozora-container-indent" data-amount="2">
+<div class="aozora-container aozora-container-indent aozora-container-indent-2" data-amount="2">
   ...
 </div>
 ```
 
-The wrapping div carries the kind-specific class
-(`aozora-container-indent`, `aozora-container-warichu`,
-`aozora-container-keigakomi`, `aozora-container-align-end`) plus
-any structural data (indent amount, align offset) on `data-*`.
+The wrapping div always carries `aozora-container`, then a class for
+its kind, then any modifier the kind takes. Structural values repeat on
+`data-*`. Run `aozora spec slugs` for the ［＃…］ forms that produce
+each one.
 
 ## Source output
 
 Round-trips to the explicit-paired directive form.
-
-## AST shape
-
-```rust,ignore
-pub struct Container {
-    pub kind: ContainerKind,
-}
-
-pub enum ContainerKind {
-    Indent { amount: u8 },
-    Warichu,
-    Framed,
-    AlignEnd { offset: u8 },
-}
-```
-
-The `Container` payload appears wrapping the *content* — the actual
-walker driver fires `visit_container_open` on enter and
-`visit_container_close` on exit so renderers wrap the body cleanly.
 
 ## When emitted
 
@@ -68,9 +49,9 @@ project to this variant.
 
 ## Related kinds
 
-- [ContainerOpen](container-open.md) — `NodeRef` projection of the
+- `containerOpen` — `NodeRef` projection of the
   open boundary.
-- [ContainerClose](container-close.md) — `NodeRef` projection of the
+- `containerClose` — `NodeRef` projection of the
   close boundary.
-- [Indent](indent.md), [AlignEnd](align-end.md),
-  [Warichu](warichu.md) — single-line counterparts.
+- `indent`, `alignEnd`,
+  `warichu` — single-line counterparts.

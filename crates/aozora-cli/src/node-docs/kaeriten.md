@@ -4,39 +4,41 @@ Inspect tag: `kaeriten` — kanbun reading-order marker (返り点).
 
 ## Source examples
 
+The mark stands alone inside the brackets. There is no `返り点` keyword.
+
 ```text
-読［＃返り点 一・二］本
+読［＃一］本
+春眠［＃レ］暁
 ```
 
 ## Rendered HTML
 
 ```html
-<sup class="aozora-kaeriten" data-mark="一・二"></sup>
+<p>読<sup class="aozora-kaeriten">一</sup>本</p>
 ```
 
-CSS positions the sup glyph appropriately for vertical / horizontal
+The mark is the element's text. CSS positions the `sup` for the
 writing mode.
 
 ## Source output
 
-Round-trips to `［＃返り点 mark］`.
-
-## AST shape
-
-```rust,ignore
-pub struct Kaeriten<'src> {
-    pub mark: NonEmptyStr<'src>,
-}
-```
+Round-trips to `［＃mark］`.
 
 ## When emitted
 
-The classify stage matches `返り点` keyword + marker payload. Empty marker
-rejected upstream.
+The classify stage recognises a bracketed body that is exactly a
+reading-order mark.
+
+Marks come in ordered families — `一` < `二` < `三` < `四`, `上` < `中`
+< `下`, `甲` < `乙` < `丙` < `丁` — and a mark above the base rank needs
+a same-family base somewhere in the document. `レ` and the 送り仮名
+`（X）` form are standalone and never ladder.
 
 ## Diagnostics
 
-None on well-formed input.
+- `aozora::lex::bracketed_kaeriten_no_pair` — a mark whose family base
+  is missing, e.g. `［＃二］` with no `［＃一］`. Severity `error`: this
+  is the one kind whose classification can hard-fail.
 
 ## Related kinds
 
