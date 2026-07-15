@@ -1,6 +1,6 @@
 # NodeKind::CombineUpright
 
-Inspect tag: `tateChuYoko` — horizontal text inside a vertical
+Inspect tag: `combineUpright` — horizontal text inside a vertical
 writing-mode run (縦中横, "vertical-with-horizontal-inside").
 
 ## Source examples

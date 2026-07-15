@@ -1,6 +1,6 @@
 # NodeKind::Directive
 
-Inspect tag: `annotation` — generic `［＃...］` annotation that no
+Inspect tag: `directive` — generic `［＃...］` annotation that no
 specific recogniser claimed.
 
 ## Source examples

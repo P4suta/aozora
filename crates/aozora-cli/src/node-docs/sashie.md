@@ -1,6 +1,6 @@
 # NodeKind::Illustration
 
-Inspect tag: `sashie` — illustration reference (挿絵).
+Inspect tag: `illustration` — illustration reference (挿絵).
 
 ## Source examples
 
