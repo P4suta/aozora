@@ -1,9 +1,6 @@
 //! Smallest possible aozora program: parse one ruby span, then print
 //! both the rendered HTML and the byte-exact serialized source.
 //!
-//! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
-//! (Library Quickstart). Uses only the `aozora` umbrella surface.
-//!
 //! Run with:
 //!
 //! ```text
