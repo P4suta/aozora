@@ -108,11 +108,8 @@ impl<'s> Tokenizer<'s> {
         // candidates, here narrowed to the single newline byte.
         let mut newline_offsets: Vec<u32> = Vec::with_capacity(bytes.len() / 64);
         for n in memchr::memchr_iter(b'\n', bytes) {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "source.len() <= u32::MAX is asserted at function entry"
-            )]
-            newline_offsets.push(n as u32);
+            // source.len() <= u32::MAX is asserted at function entry.
+            newline_offsets.push(u32::try_from(n).unwrap_or(u32::MAX));
         }
         Self {
             source,
@@ -173,11 +170,8 @@ impl Iterator for Tokenizer<'_> {
             (None, None) => {
                 // No more events: emit any trailing text once, then EOF.
                 self.finished = true;
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "source.len() <= u32::MAX is asserted at construction"
-                )]
-                let total_len = bytes.len() as u32;
+                // source.len() <= u32::MAX is asserted at construction.
+                let total_len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
                 return self.flush_text(total_len);
             }
         };

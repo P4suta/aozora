@@ -276,13 +276,9 @@ fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic
             // `out.len()` fits u32 by the same sanitize-entry length cap
             // that bounds the PUA scan; accent decomposition only ever
             // adds a bounded handful of combining bytes per digraph.
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "sanitized text length <= u32::MAX is asserted at sanitize entry"
-            )]
             diagnostics.push(Diagnostic::accent_decomposition_applied(Span::new(
-                out_open as u32,
-                out_close as u32,
+                u32::try_from(out_open).unwrap_or(u32::MAX),
+                u32::try_from(out_close).unwrap_or(u32::MAX),
             )));
         }
 
@@ -506,11 +502,7 @@ pub fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
         };
         // `memchr_iter` only walks in-bounds; cand and cand+3 fit u32
         // because sanitize asserts source.len() <= u32::MAX upstream.
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "source.len() <= u32::MAX is asserted at sanitize entry"
-        )]
-        let abs_start = cand as u32;
+        let abs_start = u32::try_from(cand).unwrap_or(u32::MAX);
         diagnostics.push(Diagnostic::source_contains_pua(
             Span::new(abs_start, abs_start + 3),
             codepoint,

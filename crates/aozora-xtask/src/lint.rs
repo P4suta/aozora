@@ -51,7 +51,7 @@ use syn::{AttrStyle, Attribute, ItemMod, Meta, Token};
 const OUTER_BASELINE: &[(&str, usize)] = &[
     ("aozora-cli", 1),
     ("aozora-lsp", 1),
-    ("aozora-pipeline", 12),
+    ("aozora-pipeline", 2),
     ("aozora-py", 1),
 ];
 
@@ -62,7 +62,6 @@ const OUTER_BASELINE: &[(&str, usize)] = &[
 /// [`OUTER_BASELINE`].
 const INNER_BASELINE: &[(&str, usize)] = &[
     ("aozora", 1),
-    ("aozora-bench", 1),
     ("aozora-cli", 2),
     ("aozora-corpus", 7),
     ("aozora-extism", 1),
@@ -71,7 +70,6 @@ const INNER_BASELINE: &[(&str, usize)] = &[
     ("aozora-pipeline", 1),
     ("aozora-trace", 4),
     ("aozora-xtask", 15),
-    ("tree-sitter-aozora", 1),
 ];
 
 /// Source root of the `.expect(` tripwire migrated out of `just
