@@ -6,17 +6,17 @@
 //! [`crate::position::byte_offset_to_position`] is `O(byte_offset)`
 //! — every call walks the source from byte 0 counting `\n`s and
 //! UTF-16 code units. For a single-shot hover that's fine, but
-//! `inlayHint` emits one position per gaiji span, and there can be
-//! hundreds of spans in a 40 KB document. Naïvely, that's
-//! `N * O(40k) = O(N·doc_size)` per inlay request.
+//! `aozora/gaijiSpans` emits two positions per gaiji span, and there
+//! can be hundreds of spans in a 40 KB document. Naïvely, that's
+//! `N * O(40k) = O(N·doc_size)` per request.
 //!
 //! [`LineIndex`] precomputes a `Vec<u32>` of line-start byte offsets
 //! once per text version. After the index is built, a position
 //! conversion is a binary search (`O(log lines)`) plus a UTF-16
 //! walk over the *current line slice only* (typically tens of
-//! bytes). The whole inlay handler drops from `O(N·doc_size)` to
+//! bytes). The whole handler drops from `O(N·doc_size)` to
 //! `O(N·log lines + N·avg_line_len)` — effectively linear in the
-//! number of hints with a tiny constant.
+//! number of spans with a tiny constant.
 //!
 //! ## Lifecycle
 //!

@@ -1,0 +1,67 @@
+---
+source: crates/aozora-lsp/tests/snapshots.rs
+expression: server_capabilities()
+---
+{
+  "textDocumentSync": 2,
+  "hoverProvider": true,
+  "completionProvider": {
+    "resolveProvider": false,
+    "triggerCharacters": [
+      "＃",
+      "#",
+      "「",
+      "[",
+      "]",
+      "<",
+      ">",
+      "|",
+      "*",
+      "｜",
+      "《",
+      "※"
+    ]
+  },
+  "documentSymbolProvider": true,
+  "codeActionProvider": {
+    "codeActionKinds": [
+      "quickfix",
+      "refactor.rewrite"
+    ]
+  },
+  "documentFormattingProvider": true,
+  "documentOnTypeFormattingProvider": {
+    "firstTriggerCharacter": "[",
+    "moreTriggerCharacter": [
+      "]",
+      "<",
+      ">",
+      "|",
+      "*",
+      "{",
+      "}"
+    ]
+  },
+  "renameProvider": {
+    "prepareProvider": true
+  },
+  "foldingRangeProvider": true,
+  "executeCommandProvider": {
+    "commands": [
+      "aozora.canonicalizeSlug"
+    ]
+  },
+  "semanticTokensProvider": {
+    "legend": {
+      "tokenTypes": [
+        "macro",
+        "enum",
+        "string"
+      ],
+      "tokenModifiers": []
+    },
+    "range": false,
+    "full": true
+  },
+  "linkedEditingRangeProvider": true
+}

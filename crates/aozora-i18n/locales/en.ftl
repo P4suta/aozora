@@ -453,12 +453,13 @@ tui-no-tty = aozora tui needs an interactive terminal (try aozora repl or --watc
 
 ## LSP editor surface
 ##
-## Human-facing chrome emitted by aozora-lsp: the gaiji hover / inlay tooltip,
-## code-action titles, and completion detail / documentation. The protocol
-## data axis (custom-method payloads, diagnostic ranges / codes, semantic
-## tokens, formatting edits) is never routed through here. The notation glyphs
-## and Tab-stop templates woven into these strings are literal aozora syntax,
-## the same in every locale; only the surrounding prose is translated.
+## Human-facing chrome emitted by aozora-lsp: the gaiji hover tooltip, the
+## oversize-document notices, code-action titles, and completion detail /
+## documentation. The protocol data axis (custom-method payloads, diagnostic
+## ranges / codes, semantic tokens, formatting edits) is never routed through
+## here. The notation glyphs and Tab-stop templates woven into these strings
+## are literal aozora syntax, the same in every locale; only the surrounding
+## prose is translated.
 
 # Gaiji (外字) reference — hover header and the labels in its Markdown body.
 lsp-hover-gaiji-header = **Gaiji (外字)**
@@ -466,8 +467,14 @@ lsp-hover-resolved-label = Resolved
 lsp-hover-composed-seq-label = composed sequence
 lsp-hover-unresolved = (no dictionary match — showing the description instead)
 lsp-hover-description-label = Description
-# Gaiji inlay-hint tooltip header (the resolved label above is reused).
-lsp-inlay-gaiji-header = **Gaiji**
+
+# Notices for a document too large to analyse. $size is the document's size
+# and $limit the cap it crossed, both whole MiB counts. The first is the lone
+# diagnostic published in place of the analysis; the second is the paragraph
+# the preview pane shows in place of the rendering (it lands inside a <p>, so
+# it must stay plain prose).
+lsp-oversize-diagnostic = This document is {$size} MiB, above the {$limit} MiB limit for full analysis. Editing and syntax highlighting keep working; diagnostics and the HTML preview are paused for this file.
+lsp-oversize-preview = Preview paused — this document is {$size} MiB, above the {$limit} MiB limit. Editing still works.
 
 # Code-action (quick-fix / refactor) titles shown in the editor's lightbulb
 # menu. `SEL` marks where the current selection lands inside the woven glyphs.

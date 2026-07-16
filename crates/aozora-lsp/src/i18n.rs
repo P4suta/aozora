@@ -1,16 +1,20 @@
-//! The server's UI language, resolved once at startup and shared by every
-//! handler.
+//! The server's UI language, resolved from the `initialize` handshake and
+//! shared by every handler.
 //!
 //! Unlike the CLI — which resolves `--lang > AOZORA_LANG > config.lang > LANG`
-//! per invocation — the language server is a long-lived daemon with no `--lang`
-//! flag and no project config to consult. Its only inputs are the process
-//! environment it was launched with: `AOZORA_LANG` (the explicit override) and
-//! `LANG` (the POSIX locale), in that order, falling back to English.
+//! per invocation — the language server has no `--lang` flag and no project
+//! config to consult. What it has instead is the client: every LSP client
+//! reports its own UI language as `InitializeParams::locale`, and an editor's
+//! language setting is a far better signal than the shell environment the
+//! daemon happened to be launched from (`LANG` is routinely unset on macOS and
+//! Windows). So the chain here is `AOZORA_LANG > client locale > LANG > en`,
+//! with `AOZORA_LANG` still on top as the explicit escape hatch for a user who
+//! wants the server in a language their editor is not in.
 //!
-//! Resolution happens exactly once, on first use, via a process-wide
-//! [`LazyLock`]. The editor launches one `aozora-lsp` per workspace and its
-//! environment does not change under it, so a single resolution at startup is
-//! both correct and cheaper than re-reading the environment on every hover.
+//! [`init_ui_lang`] fixes the value, once, from [`crate::backend`]'s
+//! `initialize` handler; [`ui_lang`] is what every later read goes through. A
+//! client that never handshakes — or one that omits `locale` — still gets a
+//! language: the first [`ui_lang`] read resolves from the environment alone.
 //!
 //! The pure provider functions (`hover_at`, `diagnostics_from_aozora`, the
 //! code-action / completion builders, …) take an explicit
@@ -21,27 +25,52 @@
 //! so there is one place to translate a string, not two.
 
 use std::env;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use aozora_i18n::LanguageIdentifier;
 
-/// The server's UI language, resolved once from the environment.
-static UI_LANG: LazyLock<LanguageIdentifier> = LazyLock::new(|| {
+/// The server's UI language, decided by whichever of [`init_ui_lang`] /
+/// [`ui_lang`] runs first.
+static UI_LANG: OnceLock<LanguageIdentifier> = OnceLock::new();
+
+/// Resolve `AOZORA_LANG > client_locale > LANG > en`.
+///
+/// The client's handshake locale takes the shared chain's `config_lang` slot:
+/// below the explicit `AOZORA_LANG` override, above the OS `LANG`. Clients
+/// send both BCP-47 (`zh-Hans`) and POSIX (`zh_CN.UTF-8`) shapes and
+/// occasionally a tag we have no catalog for; `aozora_i18n::resolve` parses,
+/// negotiates, and falls back to English for all of it, so no mapping table
+/// lives here.
+fn resolve(client_locale: Option<&str>) -> LanguageIdentifier {
     // Bind the owned `String`s so their `as_deref()` borrows outlive the call
     // (a temporary would be dropped before `resolve` reads it). The LSP has no
-    // `--lang` flag and no config file, so the two higher precedence sources
-    // the CLI consults are simply absent here.
+    // `--lang` flag, so the chain's top slot is simply absent here.
     let aozora_lang = env::var("AOZORA_LANG").ok();
     let sys_lang = env::var("LANG").ok();
-    aozora_i18n::resolve(None, aozora_lang.as_deref(), None, sys_lang.as_deref())
-});
+    aozora_i18n::resolve(
+        None,
+        aozora_lang.as_deref(),
+        client_locale,
+        sys_lang.as_deref(),
+    )
+}
 
-/// The server's resolved UI language — `AOZORA_LANG > LANG > en`, decided once
-/// at startup.
+/// Fix the server's UI language from the client's `initialize` locale.
+///
+/// Called from the `initialize` handler, before any request handler can run.
+/// Later calls are no-ops: a language server serves one client for its
+/// lifetime, so the first handshake decides.
+pub(crate) fn init_ui_lang(client_locale: Option<&str>) {
+    _ = UI_LANG.get_or_init(|| resolve(client_locale));
+}
+
+/// The server's resolved UI language.
 ///
 /// Every backend handler passes this to the locale-parameterised provider it
-/// calls, so the whole server speaks one language for its lifetime.
+/// calls, so the whole server speaks one language for its lifetime. A read
+/// that beats `init_ui_lang` — a client that skips the handshake — resolves
+/// from the environment alone rather than failing.
 #[must_use]
-pub(crate) fn ui_lang() -> &'static LanguageIdentifier {
-    &UI_LANG
+pub fn ui_lang() -> &'static LanguageIdentifier {
+    UI_LANG.get_or_init(|| resolve(None))
 }

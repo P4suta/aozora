@@ -1,18 +1,21 @@
 //! Snapshot tests that lock the *structured* output of the read-only LSP
-//! providers on a curated corpus: the diagnostic catalogue, the semantic-
-//! token delta stream, and the document-symbol outline. A behaviour change
-//! in any of them becomes a reviewable `cargo insta` diff rather than a
-//! silent regression.
+//! providers on a curated corpus — the diagnostic catalogue, the semantic-
+//! token delta stream, the document-symbol outline — plus the capability set
+//! the server advertises. A change in any of them becomes a reviewable
+//! `cargo insta` diff rather than a silent regression.
 //!
-//! We snapshot **projections** (codes/severities/ranges, token tuples,
-//! outline names) rather than the full LSP structs: the projection is the
-//! load-bearing contract, and it stays readable and stable while the
-//! verbose Japanese diagnostic prose (pinned separately by unit tests) can
-//! evolve without churning every snapshot.
+//! For the providers we snapshot **projections** (codes/severities/ranges,
+//! token tuples, outline names) rather than the full LSP structs: the
+//! projection is the load-bearing contract, and it stays readable and stable
+//! while the verbose Japanese diagnostic prose (pinned separately by unit
+//! tests) can evolve without churning every snapshot. The capability set is
+//! the one value serialized whole — `lsp-types` omits `None` options, so its
+//! JSON already *is* the projection: every key present is a capability
+//! offered.
 
 use aozora_lsp::internals::{
     LanguageIdentifier, LineIndex, OpenDocument, diagnostics_for_source, document_symbols,
-    semantic_tokens_full,
+    semantic_tokens_full, server_capabilities, server_info,
 };
 use tower_lsp::lsp_types::{DiagnosticSeverity, DocumentSymbol, NumberOrString};
 
@@ -119,4 +122,20 @@ fn snapshot_semantic_token_stream() {
 #[test]
 fn snapshot_document_symbol_outline() {
     insta::assert_debug_snapshot!(symbol_outline(HEADINGS));
+}
+
+#[test]
+fn snapshot_server_capabilities() {
+    insta::assert_json_snapshot!(server_capabilities());
+}
+
+/// `server_info` is deliberately *not* snapshotted — it carries the crate
+/// version, so a snapshot would churn on every release. Pin the two things
+/// that are actually contracts instead: the name clients display, and that the
+/// version is the crate's own rather than a literal that can drift behind it.
+#[test]
+fn server_info_names_the_crate_and_its_version() {
+    let info = server_info();
+    assert_eq!(info.name, "aozora-lsp");
+    assert_eq!(info.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
 }
