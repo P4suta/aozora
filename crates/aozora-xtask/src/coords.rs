@@ -136,7 +136,7 @@ fn skip_raw_string(b: &[u8], start: usize, hashes: usize) -> usize {
 
 /// Advance past a char literal (`'x'`, `'\n'`, `'\''`) at `b[start]`, or past
 /// just the tick of a lifetime (`'a`, `'static`). A char literal is the only
-/// form that can hide a `"`, so misreading a lifetime as one would only cost
+/// form that can hide a `"`, so reading a lifetime as one would only cost
 /// a skipped tick — never a false string.
 fn skip_char_or_lifetime(b: &[u8], start: usize) -> usize {
     if b.get(start + 1) == Some(&b'\\') {

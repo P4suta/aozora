@@ -106,7 +106,7 @@ module.exports = grammar({
     // CJK kanji + iteration marks + small Katakana that count as
     // kanji in the aozora implicit-ruby scanner. Ranges spelled
     // with explicit \uXXXX escapes so static analyzers can verify
-    // the bounds without misreading a literal CJK char as a stray
+    // the bounds without reading a literal CJK char as a stray
     // unicode point — the CodeQL `js/overly-large-range` check
     // false-positives on the literal-char form here:
     //   一-鿿     U+4E00..U+9FFF  CJK Unified Ideographs

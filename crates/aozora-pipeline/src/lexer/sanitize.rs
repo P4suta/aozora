@@ -811,7 +811,7 @@ mod tests {
 
     // -------------------------------------------------------------
     // Decorative rule isolation — long `-` / `=` / `_` rows must not
-    // be misread as setext underlines for a preceding paragraph.
+    // be taken for setext underlines for a preceding paragraph.
     //
     // Background: Aozora Bunko prose frequently inserts
     // `---------------------------------------------------------`

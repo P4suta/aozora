@@ -216,7 +216,7 @@ impl<'src> Converter<'src> {
             // 改行 — an in-paragraph forced break (inline leaf).
             N::ForcedBreak => Inline::LineBreak,
             // Block-leaf variants slip through here only if the
-            // pipeline misclassified them; render as fallback span.
+            // pipeline classified them as inline; render as fallback span.
             // The debug form is the node's `Debug` (a non-canonical
             // placeholder, not a stable projection).
             other => Inline::Span(plain_attr(), vec![Inline::Str(format!("{other:?}"))]),
@@ -244,9 +244,9 @@ impl<'src> Converter<'src> {
             N::SectionBreak(k) => section_break_block(k),
             N::Heading(h) => aozora_heading_block(h, store),
             N::Illustration(s) => sashie_block(s, store),
-            // Inline-typed variants here would mean a pipeline
-            // misclassification; emit them inside a singleton Para
-            // so the document stays renderable.
+            // Inline-typed variants here would mean the pipeline tagged
+            // an inline node as a block leaf; emit them inside a singleton
+            // Para so the document stays renderable.
             other => Block::Para(vec![Inline::Span(
                 plain_attr(),
                 vec![Inline::Str(format!("{other:?}"))],

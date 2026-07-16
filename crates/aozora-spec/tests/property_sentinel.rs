@@ -2,8 +2,9 @@
 //!
 //! The PUA sentinel scheme is the single point through which every
 //! phase of the lex pipeline talks about Aozora-vs-plain bytes — a
-//! `from_char` / `as_char` mismatch silently misroutes every entry in
-//! every registry. The properties here gate that surface against:
+//! `from_char` / `as_char` mismatch silently sends every entry in
+//! every registry to the wrong sentinel. The properties here gate that
+//! surface against:
 //!
 //! 1. `from_char ∘ as_char = Some` for every `Sentinel::ALL` variant
 //!    (the pipeline relies on every emitted sentinel being recognised

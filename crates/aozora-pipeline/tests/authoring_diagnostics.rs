@@ -203,7 +203,8 @@ fn known_and_non_container_directives_are_silent() {
         0
     );
     // An unknown annotation that is NOT a `ここから` directive is just a
-    // plain `Directive{Unknown}` and must not be mislabelled.
+    // plain `Directive{Unknown}` and must not be flagged as an
+    // unrecognised container directive.
     assert_eq!(
         count_code(
             "［＃ふつうの注記］",

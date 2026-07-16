@@ -37,7 +37,8 @@ pub struct RollupRow {
     pub pct: f64,
     /// How many distinct functions matched this category. Useful
     /// sanity check: a category with `distinct_funcs = 1` is
-    /// suspicious (probably misnamed).
+    /// suspicious: its matcher probably catches less than the label
+    /// implies.
     pub distinct_funcs: usize,
 }
 

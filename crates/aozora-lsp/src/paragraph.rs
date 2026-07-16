@@ -465,7 +465,7 @@ mod tests {
         let s: String = "あ".repeat(30_000);
         let state = OpenDocument::new(s.clone());
         // Round-trip text equality is the strongest possible check
-        // that no bytes were dropped or misaligned.
+        // that no bytes were dropped or shifted.
         assert_eq!(&**state.snapshot().doc_text(), &s);
     }
 
