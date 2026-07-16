@@ -231,7 +231,7 @@ mod tests {
     /// carries. The mid-byte guard must reject it so the char flows through
     /// verbatim as plain text.
     ///
-    /// Swapping the guard's `||` to `&&` (line 114) makes
+    /// Swapping the guard's `||` to `&&` makes
     /// `cand + 2 >= len (false) && mid != 0x80` short-circuit to `false`, so the
     /// early return is skipped, the collision decodes as an inline sentinel, the
     /// run is split at the char, and the char is dropped from the output. Pins

@@ -218,8 +218,9 @@ pub unsafe extern "C" fn aozora_document_to_html(
 /// Render the document's diagnostics as a JSON byte buffer.
 ///
 /// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty document →
-/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
+/// [`AozoraStatus::Ok`]. Empty document → the empty envelope
+/// `{"schemaVersion":…,"data":[]}` (version is
+/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
@@ -291,8 +292,9 @@ pub unsafe extern "C" fn aozora_document_diagnostics_text(
 /// (semantic tokens, document symbols, Lezer-Tree builders).
 ///
 /// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
+/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
+/// `{"schemaVersion":…,"data":[]}` (version is
+/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
@@ -331,8 +333,9 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
 /// `textDocument/documentHighlight`.
 ///
 /// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
+/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
+/// `{"schemaVersion":…,"data":[]}` (version is
+/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit

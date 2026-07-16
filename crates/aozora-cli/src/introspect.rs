@@ -427,7 +427,7 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
 /// `annotation`), so `aozora spec kinds` advertised `combineUpright` /
 /// `illustration` / `directive` and `aozora explain` rejected all three
 /// — while the pages sat right here, reachable only under names the CLI
-/// never printed. `explain_reaches_every_documented_kind` pins the
+/// never printed. `every_advertised_tag_explains` pins the
 /// round-trip now.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("node-docs/ruby.md")),
@@ -740,12 +740,6 @@ mod tests {
             "NodeRef::BlockClose — paired-container close sentinel."
         );
     }
-
-    // NOTE: describe_node intentionally routes structural NodeKind variants
-    // (e.g. BodyEnd) to the wildcard `_` fallback — they are not user-facing
-    // `inspect` labels — so a "no variant hits the fallback" guard would be a
-    // false invariant here. The exact-label test above already kills every
-    // arm-deletion and whole-body survivor; that is the real coverage.
 
     #[test]
     fn describe_pair_labels_are_exact() {

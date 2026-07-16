@@ -1350,7 +1350,7 @@ mod tests {
     }
 
     /// A coupled heading hint re-forms as a referent-bearing hint **or** a
-    /// promoted heading — the `||` disjunct at line 368 (an `&&` here can never
+    /// promoted heading — the `||` disjunct (an `&&` here can never
     /// hold, so both true cases would collapse to `false`).
     #[test]
     fn reparsed_in_family_heading_hint_accepts_hint_or_promoted_heading() {
@@ -1381,7 +1381,7 @@ mod tests {
     }
 
     /// An interstitial gap region spans `(previous node end .. next node start)`.
-    /// Pins the `nodes[next_idx - 1]` index (line 451) against `+ 1` / `/ 1`,
+    /// Pins the `nodes[next_idx - 1]` index against `+ 1` / `/ 1`,
     /// which would read a different node's end. Three nodes so `next_idx + 1`
     /// stays in bounds (an in-bounds wrong value, not a panic).
     #[test]
@@ -1402,9 +1402,9 @@ mod tests {
     }
 
     /// A non-container coupled region (a forward reference) resolves its upstream
-    /// partner — pins the `Coupled(kind)` arm at line 477 (its deletion drops to
+    /// partner — pins the `Coupled(kind)` arm (its deletion drops to
     /// `_ => None`). The upstream `青空` begins after `まず` (offset 6), so this
-    /// also pins `at = from + rel` (line 742) against `from * rel` (which would
+    /// also pins `at = from + rel` against `from * rel` (which would
     /// mislocate the occurrence to offset 0 and then read it as ambiguous).
     #[test]
     fn coupling_of_forward_reference_returns_upstream_partner() {
@@ -1421,7 +1421,7 @@ mod tests {
     }
 
     /// A container **close** marker couples back to its **open** — pins the
-    /// `span == close_span` disjunct at line 561 (an `!=` there makes the close
+    /// `span == close_span` disjunct (an `!=` there makes the close
     /// query never match its own pair, returning `None`).
     #[test]
     fn coupling_of_container_close_returns_open_partner() {
@@ -1439,7 +1439,7 @@ mod tests {
 
     /// `block_open_format_at` recovers the open format only when the offset is
     /// the node's exact start — pins the `sn.source_span.start == start` guard
-    /// (line 765) against `true`, which would accept an interior offset.
+    /// against `true`, which would accept an interior offset.
     #[test]
     fn block_open_format_at_requires_offset_at_node_start() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
@@ -1453,7 +1453,7 @@ mod tests {
     }
 
     /// `lone_open_format` accepts a marker only when its first source node sits
-    /// at offset 0 — pins the `sn.source_span.start == 0` guard (line 778)
+    /// at offset 0 — pins the `sn.source_span.start == 0` guard
     /// against `true`, which would accept a marker buried after leading text.
     #[test]
     fn lone_open_format_requires_first_node_at_offset_zero() {
@@ -1462,8 +1462,8 @@ mod tests {
     }
 
     /// `marker_in_family` requires the first node to be at offset 0 **and** in
-    /// the family — pins the `-> true` body (line 790) and the `&&` (line 794,
-    /// which an `||` weakens). Leading text makes offset-0 false while family
+    /// the family — pins the `-> true` body and the `&&` (which an `||`
+    /// weakens). Leading text makes offset-0 false while family
     /// stays true, isolating the conjunction.
     #[test]
     fn marker_in_family_needs_container_at_offset_zero() {
@@ -1493,7 +1493,7 @@ mod tests {
             "海",
         ));
         // A `SelfContained` forward (no upstream referent) is NOT a re-formation
-        // — kills the `f.origin != SelfContained` guard (line 829) -> true.
+        // — kills the `f.origin != SelfContained` guard -> true.
         assert!(!window_reforms_coupled(
             "［＃「海」に傍点］",
             CoupledKind::ForwardReference,
@@ -1506,27 +1506,27 @@ mod tests {
             "海",
         ));
         // A `self_contained` hint is NOT a re-formation — kills the
-        // `!h.self_contained` guard (line 835) -> true.
+        // `!h.self_contained` guard -> true.
         assert!(!window_reforms_coupled(
             "［＃「海」は中見出し］",
             CoupledKind::HeadingHint,
             "海",
         ));
         // A promoted heading is an equally valid re-formation — kills deletion of
-        // the `(HeadingHint, Heading)` arm (line 839).
+        // the `(HeadingHint, Heading)` arm.
         assert!(window_reforms_coupled(
             "海\n［＃「海」は中見出し］",
             CoupledKind::HeadingHint,
             "海",
         ));
         // A margin note re-forms on its base — kills deletion of the
-        // `(MarginNote, MarginNote)` arm (line 840).
+        // `(MarginNote, MarginNote)` arm.
         assert!(window_reforms_coupled(
             "青空［＃「青空」の左に「あお」の注記］",
             CoupledKind::MarginNote,
             "青空",
         ));
-        // A non-matching window never re-forms — kills the `-> true` body (818).
+        // A non-matching window never re-forms — kills the `-> true` body.
         assert!(!window_reforms_coupled(
             "ただの本文",
             CoupledKind::ForwardReference,

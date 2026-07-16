@@ -21,7 +21,7 @@
  *     the `ruby_base_implicit` token's lookahead.
  *   - The reading inside `《...》` uses the same trick: `token.immediate`
  *     after `《` consumes the reading body atomically.
- *   - Implicit-ruby base uses `prec.dynamic` so it only wins when
+ *   - Implicit-ruby base uses static `prec(1)` so it only wins when
  *     followed by `《`; otherwise the kanji-run is just text.
  *
  * Out of scope (Stage 2+):

@@ -7,8 +7,8 @@
 //!   lexer injects into normalized text (see [`sentinels`]).
 //! - **[`Span`]** — `(u32, u32)` byte-range over a UTF-8 source.
 //! - **[`TriggerKind`]** — the set of Aozora notation marker characters
-//!   (`｜《》［］＃※〔〕「」`) plus the const-PHF byte-sequence lookup
-//!   table that maps a UTF-8 trigger byte sequence to its kind.
+//!   (`｜《》［］＃※〔〕「」`) plus [`classify_trigger_bytes`], the
+//!   `match` that maps a UTF-8 trigger byte sequence to its kind.
 //! - **[`PairKind`]** — categories of balanced open/close delimiters.
 //! - **[`Diagnostic`]** — every non-fatal observation any pipeline stage can emit.
 //!

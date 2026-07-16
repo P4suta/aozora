@@ -10,10 +10,10 @@
 //! ## Lossless invariant
 //!
 //! Concatenating every leaf token's text yields exactly the
-//! original source bytes:
+//! sanitized source (see `build_cst`):
 //!
 //! ```rust,ignore
-//! let cst = aozora_cst::build_cst(&tree);
+//! let cst = aozora_cst::build_cst(sanitized_source, tree.source_nodes());
 //! let reconstructed: String = cst
 //!     .preorder_with_tokens()
 //!     .filter_map(|step| match step {
@@ -33,7 +33,7 @@
 //!
 //! aozora's classifier emits per-construct spans
 //! (`aozora::SourceNode`). The CST projection treats each span
-//! as a `Construct` node containing one `Text` token whose bytes
+//! as a `Construct` node containing one `ConstructText` token whose bytes
 //! equal the source slice; bytes between spans become standalone
 //! `Plain` text tokens. Container open / close events nest the
 //! intervening blocks under a `Container` node so editor outlines

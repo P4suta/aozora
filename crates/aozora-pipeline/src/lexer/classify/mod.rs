@@ -2267,12 +2267,6 @@ fn push_text_segment(
     }
 }
 
-/// Byte offset where the trailing kanji run in `text` begins.
-///
-/// Walks chars right-to-left, keeping track of the earliest byte
-/// offset reached while every char is a ruby-base char. Returns
-/// `text.len()` if the final char is not a ruby-base char (→ no
-/// implicit base available).
 /// Byte offset where the trailing implicit-ruby base run of `text` starts
 /// — the maximal run of a single `RubyBaseClass` ending at `text`'s end.
 /// Returns `text.len()` when the last char is not a base char (no implicit

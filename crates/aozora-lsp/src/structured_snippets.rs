@@ -511,7 +511,7 @@ mod tests {
             mc.value,
             "Convert `#` to `［＃<cursor>］`. Press Enter to confirm."
         );
-        // `kind` field (line 114).
+        // `kind` field.
         assert_eq!(wrap.kind, Some(CompletionItemKind::SNIPPET));
     }
 
@@ -551,16 +551,16 @@ mod tests {
             .iter()
             .find(|i| i.label == "［＃改ページ］")
             .expect("改ページ catalogue item present");
-        // `detail` field (line 137) is the entry's doc string.
+        // `detail` field is the entry's doc string.
         assert_eq!(kaipage.detail.as_deref(), Some(entry.doc));
-        // `documentation` field (line 138) is present.
+        // `documentation` field is present.
         assert!(
             kaipage.documentation.is_some(),
             "catalogue item must carry documentation: {kaipage:?}",
         );
-        // `kind` field (line 151) is derived from the entry's family.
+        // `kind` field is derived from the entry's family.
         assert_eq!(kaipage.kind, Some(family_to_kind(entry.family)));
-        // `insert_text_format` field (line 156): no param → PLAIN_TEXT.
+        // `insert_text_format` field: no param → PLAIN_TEXT.
         let expected_format = if entry.accepts_param {
             InsertTextFormat::SNIPPET
         } else {

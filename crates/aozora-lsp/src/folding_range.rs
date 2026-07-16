@@ -203,7 +203,7 @@ mod tests {
     }
 
     /// Opener and closer on the SAME line must NOT emit a degenerate
-    /// zero-height fold. Pins `line_idx > start_line` (line 57): with
+    /// zero-height fold. Pins `line_idx > start_line`: with
     /// `>=` the equal-line case (0 == 0) would produce a `start==end`
     /// fold, so the empty result would break.
     #[test]
@@ -214,7 +214,7 @@ mod tests {
     }
 
     /// Two adjacent heading lines make the window `end == start` (both
-    /// resolve to line 0). Pins `end > start` (line 94): with `>=` a
+    /// resolve to line 0). Pins `end > start`: with `>=` a
     /// degenerate `start_line == end_line == 0` window fold would be
     /// pushed on top of the tail fold, making the count 2.
     #[test]
@@ -228,7 +228,7 @@ mod tests {
     }
 
     /// A heading on the very last line makes `last_line == last_anchor`.
-    /// Pins `last_line > last_anchor` (line 106): with `>=` a degenerate
+    /// Pins `last_line > last_anchor`: with `>=` a degenerate
     /// `start_line == end_line == 1` tail fold would be emitted.
     #[test]
     fn heading_on_last_line_emits_no_tail_fold() {

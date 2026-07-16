@@ -154,10 +154,7 @@ export function buildOffsetTables(source: string): {
   let utf16 = 0;
   for (let b = 0; b <= byte; b++) {
     while (utf16 < len && u2b[utf16 + 1] <= b && (utf16 + 1 < len || u2b[utf16 + 1] === b)) {
-      // Advance while the next code unit's start byte is at or before b
-      // (the second condition handles the trailing sentinel exactly).
-      if (u2b[utf16 + 1] <= b) utf16++;
-      else break;
+      utf16++;
     }
     b2u[b] = utf16;
   }

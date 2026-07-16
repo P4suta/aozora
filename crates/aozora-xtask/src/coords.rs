@@ -1,4 +1,4 @@
-//! Coordinate-literal gate: a comment may not cite source by `file:line`.
+//! Coordinate-literal gate: a comment may not cite source by line number.
 //!
 //! A line number in a comment is a fact with a shelf life — the next edit
 //! above it makes it wrong, and nothing re-reads it. #553 shipped a table
@@ -7,11 +7,13 @@
 //! where it actually sits. Reference a symbol instead: the compiler moves it,
 //! and a grep still finds it.
 //!
-//! Sound over complete. It scans the `//` comment text of every git-tracked
-//! `.rs` line, stepping over string, raw-string and char literals so a
-//! coordinate inside `"…"` — a fixture, a format string — is never read as
-//! a comment. A `file:line` hidden in a block comment is out of scope; the
-//! forms that rot in practice are `//` and `//!`.
+//! Sound over complete. Two forms are rejected: a `file:line` (`file.rs:N`)
+//! and a bare parenthesised line cite (`(line N)`, `(lines N, M)`). It scans
+//! the `//` comment text only — string, raw-string and char literals are
+//! stepped over, so a coordinate inside `"…"` is never read as a comment —
+//! and it skips a `(line N, col M)` LSP position, which is document data, not
+//! a pointer into the tree. A coordinate in a block comment is out of scope;
+//! the forms that rot in practice are `//` and `//!`.
 
 use std::fs;
 
@@ -19,17 +21,24 @@ use regex::Regex;
 
 use crate::scan::{tracked_rs_files, workspace_root};
 
-/// A source coordinate: a filename with a code/config extension, or a bare
-/// `Justfile`, joined by `:` to a line number. Shapes without the `.<ext>:` /
-/// `Justfile:` prefix — times (`12:30`), versions (`1.23`), codepoints
-/// (`U+3099`) — cannot match.
-const PATTERN: &str =
+/// A `file:line` coordinate: a filename with a code/config extension, or a
+/// bare `Justfile`, joined by `:` to a line number. Shapes without the
+/// `.<ext>:` / `Justfile:` prefix — times (`12:30`), versions (`1.23`),
+/// codepoints (`U+3099`) — cannot match.
+const FILE_LINE: &str =
     r"(?:[A-Za-z0-9_-]+\.(?:rs|md|toml|js|jsx|ts|tsx|json|yml|yaml|sh|go|py|c|h)|Justfile):[0-9]+";
 
-/// `xtask lint coordinates` — no comment may cite a `file:line`.
+/// A bare parenthesised source-line cite: `(line N)`, `(lines N, M)`,
+/// `(line N, == -> !=)`. A digit must follow `line`/`lines`, so prose like
+/// `(line up the columns)` cannot match; the `, col` LSP-position form is
+/// filtered out in [`coordinate`].
+const BARE_LINE: &str = r"\(lines?\s+[0-9][^)]*\)";
+
+/// `xtask lint coordinates` — no comment may cite a source line.
 pub(crate) fn check() -> Result<(), String> {
     let root = workspace_root()?;
-    let re = Regex::new(PATTERN).map_err(|e| format!("compile pattern: {e}"))?;
+    let file_line = Regex::new(FILE_LINE).map_err(|e| format!("compile pattern: {e}"))?;
+    let bare_line = Regex::new(BARE_LINE).map_err(|e| format!("compile pattern: {e}"))?;
 
     let mut hits = Vec::new();
     let mut scanned = 0usize;
@@ -41,8 +50,8 @@ pub(crate) fn check() -> Result<(), String> {
             let Some(comment) = line_comment(line) else {
                 continue;
             };
-            if let Some(m) = re.find(comment) {
-                hits.push(format!("{}:{}: {}", rel.display(), i + 1, m.as_str()));
+            if let Some(coord) = coordinate(comment, &file_line, &bare_line) {
+                hits.push(format!("{}:{}: {}", rel.display(), i + 1, coord));
             }
         }
     }
@@ -52,7 +61,7 @@ pub(crate) fn check() -> Result<(), String> {
             eprintln!("    {h}");
         }
         return Err(format!(
-            "{} comment coordinate(s) — a `file:line` in a comment rots on the \
+            "{} comment coordinate(s) — a source line in a comment rots on the \
              next edit above it; name a symbol instead",
             hits.len()
         ));
@@ -61,6 +70,19 @@ pub(crate) fn check() -> Result<(), String> {
         "xtask lint coordinates: clean — {scanned} files scanned, no comment cites a source coordinate"
     );
     Ok(())
+}
+
+/// The first source coordinate a comment cites, or `None`. A `file:line`
+/// wins; otherwise a bare `(line N)` cite — except a `(line N, col M)` LSP
+/// position, which is document data rather than a pointer into the tree.
+fn coordinate(comment: &str, file_line: &Regex, bare_line: &Regex) -> Option<String> {
+    if let Some(m) = file_line.find(comment) {
+        return Some(m.as_str().to_owned());
+    }
+    bare_line
+        .find_iter(comment)
+        .find(|m| !m.as_str().contains(", col"))
+        .map(|m| m.as_str().to_owned())
 }
 
 /// The `//` line-comment text of a source line, or `None` when it has none.
@@ -157,8 +179,11 @@ mod tests {
     use super::*;
 
     fn hits(line: &str) -> bool {
-        let re = Regex::new(PATTERN).expect("pattern compiles");
-        line_comment(line).is_some_and(|c| re.is_match(c))
+        let file_line = Regex::new(FILE_LINE).expect("pattern compiles");
+        let bare_line = Regex::new(BARE_LINE).expect("pattern compiles");
+        line_comment(line)
+            .and_then(|c| coordinate(c, &file_line, &bare_line))
+            .is_some()
     }
 
     #[test]
@@ -209,8 +234,28 @@ mod tests {
         assert!(hits(r##"    let r = r#"x"#; // b.rs:2"##));
     }
 
+    #[test]
+    fn flags_a_bare_parenthesised_line_cite() {
+        assert!(hits("    // kills the `||`->`&&` guard (line 114)"));
+        assert!(hits(
+            "    // ---- Piece::narrow partitions (lines 509, 512) ----"
+        ));
+    }
+
+    #[test]
+    fn ignores_an_lsp_line_col_position() {
+        assert!(!hits(
+            "    /// `offset = 10` gives start = (line 10, col 0) and"
+        ));
+    }
+
+    #[test]
+    fn ignores_prose_line_without_a_number() {
+        assert!(!hits("    // line up the columns before emitting the row"));
+    }
+
     /// Self-check mirroring `docs.rs` / `lint.rs`: the live tree cites no
-    /// `file:line` in any comment.
+    /// source line in any comment.
     #[test]
     fn the_repo_cites_no_source_coordinates() {
         check().expect("no comment in the tree cites a source coordinate");
