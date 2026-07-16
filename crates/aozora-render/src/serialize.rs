@@ -57,8 +57,9 @@ pub enum DirectiveNormalization {
     /// Tier1 + Tier2: additionally reduce the lossy / judgment degraded forms
     /// (per [`degraded_directive`]) Tier1 refuses. Constructed **only** by the
     /// opt-in renderer ([`crate::render_html_normalized`] via `render --degraded`),
-    /// never by a persistent-write path, so a Tier2 misfire can reach only
-    /// `--degraded` render output — never source. See ADR-0026.
+    /// never by a persistent-write path, so a Tier2 reduction applied in
+    /// error can reach only `--degraded` render output — never source. See
+    /// ADR-0026.
     Degraded,
 }
 

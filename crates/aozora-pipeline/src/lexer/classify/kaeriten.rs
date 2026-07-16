@@ -142,7 +142,7 @@ mod tests {
         for &(mark, fam, rank, ladder) in cases {
             assert!(
                 classify_kaeriten_mark(mark) == (fam, rank, ladder),
-                "classify_kaeriten_mark({mark:?}) misclassified"
+                "classify_kaeriten_mark({mark:?}) returned the wrong (family, rank, ladder)"
             );
         }
     }

@@ -144,9 +144,9 @@ proptest! {
         assert_emit_symmetry(&s);
     }
 
-    /// Deeply nested same-shape pairs — a regression that miscounts
-    /// stack frames would shift a delta and is caught here under
-    /// shrinking.
+    /// Deeply nested same-shape pairs — a regression that over- or
+    /// under-counts stack frames would shift a delta and is caught
+    /// here under shrinking.
     #[test]
     fn nested_pairs_emit_is_symmetric(s in nested_pairs(64)) {
         assert_emit_symmetry(&s);

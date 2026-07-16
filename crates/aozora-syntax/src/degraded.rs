@@ -23,8 +23,8 @@
 //! (`RenderOptions::directives == Degraded` / `aozora render --degraded`) — never
 //! by the parser, the default lint, the default `fmt`, or `fmt --fix`.
 //! Because `DirectiveNormalization::Degraded` is constructed at a single
-//! ephemeral render site, a Tier2 misfire can reach only `--degraded` render
-//! output; it never rewrites source. See ADR-0026.
+//! ephemeral render site, a Tier2 reduction applied in error can reach
+//! only `--degraded` render output; it never rewrites source. See ADR-0026.
 
 use std::borrow::Cow;
 

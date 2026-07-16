@@ -669,8 +669,8 @@ pub enum Diagnostic {
     /// `［＃上］` / `［＃甲］`) is absent entirely — there is nothing for the
     /// return mark to pair back to. The check is document-wide and
     /// base-only: kanbun return-mark groups routinely span `、` / `。` and
-    /// line boundaries and 上下点 skips `中`, so any narrower scope misfires
-    /// on valid kanbun. The label points at the unpaired mark.
+    /// line boundaries and 上下点 skips `中`, so any narrower scope flags
+    /// valid kanbun. The label points at the unpaired mark.
     #[error("bracketed kaeriten has no matching base mark in the document")]
     #[diagnostic(
         code("aozora::lex::bracketed_kaeriten_no_pair"),

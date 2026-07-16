@@ -463,8 +463,8 @@ struct RenderArgs {
     /// (Tier2) — e.g. `［＃中文字、ゴシック体］` renders bold, and
     /// `［＃ここから最後まで３字下げ］` an indent that runs to the document end.
     /// Implies `--normalize`, is render-only, and never rewrites the source
-    /// (a Tier2 misfire can reach only this render output). Looser than
-    /// `--normalize`. See ADR-0026.
+    /// (a Tier2 reduction applied in error can reach only this render
+    /// output). Looser than `--normalize`. See ADR-0026.
     #[arg(long)]
     degraded: bool,
 }
@@ -1132,7 +1132,7 @@ fn display_path(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    // --- classify_err: main's final error disposition (main.rs:417 guard) ---
+    // --- classify_err: main's final error disposition ---
 
     #[test]
     fn classify_err_maps_broken_pipe_to_silent_success() {
@@ -1143,7 +1143,7 @@ mod tests {
     #[test]
     fn classify_err_maps_oversize_input_to_usage() {
         // is_broken_pipe is false, is_oversize_input true -> Usage (exit 2).
-        // Forcing the oversize guard false would misroute this to Failure.
+        // Forcing the oversize guard false would route this to Failure instead.
         let err = anyhow::Error::new(aozora_fmt::OversizeInput {
             bytes: aozora_fmt::MAX_SOURCE_BYTES + 1,
         });
@@ -1153,12 +1153,12 @@ mod tests {
     #[test]
     fn classify_err_maps_other_errors_to_failure() {
         // Neither guard matches -> Failure (exit 1). Forcing the oversize guard
-        // true would misroute this to Usage.
+        // true would route this to Usage instead.
         let err = anyhow::anyhow!("some unrelated failure");
         assert_eq!(classify_err(&err), ErrDisposition::Failure);
     }
 
-    // --- watch_target_paths: fmt --watch stdin filter (main.rs:611 `!=`) ---
+    // --- watch_target_paths: fmt --watch stdin filter ---
 
     #[test]
     fn watch_target_paths_drops_stdin_marker() {
@@ -1185,7 +1185,7 @@ mod tests {
         assert!(watch_target_paths(&paths).is_empty());
     }
 
-    // --- run_pandoc_once: real return differs from the default (main.rs:742) ---
+    // --- run_pandoc_once: real return differs from the default ---
 
     #[test]
     fn run_pandoc_once_propagates_read_errors() {

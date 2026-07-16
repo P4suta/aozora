@@ -119,13 +119,12 @@ fn build_symbol(
     untitled: &str,
 ) -> DocumentSymbol {
     // LSP `Position.character` is the UTF-16 code-unit offset under
-    // the default `PositionEncodingKind::UTF16` (the only encoding
-    // VS Code currently advertises). Emit the *actual* end-of-line
-    // column rather than `u32::MAX`: the spec is permissive on
-    // out-of-range characters ("defaults back to the line length")
-    // but vscode-languageclient's hierarchical → flat symbol
-    // adapter crashes on the sentinel because it tries to slice
-    // the line text by the column and dereferences an undefined.
+    // the default `PositionEncodingKind::UTF16`. Emit the *actual*
+    // end-of-line column rather than `u32::MAX`: the spec is permissive
+    // on out-of-range characters ("defaults back to the line length")
+    // but vscode-languageclient's hierarchical → flat symbol adapter
+    // crashes on the sentinel because it tries to slice the line text
+    // by the column and dereferences an undefined.
     let utf16_len = u32::try_from(line_text.encode_utf16().count()).unwrap_or(u32::MAX);
     let line_range = Range::new(
         Position::new(line_idx, 0),

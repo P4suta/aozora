@@ -1241,7 +1241,7 @@ fn extract_forward_quote_targets<'s>(
 /// its sole rendered copy. When the referent is not a clean preceding
 /// line, the classifier keeps the inline `HeadingHint` marker
 /// at the directive position (information-preserving, never promoted to
-/// an empty or misplaced heading).
+/// an empty heading, or one bound to the wrong line).
 ///
 /// Same `forward_target_is_preceded` gate as forward bouten, but a target
 /// absent from the preceding source is no longer rejected: a single quoted

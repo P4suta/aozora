@@ -291,7 +291,7 @@ pub fn sjis_bytes(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
 ///
 /// SJIS uses two ranges of lead bytes (`0x81..=0x9F` + `0xE0..=0xEF`)
 /// followed by trail bytes (`0x40..=0x7E` + `0x80..=0xFC`); a decoder
-/// that mishandles the boundary between them (e.g. accepts an
+/// that trips at the boundary between them (e.g. accepts an
 /// out-of-range trail or runs off the end with an unpaired lead) is
 /// the most common SJIS bug class.
 ///

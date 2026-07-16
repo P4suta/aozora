@@ -614,7 +614,7 @@ where
     /// is absent from the entire document. This is calibrated against the
     /// real 青空文庫 corpus — kanbun return-mark groups routinely span
     /// `、` / `。` and line boundaries, and 上下点 skips `中`, so any
-    /// narrower scope or stricter ladder misfires on valid kanbun (per-
+    /// narrower scope or stricter ladder flags valid kanbun (per-
     /// clause strict: 586 false positives across 337 corpus files; this
     /// rule: 2). It matches the catalogue's literal wording — "a `［＃二］`
     /// with no `［＃一］`".

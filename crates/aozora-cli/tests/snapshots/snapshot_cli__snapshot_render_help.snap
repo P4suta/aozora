@@ -52,8 +52,9 @@ Options:
       --degraded
           Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses (Tier2) — e.g.
           `［＃中文字、ゴシック体］` renders bold, and `［＃ここから最後まで３字下げ］` an indent that runs to the document
-          end. Implies `--normalize`, is render-only, and never rewrites the source (a Tier2 misfire
-          can reach only this render output). Looser than `--normalize`. See ADR-0026
+          end. Implies `--normalize`, is render-only, and never rewrites the source (a Tier2
+          reduction applied in error can reach only this render output). Looser than `--normalize`.
+          See ADR-0026
 
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
