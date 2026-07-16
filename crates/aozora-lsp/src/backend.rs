@@ -819,8 +819,7 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        let symbols: Vec<DocumentSymbol> =
-            document_symbols(snap.doc_text(), snap.doc_line_index(), ui_lang());
+        let symbols: Vec<DocumentSymbol> = document_symbols(snap.doc_text(), ui_lang());
         if symbols.is_empty() {
             Ok(None)
         } else {

@@ -16,16 +16,10 @@
 use aozora_i18n::{self as i18n, LanguageIdentifier};
 use tower_lsp::lsp_types::{DocumentSymbol, Position, Range, SymbolKind};
 
-use crate::line_index::LineIndex;
-
 /// Compute every heading symbol in `source`, nested by level, with the
 /// untitled-heading placeholder rendered in `lang`.
 #[must_use]
-pub fn document_symbols(
-    source: &str,
-    line_index: &LineIndex,
-    lang: &LanguageIdentifier,
-) -> Vec<DocumentSymbol> {
+pub fn document_symbols(source: &str, lang: &LanguageIdentifier) -> Vec<DocumentSymbol> {
     // Resolve the placeholder once for the whole outline. The heading-level
     // names shown as each symbol's `detail` (大見出し / 中見出し / 小見出し) are
     // the aozora directive vocabulary itself, so they stay verbatim.
@@ -36,7 +30,7 @@ pub fn document_symbols(
             continue;
         };
         let line_idx = u32::try_from(line_idx).unwrap_or(u32::MAX);
-        let title = extract_title(line, source, line_idx, line_index, &untitled);
+        let title = extract_title(line, &untitled);
         let symbol = build_symbol(line_idx, line, level, title, &untitled);
         flat.push((level, symbol));
     }
@@ -88,19 +82,7 @@ fn untitled_placeholder(lang: &LanguageIdentifier) -> String {
 /// the user typed `「」は大見出し` with no body yet) falls through to
 /// the next shape rather than returning `""`, which would violate
 /// the LSP `DocumentSymbol.name` non-empty contract.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the source/line context is threaded through even where a shape \
-              doesn't need it (keeping the document_symbols line-index param \
-              live) alongside the localized untitled placeholder"
-)]
-fn extract_title(
-    line: &str,
-    _source: &str,
-    _line_idx: u32,
-    _line_index: &LineIndex,
-    untitled: &str,
-) -> String {
+fn extract_title(line: &str, untitled: &str) -> String {
     // Shape 1: quoted title
     if let Some(quote_start) = line.find('「') {
         let after = &line[quote_start + '「'.len_utf8()..];
@@ -260,8 +242,7 @@ mod tests {
     const UNTITLED_EN: &str = "(untitled)";
 
     fn syms(src: &str) -> Vec<DocumentSymbol> {
-        let idx = LineIndex::new(src);
-        document_symbols(src, &idx, &en())
+        document_symbols(src, &en())
     }
 
     #[test]

@@ -48,12 +48,7 @@ use syn::{AttrStyle, Attribute, ItemMod, Meta, Token};
 /// clause is not a lint and is not counted. Crates with zero outer
 /// suppressions are omitted. Lower a number here when the gate tells you a
 /// reduction is unrecorded — never raise one to admit a new suppression.
-const OUTER_BASELINE: &[(&str, usize)] = &[
-    ("aozora-cli", 1),
-    ("aozora-lsp", 1),
-    ("aozora-pipeline", 2),
-    ("aozora-py", 1),
-];
+const OUTER_BASELINE: &[(&str, usize)] = &[("aozora-py", 1)];
 
 /// Per-crate baseline for INNER blanket `#![allow(...)]` lint pairs — the
 /// module-/crate-wide suppressions. Tracked separately from the outer

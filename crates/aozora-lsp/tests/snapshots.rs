@@ -14,7 +14,7 @@
 //! offered.
 
 use aozora_lsp::internals::{
-    LanguageIdentifier, LineIndex, OpenDocument, diagnostics_for_source, document_symbols,
+    LanguageIdentifier, OpenDocument, diagnostics_for_source, document_symbols,
     semantic_tokens_full, server_capabilities, server_info,
 };
 use tower_lsp::lsp_types::{DiagnosticSeverity, DocumentSymbol, NumberOrString};
@@ -101,11 +101,7 @@ fn symbol_outline(src: &str) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    walk(
-        &document_symbols(src, &LineIndex::new(src), &en()),
-        0,
-        &mut out,
-    );
+    walk(&document_symbols(src, &en()), 0, &mut out);
     out
 }
 
