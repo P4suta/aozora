@@ -105,6 +105,7 @@ pub(crate) use aozora_fmt::{ColorChoice, Encoding};
 use aozora_i18n::{self as i18n, LanguageIdentifier};
 
 use anyhow::{Context, Result};
+use clap::builder::PossibleValue;
 use clap::builder::styling::{AnsiColor, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
 use tracing::debug;
@@ -472,19 +473,71 @@ struct RenderArgs {
 /// `aozora inspect <kind>` — which JSON envelope to emit. The data
 /// counterpart to `SchemaKind`: `spec schema nodes` prints the contract,
 /// `inspect nodes` prints a document's data in that contract.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+///
+/// The nesting is the one structural split that matters: `Gaiji` reads
+/// raw source, so it is unreachable through a parse; every other kind
+/// projects the parse tree. Encoding that difference in the type is what
+/// lets the dispatch stay a two-arm match with no `unreachable!` stand-in.
+#[derive(Debug, Clone, Copy)]
 enum InspectKind {
-    /// Per-diagnostic `{ kind, severity, source, span, codepoint? }`.
+    Gaiji,
+    Tree(TreeKind),
+}
+
+/// The `inspect` kinds that project the parse tree.
+#[derive(Debug, Clone, Copy)]
+enum TreeKind {
     Diagnostics,
-    /// Per-source-node `{ kind, span }`, sorted by `span.start`.
     Nodes,
-    /// Per-matched-pair `{ kind, open, close }`.
     Pairs,
-    /// Per-container-pair `{ kind, open, close }` (normalized coordinates).
     ContainerPairs,
-    /// Per-外字-reference `{ span, description, mencode, codepoint, resolved }`.
-    #[value(name = "gaiji", alias = "gaiji-resolutions")]
-    GaijiResolutions,
+}
+
+impl TreeKind {
+    /// Render this projection of `tree` to its JSON string. Every arm
+    /// delegates to `aozora::json`, the single authority shared with the
+    /// Python / WASM / C bindings, so the bytes match every surface.
+    fn render(self, tree: &aozora::Tree<'_>) -> String {
+        match self {
+            Self::Diagnostics => json::diagnostics(tree.diagnostics()),
+            Self::Nodes => json::nodes(tree),
+            Self::Pairs => json::pairs(tree),
+            Self::ContainerPairs => json::container_pairs(tree),
+        }
+    }
+}
+
+// Hand-written rather than derived: `ValueEnum` cannot derive through the
+// `Tree(TreeKind)` tuple variant. The `value_variants` order is the order
+// `--help` lists the kinds; the CLI names and the `gaiji-resolutions`
+// alias are preserved exactly.
+impl ValueEnum for InspectKind {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            Self::Tree(TreeKind::Diagnostics),
+            Self::Tree(TreeKind::Nodes),
+            Self::Tree(TreeKind::Pairs),
+            Self::Tree(TreeKind::ContainerPairs),
+            Self::Gaiji,
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(match self {
+            Self::Tree(TreeKind::Diagnostics) => PossibleValue::new("diagnostics")
+                .help("Per-diagnostic `{ kind, severity, source, span, codepoint? }`"),
+            Self::Tree(TreeKind::Nodes) => PossibleValue::new("nodes")
+                .help("Per-source-node `{ kind, span }`, sorted by `span.start`"),
+            Self::Tree(TreeKind::Pairs) => {
+                PossibleValue::new("pairs").help("Per-matched-pair `{ kind, open, close }`")
+            }
+            Self::Tree(TreeKind::ContainerPairs) => PossibleValue::new("container-pairs")
+                .help("Per-container-pair `{ kind, open, close }` (normalized coordinates)"),
+            Self::Gaiji => PossibleValue::new("gaiji")
+                .alias("gaiji-resolutions")
+                .help("Per-外字-reference `{ span, description, mencode, codepoint, resolved }`"),
+        })
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -1010,28 +1063,21 @@ fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Project the requested JSON envelope to its JSON string. `gaiji` scans raw
-/// source; every other kind walks the parse tree. All arms delegate to
-/// `aozora::json`, the single authority shared with the Python / WASM /
-/// C bindings, so the bytes are identical across every surface.
+/// Project the requested JSON envelope to its JSON string. `Gaiji` reads
+/// raw source and skips the parse; `Tree` kinds parse first, then delegate
+/// to [`TreeKind::render`].
 fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
-    if matches!(args.which, InspectKind::GaijiResolutions) {
-        return Ok(timer.measure("serialize", || json::gaiji(&source)));
-    }
-    let doc = Document::new(source);
-    let tree = timer.measure("parse", || doc.parse());
-    Ok(timer.measure("serialize", || match args.which {
-        InspectKind::Nodes => json::nodes(&tree),
-        InspectKind::Pairs => json::pairs(&tree),
-        InspectKind::ContainerPairs => json::container_pairs(&tree),
-        InspectKind::Diagnostics => json::diagnostics(tree.diagnostics()),
-        InspectKind::GaijiResolutions => {
-            unreachable!("gaiji is emitted before the parse step")
+    Ok(match args.which {
+        InspectKind::Gaiji => timer.measure("serialize", || json::gaiji(&source)),
+        InspectKind::Tree(kind) => {
+            let doc = Document::new(source);
+            let tree = timer.measure("parse", || doc.parse());
+            timer.measure("serialize", || kind.render(&tree))
         }
-    }))
+    })
 }
 
 /// Dispatch `aozora spec <command>` to the introspection renderers. These read
