@@ -7,7 +7,7 @@ so this page is its only record.
 The goal: **no long-lived publish token sits in the repository.** Where a
 registry supports OIDC Trusted Publishing we mint a short-lived token at
 publish time. Where it does not (VS Code Marketplace, Open VSX) the token
-lives as an *Environment* secret behind an approval gate, never as a
+will live as an *Environment* secret behind an approval gate, never as a
 repository secret.
 
 Why it is shaped this way is in
@@ -41,11 +41,15 @@ and it is worth knowing which one you are relying on:
   push, so a dispatch builds and stops.
 - `publish-pypi` / `publish-npm` / `publish-extism-wasm` — `dry_run: true`
   is the input default.
-- `release-plz.yml` — **neither**. Its `workflow_dispatch` takes no inputs
-  and `release-plz-release` has no event guard, so a dispatch on `main` is
-  equivalent to a push on `main`. It is safe only because release-plz is
-  idempotent against crates.io: it publishes what is not yet published.
-  Once activated, treat the button as live.
+- `release-plz.yml` — **neither**, and the button is live. Its
+  `workflow_dispatch` takes no inputs and `release-plz-release` has no
+  event guard, so a dispatch on `main` is equivalent to a push on `main`.
+  What bounds both is not in the workflow at all: `release-plz.toml`'s
+  `release_always = false` releases only from a Release-PR merge commit,
+  so a dispatch on an ordinary `main` commit does nothing, and one on the
+  merge commit re-runs a publish that is idempotent against crates.io —
+  which is how you finish a release that failed. See
+  [ADR-0039](../adr/0039-release-plzs-manual-trigger-stays-unguarded.md).
 
 ## One-time setup
 
@@ -90,14 +94,12 @@ gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the Client ID (Iv2
 gh secret set RELEASE_PLZ_APP_PRIVATE_KEY --env release-plz # the .pem contents
 ```
 
-`release-plz.yml`'s `HAS_APP` gate reads these; until both exist the whole
-pipeline no-ops green, which is why the scaffolding could land long before
-the App existed.
-
 The two ruleset changes — signature bypass on `release-plz-*`, and the
 `v*` tag-creation lock — key on the numeric **App ID**, not the Client ID.
-Apply them per `.github/rulesets/README.md`. **Apply the tag lock last:**
-earlier it would block the manual tag flow that is still in use.
+Apply them per `.github/rulesets/README.md`. **Apply the tag lock last:** it
+restricts `v*` creation to the App, so apply it only once you have watched
+release-plz cut a `v*` tag. Lock first and a misconfigured App leaves the tag
+uncuttable by anyone.
 
 ### 3. crates.io
 
@@ -167,8 +169,8 @@ CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the runner.)
 
 ### 6. VS Code Marketplace & Open VSX — no OIDC
 
-No OIDC publishing exists, so these tokens persist. They live on the
-environment, behind the approval gate:
+No OIDC publishing exists, so these tokens persist. Once created they will
+live on the environment, behind the approval gate:
 
 ```sh
 gh secret set VSCE_PAT --env release   # Azure DevOps PAT (Marketplace)

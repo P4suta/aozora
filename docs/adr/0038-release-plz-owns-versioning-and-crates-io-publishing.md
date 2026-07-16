@@ -1,6 +1,7 @@
 # 0038. release-plz owns versioning and crates.io publishing
 
-- Status: accepted
+- Status: accepted; the `workflow_dispatch` consequence superseded by
+  [ADR-0039](0039-release-plzs-manual-trigger-stays-unguarded.md)
 - Date: 2026-07-15
 - Deciders: @P4suta
 - Tags: release, security, ci, supply-chain

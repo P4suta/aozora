@@ -15,8 +15,8 @@
 [workspace]
 # Release ONLY when the Release PR is merged (not on every push to main).
 release_always = false
-# Publish to crates.io in release-plz's own dependency order (this replaces the
-# hand-maintained topological ladder in the now-deleted publish-crates.yml).
+# Publish every public crate to crates.io, in the dependency order release-plz
+# derives from the workspace graph.
 publish = true
 # cargo-semver-checks gate on every Release PR (mirrors `just semver`).
 semver_check = true
@@ -51,7 +51,7 @@ git_tag_name = "v{{ version }}"
 changelog_update = true
 # Fold every other publishable crate's commits into the one root changelog
 # section (each commit is owned by exactly one crate by path, so this is the
-# union of all commits — the same content the old `just changelog` produced).
+# union of all commits, with none counted twice).
 changelog_include = [
   "aozora-buildstamp",
   "aozora-cli",
@@ -72,12 +72,12 @@ changelog_include = [
   "tree-sitter-aozora",
 ]
 
-# --- changelog rendering (git-cliff syntax, ported from the retired cliff.toml)
+# --- changelog rendering (git-cliff syntax) --------------------------------
 # Keep-a-Changelog body so CHANGELOG.md and the GitHub Release page agree.
-# A GitHub squash-merge subject already ends in " (#N)", and the template also
-# appends its own " (#N)" from commit.remote.pr_number — which doubled the
-# reference ("… (#72) (#72)"). When a PR number is known we strip the subject's
-# trailing " (#N)" (split on " (#", keep the head) and append the canonical one;
+# A GitHub squash-merge subject already ends in " (#N)", so appending
+# commit.remote.pr_number on top of it would double the reference
+# ("… (#72) (#72)"). When a PR number is known we strip the subject's trailing
+# " (#N)" (split on " (#", keep the head) and append the canonical one;
 # otherwise the subject is rendered verbatim so a bare reference is never lost.
 [changelog]
 protect_breaking_commits = true

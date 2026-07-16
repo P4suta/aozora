@@ -108,6 +108,19 @@ jobs:
         with:
           tool: cross
 
+      # Stamp the bundled server's `--version`. Without this, `.git` is
+      # present (actions/checkout leaves it) so aozora-buildstamp's build.rs
+      # takes it for a working tree and stamps `-dev+g<sha>` — a shipped
+      # binary calling itself a dev build, the exact inversion of what that
+      # stamp is for. The value is the crate's, not the tag's: the extension
+      # rides its own Marketplace version line (ADR-0016), so `vscode-v0.1.0`
+      # says nothing about which aozora-lsp is inside.
+      - name: Resolve build-version stamp
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "AOZORA_BUILD_VERSION=$(cargo run -p aozora-xtask -q -- version --channel stable)" >> "$GITHUB_ENV"
+
       - name: Build aozora-lsp (dist profile)
         shell: bash
         run: |
@@ -139,7 +152,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
-          bun-version: latest
+          bun-version: '1.3.14'
 
       - name: Install + compile extension
         working-directory: editors/vscode
@@ -149,7 +162,7 @@ jobs:
 
       - name: Package platform-specific .vsix
         working-directory: editors/vscode
-        run: bunx @vscode/vsce package --target ${{ matrix.vsce_target }} --no-yarn
+        run: bun run vsce package --target ${{ matrix.vsce_target }} --no-yarn
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -196,9 +209,17 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
-          bun-version: latest
+          bun-version: '1.3.14'
+
+      # `vsce` and `ovsx` are devDependencies, so the lockfile pins the tools
+      # that talk to the registries. Resolving them fresh (`bunx`) would let
+      # whatever npm serves at publish time sign and upload the release.
+      - name: Install publish tooling
+        working-directory: editors/vscode
+        run: bun install --frozen-lockfile
 
       - name: Publish to VS Code Marketplace
+        working-directory: editors/vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
@@ -207,26 +228,25 @@ jobs:
             echo "::error::VSCE_PAT secret is not set; cannot publish to Marketplace"
             exit 1
           fi
-          for vsix in vsix/*.vsix; do
+          for vsix in ../../vsix/*.vsix; do
             echo "::group::Publishing ${vsix}"
-            bunx @vscode/vsce publish --packagePath "${vsix}" --pat "${VSCE_PAT}"
+            bun run vsce publish --packagePath "${vsix}" --pat "${VSCE_PAT}"
             echo "::endgroup::"
           done
 
+      # Open VSX is opt-in: it serves the VSCodium / Cursor / Theia crowd and
+      # the Marketplace is the primary surface, so an unset OVSX_PAT skips the
+      # step. Once it is set, a failure is a failure — swallowing it into a
+      # `::warning::` bought a green tick for a release that did not ship.
       - name: Publish to Open VSX
+        working-directory: editors/vscode
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        # Skip silently if OVSX_PAT not configured — Marketplace publish
-        # is the primary surface, Open VSX is a nice-to-have for the
-        # VSCodium / Cursor / Theia crowd. We don't want a missing
-        # OVSX_PAT to fail the whole release.
         if: env.OVSX_PAT != ''
         run: |
           set -euo pipefail
-          for vsix in vsix/*.vsix; do
+          for vsix in ../../vsix/*.vsix; do
             echo "::group::Publishing ${vsix} to Open VSX"
-            bunx ovsx publish "${vsix}" -p "${OVSX_PAT}" || {
-              echo "::warning::ovsx publish failed for ${vsix}; continuing with the rest"
-            }
+            bun run ovsx publish "${vsix}" -p "${OVSX_PAT}"
             echo "::endgroup::"
           done

@@ -10,13 +10,12 @@
 # single `vX.Y.Z` tag. The tag fires release.yml (binaries + GitHub Release) and
 # the tag-driven PyPI / npm / extism publishers.
 #
-# DORMANT until activated. The `vX.Y.Z` tag only triggers the downstream
-# workflows when pushed by a non-GITHUB_TOKEN identity (GitHub suppresses
-# workflow triggers from GITHUB_TOKEN-pushed refs), so release-plz runs as a
-# GitHub App: a short-lived installation token is minted at runtime from two
-# secrets — RELEASE_PLZ_APP_CLIENT_ID and RELEASE_PLZ_APP_PRIVATE_KEY. With those unset
-# every step is skipped and the jobs run green and no-op. The scaffolding ships
-# now; the App lights it up later. See docs/contrib/release.md.
+# That last hop is why release-plz runs as a GitHub App rather than on the
+# default token: GitHub suppresses workflow triggers from a ref pushed with
+# GITHUB_TOKEN, so a tag pushed that way would fire nothing downstream. A
+# short-lived installation token is minted at runtime from
+# RELEASE_PLZ_APP_CLIENT_ID + RELEASE_PLZ_APP_PRIVATE_KEY. See
+# docs/contrib/releasing-secrets.md.
 #
 # Action pinning: third-party actions are pinned to a full commit SHA (the
 # `# vX.Y.Z` trailer is the human-readable tag); Dependabot bumps them weekly.
@@ -26,9 +25,12 @@ name: release-plz
 on:
   push:
     branches: [main]
-  # Manual trigger for activation / re-runs: once the App secrets exist,
-  # `gh workflow run release-plz.yml` opens the first Release PR without
-  # waiting for the next push to main. Dormant (HAS_APP) gate still applies.
+  # Re-runs a release that failed after the merge, and refreshes the Release PR
+  # without waiting for the next push to main. Neither job has an event guard,
+  # so a dispatch does exactly what a push on main does — and what that is, is
+  # bounded by release-plz.toml's `release_always = false` (release only from a
+  # Release-PR merge commit), not by anything here. See
+  # docs/adr/0039-release-plzs-manual-trigger-stays-unguarded.md.
   workflow_dispatch:
 
 # One release pipeline per ref; never cancel a publish already in flight.
@@ -52,20 +54,15 @@ jobs:
     permissions:
       contents: write # push the release-plz-<branch> branch
       pull-requests: write # open / maintain the Release PR
-    env:
-      # Server-side boolean — never exposes the secret values.
-      HAS_APP: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID != '' && secrets.RELEASE_PLZ_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Mint GitHub App token
         id: app-token
-        if: env.HAS_APP == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
 
       - name: Checkout
-        if: env.HAS_APP == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
@@ -75,7 +72,6 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        if: env.HAS_APP == 'true'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
@@ -84,25 +80,16 @@ jobs:
       # `semver_check = true` gate (the same check `just semver` runs); without
       # it release-plz only warns and skips.
       - name: Install cargo-semver-checks
-        if: env.HAS_APP == 'true'
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-semver-checks
 
       - name: release-plz release-pr
-        if: env.HAS_APP == 'true'
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      - name: Dormant — App not configured
-        if: env.HAS_APP != 'true'
-        run: |
-          echo "::notice::release-plz is dormant — set RELEASE_PLZ_APP_CLIENT_ID and"
-          echo "RELEASE_PLZ_APP_PRIVATE_KEY (a GitHub App) to activate."
-          echo "See docs/contrib/releasing-secrets.md."
 
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
@@ -117,38 +104,28 @@ jobs:
     permissions:
       contents: write # create the v* tag
       id-token: write # crates.io OIDC trusted publishing (no CARGO_REGISTRY_TOKEN)
-    env:
-      HAS_APP: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID != '' && secrets.RELEASE_PLZ_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Mint GitHub App token
         id: app-token
-        if: env.HAS_APP == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
 
       - name: Checkout
-        if: env.HAS_APP == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install Rust
-        if: env.HAS_APP == 'true'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
       - name: release-plz release
-        if: env.HAS_APP == 'true'
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      - name: Dormant — App not configured
-        if: env.HAS_APP != 'true'
-        run: echo "::notice::release-plz is dormant — set the App secrets to activate."

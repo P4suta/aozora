@@ -9,10 +9,6 @@ PyPI / npm / Extism publishers.
 
 **Humans never hand-edit a version or hand-push a release tag.**
 
-> release-plz is **dormant until activated** — `release-plz.yml` no-ops
-> green until the GitHub App secrets exist. Activation is in the
-> [release secrets runbook](releasing-secrets.md).
-
 ## Pre-flight
 
 Three obligations that **no gate enforces**. Nothing goes red if you skip
@@ -66,20 +62,33 @@ what makes that claim mean something: any toolchain from the last six
 months keeps working, so a bump is predictable rather than a surprise you
 can only absorb by pinning a tag. See [MSRV](./msrv.md).
 
-## Why three release targets
+## Why the two binary lines ship different targets
 
-`release.yml` builds linux x86_64, macOS arm64, and windows x86_64. Not
-macOS Intel (Apple deprecated it; arm64 covers current machines) and not
-linux arm64 (`cargo install` from source covers that niche).
+`release.yml` and `release-vscode.yml` both build the same CLI, and their
+target matrices do not agree. That is deliberate: they answer to different
+distributors, and only one of them has a fallback.
 
-Adding one is a line in `release.yml`. We add a target when a real consumer
-asks for a binary build of it — pre-emptive coverage is not worth the CI
+`release.yml` ships archives someone chooses and downloads. It declines
+macOS Intel (Apple deprecated it; arm64 covers current machines) and linux
+arm64 — on a target we skip, `cargo install` builds from source, which is
+how CLI users on niche platforms are already served. So a missing target
+costs convenience, not access, and we add one when a real consumer asks
+for a binary build of it: pre-emptive coverage is not worth the CI
 minutes. ([ADR-0021](../adr/0021-cli-release-stays-hand-written.md) cites
 this policy for why `cargo-dist` was not adopted.)
+
+`release-vscode.yml` has no such fallback. The Marketplace resolves a
+platform-specific `.vsix` for the reader's machine and installs it without
+asking — nothing prompts, and nothing compiles. A platform it cannot serve
+is one where the extension installs and then has no language server at
+all, so the matrix has to cover everywhere VS Code runs, including the
+linux arm64 and musl targets the CLI declines.
+
+Each workflow's matrix is the authority on which targets those are.
 
 ## See also
 
 - [Release secrets & Trusted Publishing](releasing-secrets.md) — the App,
-  the environments, and per-registry publisher setup, including activation.
+  the environments, and per-registry publisher setup.
 - [ADR-0037](../adr/0037-release-binaries-are-not-ca-code-signed.md) — why
   the binaries are not CA code-signed.
