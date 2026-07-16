@@ -60,7 +60,7 @@ impl DiagFormat {
 /// Render `diagnostics` (belonging to `doc`) to stderr in `format`. `lang`
 /// selects the language of the human-only `explain` footer; the `json` /
 /// `short` machine views ignore it and stay byte-identical.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the five render inputs (format / path / doc / diagnostics / lang) are each distinct; bundling them behind a struct would move the arity without clarifying it"
 )]

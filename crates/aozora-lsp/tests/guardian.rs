@@ -177,8 +177,7 @@ fn diagnostics_format_folding_symbol_never_panic_on_corpus() {
         drop(diagnostics_for_source(&src, &en()));
         drop(format_edits(&src));
         drop(folding_ranges(&src));
-        let idx = LineIndex::new(&src);
-        drop(document_symbols(&src, &idx, &en()));
+        drop(document_symbols(&src, &en()));
     }
 }
 

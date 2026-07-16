@@ -122,7 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(
+    #[expect(
         clippy::float_cmp,
         reason = "exact f64 pin — the expected values are exactly representable and every mutation (constant swap or * -> + / /) yields a value far from them"
     )]
@@ -134,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(
+    #[expect(
         clippy::float_cmp,
         reason = "exact f64 pin — the expected values are exactly representable and every mutation yields a value far from them"
     )]

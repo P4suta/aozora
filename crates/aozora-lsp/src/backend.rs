@@ -819,8 +819,7 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        let symbols: Vec<DocumentSymbol> =
-            document_symbols(snap.doc_text(), snap.doc_line_index(), ui_lang());
+        let symbols: Vec<DocumentSymbol> = document_symbols(snap.doc_text(), ui_lang());
         if symbols.is_empty() {
             Ok(None)
         } else {
@@ -1444,7 +1443,7 @@ mod e2e {
         /// Spin (real time, generously bounded — covers the 150 ms publish
         /// debounce) until `f` extracts a value from the collected
         /// server→client traffic.
-        #[allow(
+        #[expect(
             clippy::future_not_send,
             reason = "test-only harness driven by block_on in #[tokio::test]; never spawned, so Send is not required"
         )]
@@ -1502,10 +1501,6 @@ mod e2e {
     /// Fetch a document's rendered HTML body (custom `aozora/renderHtml`).
     /// A read-back probe for tests that need to inspect the settled
     /// buffer text after a `did_change`.
-    #[allow(
-        clippy::future_not_send,
-        reason = "test-only helper driven by block_on in #[tokio::test]; never spawned, so Send is not required"
-    )]
     async fn rendered_html(server: &mut TestServer) -> String {
         let resp = server
             .request("aozora/renderHtml", json!({ "uri": URI }))
@@ -1515,7 +1510,7 @@ mod e2e {
 
     /// Wait until at least `n` `publishDiagnostics` have been observed,
     /// returning the `n`-th (1-indexed) one.
-    #[allow(
+    #[expect(
         clippy::future_not_send,
         reason = "test-only helper driven by block_on in #[tokio::test]; never spawned, so Send is not required"
     )]

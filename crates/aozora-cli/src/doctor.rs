@@ -346,7 +346,7 @@ fn write_settings(
 }
 
 /// Render one PATH-tool row (plus a hint line when it is missing) into `out`.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the five inputs (sink, language, tool name, its status, and its localized hint key) are each distinct; a bundle struct would move the arity without clarifying it"
 )]
@@ -511,7 +511,7 @@ fn resolve_settings(
 /// their env vars itself to answer "what would `aozora check` use here?".
 /// `color` / `lang` are real resolutions this process already performed, so
 /// they attribute through [`colour_source`] / [`lang_source`] instead.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the four layers (env outcome + var name, project, global, default) are each independent; a bundle struct would move the arity without clarifying it"
 )]
@@ -600,7 +600,7 @@ fn resolve_strict(
 /// `aozora_i18n::resolve`: the first present-and-non-blank of `--lang`,
 /// `AOZORA_LANG`, `config.lang` (project over global), then `LANG`; else the
 /// built-in English default.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the five language sources mirror aozora_i18n::resolve's precedence chain one-to-one; each is a distinct layer"
 )]
@@ -660,7 +660,7 @@ fn colour_source(
 /// `--color auto`: `CLICOLOR_FORCE` (non-`0`) forces on, then `NO_COLOR`
 /// (present) forces off, then `CLICOLOR=0` forces off, else the stderr TTY
 /// decides. `always` / `never` short-circuit the whole chain.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     clippy::fn_params_excessive_bools,
     reason = "the five inputs are the distinct colour signals miette weighs (the flag, the stderr TTY, and the NO_COLOR / CLICOLOR / CLICOLOR_FORCE env vars); a struct would not clarify them"

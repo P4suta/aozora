@@ -243,7 +243,7 @@ where
 ///   following event is anything else the refmark is folded into the
 ///   pending Plain run.
 /// * `diagnostics`: non-fatal observations accumulated during the pass.
-#[allow(
+#[expect(
     missing_debug_implementations,
     reason = "the &mut Allocator field cannot derive Debug; the iterator is opaque to consumers"
 )]

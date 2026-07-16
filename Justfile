@@ -307,7 +307,17 @@ msrv-local:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check && cargo run -p aozora-xtask -q -- lint suppressions'
+
+# Suppression-hygiene ratchet (a drift gate): per-crate #[allow] counts —
+# outer `#[allow]` and blanket inner `#![allow]`, tracked separately — may
+# only shrink from the baselines hardcoded in `xtask lint suppressions`,
+# and the aozora-pipeline `.expect(` count may not grow. Exact-match both
+# directions, so a reduction that isn't recorded also fails (it tells you
+# the new number to write). Pure Rust + git — runs on the bare host like
+# the other `xtask` recipes; also folded into `drift-gate`.
+lint-suppressions:
+    cargo run -p aozora-xtask -q -- lint suppressions
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a
@@ -1168,17 +1178,21 @@ strict-code:
     failed=0
 
     # ---- Warning suppression -----------------------------------------------
-    # `#[allow(... reason = "...")]` (Rust 1.81+ stable) is the
-    # documented "I've considered this lint and overridden it
-    # deliberately" idiom and is allowed; bare `#[allow(...)]` without
-    # a reason is forbidden. We grep with -A 5 to catch the reason
-    # clause when it's on a continuation line, then filter out hits
-    # whose surrounding window contains `reason = `.
+    # `#[allow(... reason = "...")]` / `#[expect(... reason = "...")]`
+    # (Rust 1.81+ stable) is the documented "I've considered this lint
+    # and overridden it deliberately" idiom and is allowed; a bare
+    # `#[allow(...)]` / `#[expect(...)]` without a reason is forbidden.
+    # We grep with -A 5 to catch the reason clause when it's on a
+    # continuation line, then filter out hits whose surrounding window
+    # contains `reason = `.
     #
     # `build.rs` files are excluded because their string literals
     # often contain `#[allow(reason="...")]` snippets that they emit
     # as generated Rust code — they are not actual Rust attributes
     # under strict-code's purview.
+    #
+    # (The per-crate *count* of #[allow], and the aozora-pipeline
+    # `.expect(` count, are ratcheted by `xtask lint suppressions`.)
     src_files=()
     for f in "${files[@]}"; do
         case "$f" in
@@ -1186,11 +1200,11 @@ strict-code:
             *) src_files+=("$f") ;;
         esac
     done
-    bare_allow=$(grep -nE -A 5 '^\s*#!?\[allow\(' "${src_files[@]}" 2>/dev/null \
+    bare_allow=$(grep -nE -A 5 '^\s*#!?\[(allow|expect)\(' "${src_files[@]}" 2>/dev/null \
         | awk -F: '
-            /#!?\[allow\(/      { capture = 1; window = ""; head = $0 }
-            capture              { window = window $0 "\n" }
-            capture && /\)\]/    {
+            /#!?\[(allow|expect)\(/ { capture = 1; window = ""; head = $0 }
+            capture                 { window = window $0 "\n" }
+            capture && /\)\]/       {
                 if (window !~ /reason[[:space:]]*=[[:space:]]*"/) {
                     print head
                 }
@@ -1198,7 +1212,7 @@ strict-code:
             }
         ' || true)
     if [[ -n "$bare_allow" ]]; then
-        echo '==> forbidden: warning suppression (#[allow] without reason="...")' >&2
+        echo '==> forbidden: warning suppression (#[allow] / #[expect] without reason="...")' >&2
         echo "$bare_allow" >&2
         failed=1
     fi
@@ -1284,44 +1298,12 @@ strict-code:
         failed=1
     fi
 
-    # ---- expect() in pipeline source files (regression gate) ----------
-    # Counts every `.expect(` in `crates/aozora-pipeline/src/**` —
-    # including test-module bodies, since this is a coarse "no
-    # regression" tripwire, not a precise audit. PR 4 of the
-    # quality-hardening plan replaced pipeline.rs's state-transition
-    # `Option::expect` chain (13 calls) with a field-bound type-state
-    # struct, dropping the workspace total from 58 to 50; the
-    # remaining 50 are split across genuine bounds checks
-    # (`u32::try_from(len).expect("fits per Phase 0 cap")`),
-    # locally-justified `next().expect()` after a length check, and
-    # in-source `#[cfg(test)] mod tests` assertions. The baseline
-    # gates against new state-assertion-style expects landing in
-    # production paths.
-    #
-    # 51 (was 50): the coremodel Format unification (#189) made
-    # `FontShift` wrap a `NonZeroI8`, so the classify test module gained
-    # one `fs(steps)` data-builder helper bridging an i8 literal to the
-    # now-type-safe constructor (`NonZeroI8::new(steps).expect(..)`). A
-    # test-data helper, not a production state-assertion — exactly the
-    # invariant-in-the-type move this gate rewards.
-    expect_files=(crates/aozora-pipeline/src/**/*.rs)
-    expect_count=$(grep -hcE '\.expect\(' "${expect_files[@]}" 2>/dev/null \
-        | awk '{s+=$1} END {print s+0}')
-    expect_baseline=51
-    if [[ "$expect_count" -gt "$expect_baseline" ]]; then
-        echo "==> forbidden: expect() count in aozora-pipeline source grew" >&2
-        echo "    baseline: $expect_baseline, found: $expect_count" >&2
-        echo "    Add a property test or refactor to lift the invariant into the type" >&2
-        echo "    instead of pushing it to runtime. See PR 4 of the hardening plan." >&2
-        failed=1
-    fi
-
     if [[ $failed -ne 0 ]]; then
         echo "" >&2
         echo "strict-code check failed. Refactor the offending sites; do not silence." >&2
         exit 1
     fi
-    echo "strict-code: clean (expect-count $expect_count / baseline $expect_baseline)"
+    echo "strict-code: clean"
 
 # Every publishable crate (one that is NOT `publish = false`) must ship a
 # README.md — otherwise its crates.io page renders empty (F9). And that README

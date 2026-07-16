@@ -125,7 +125,7 @@ pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 /// This is exposed for the in-workspace LSP consumer only; its shape may change
 /// without a major version bump until v0.5.0.
 #[must_use]
-#[allow(
+#[expect(
     clippy::needless_pass_by_value,
     reason = "the lightweight DiagBaseRef (a sanitized source plus one PieceSeq borrow) is taken by value so the in-workspace LSP caller passes its temporary `DiagBaseRef { .. }` literal unchanged; it is forwarded by reference to the generic engine"
 )]

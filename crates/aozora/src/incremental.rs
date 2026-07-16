@@ -678,7 +678,7 @@ impl PieceSeq {
     /// negative re-lexed length). Both are caller-precondition violations the
     /// engine never produces.
     #[must_use]
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the five inputs are irreducible: the region plus its three parallel re-lexed tables plus the sanitized length delta; bundling them into an ad-hoc struct would move the arity without adding meaning, and keeping raw tables decouples PieceSeq from LexOutput"
     )]
@@ -2859,7 +2859,7 @@ mod mut_tests_pieces {
             NodeRef::BlockOpen(RegionFormat::Bold { padded: true }),
         )
     }
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "test fixture builder for a paired source node"
     )]

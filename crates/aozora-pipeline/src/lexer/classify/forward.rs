@@ -261,7 +261,7 @@ impl RecogniseCtx<'_, '_> {
     ///   carried through the later arms via `tcy_pending`. Pinned by
     ///   `tcy_target_not_found_fires_as_warning` (node-absence by
     ///   `forward_tcy_without_preceding_target_falls_through`).
-    #[allow(
+    #[expect(
         clippy::too_many_lines,
         reason = "a flat dispatch chain over the forward-reference recognisers \
                   (body / bouten / 縦中横 / heading / emphasis) — each block is \
@@ -771,9 +771,11 @@ impl RecogniseCtx<'_, '_> {
         // bouten ambiguity diagnostic when the styled target occurs ≥2 times in
         // the look-back (`matches` counts non-overlapping candidate runs).
         let (node, consume_start, diag) = self.resolve_forward_format(
-            view,
-            open_idx,
-            open_span.start,
+            ForwardBracket {
+                view,
+                open_idx,
+                open_span_start: open_span.start,
+            },
             ForwardAttr::Bouten { kind, position },
             only,
         );
@@ -898,9 +900,11 @@ impl RecogniseCtx<'_, '_> {
             return ForwardTcy::NotTcy;
         };
         let (node, consume_start, diag) = self.resolve_forward_format(
-            view,
-            open_idx,
-            open_span.start,
+            ForwardBracket {
+                view,
+                open_idx,
+                open_span_start: open_span.start,
+            },
             ForwardAttr::CombineUpright,
             first,
         );
@@ -1085,18 +1089,27 @@ impl ForwardDiag {
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "each parameter is an independent input to the pure resolution — the events \
-              table, source, bracket index, target text, and the pending-run window start."
-)]
-fn resolve_forward_referent(
-    events: &[PairEvent],
-    source: &str,
+/// The look-back a forward-reference resolution searches for a target's
+/// referent: the paired-event table together with the directive bracket's
+/// event index (which give the cutoff), the full sanitized source, and the
+/// start of the current pending plain run (`None` when no plain run is open
+/// to search within). A self-documenting parameter object for the pure
+/// resolution below.
+#[derive(Clone, Copy)]
+struct ReferentSearch<'a> {
+    events: &'a [PairEvent],
+    source: &'a str,
     open_idx: usize,
-    target: &str,
     pending_plain_start: Option<u32>,
-) -> ForwardReferent {
+}
+
+fn resolve_forward_referent(search: ReferentSearch<'_>, target: &str) -> ForwardReferent {
+    let ReferentSearch {
+        events,
+        source,
+        open_idx,
+        pending_plain_start,
+    } = search;
     let Some(&PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return ForwardReferent::Unresolvable;
     };
@@ -1439,6 +1452,17 @@ impl RecogniseCtx<'_, '_> {
     }
 }
 
+/// The directive bracket a forward-format resolution operates over: the body
+/// view, the bracket's open-event index, and its already-resolved open-span
+/// start. Bundled so the single-target `forward_format` families
+/// (emphasis / bouten / 縦中横 / box enclosure) share one location argument.
+#[derive(Clone, Copy)]
+struct ForwardBracket<'a> {
+    view: BodyView<'a>,
+    open_idx: usize,
+    open_span_start: u32,
+}
+
 /// Classify a `［＃「target」は太字／斜体］` forward-reference emphasis.
 ///
 /// The `は`-form leaf counterpart of the `［＃太字］…［＃太字終わり］`
@@ -1462,26 +1486,26 @@ impl RecogniseCtx<'_, '_> {
     /// span. Returns the bracket node, its consume start, and the diagnostic;
     /// for the interior case it also stashes the styled `Detached` decoration
     /// in `self.pending_decoration` for `try_bracket_emit` to splice.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the caller already holds the body view, bracket index, open-span start, \
-                  resolved attribute, and target text — each an independent input."
-    )]
     fn resolve_forward_format(
         &mut self,
-        view: BodyView<'_>,
-        open_idx: usize,
-        open_span_start: u32,
+        bracket: ForwardBracket<'_>,
         attr: ForwardAttr,
         only: &str,
     ) -> (Node, u32, ForwardDiag) {
+        let ForwardBracket {
+            view,
+            open_idx,
+            open_span_start,
+        } = bracket;
         let text = self.alloc.content_plain(only);
         match resolve_forward_referent(
-            view.events,
-            self.source,
-            open_idx,
+            ReferentSearch {
+                events: view.events,
+                source: self.source,
+                open_idx,
+                pending_plain_start: self.pending_plain_start,
+            },
             only,
-            self.pending_plain_start,
         ) {
             ForwardReferent::Adjacent(consume_start) => (
                 self.alloc
@@ -1567,7 +1591,15 @@ impl RecogniseCtx<'_, '_> {
                 ForwardDiag::None,
             ));
         }
-        Some(self.resolve_forward_format(view, open_idx, open_span.start, attr, only))
+        Some(self.resolve_forward_format(
+            ForwardBracket {
+                view,
+                open_idx,
+                open_span_start: open_span.start,
+            },
+            attr,
+            only,
+        ))
     }
 }
 
@@ -1620,7 +1652,15 @@ impl RecogniseCtx<'_, '_> {
                 ForwardDiag::None,
             ));
         }
-        Some(self.resolve_forward_format(view, open_idx, open_span.start, attr, target))
+        Some(self.resolve_forward_format(
+            ForwardBracket {
+                view,
+                open_idx,
+                open_span_start: open_span.start,
+            },
+            attr,
+            target,
+        ))
     }
 }
 
@@ -2033,7 +2073,15 @@ mod tests {
     fn resolve_forward_referent_locates_interior_occurrence() {
         // `XY` occurs at byte 5 inside the pending run [3, 9) but is not
         // byte-adjacent to the bracket at cutoff 9, so it is an interior span.
-        match resolve_forward_referent(&open_at(9), "pppqqXYZZ", 0, "XY", Some(3)) {
+        match resolve_forward_referent(
+            ReferentSearch {
+                events: &open_at(9),
+                source: "pppqqXYZZ",
+                open_idx: 0,
+                pending_plain_start: Some(3),
+            },
+            "XY",
+        ) {
             ForwardReferent::Interior { start, end } => assert_eq!((start, end), (5, 7)),
             _ => panic!("expected an interior referent"),
         }

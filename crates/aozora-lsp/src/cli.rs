@@ -26,7 +26,7 @@ pub(crate) struct Cli {
     /// Speak LSP over stdio. Accepted for editor compatibility; this is the
     /// only supported transport, so the flag is a no-op.
     #[arg(long)]
-    #[allow(
+    #[expect(
         dead_code,
         reason = "--stdio is accepted for editor compatibility but never read: the daemon only speaks stdio"
     )]

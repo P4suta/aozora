@@ -106,12 +106,8 @@ impl Piece {
             let in_end = in_off + in_len;
             // `out_end` fits u32: it never exceeds the sanitized length,
             // which is bounded by the source length (≤ u32::MAX upstream).
-            #[allow(
-                clippy::cast_sign_loss,
-                clippy::cast_possible_truncation,
-                reason = "out_end = in_end + delta is a non-negative offset ≤ sanitized len ≤ u32::MAX"
-            )]
-            let out_end = (i64::from(in_end) + delta) as u32;
+            // Non-negative by construction, so saturating is value-identical.
+            let out_end = u32::try_from(i64::from(in_end) + delta).unwrap_or(u32::MAX);
             anchors.push((out_end, in_end));
         }
         Self { anchors }
@@ -156,11 +152,8 @@ pub fn offset_map(source: &str) -> OffsetMap {
     while let Some(rest) = after_bom.strip_prefix('\u{FEFF}') {
         after_bom = rest;
     }
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "source.len() ≤ u32::MAX is the lexer-wide span contract"
-    )]
-    let bom = (source.len() - after_bom.len()) as u32;
+    // source.len() ≤ u32::MAX is the lexer-wide span contract.
+    let bom = u32::try_from(source.len() - after_bom.len()).unwrap_or(u32::MAX);
 
     // Pass 2 — CR/LF folding. Only `\r\n` (2→1) shifts; lone `\r` (1→1)
     // does not. Mirror normalize_line_endings' `\r` scan.
@@ -199,11 +192,8 @@ fn scan_crlf_edits(after_bom: &str) -> Vec<(u32, u32, u32)> {
     let mut edits = Vec::new();
     for cr in memchr::memchr_iter(b'\r', bytes) {
         if bytes.get(cr + 1) == Some(&b'\n') {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "byte offset ≤ source.len() ≤ u32::MAX"
-            )]
-            edits.push((cr as u32, 2, 1));
+            // byte offset ≤ source.len() ≤ u32::MAX.
+            edits.push((u32::try_from(cr).unwrap_or(u32::MAX), 2, 1));
         }
     }
     edits
@@ -214,10 +204,6 @@ fn scan_crlf_edits(after_bom: &str) -> Vec<(u32, u32, u32)> {
 /// [`isolate_decorative_rules`](super::sanitize::isolate_decorative_rules)
 /// exactly (same `prev_nonblank` bookkeeping and tail-line handling), so
 /// the recorded insertion points stay in lockstep with the real pass.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "byte offset ≤ source.len() ≤ u32::MAX is the lexer-wide span contract"
-)]
 fn scan_rule_edits(line_normalized: &str) -> Vec<(u32, u32, u32)> {
     use super::sanitize::is_rule_line_trimmed;
 
@@ -229,7 +215,7 @@ fn scan_rule_edits(line_normalized: &str) -> Vec<(u32, u32, u32)> {
     for nl in memchr::memchr_iter(b'\n', bytes) {
         let trimmed = line_normalized[line_start..nl].trim();
         if is_rule_line_trimmed(trimmed) && prev_nonblank {
-            edits.push((line_start as u32, 0, 1));
+            edits.push((u32::try_from(line_start).unwrap_or(u32::MAX), 0, 1));
         }
         prev_nonblank = !trimmed.is_empty();
         line_start = nl + 1;
@@ -237,7 +223,7 @@ fn scan_rule_edits(line_normalized: &str) -> Vec<(u32, u32, u32)> {
     if line_start < bytes.len() {
         let tail = line_normalized[line_start..].trim();
         if is_rule_line_trimmed(tail) && prev_nonblank {
-            edits.push((line_start as u32, 0, 1));
+            edits.push((u32::try_from(line_start).unwrap_or(u32::MAX), 0, 1));
         }
     }
     edits
@@ -266,11 +252,12 @@ fn scan_accent_edits(rule_isolated: &str) -> Vec<(u32, u32, u32)> {
         let close_abs = after_open + close_rel;
         let body = &rule_isolated[after_open..close_abs];
         for (in_off, in_len, out_len) in decompose_fragment_edits(body) {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "byte offset ≤ source.len() ≤ u32::MAX"
-            )]
-            edits.push(((after_open + in_off) as u32, in_len as u32, out_len as u32));
+            // byte offset ≤ source.len() ≤ u32::MAX.
+            edits.push((
+                u32::try_from(after_open + in_off).unwrap_or(u32::MAX),
+                u32::try_from(in_len).unwrap_or(u32::MAX),
+                u32::try_from(out_len).unwrap_or(u32::MAX),
+            ));
         }
         cursor = close_abs + '〕'.len_utf8();
     }
@@ -285,10 +272,6 @@ mod tests {
     /// Walk every sanitized offset and pin the universal invariants a
     /// source-coordinate consumer relies on: monotonic, in-bounds, ending
     /// exactly at `source.len()`, and always on a source char boundary.
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "test offsets ≤ source.len() ≤ u32::MAX"
-    )]
     fn assert_map_invariants(source: &str) {
         let sanitized = sanitize(source).text;
         let map = offset_map(source);
@@ -299,7 +282,7 @@ mod tests {
             if !sanitized.is_char_boundary(s) {
                 continue;
             }
-            let src = map.source_offset(s as u32);
+            let src = map.source_offset(u32::try_from(s).unwrap());
             assert!(
                 src >= prev,
                 "non-monotonic at sanitized {s}: {src} < {prev} (source {source:?})"
@@ -316,7 +299,7 @@ mod tests {
             prev = src;
         }
         assert_eq!(
-            map.source_offset(sanitized.len() as u32) as usize,
+            map.source_offset(u32::try_from(sanitized.len()).unwrap()) as usize,
             source.len(),
             "sanitized end must map to source end (source {source:?})"
         );

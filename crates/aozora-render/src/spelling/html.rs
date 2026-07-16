@@ -318,7 +318,7 @@ pub(crate) fn render_container<W: Write>(
 /// Emit a container's opening tag. Block containers render a
 /// `<div class="aozora-container …">`; the inline range forms (bouten,
 /// bare 太字 / 斜体, 小書き) render their inline element directly.
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "one match arm per RegionFormat — splitting would scatter the \
               1:1 kind→markup mapping that mirrors emit_container_open"

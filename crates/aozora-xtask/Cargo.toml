@@ -37,6 +37,14 @@ rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# AST parsing for `xtask lint suppressions`: counts #[allow] lint pairs
+# per crate by walking the real syntax tree, so `#[cfg(test)]` modules and
+# `reason = "…"` clauses are handled structurally rather than by regex.
+# "visit" for the Visit trait, "full" for item/expr coverage, "parsing"
+# for `syn::parse_file`. Not in `[workspace.dependencies]` (no other crate
+# needs it); already present in Cargo.lock transitively via the proc-macro
+# derives, so this pins the same 2.x line without adding a new graph.
+syn = { version = "2.0.117", features = ["full", "visit", "parsing"] }
 toml = { workspace = true }
 tree-sitter = "0.26"
 tree-sitter-aozora = { workspace = true }

@@ -95,7 +95,7 @@ impl Span {
 /// `u32::MAX`. The killable `>` → `==` variant (which would truncate instead of
 /// saturating past the top of the range) is pinned by
 /// `tests::shifted_clamps_at_u32_max_on_overflow`.
-#[allow(
+#[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "the bounds check guarantees 0 <= shifted <= u32::MAX before the cast"

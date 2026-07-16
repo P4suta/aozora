@@ -16,7 +16,6 @@
 //!   `cargo bench -p aozora-bench` and have one place to point CI's
 //!   regression-detection workflow at.
 
-#![allow(missing_docs, reason = "dev bench harness — not a public API surface")]
 #![forbid(unsafe_code)]
 
 use std::hint::black_box;
@@ -408,7 +407,7 @@ pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
 /// Panics if `buckets == 0` or if `min_ns == 0` or `min_ns >= max_ns`
 /// — the bucket-bound math requires a strictly positive range.
 #[must_use]
-#[allow(
+#[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -461,7 +460,7 @@ pub fn log_histogram_ns(
 /// capped at `max_width` cells. Empty buckets render as a single space
 /// so columns stay aligned.
 #[must_use]
-#[allow(
+#[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,

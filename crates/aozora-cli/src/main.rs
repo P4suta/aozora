@@ -793,7 +793,15 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     let path = &args.common.input.file;
 
     if args.fix {
-        return run_lint_fix(path, encoding, format, strict, lang);
+        return run_lint_fix(
+            path,
+            LintFixSettings {
+                encoding,
+                format,
+                strict,
+                lang,
+            },
+        );
     }
 
     let mut timer = Timer::new(args.common.cross.timing);
@@ -817,20 +825,27 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     })
 }
 
-/// `aozora lint --fix`: apply the Tier1 autofix in place through the same
-/// guarded engine `fmt --fix --write` uses, then re-lint the result and report
-/// anything the autofix could not resolve.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a path plus the four resolved lint settings (encoding / format / strict / lang), each independent; a bundle struct would not read more clearly"
-)]
-fn run_lint_fix(
-    path: &Path,
+/// The resolved lint settings threaded through `aozora lint --fix` alongside
+/// the input path: the decoder, the diagnostic output format, whether residue
+/// is fatal under `--strict`, and the language for rendered messages.
+#[derive(Clone, Copy)]
+struct LintFixSettings<'a> {
     encoding: Encoding,
     format: DiagFormat,
     strict: bool,
-    lang: &LanguageIdentifier,
-) -> Result<ExitCode> {
+    lang: &'a LanguageIdentifier,
+}
+
+/// `aozora lint --fix`: apply the Tier1 autofix in place through the same
+/// guarded engine `fmt --fix --write` uses, then re-lint the result and report
+/// anything the autofix could not resolve.
+fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> {
+    let LintFixSettings {
+        encoding,
+        format,
+        strict,
+        lang,
+    } = settings;
     if path.as_os_str() == "-" {
         anyhow::bail!("lint --fix needs a file path; it cannot rewrite stdin");
     }

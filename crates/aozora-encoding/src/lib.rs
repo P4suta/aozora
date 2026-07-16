@@ -165,7 +165,7 @@ pub use self::suijun::{Suijun, is_platform_dependent, jis_level, level_table_siz
 /// regenerated automatically when any input TSV changes; the
 /// committed source tree carries only the data, not the perfect-
 /// hash output. See `build.rs` for the generator.
-#[allow(
+#[expect(
     clippy::unreadable_literal,
     reason = "phf_codegen emits 64-bit perfect-hash keys without separators; \
               we cannot reformat them without forking the codegen crate"
