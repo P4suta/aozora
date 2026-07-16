@@ -4,7 +4,7 @@ import type { Locale } from './types';
 // key set; `MessageKey` is `keyof typeof ja`, and `en` is typed
 // `Record<MessageKey, string>` so a missing OR extra English key fails `tsc`.
 // `{x}` placeholders are filled by `tf()`. Literary sample text (samples.ts)
-// and the notation-guide body are out of scope — they stay Japanese.
+// is out of scope — it stays Japanese.
 
 const ja = {
   // App — header / panes / banners / toasts
@@ -22,9 +22,6 @@ const ja = {
   paletteText: 'コマンド',
   guideOpen: '記法ガイドを開く',
   guideText: '記法ガイド',
-  guideModalLabel: '青空文庫記法 完全リファレンス',
-  guideModalHeader: '📖 青空文庫記法 リファレンス',
-  close: '閉じる',
   // HtmlPreview writing-mode toggle
   writingToHorizontal: '横書きに切り替え',
   writingToVertical: '縦書きに切り替え',
@@ -127,9 +124,6 @@ const en: Record<MessageKey, string> = {
   paletteText: 'Commands',
   guideOpen: 'Open notation guide',
   guideText: 'Guide',
-  guideModalLabel: 'Aozora notation reference',
-  guideModalHeader: '📖 Aozora Notation Reference',
-  close: 'Close',
   writingToHorizontal: 'Switch to horizontal writing',
   writingToVertical: 'Switch to vertical writing',
   writingHorizontalLabel: '↻ Horizontal',
