@@ -112,7 +112,7 @@ enum Cmd {
     /// that they stay in sync with the live wire shape.
     Schema(SchemaArgs),
     /// TypeScript types artefact dump / drift gate. Generates
-    /// `crates/aozora-wasm/pkg/aozora_types.d.ts` from the live
+    /// `crates/aozora-wasm/types/aozora_types.d.ts` from the live
     /// enums (`NodeKind` / `PairKind` / `Severity` /
     /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
     /// Drift-gated like `xtask schema`.
@@ -349,7 +349,7 @@ struct TypesArgs {
 #[derive(Subcommand)]
 enum TypesOp {
     /// Generate `aozora_types.d.ts` from the live enums + wire
-    /// structs and write it under `crates/aozora-wasm/pkg/`.
+    /// structs and write it under `crates/aozora-wasm/types/`.
     /// Overwrites the existing file; commit the diff.
     Ts,
     /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
