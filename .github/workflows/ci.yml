@@ -400,15 +400,25 @@ jobs:
         run: |
           git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
           echo "diff is $(wc -l < pr.diff) lines"
-      # `--features internals`: aozora-lsp's test binaries are behind it
-      # (`required-features`), so without it a mutant on a line those tests
-      # cover reports as a survivor when the test that kills it simply did not
-      # run. It is the only crate with the feature, so this is inert elsewhere.
-      # The weekly full sweep (`mutants.yml`) ratchets aozora-lsp on default
-      # features against a baseline; this per-diff gate does not read that
-      # baseline, so it judges a changed line by whether a test *can* catch it.
+      # `--features internals`: aozora-lsp's mutant-killing test binaries are
+      # behind it (`required-features`), so without it a mutant on a line those
+      # tests cover reports as a survivor when the test that kills it did not
+      # run. But aozora-lsp is the ONLY crate defining the feature, so passing
+      # it to a diff that mutates only other crates makes cargo reject it
+      # ("none of the selected packages contains this feature: internals").
+      # List first (a static pass, no build) and add the feature only when
+      # aozora-lsp is among the mutated crates — the one case it is both needed
+      # and valid. The weekly full sweep (`mutants.yml`) ratchets aozora-lsp on
+      # default features against a baseline; this per-diff gate does not read
+      # that baseline, so it judges a changed line by whether a test *can*
+      # catch it.
       - name: Mutate the changed lines
-        run: just mutants --features internals --in-diff pr.diff
+        run: |
+          if just mutants --in-diff pr.diff --list 2>/dev/null | grep -q 'crates/aozora-lsp/'; then
+            just mutants --features internals --in-diff pr.diff
+          else
+            just mutants --in-diff pr.diff
+          fi
 
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
