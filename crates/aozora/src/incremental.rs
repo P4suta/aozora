@@ -1446,15 +1446,13 @@ fn splice_prologue<S: SanitizedSrc>(
     }
     // The bytes outside `edit_old` must be byte-identical between the cached and
     // new sanitized buffers (the prefix `[0, edit_old.start)` plus the suffix
-    // after the edit). This used to be an unconditional prefix/suffix `memcmp`
-    // here; it is gone primarily for **time**, not defence — on the rope source
-    // a later PR introduces, slicing `[0, edit_old.start)` is `O(prefix) =
-    // O(doc)` per edit (a `RopeSlice` equality still walks `O(min len)`), which
-    // is incompatible with the per-keystroke hot path. The check now lives as
-    // the caller's precondition: in debug it is restated by
-    // `debug_assert_unchanged_outside` (a full `memcmp` for `&str`, byte-
-    // identical to the deleted code; a no-alloc probe for a rope), and the
-    // production LSP caller guarantees it by deriving `edit_old` from the
+    // after the edit). Deliberately not checked here, and that is about **time**
+    // rather than defence: on a rope source, slicing `[0, edit_old.start)` costs
+    // `O(prefix) = O(doc)` per edit (a `RopeSlice` equality still walks
+    // `O(min len)`), which the per-keystroke hot path cannot afford. It is the
+    // caller's precondition instead: in debug `debug_assert_unchanged_outside`
+    // restates it (a full `memcmp` for `&str`, a no-alloc probe for a rope), and
+    // the production LSP caller guarantees it by deriving `edit_old` from the
     // real sanitized diff.
     #[cfg(debug_assertions)]
     old_source.debug_assert_unchanged_outside(new_sanitized, edit_old.clone(), new_edit_end);

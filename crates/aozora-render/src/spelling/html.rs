@@ -301,7 +301,7 @@ pub(crate) fn escape_text_chunk<W: Write>(chunk: &str, out: &mut W) -> fmt::Resu
     out.write_str(&chunk[cursor..])
 }
 
-// ── HTML container / heading / line tag byte-spelling (formerly render_node.rs) ──
+// ── HTML container / heading / line tag byte-spelling ──
 
 pub(crate) fn render_container<W: Write>(
     c: Container,

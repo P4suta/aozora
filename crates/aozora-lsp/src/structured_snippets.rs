@@ -517,8 +517,8 @@ mod tests {
 
     #[test]
     fn empty_wrap_prose_localizes_by_lang() {
-        // The empty-wrap detail/doc come from the shared catalog: `ja` keeps
-        // the migrated Japanese, `zh` the new Chinese (en is asserted above).
+        // The empty-wrap detail/doc come from the shared catalog, one per
+        // locale (en is asserted above).
         let src = "#";
         let wrap = |tag: &str| {
             let lang: LanguageIdentifier = tag.parse().expect("locale parses");

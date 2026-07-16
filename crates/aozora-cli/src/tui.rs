@@ -785,7 +785,7 @@ mod tests {
         );
         a.toggle_lang();
         assert_eq!(a.lang, lang("ja"), "language advanced");
-        // The clean-parse placeholder now localizes (no longer the English text).
+        // The clean-parse placeholder localizes with the language.
         assert_ne!(
             a.derived.diagnostics, "(no diagnostics)",
             "placeholder localized"

@@ -278,14 +278,14 @@ fn explain_section_labels_localize_with_lang() {
 
 #[test]
 fn explain_title_and_body_prose_localize_with_lang() {
-    // The migrated title / body prose comes from aozora-i18n by code + lang.
+    // Title / body prose comes from aozora-i18n, keyed by code + lang.
     // The English default title/body:
     let (status, en, stderr) = run(&["explain", "aozora::lex::unclosed_bracket"]);
     assert!(status.success(), "explain en must succeed: {stderr:?}");
     assert!(en.contains("Unclosed opening bracket"), "en title: {en:?}");
     assert!(en.contains("There is an unclosed"), "en body: {en:?}");
 
-    // `--lang ja` swaps the title and body to the migrated Japanese prose.
+    // `--lang ja` swaps the title and body to the Japanese prose.
     let (status, ja, _) = run(&["explain", "--lang", "ja", "aozora::lex::unclosed_bracket"]);
     assert!(status.success(), "explain --lang ja must succeed");
     assert!(ja.contains("閉じられていない開き括弧"), "ja title: {ja:?}");
