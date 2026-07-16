@@ -17,11 +17,8 @@
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
+import type { RenderHtmlResult } from "./lspWire";
 import { aozoraNotationStyles } from "./notationStyles";
-
-interface RenderHtmlResult {
-  html: string;
-}
 
 type WritingMode = "vertical" | "horizontal";
 

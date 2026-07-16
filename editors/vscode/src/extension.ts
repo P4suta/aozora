@@ -3,12 +3,15 @@
 // any plaintext .txt file whose content looks like an aozora-bunko work.
 
 import { chmodSync, existsSync, constants as fsConstants, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
 import {
   commands,
   type ExtensionContext,
+  env,
   languages,
   type TextDocument,
+  Uri,
   type WorkspaceConfiguration,
   window,
   workspace,
@@ -24,7 +27,6 @@ import { registerCanonicalizeAtCursorCommand } from "./canonicalize";
 import { registerCliCommands } from "./cliCommands";
 import { registerDeletePair } from "./deletePair";
 import { registerGaijiFold } from "./gaijiFold";
-import { registerNotationGuideCommand } from "./notationGuide";
 import { registerShowOutlineCommand } from "./outline";
 import { registerPreviewCommand } from "./preview";
 import { registerSnippetTriggers } from "./snippetTrigger";
@@ -69,9 +71,6 @@ export async function activate(context: ExtensionContext): Promise<void> {
       { scheme: "file", language: "aozora" },
       { scheme: "untitled", language: "aozora" },
     ],
-    synchronize: {
-      configurationSection: "aozora",
-    },
   };
 
   client = new LanguageClient("aozora", "aozora Language Server", serverOptions, clientOptions);
@@ -111,7 +110,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // other contribution in this file uses.
   registerPreviewCommand(context, client);
   // Wrap-selection commands are pure client-side WorkspaceEdits: no
-  // LSP roundtrip needed for trivial open/close splices. The same 7
+  // LSP roundtrip needed for trivial open/close splices. The same
   // wraps are also exposed via the LSP `code_action` handler so
   // editors that talk LSP only (helix, neovim) get them too.
   registerWrapCommands(context);
@@ -119,10 +118,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // glyph when the cursor is elsewhere; expands back when cursor
   // enters the span. Driven by the LSP `aozora/gaijiSpans` request.
   registerGaijiFold(context, client);
-  // `Aozora: 記法ガイドを開く` — webview pane rendering the
-  // shipped Markdown reference. Discoverable from the command
-  // palette, the editor context menu, and the welcome walkthrough.
-  registerNotationGuideCommand(context);
+  // `Aozora: 記法ガイドを開く` — opens aozora-bunko's own annotation
+  // reference in the browser. Upstream owns the notation, so we link
+  // to it rather than restate it. Discoverable from the command
+  // palette and the editor context menu.
+  context.subscriptions.push(
+    commands.registerCommand("aozora.openNotationGuide", async () => {
+      await env.openExternal(Uri.parse("https://www.aozora.gr.jp/annotation/"));
+    }),
+  );
 
   // Discoverability shortcuts for the auto-wired LSP features
   // (foldingRange / documentSymbol / semanticTokens). VS Code picks
@@ -262,13 +266,10 @@ function registerLspFeatureShortcuts(context: ExtensionContext): void {
 // coded absolute path.
 function resolveVars(input: string): string {
   const ws = workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-  return (
-    input
-      .replace(/\$\{workspaceFolder\}/g, ws)
-      // biome-ignore lint/complexity/useLiteralKeys: `process.env` is a Dict<string> index signature; `noPropertyAccessFromIndexSignature` requires bracket access
-      .replace(/\$\{userHome\}/g, process.env["HOME"] ?? "")
-      .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => process.env[name] ?? "")
-  );
+  return input
+    .replace(/\$\{workspaceFolder\}/g, ws)
+    .replace(/\$\{userHome\}/g, homedir())
+    .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => process.env[name] ?? "");
 }
 
 // Aozora-bunko "input manual" feature detection.
