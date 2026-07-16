@@ -113,8 +113,8 @@ impl ParagraphBuffer {
 ///   `byte_range.start`.
 ///
 /// Mixing the two is intentional — `gaiji_spans` is a pre-shifted
-/// convenience for the most-common consumer (LSP `gaiji_spans` /
-/// inlay), while keeping `tree` paragraph-local lets us share the
+/// convenience for its consumer (the `aozora/gaijiSpans` request),
+/// while keeping `tree` paragraph-local lets us share the
 /// `Arc<Tree>` across snapshot generations untouched even when the
 /// paragraph's absolute position shifted.
 #[derive(Debug)]
@@ -454,7 +454,7 @@ mod tests {
 
     /// End-to-end pin for the same bug: constructing a `DocBuffer`
     /// from a giant multi-byte stream went through `Rope::byte_slice`
-    /// against the (formerly mid-codepoint) ranges and panicked.
+    /// against ranges that could land mid-codepoint, and panicked.
     /// Documents this scale exist in the wild — `tsumi-to-batsu-x100`
     /// is one of the workspace's own benchmark fixtures.
     #[test]

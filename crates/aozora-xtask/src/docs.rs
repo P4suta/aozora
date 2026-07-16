@@ -12,21 +12,15 @@
 //! ## Why this exists
 //!
 //! Deleting or moving a page does not break the reference to it — it
-//! makes the reference wrong while everything stays green. Measured
-//! twice in one campaign (#525):
+//! makes the reference wrong while everything stays green. Measured in
+//! #525: `fuzz.yml:3` cited `docs/fuzz-workflow.md`, which #550 deleted
+//! because `Justfile:718-747` said the same thing next to the recipes.
+//! That is the case this gate catches, and the reason it exists.
 //!
-//! - `release-plz.yml`'s dormant notice printed "See
-//!   docs/contrib/release.md." for the App setup. #550 moved activation
-//!   to `releasing-secrets.md`. The file still existed, so nothing
-//!   caught it — the *content* had left, which no path check can see,
-//!   and no link checker would either.
-//! - `fuzz.yml:3` cited `docs/fuzz-workflow.md`, which #550 deleted
-//!   because `Justfile:718-747` said the same thing next to the
-//!   recipes. That one this gate does catch.
-//!
-//! The first case is the reason to read the whole line, not just the
-//! path, when this gate is green: a resolving path is necessary and not
-//! sufficient. The second is the reason the gate exists at all.
+//! It is necessary and not sufficient. Content can move out of a page
+//! that still exists, leaving a line that resolves and misleads — no
+//! path check sees that, and no link checker would either. So read the
+//! whole line, not just the path, when this gate is green.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn emmet_detail_and_doc_localize_by_lang() {
         // Detail prose and the glyph-substitution doc come from the shared
-        // catalog: `ja` keeps the migrated Japanese, `zh` the new Chinese.
+        // catalog, one per locale.
         let item = |tag: &str| {
             let lang: LanguageIdentifier = tag.parse().expect("locale parses");
             super::emmet_completions("[", pos(0, 1), &lang)

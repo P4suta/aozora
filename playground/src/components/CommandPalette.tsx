@@ -28,7 +28,8 @@ function describe(id: string): string {
 
 // Surfaces the selection-wrap commands — especially the three full-width-bracket
 // shapes (「」/〔〕/［＃］) whose trigger keys aren't typeable (roadmap S12-Q2).
-// Mirrors NotationGuide.tsx's overlay/focus discipline.
+// Overlay discipline: Escape closes, focus moves into the modal on open and
+// returns to the previously-focused element on close.
 export default function CommandPalette(props: CommandPaletteProps) {
   const [query, setQuery] = createSignal('');
   const [selected, setSelected] = createSignal(0);

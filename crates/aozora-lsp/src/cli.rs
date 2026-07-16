@@ -22,11 +22,7 @@ const LONG_ABOUT: &str = concat!(
     long_about = LONG_ABOUT,
     version = aozora_buildstamp::VERSION
 )]
-#[allow(
-    missing_copy_implementations,
-    reason = "a clap parser handle, not a value type; deriving Copy would mislead and break once string-valued args are added"
-)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Speak LSP over stdio. Accepted for editor compatibility; this is the
     /// only supported transport, so the flag is a no-op.
     #[arg(long)]
@@ -42,7 +38,7 @@ impl Cli {
     /// usage error) *before* this returns, so the JSON-RPC stdout channel is
     /// never touched when those flags are present.
     #[must_use]
-    pub fn parse_args() -> Self {
+    pub(crate) fn parse_args() -> Self {
         Self::parse()
     }
 }

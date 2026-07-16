@@ -404,6 +404,13 @@ tui-textarea-2 = { version = "0.12", default-features = false, features = ["cros
 # per ADR-0017 and consumed only by aozora-i18n (no `langid!` macro — it
 # expands to `unsafe`, which the workspace forbids — so no `macros` feature).
 fluent-bundle = "0.16"
+# Fluent's own parser/AST crate. `FluentResource::entries()` hands back
+# `fluent_syntax::ast::Entry`, and fluent-bundle re-exports neither the module
+# nor the type, so reading a catalog's message ids back out of the parsed
+# resource needs it named directly (aozora-i18n, test-only). Must track the
+# version fluent-bundle itself depends on — 0.16 wants 0.12 — or `ast::Entry`
+# resolves to two unrelated types.
+fluent-syntax = "0.12"
 unic-langid = "0.9"
 # Pinned to 0.13 (not 0.14): fluent-langneg 0.14 rebased its identifier type on
 # ICU4X's `icu_locid`, whereas fluent-bundle 0.16 and `unic-langid` here speak

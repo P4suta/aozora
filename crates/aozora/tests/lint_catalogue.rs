@@ -229,7 +229,7 @@ fn catalogue_refuses_every_editorial_body() {
 
 // ---------------------------------------------------------------------------
 // Tier2 (`aozora_syntax::degraded`) — the opt-in, render-only home for the
-// lossy / judgment reductions migrated out of Tier1 (ADR-0026).
+// lossy / judgment reductions Tier1 does not admit (ADR-0026).
 // ---------------------------------------------------------------------------
 
 /// Source giving a degraded sample / reduction a fair render context: a forward
@@ -248,7 +248,7 @@ fn degraded_context(body: &str) -> String {
     format!("あ\n［＃{body}］\n本文\n")
 }
 
-/// Every migrated degraded sample reduces to a directly parser-recognised
+/// Every degraded sample reduces to a directly parser-recognised
 /// spelling, stays Unknown as written, and is idempotent. The Tier2 analogue of
 /// `every_variant_is_unknown_and_fires_the_lint`.
 #[test]
@@ -279,7 +279,7 @@ fn every_degraded_sample_reduces() {
 
 /// Tier1 and Tier2 are disjoint catalogues (ADR-0026): no body resolves in both.
 /// This is what keeps the zero-FP Tier1 map free of the lossy / judgment Tier2
-/// reductions migrated out of it.
+/// reductions.
 #[test]
 fn tier1_and_tier2_are_disjoint() {
     for &t1 in CATALOGUE_SAMPLES {
@@ -299,8 +299,8 @@ fn tier1_and_tier2_are_disjoint() {
 }
 
 /// The blast-radius pin: a Tier2 reduction reaches ONLY the opt-in `Degraded`
-/// render. Under `Degraded` each migrated form renders non-inert; under
-/// `Canonical` (`render --normalize`) it stays inert (it left Tier1); and
+/// render. Under `Degraded` each degraded form renders non-inert; under
+/// `Canonical` (`render --normalize`) it stays inert; and
 /// `fmt --fix` (= `Canonical` serialize) leaves it byte-verbatim, so a
 /// lossy Tier2 reduction can never rewrite source.
 #[test]

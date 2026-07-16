@@ -49,23 +49,7 @@ import {
 } from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
-/** Server-side payload for the `aozora/gaijiSpans` LSP request.
- *  Mirrors `aozora_lsp::backend::GaijiSpansResult`. */
-interface GaijiSpansResponse {
-  readonly spans: ReadonlyArray<GaijiSpanWire>;
-}
-
-interface GaijiSpanWire {
-  readonly range: { start: VsPositionLike; end: VsPositionLike };
-  readonly resolved: string;
-  readonly description: string;
-  readonly mencode: string | null;
-}
-
-interface VsPositionLike {
-  readonly line: number;
-  readonly character: number;
-}
+import type { GaijiSpansResponse, GaijiSpanWire } from "./lspWire";
 
 const GAIJI_SPANS_REQUEST = "aozora/gaijiSpans" as const;
 const CONFIG_NAMESPACE = "aozora.gaijiFold" as const;

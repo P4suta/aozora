@@ -434,12 +434,12 @@ tui-no-tty = aozora tui には対話端末が必要です（aozora repl か --wa
 
 ## LSP エディタ表層
 ##
-## aozora-lsp が出す人間向けの表層: 外字ホバー／インレイのツールチップ、
-## コードアクションのタイトル、補完の detail／documentation。プロトコルの
-## データ軸（カスタムメソッドの payload、診断の range／コード、semantic
-## token、フォーマット編集）は決してここを通さない。文中の記法グリフや
-## Tab ストップのテンプレートは青空記法そのもので全 locale 共通、周囲の
-## プロースだけを訳す。
+## aozora-lsp が出す人間向けの表層: 外字ホバーのツールチップ、サイズ超過
+## 文書の通知、コードアクションのタイトル、補完の detail／documentation。
+## プロトコルのデータ軸（カスタムメソッドの payload、診断の range／コード、
+## semantic token、フォーマット編集）は決してここを通さない。文中の記法
+## グリフや Tab ストップのテンプレートは青空記法そのもので全 locale 共通、
+## 周囲のプロースだけを訳す。
 
 # 外字 (gaiji) 参照 — ホバー見出しと Markdown 本文のラベル。
 lsp-hover-gaiji-header = **外字 (gaiji)**
@@ -447,8 +447,13 @@ lsp-hover-resolved-label = 解決
 lsp-hover-composed-seq-label = 合成シーケンス
 lsp-hover-unresolved = (辞書にマッチせず — 記述で代替表示)
 lsp-hover-description-label = 記述
-# 外字インレイヒントのツールチップ見出し（上の解決ラベルを再利用）。
-lsp-inlay-gaiji-header = **外字**
+
+# 解析するには大きすぎる文書の通知。$size は文書サイズ、$limit は超えた
+# 上限で、どちらも MiB の整数値。前者は解析の代わりに出す唯一の診断、
+# 後者はプレビュー枠がレンダリングの代わりに出す段落（<p> の中に入るので
+# プレーンなプロースのままにする）。
+lsp-oversize-diagnostic = この文書は {$size} MiB で、全解析の上限 {$limit} MiB を超えています。編集と構文ハイライトは動きますが、このファイルの診断と HTML プレビューは停止します。
+lsp-oversize-preview = プレビュー停止中 — この文書は {$size} MiB で、上限 {$limit} MiB を超えています。編集は引き続き可能です。
 
 # コードアクション（クイックフィックス／リファクタ）のタイトル。エディタの
 # 電球メニューに出る。`SEL` は選択範囲が入る位置を示す。

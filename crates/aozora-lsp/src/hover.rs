@@ -329,9 +329,9 @@ mod tests {
         assert!(hover_at("", Position::new(99, 99)).is_none());
     }
 
-    /// The gaiji hover header + labels come from the shared i18n catalog: `ja`
-    /// keeps the migrated Japanese, `zh` gets the new Chinese, and `en` (the
-    /// default asserted throughout via the shim) carries the canonical prose.
+    /// The gaiji hover header + labels come from the shared i18n catalog, so
+    /// each locale gets its own prose; `en` is the default asserted throughout
+    /// via the shim.
     #[test]
     fn hover_prose_localizes_by_lang() {
         let src = "※［＃「木＋吶のつくり」、第3水準1-85-54］";

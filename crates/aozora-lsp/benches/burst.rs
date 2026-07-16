@@ -11,8 +11,6 @@
 //!   `gaiji_spans`. **Hypothesis: dominated by gaiji-span tree walk.**
 //! - `apply_changes/burst_100`            — 100 sequential edits.
 //!   Linear in count if no per-edit allocation cliff.
-//! - `inlay_solo`              — one `inlay_hints` call against the
-//!   pre-extracted span list. Should be sub-millisecond.
 //! - `gaiji_span_extract`      — just the tree walk in
 //!   `extract_gaiji_spans`. Bounds the cost we'd pay if we
 //!   recomputed eagerly.
@@ -28,12 +26,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aozora_lsp::internals::{
-    ByteEdit, GaijiSpan, LanguageIdentifier, LineIndex, OpenDocument, TreeSitterDoc, apply_edits,
-    extract_gaiji_spans_from_tree, inlay_hints, input_edit,
+    ByteEdit, LineIndex, OpenDocument, TreeSitterDoc, apply_edits, extract_gaiji_spans_from_tree,
+    input_edit,
 };
 use criterion::measurement::WallTime;
 use criterion::{BatchSize, BenchmarkGroup, Criterion, criterion_group, criterion_main};
-use tower_lsp::lsp_types::{Position, Range};
 
 fn load_fixture(name: &str) -> String {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -66,10 +63,6 @@ fn synthetic_fixture() -> String {
         s.push_str(PARA);
     }
     s
-}
-
-fn full_range_for(text: &str, idx: &LineIndex) -> Range {
-    Range::new(Position::new(0, 0), idx.position(text, text.len()))
 }
 
 fn bench_apply_changes(c: &mut Criterion) {
@@ -131,33 +124,6 @@ fn nearest_char_boundary(text: &str, target: usize) -> usize {
         idx -= 1;
     }
     idx
-}
-
-fn bench_inlay(c: &mut Criterion) {
-    let text = load_fixture("bouten.afm");
-    let state = OpenDocument::new(text);
-    let snap = state.snapshot();
-    // `inlay_hints` (the public library helper for editors that prefer
-    // server-side inlay) takes a sorted slice — collect from the
-    // snapshot's BTreeMap once. Production reads use the BTreeMap
-    // directly via `DocSnapshot::gaiji_spans.values()`; this bench is the
-    // only consumer of the slice form.
-    let spans: Vec<Arc<GaijiSpan>> = snap.doc_gaiji_spans().values().cloned().collect();
-    let range = full_range_for(snap.doc_text(), snap.doc_line_index());
-    let lang: LanguageIdentifier = "en".parse().expect("en parses");
-    let mut g = c.benchmark_group("inlay");
-    g.bench_function("solo_full_range_bouten_6mb", |b| {
-        b.iter(|| {
-            drop(inlay_hints(
-                snap.doc_text(),
-                &spans,
-                snap.doc_line_index(),
-                range,
-                &lang,
-            ));
-        });
-    });
-    g.finish();
 }
 
 /// Top-level dispatcher. Each individual bench is its own helper below,
@@ -383,7 +349,6 @@ criterion_group!(
     benches,
     bench_subcomponents,
     bench_apply_changes,
-    bench_inlay,
     bench_concurrent_reads
 );
 criterion_main!(benches);

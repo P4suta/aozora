@@ -183,6 +183,7 @@ body {
   border-radius: 4px;
   font: inherit;
   font-size: 0.85rem;
+  text-decoration: none;
   cursor: pointer;
   min-height: 36px;
 }
@@ -822,62 +823,9 @@ body {
   accent-color: var(--on-accent);
 }
 
-/* ===== Notation guide modal ===== */
-.notation-guide-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 50%);
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-}
+/* ===== Command palette (#334) ===== */
 
-.notation-guide-modal {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border-radius: 8px;
-  max-width: 880px;
-  width: 100%;
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 10px 40px rgb(0 0 0 / 25%);
-  overflow: hidden;
-}
-
-.notation-guide-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.notation-guide-header h2 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.notation-guide-close {
-  background: transparent;
-  border: none;
-  font-size: 1.5rem;
-  color: var(--fg-muted);
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 0.3rem;
-}
-
-.notation-guide-close:hover {
-  color: var(--accent);
-}
-
-/* Command palette (#334) — mirrors the notation-guide overlay, docked near the
-   top like a typical Cmd-K palette. */
+/* A modal overlay docked near the top like a typical Cmd-K palette. */
 .command-palette-backdrop {
   position: fixed;
   inset: 0;
@@ -949,155 +897,6 @@ body {
   padding: 0.75rem 0.65rem;
   color: var(--fg-muted);
   font-size: 0.85rem;
-}
-
-.notation-guide-content {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.notation-guide-toc {
-  flex: 0 0 220px;
-  border-right: 1px solid var(--border);
-  background: var(--bg);
-  overflow-y: auto;
-  padding: 0.5rem 0;
-  font-size: 0.85rem;
-}
-
-.notation-guide-toc ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.toc-link {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 0.4rem 1rem 0.4rem 1.25rem;
-  font: inherit;
-  font-size: 0.85rem;
-  color: var(--fg);
-  cursor: pointer;
-  line-height: 1.4;
-}
-
-.toc-link:hover {
-  background: var(--accent-bg);
-  color: var(--accent);
-}
-
-.toc-link.active {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.toc-l3 .toc-link {
-  padding-left: 2rem;
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-}
-
-.toc-l3 .toc-link:hover {
-  color: var(--accent);
-}
-
-.toc-l3 .toc-link.active {
-  color: var(--on-accent);
-}
-
-.notation-guide-body {
-  flex: 1 1 auto;
-  padding: 1.25rem 1.5rem 2rem;
-  overflow: auto;
-  line-height: 1.7;
-  font-size: 0.95rem;
-}
-
-.notation-guide-body h1,
-.notation-guide-body h2,
-.notation-guide-body h3 {
-  margin-top: 1.5em;
-  margin-bottom: 0.4em;
-  color: var(--accent);
-}
-
-.notation-guide-body h1 {
-  font-size: 1.45rem;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.3em;
-}
-
-.notation-guide-body h2 {
-  font-size: 1.2rem;
-}
-
-.notation-guide-body h3 {
-  font-size: 1rem;
-}
-
-.notation-guide-body p {
-  margin: 0.75em 0;
-}
-
-.notation-guide-body ul,
-.notation-guide-body ol {
-  padding-inline-start: 1.5em;
-}
-
-.notation-guide-body code {
-  background: var(--bg-code);
-  padding: 0.1em 0.3em;
-  border-radius: 3px;
-  font-size: 0.92em;
-  font-family: var(--font-mono);
-}
-
-.notation-guide-body pre {
-  background: var(--bg-code);
-  padding: 0.85rem 1rem;
-  border-radius: 4px;
-  overflow-x: auto;
-  font-size: 0.88em;
-  margin: 0.85em 0;
-}
-
-.notation-guide-body pre code {
-  background: transparent;
-  padding: 0;
-}
-
-.notation-guide-body table {
-  border-collapse: collapse;
-  margin: 1em 0;
-  font-size: 0.9em;
-}
-
-.notation-guide-body th,
-.notation-guide-body td {
-  border: 1px solid var(--border);
-  padding: 0.35em 0.7em;
-  text-align: left;
-}
-
-.notation-guide-body th {
-  background: var(--bg);
-  font-weight: 600;
-}
-
-.notation-guide-body hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 1.5em 0;
-}
-
-.notation-guide-body a {
-  color: var(--accent);
 }
 
 .toast {
@@ -1245,46 +1044,6 @@ body {
     right: -4px;
     min-width: 220px;
     max-width: calc(100vw - 24px);
-  }
-
-  .notation-guide-backdrop {
-    padding: 0;
-  }
-
-  .notation-guide-modal {
-    border-radius: 0;
-    max-height: 100dvh;
-    height: 100dvh;
-  }
-
-  .notation-guide-header {
-    padding: 0.7rem 1rem;
-  }
-
-  .notation-guide-header h2 {
-    font-size: 0.95rem;
-  }
-
-  .notation-guide-body {
-    padding: 1rem;
-    font-size: 0.9rem;
-  }
-
-  /* モバイルでは TOC を縦折りたたみ。表示順は TOC が上、本文が下。 */
-  .notation-guide-content {
-    flex-direction: column;
-  }
-
-  .notation-guide-toc {
-    flex: 0 0 auto;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 32dvh;
-    overflow-y: auto;
-  }
-
-  .notation-guide-body pre {
-    font-size: 0.82em;
   }
 
   .outline-link {

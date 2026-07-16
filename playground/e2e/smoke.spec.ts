@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 // Smoke E2E over the real WASM-backed playground (#335 D-5). Selectors verified
 // against the live components (App.tsx / HtmlPreview.tsx / Tabs.tsx /
-// SettingsPanel.tsx / NotationGuide.tsx).
+// SettingsPanel.tsx / CommandPalette.tsx).
 
 // The `.status-banner` ("WASM 初期化中…") is rendered by a Solid `<Show>` while
 // `!wasmReady()`, so it is *unmounted* once the engine loads — the canonical
@@ -111,12 +111,13 @@ test.describe('playground smoke', () => {
     await expect(page.locator('main.app-main')).toHaveClass(/mode-editor/);
   });
 
-  test('記法ガイドが開き Escape で閉じる', async ({ page }) => {
+  test('記法ガイドが公式注記一覧へのリンクになっている', async ({ page }) => {
+    // 記法の権威は青空文庫本家。クリックすると外部サイトへ離脱するので、
+    // ここでは遷移先だけを検証する。
     await ready(page);
-    await page.locator('.guide-btn').click();
-    await expect(page.locator('[role="dialog"]')).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+    const guide = page.locator('a.guide-btn');
+    await expect(guide).toHaveAttribute('href', 'https://www.aozora.gr.jp/annotation/');
+    await expect(guide).toHaveAttribute('target', '_blank');
   });
 
   test('設定ポップオーバーが開く', async ({ page }) => {

@@ -303,8 +303,10 @@ dependencies = [
 name = "aozora-i18n"
 version = "0.4.1"
 dependencies = [
+ "aozora-spec",
  "fluent-bundle",
  "fluent-langneg",
+ "fluent-syntax",
  "unic-langid",
 ]
 

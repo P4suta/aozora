@@ -9,7 +9,6 @@ import type { HeadingEntry, ParserState, ProfilePhaseEntry } from './editor';
 import { buildShareUrl, readShareTextFromUrl, syncTextToUrl } from './share';
 import { clearStoredSource, loadStoredSource, saveSource } from './storage';
 import { SAMPLES, DEFAULT_SAMPLE_ID } from './samples';
-import NotationGuide from './components/NotationGuide';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel from './components/SettingsPanel';
 import { error as logError } from './logger';
@@ -64,7 +63,6 @@ export default function App() {
   const [toast, setToast] = createSignal<string | null>(null);
   const [parsePayload, setParsePayload] = createSignal<ParsePayload>(EMPTY_PAYLOAD);
   const [editorView, setEditorView] = createSignal<EditorView | null>(null);
-  const [showGuide, setShowGuide] = createSignal(false);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   // Layout mode for the editor / preview panes. Useful on phones
   // (one-pane focus) but also on desktop when the user wants a
@@ -216,16 +214,18 @@ export default function App() {
             <span class="btn-icon">⌘</span>
             <span class="btn-text">{t('paletteText')}</span>
           </button>
-          <button
-            type="button"
+          {/* 記法の権威は青空文庫の公式注記一覧。ここでは複製せず直接送る。 */}
+          <a
             class="guide-btn"
-            onClick={() => setShowGuide(true)}
+            href="https://www.aozora.gr.jp/annotation/"
+            target="_blank"
+            rel="noopener noreferrer"
             title={t('guideOpen')}
             aria-label={t('guideOpen')}
           >
             <span class="btn-icon">📖</span>
             <span class="btn-text">{t('guideText')}</span>
-          </button>
+          </a>
           <SettingsPanel
             view={editorView()}
             onResetStorage={() => {
@@ -298,7 +298,6 @@ export default function App() {
           />
         </section>
       </main>
-      <NotationGuide open={showGuide()} onClose={() => setShowGuide(false)} />
       <CommandPalette
         open={paletteOpen()}
         view={editorView()}

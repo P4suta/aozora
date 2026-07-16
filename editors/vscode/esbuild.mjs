@@ -19,7 +19,23 @@
 // module that the bundler must NOT try to resolve from the file
 // system. https://code.visualstudio.com/api/working-with-extensions/bundling-extension
 
+import { readFileSync } from "node:fs";
+
 import * as esbuild from "esbuild";
+
+// The bundle target has to match the Node the extension host actually
+// runs: VS Code 1.91 ships Electron 29.4.0 / Node.js 20.9.0. Read the
+// engine back from package.json instead of restating it in a comment —
+// raising `engines.vscode` now fails the build until someone re-derives
+// the target from the new engine's Electron/Node pair.
+const TARGET_ENGINE = "^1.91.0";
+const { engines } = JSON.parse(readFileSync(new URL("package.json", import.meta.url), "utf8"));
+if (engines.vscode !== TARGET_ENGINE) {
+  throw new Error(
+    `engines.vscode is ${engines.vscode}, but the esbuild target assumes ${TARGET_ENGINE} ` +
+      "(Node 20). Re-derive `target` from the Electron/Node pair the new engine ships.",
+  );
+}
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -29,10 +45,9 @@ const baseConfig = {
   bundle: true,
   format: "cjs",
   platform: "node",
-  // VS Code 1.80 ships Node 18; use the same target so esbuild emits
-  // syntax the host can parse without polyfilling. `engines.vscode`
-  // in package.json is `^1.80`, anything older isn't supported.
-  target: "node18",
+  // Emit syntax the host can parse without polyfilling — see the
+  // engine check above for where this comes from.
+  target: "node20",
   outfile: "out/extension.js",
   // `vscode` is injected by the host. Bundling it would either fail
   // (the npm package doesn't actually contain the runtime — only

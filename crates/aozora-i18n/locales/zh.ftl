@@ -424,7 +424,7 @@ tui-no-tty = aozora tui 需要交互式终端（可尝试 aozora repl 或 --watc
 
 ## LSP 编辑器外壳
 ##
-## aozora-lsp 输出的面向用户的外壳文本：外字悬浮／内嵌提示的 tooltip、
+## aozora-lsp 输出的面向用户的外壳文本：外字悬浮的 tooltip、超大文档提示、
 ## 代码操作标题，以及补全的 detail／documentation。协议数据轴（自定义
 ## 方法负载、诊断 range／代码、语义 token、格式化编辑）绝不经过此处。
 ## 文本中穿插的记法字形与 Tab 停位模板是青空记法本身，各 locale 通用，
@@ -436,8 +436,12 @@ lsp-hover-resolved-label = 解析
 lsp-hover-composed-seq-label = 合成序列
 lsp-hover-unresolved = (未匹配字典 — 改为显示描述文本)
 lsp-hover-description-label = 描述
-# 外字内嵌提示的 tooltip 标题（复用上面的解析标签）。
-lsp-inlay-gaiji-header = **外字**
+
+# 文档过大、无法解析时的提示。$size 为文档大小，$limit 为其超出的上限，
+# 均为整数 MiB。前者是替代解析结果发布的唯一诊断；后者是预览面板替代
+# 渲染结果显示的段落（它会放入 <p> 中，因此须保持为纯文本）。
+lsp-oversize-diagnostic = 本文档为 {$size} MiB，超出完整解析的上限 {$limit} MiB。编辑与语法高亮仍可使用；该文件的诊断与 HTML 预览已暂停。
+lsp-oversize-preview = 预览已暂停 — 本文档为 {$size} MiB，超出上限 {$limit} MiB。编辑仍可使用。
 
 # 代码操作（快速修复／重构）标题，显示在编辑器的灯泡菜单中。
 # `SEL` 标示当前选区在穿插字形中的落点。

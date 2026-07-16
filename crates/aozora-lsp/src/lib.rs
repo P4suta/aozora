@@ -1,38 +1,28 @@
 //! `aozora-lsp` — Language Server for aozora-flavored-markdown.
 //!
-//! The server is built on top of the `aozora` library surface from
-//! the sibling `aozora` repository. Three primary LSP capabilities:
+//! A `tower-lsp` server over the `aozora` crate: its parse tree, its
+//! canonical `parse ∘ serialize` form (the one `aozora-fmt` produces), and
+//! `aozora_encoding::gaiji` resolution, reached over the wire. What the
+//! server advertises is `capabilities.rs` — pinned by a snapshot test, so
+//! this page does not keep a second list of it.
 //!
-//! - `textDocument/publishDiagnostics` — every `aozora::Diagnostic`
-//!   variant is mapped to an LSP `Diagnostic` with a byte-range span
-//!   converted into line/UTF-16-column coordinates.
-//! - `textDocument/formatting` — runs the `aozora` `parse ∘ serialize`
-//!   round-trip (the same canonical form `aozora-fmt` produces) and
-//!   returns a single document-replace `TextEdit`.
-//! - `textDocument/hover` — when the cursor sits inside a
-//!   `※［＃…］` gaiji reference, resolves via `aozora_encoding::gaiji`
-//!   and returns a Markdown explanation.
-//!
-//! The stable public surface is intentionally tiny: [`Cli`] (so `xtask`
-//! can generate the shell completions and man page) and [`run`], the
-//! daemon entry point. The internal building blocks the handlers are made
-//! of are re-exported behind the `#[doc(hidden)]` `internals` module —
-//! for the crate's own tests, benches, examples, and fuzz targets only,
-//! with no semver guarantee.
+//! The public surface is intentionally tiny: [`run`] parses argv and then
+//! serves — it is what the `aozora-lsp` binary calls; [`serve`] is the same
+//! thing minus argv handling, for an embedder that does its own. The internal
+//! building blocks the handlers are made of are re-exported behind the
+//! `#[doc(hidden)]` `internals` module — for the crate's own tests, benches,
+//! examples, and fuzz targets only, with no semver guarantee.
 
 #![forbid(unsafe_code)]
-// The stable surface is just `Cli` + `run` (both documented). The bulk of the
-// crate's `pub` items exist only to be re-exported through the `#[doc(hidden)]`
-// `internals` module for the crate's own tests/benches/examples, and carry no
-// semver or doc guarantee — so we don't require rustdoc on them.
 #![allow(
     missing_docs,
-    reason = "pub items are re-exported via the doc-hidden `internals` module \
-              for the crate's own tests/benches and carry no doc guarantee; \
-              the stable surface (Cli + run) is documented"
+    reason = "the bulk of the crate's `pub` items exist only to be re-exported \
+              through the doc-hidden `internals` module for the crate's own \
+              tests/benches/examples, and carry no semver or doc guarantee"
 )]
 
 mod backend;
+mod capabilities;
 mod cli;
 mod code_actions;
 mod commands;
@@ -46,7 +36,6 @@ mod gaiji_spans;
 mod half_width_emmet;
 mod hover;
 mod i18n;
-mod inlay_hints;
 mod line_index;
 mod linked_editing;
 mod metrics;
@@ -69,8 +58,7 @@ use tower_lsp::{ClientSocket, LspService, Server};
 use tracing_subscriber::EnvFilter;
 
 use crate::backend::AozoraLanguageServer;
-
-pub use cli::Cli;
+use crate::cli::Cli;
 
 /// Build the `LspService` with the aozora custom methods (`aozora/renderHtml`,
 /// `aozora/gaijiSpans`) wired onto the builder — tower-lsp's `LanguageServer`
@@ -117,7 +105,7 @@ pub async fn serve() {
     let stdout = stdout();
     let (service, socket) = build_service();
     // tower-lsp's default concurrency cap is 4. After a didChange, VS Code
-    // routinely fires 5+ concurrent requests (codeAction, inlayHint,
+    // routinely fires 5+ concurrent requests (codeAction, gaijiSpans,
     // renderHtml, plus repeat codeActions either side of the cursor); the
     // 5th+ would queue behind the first four and surface as latency on
     // otherwise µs handlers. 32 keeps every realistic burst inside the
@@ -136,7 +124,8 @@ pub async fn serve() {
 /// This module is `#[doc(hidden)]` and is **not** part of the public API: it
 /// carries no semver guarantee and anything in it may change or vanish in any
 /// release. Public-surface tools (`cargo public-api`, `cargo semver-checks`)
-/// skip `#[doc(hidden)]` items, so the stable surface stays [`Cli`] + [`run`].
+/// skip `#[doc(hidden)]` items, so nothing re-exported here counts as public
+/// API.
 ///
 /// The targets that consume it are gated on the `internals` Cargo feature
 /// (see `Cargo.toml`), so a plain `cargo test` skips them; CI runs
@@ -145,10 +134,12 @@ pub async fn serve() {
 pub mod internals {
     // Re-exported so the crate's own tests, benches, and examples can build a
     // `LanguageIdentifier` to pass to the locale-parameterised providers, and
-    // reach the server's resolved UI language when they want production
-    // behaviour rather than a pinned locale.
+    // reach the server's resolved UI language (`ui_lang`) when they want
+    // production behaviour rather than a pinned locale.
     pub use aozora_i18n::LanguageIdentifier;
 
+    pub use crate::backend::AozoraLanguageServer;
+    pub use crate::capabilities::{server_capabilities, server_info};
     pub use crate::code_actions::wrap_selection_actions;
     pub use crate::commands::{COMMAND_CANONICALIZE_SLUG, canonicalize_slug_edit};
     pub use crate::completion::completion_at;
@@ -160,7 +151,7 @@ pub mod internals {
     pub use crate::gaiji_spans::{GaijiSpan, extract_gaiji_spans_from_tree};
     pub use crate::half_width_emmet::emmet_completions;
     pub use crate::hover::hover_at;
-    pub use crate::inlay_hints::inlay_hints;
+    pub use crate::i18n::ui_lang;
     pub use crate::line_index::LineIndex;
     pub use crate::linked_editing::linked_editing_at;
     pub use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};

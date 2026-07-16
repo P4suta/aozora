@@ -193,9 +193,7 @@ fn diag_slug(code: &str) -> String {
 ///
 /// Looks up `diag-<slug>-title`, where `slug` is `code`'s trailing `::`
 /// segment with `_` turned into `-`; missing keys surface as the key itself, a
-/// loud, greppable signal of a catalog gap. This is the prose migrated out of
-/// `aozora-spec`'s `DOCS` table — the machine `code` / severity / `#[error]`
-/// Display in that crate are unchanged.
+/// loud, greppable signal of a catalog gap.
 #[must_use]
 pub fn diag_title(lang: &LanguageIdentifier, code: &str) -> String {
     t(lang, &format!("diag-{}-title", diag_slug(code)))
@@ -258,6 +256,11 @@ fn en_catalog() -> &'static Catalog {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use aozora_spec::Diagnostic;
+    use fluent_syntax::ast;
+
     use super::*;
 
     fn lang(tag: &str) -> LanguageIdentifier {
@@ -275,165 +278,76 @@ mod tests {
         assert_eq!(AVAILABLE.len(), 3);
     }
 
+    /// Every message id `tag`'s catalog defines, read back out of the AST
+    /// Fluent itself parsed, so the set is whatever the `.ftl` really says.
+    ///
+    /// Messages only. A term (`-name`) is catalog-internal — reachable only
+    /// from patterns inside its own bundle, never a [`t`] / [`tf`] key — so a
+    /// translation may factor out terms the canonical catalog has no use for.
+    fn message_ids(tag: &str, ftl: &str) -> BTreeSet<String> {
+        let resource = FluentResource::try_new(ftl.to_owned())
+            .unwrap_or_else(|(_, errors)| panic!("`{tag}.ftl` has parse errors: {errors:?}"));
+        resource
+            .entries()
+            .filter_map(|entry| match entry {
+                ast::Entry::Message(message) => Some(message.id.name.to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one exhaustive per-locale key enumeration; splitting the single catalog-parity contract across helpers would scatter it and read worse"
-    )]
-    fn shell_keys_present_in_every_locale() {
-        // Each shell key must resolve to something other than the bare key
-        // (the missing-key signal) in every locale — no accidental gaps.
-        let keys = [
-            "watch-banner",
-            // Directory `aozora fmt` batch chrome: the discovery spinner
-            // message (the arg-bearing summary resolves through `tf` below).
-            "fmt-progress-discovering",
-            "explain-hint-header",
-            "explain-hint-more",
-            "explain-repro-label",
-            "explain-fixed-label",
-            "explain-see-label",
-            "explain-unknown-hint",
-            "explain-did-you-mean",
-            // Notation-concept prose (`aozora explain <concept>`): one title +
-            // body per family, present in every locale.
-            "concept-ruby-title",
-            "concept-ruby-body",
-            "concept-gaiji-title",
-            "concept-gaiji-body",
-            "concept-kaeriten-title",
-            "concept-kaeriten-body",
-            "concept-bouten-title",
-            "concept-bouten-body",
-            "concept-warichu-title",
-            "concept-warichu-body",
-            "concept-tcy-title",
-            "concept-tcy-body",
-            // `aozora doctor` chrome: section headings, status words, hints,
-            // and the summary (the arg-bearing keys resolve through `tf` below).
-            "doctor-title",
-            "doctor-config-heading",
-            "doctor-settings-heading",
-            "doctor-tools-heading",
-            "doctor-terminal-heading",
-            "doctor-global-none",
-            "doctor-parse-ok",
-            "doctor-tool-missing",
-            "doctor-hint-pandoc",
-            "doctor-hint-lsp",
-            "doctor-terminal-yes",
-            "doctor-terminal-no",
-            "doctor-env-unset",
-            "doctor-colour-label",
-            "doctor-colour-on",
-            "doctor-colour-off",
-            "doctor-all-passed",
-            // `aozora init` chrome: heading, per-file outcome words, the skip
-            // hint, and the next-steps footer.
-            "init-heading",
-            "init-created",
-            "init-overwritten",
-            "init-skipped",
-            "init-skipped-hint",
-            "init-next-steps",
-            "init-step-render",
-            "init-step-check",
-            "init-step-doctor",
-            // `aozora repl` chrome: banner, help, section labels, and the
-            // clean-parse placeholder (the arg-bearing keys resolve via `tf`).
-            "repl-banner",
-            "repl-help",
-            "repl-label-nodes",
-            "repl-label-html",
-            "repl-label-pandoc",
-            "repl-label-diag",
-            "repl-diag-none",
-            // `aozora tui` chrome: pane titles, the modified marker, the
-            // clean-parse placeholder, the footer keybind words, the no-file
-            // hint, and the non-tty refusal (the arg-bearing save keys resolve
-            // via `tf` below).
-            "tui-title-source",
-            "tui-title-preview",
-            "tui-title-diagnostics",
-            "tui-modified",
-            "tui-diag-none",
-            "tui-key-save",
-            "tui-key-lang",
-            "tui-key-preview",
-            "tui-key-quit",
-            "tui-no-file",
-            "tui-no-tty",
-        ];
-        for tag in ["en", "ja", "zh"] {
-            let l = lang(tag);
-            for key in keys {
-                assert_ne!(t(&l, key), key, "{tag}.ftl is missing `{key}`");
-            }
-            // The arg-bearing doctor keys resolve through `tf` too.
-            let mut dir = FluentArgs::new();
-            dir.set("dir", "/x");
-            assert_ne!(tf(&l, "doctor-project-none", &dir), "doctor-project-none");
-            let mut err = FluentArgs::new();
-            err.set("error", "boom");
-            assert_ne!(tf(&l, "doctor-parse-error", &err), "doctor-parse-error");
-            let mut value = FluentArgs::new();
-            value.set("value", "1");
-            assert_ne!(tf(&l, "doctor-env-set", &value), "doctor-env-set");
-            let mut count = FluentArgs::new();
-            count.set("count", "1");
-            assert_ne!(tf(&l, "doctor-problems", &count), "doctor-problems");
-            let mut rejected = FluentArgs::new();
-            rejected.set("var", "AOZORA_ENCODING");
-            rejected.set("value", "SJIS");
-            assert_ne!(
-                tf(&l, "doctor-setting-rejected", &rejected),
-                "doctor-setting-rejected"
+    fn every_locale_defines_the_same_message_ids() {
+        // Parity, never a key list: whatever the canonical catalog defines the
+        // others must define, and vice versa. Both sides come from the
+        // catalogs, so this covers every namespace — including ones nobody has
+        // invented yet — where an enumeration only ever covers what someone
+        // remembered to type.
+        let catalogs: Vec<(&str, BTreeSet<String>)> = SOURCES
+            .iter()
+            .map(|&(tag, ftl)| (tag, message_ids(tag, ftl)))
+            .collect();
+        let (canonical_tag, canonical) = &catalogs[0];
+
+        // "Nothing to check" must not read as "nothing wrong": were the walk to
+        // stop seeing messages, every catalog would agree on the empty set and
+        // the parity assertions below would pass while proving nothing.
+        assert!(
+            !canonical.is_empty(),
+            "{canonical_tag}.ftl parsed to zero messages"
+        );
+
+        for (tag, ids) in &catalogs[1..] {
+            let missing: Vec<_> = canonical.difference(ids).collect();
+            assert!(
+                missing.is_empty(),
+                "{tag}.ftl is missing {missing:?} — `lookup` would fall through \
+                 to {canonical_tag}, so a {tag} reader silently gets \
+                 {canonical_tag} prose with nothing to signal the gap"
             );
-            // The arg-bearing batch summary resolves through `tf` too.
-            let mut summary = FluentArgs::new();
-            summary.set("formatted", "3");
-            summary.set("unchanged", "10");
-            summary.set("errors", "0");
-            assert_ne!(tf(&l, "fmt-summary", &summary), "fmt-summary");
-            // The arg-bearing keys resolve through `tf` too.
-            let mut args = FluentArgs::new();
-            args.set("cmd", "check");
-            assert_ne!(tf(&l, "stdin-empty", &args), "stdin-empty");
-            let mut target = FluentArgs::new();
-            target.set("target", "bogus");
-            assert_ne!(tf(&l, "explain-unknown", &target), "explain-unknown");
-            // The arg-bearing `aozora repl` keys resolve through `tf` too.
-            let mut mode = FluentArgs::new();
-            mode.set("mode", "all");
-            assert_ne!(tf(&l, "repl-mode-set", &mode), "repl-mode-set");
-            let mut msg_lang = FluentArgs::new();
-            msg_lang.set("lang", "ja");
-            assert_ne!(tf(&l, "repl-lang-set", &msg_lang), "repl-lang-set");
-            let mut enc = FluentArgs::new();
-            enc.set("encoding", "utf8");
-            assert_ne!(tf(&l, "repl-encoding-set", &enc), "repl-encoding-set");
-            let mut path = FluentArgs::new();
-            path.set("path", "book.txt");
-            assert_ne!(tf(&l, "repl-loaded", &path), "repl-loaded");
-            let mut load_err = FluentArgs::new();
-            load_err.set("path", "book.txt");
-            load_err.set("error", "boom");
-            assert_ne!(tf(&l, "repl-load-error", &load_err), "repl-load-error");
-            let mut unknown = FluentArgs::new();
-            unknown.set("cmd", "frob");
-            assert_ne!(tf(&l, "repl-unknown-meta", &unknown), "repl-unknown-meta");
-            let mut usage = FluentArgs::new();
-            usage.set("cmd", "mode");
-            usage.set("expected", "nodes, html");
-            assert_ne!(tf(&l, "repl-usage", &usage), "repl-usage");
-            // The arg-bearing `aozora tui` save keys resolve through `tf` too.
-            let mut saved = FluentArgs::new();
-            saved.set("path", "book.txt");
-            assert_ne!(tf(&l, "tui-saved", &saved), "tui-saved");
-            let mut save_err = FluentArgs::new();
-            save_err.set("path", "book.txt");
-            save_err.set("error", "boom");
-            assert_ne!(tf(&l, "tui-save-error", &save_err), "tui-save-error");
+            let dead: Vec<_> = ids.difference(canonical).collect();
+            assert!(
+                dead.is_empty(),
+                "{tag}.ftl defines {dead:?}, absent from the canonical \
+                 {canonical_tag}.ftl — nothing can ever look them up"
+            );
+        }
+
+        // Id parity alone would still admit a message carrying only attributes:
+        // `lookup` formats `message.value()`, so a valueless message counts as a
+        // miss however present its id is — it degrades to the canonical
+        // catalog, or to the bare key when it is valueless there too.
+        for (tag, ids) in &catalogs {
+            let catalog = catalog_for(&lang(tag));
+            for id in ids {
+                assert!(
+                    catalog
+                        .bundle
+                        .get_message(id)
+                        .is_some_and(|message| message.value().is_some()),
+                    "{tag}.ftl: `{id}` resolves to no value"
+                );
+            }
         }
     }
 
@@ -516,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn stdin_empty_japanese_matches_the_migrated_source() {
+    fn stdin_empty_japanese_bytes_are_exact() {
         let mut args = FluentArgs::new();
         args.set("cmd", "check");
         let text = tf(&lang("ja"), "stdin-empty", &args);
@@ -558,51 +472,31 @@ mod tests {
         assert_eq!(t(&lang("zh"), "explain-repro-label"), "复现示例:");
     }
 
-    // --- diagnostic prose migrated out of aozora-spec ---
-
-    /// The 21 diagnostic code slugs, mirroring `aozora_spec::Diagnostic::
-    /// ALL_CODES` (kept here as literals so this crate does not depend on the
-    /// catalogue crate — the `.ftl` keys are the coupling point, verified by
-    /// the CLI's per-code `explain` tests end-to-end).
-    const DIAG_SLUGS: [&str; 21] = [
-        "source-contains-pua",
-        "unclosed-bracket",
-        "unmatched-close",
-        "accent-decomposition-applied",
-        "unresolved-gaiji",
-        "mismatched-container-close",
-        "empty-ruby-reading",
-        "nested-ruby",
-        "unrecognised-container-directive",
-        "tcy-target-not-found",
-        "bouten-target-ambiguous",
-        "forward-referent-not-stylable",
-        "break-in-single-line-container",
-        "bracketed-kaeriten-no-pair",
-        "kaeriten-outside-kanbun",
-        "mismatched-bouten-container",
-        "non-canonical-directive",
-        "residual-annotation-marker",
-        "unregistered-sentinel",
-        "registry-out-of-order",
-        "registry-position-mismatch",
-    ];
+    // --- diag_title / diag_body: the localized prose behind a code ---
 
     #[test]
-    fn every_diagnostic_has_title_and_body_in_every_locale() {
-        // No silent catalog gap: each code's title/body resolves (i.e. does
-        // not fall through to the bare key) in en / ja / zh.
-        for tag in ["en", "ja", "zh"] {
-            let l = lang(tag);
-            for slug in DIAG_SLUGS {
-                let code = format!("aozora::lex::{}", slug.replace('-', "_"));
-                let title = diag_title(&l, &code);
-                assert_ne!(title, format!("diag-{slug}-title"), "{tag}: {slug} title");
-                assert!(!title.trim().is_empty(), "{tag}: {slug} empty title");
-                let body = diag_body(&l, &code, &FluentArgs::new());
-                assert_ne!(body, format!("diag-{slug}-body"), "{tag}: {slug} body");
-                assert!(!body.trim().is_empty(), "{tag}: {slug} empty body");
-            }
+    fn every_diagnostic_code_has_prose_in_the_canonical_catalog() {
+        // Walk the live catalogue — every code `Diagnostic::code` can return —
+        // and require prose for each. A code added to `ALL_CODES` without its
+        // `.ftl` entries fails here instead of reaching `aozora explain` and
+        // the Problems pane as a raw `diag-<slug>-title`.
+        //
+        // The canonical locale only, deliberately. `lookup` falls back to it,
+        // so asking the same question of ja / zh through `diag_title` cannot
+        // fail while the canonical catalog answers: the fallback supplies prose
+        // and the assertion passes for a locale that defines nothing. Coverage
+        // of the other locales is `every_locale_defines_the_same_message_ids`,
+        // which reads the catalogs directly and can therefore see the gap.
+        let (canonical_tag, _) = SOURCES[0];
+        let l = lang(canonical_tag);
+        for code in Diagnostic::ALL_CODES {
+            let slug = diag_slug(code);
+            let title = diag_title(&l, code);
+            assert_ne!(title, format!("diag-{slug}-title"), "{code} title");
+            assert!(!title.trim().is_empty(), "{code} empty title");
+            let body = diag_body(&l, code, &FluentArgs::new());
+            assert_ne!(body, format!("diag-{slug}-body"), "{code} body");
+            assert!(!body.trim().is_empty(), "{code} empty body");
         }
     }
 

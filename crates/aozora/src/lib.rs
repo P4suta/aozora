@@ -73,8 +73,8 @@ pub use aozora_spec::{
     PairKind, PairLink, RENDER_SLUGS, RenderSlug, SLUGS, Sentinel, Severity, SlugEntry, SlugFamily,
     SourceOffset, Span, TriggerKind, canonicalise_slug, codes, roman_slug,
 };
-/// Owned-AST node types editor surfaces match against (LSP inlay hints, hover,
-/// completion, code actions, semantic tokens). Re-exported so external
+/// Owned-AST node types editor surfaces match against (hover, completion,
+/// code actions, semantic tokens). Re-exported so external
 /// consumers don't have to depend on `aozora-syntax` directly — `aozora` is the
 /// single editor-facing front door.
 pub use aozora_syntax::{

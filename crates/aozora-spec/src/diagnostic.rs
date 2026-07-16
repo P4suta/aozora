@@ -810,10 +810,10 @@ pub enum Diagnostic {
 /// pair from the crate-private `DOCS` table, and `body_args` are the
 /// representative instance's [`Diagnostic::body_args`].
 ///
-/// The localized *prose* — the one-line title and the long-form body — no
-/// longer lives here: it was migrated to the `aozora-i18n` catalog, keyed by
-/// `code`, so this crate stays a pure machine contract. A consumer renders the
-/// title with `aozora_i18n::diag_title(lang, info.code)` and the body with
+/// The localized *prose* — the one-line title and the long-form body — lives in
+/// the `aozora-i18n` catalog, keyed by `code`, so this crate stays a pure
+/// machine contract. A consumer renders the title with
+/// `aozora_i18n::diag_title(lang, info.code)` and the body with
 /// `aozora_i18n::diag_body(lang, info.code, args)` where `args` is built from
 /// `info.body_args`.
 #[derive(Debug, Clone)]
@@ -1502,7 +1502,7 @@ impl Diagnostic {
     /// language-neutral example pair, and `body_args` the representative
     /// instance's [`body_args`](Self::body_args). The localized title / body
     /// prose is fetched separately from the `aozora-i18n` catalog by
-    /// [`Self::code`] — this crate no longer carries it.
+    /// [`Self::code`].
     #[must_use]
     pub fn explain(code: &str) -> Option<DiagnosticInfo> {
         let sample = Self::sample_for_code(code)?;

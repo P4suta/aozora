@@ -2,13 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch Extension (samples/)",
+      "name": "Launch Extension",
       "type": "extensionHost",
       "request": "launch",
       "runtimeExecutable": "${execPath}",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}",
-        "${workspaceFolder}/../../samples"
+        "--extensionDevelopmentPath=${workspaceFolder}"
       ],
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"

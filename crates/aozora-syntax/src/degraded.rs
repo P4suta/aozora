@@ -33,9 +33,9 @@ use crate::lint::is_digit_run;
 /// Map a degraded `［＃…］` directive body to a recognized spelling, or `None`.
 ///
 /// `body` is the trimmed inner text, without the `［＃` / `］` delimiters. See
-/// the module docs for the Tier1/Tier2 contract. Each rule was migrated out of
-/// Tier1 because it loses or re-derives meaning: admitting it there let
-/// `fmt --fix` rewrite source lossily and hid the loss behind a purely
+/// the module docs for the Tier1/Tier2 contract. Each rule is here rather than
+/// in Tier1 because it loses or re-derives meaning: admitting it there lets
+/// `fmt --fix` rewrite source lossily and hides the loss behind a purely
 /// syntactic self-test.
 #[must_use]
 pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
@@ -122,7 +122,7 @@ pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
     None
 }
 
-/// Concrete degraded sample bodies, one per migrated rule family.
+/// Concrete degraded sample bodies, one per rule family above.
 ///
 /// For the parse-round-trip + meaning self-tests in the `aozora` crate (which
 /// alone can call the parser). Each must satisfy: `degraded_directive(sample)`
@@ -146,7 +146,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrated_families_reduce() {
+    fn degraded_families_reduce_to_their_canonical_spelling() {
         assert_eq!(
             degraded_directive("ここから最後まで3字下げ").as_deref(),
             Some("ここから3字下げ")

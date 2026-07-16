@@ -4,7 +4,7 @@
   "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by aozora-lsp.",
   "version": "0.1.0",
   "publisher": "yasunobu-sakashita",
-  "license": "Apache-2.0",
+  "license": "Apache-2.0 OR MIT",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
@@ -305,67 +305,12 @@
       },
       "editor.semanticTokenColorCustomizations": {
         "rules": {
-          "*.aozora": {
+          "*:aozora": {
             "fontStyle": ""
           }
         }
       }
-    },
-    "walkthroughs": [
-      {
-        "id": "aozora.welcome",
-        "title": "Aozora — はじめての青空文庫記法",
-        "description": "プラグインで使える機能と、青空文庫記法の書き方をひと通り紹介します。",
-        "steps": [
-          {
-            "id": "open-guide",
-            "title": "記法ガイドを開く",
-            "description": "注記 / ルビ / 外字 / アクセント分解 — 全部入りの完全リファレンスを開きます。\n[記法ガイドを開く](command:aozora.openNotationGuide)",
-            "media": {
-              "markdown": "media/walkthrough/01-guide.md"
-            },
-            "completionEvents": [
-              "onCommand:aozora.openNotationGuide"
-            ]
-          },
-          {
-            "id": "type-half-width",
-            "title": "半角キーで全角入力",
-            "description": "`[#` を打ってみてください。slug カタログが候補に出て、Enter で `［＃canonical］` に変換されます。同様に `<<` → `《》`、`|` → `｜` です。",
-            "media": {
-              "markdown": "media/walkthrough/02-emmet.md"
-            }
-          },
-          {
-            "id": "wrap-selection",
-            "title": "選択を括弧で囲む",
-            "description": "テキストを選択して右クリ → **「Aozora: 選択を括弧で囲む」** から、ルビ / 鉤括弧 / 注記など 7 種類でラップできます。\n\nキーバインド:\n- `Ctrl+Alt+R` ルビ\n- `Ctrl+Alt+B` 傍点",
-            "media": {
-              "markdown": "media/walkthrough/03-wrap.md"
-            }
-          },
-          {
-            "id": "preview",
-            "title": "プレビューを開く",
-            "description": "右クリ → **Aozora: Open Preview** で HTML プレビューを横に開きます。編集に追従してリアルタイム更新されます。",
-            "media": {
-              "markdown": "media/walkthrough/04-preview.md"
-            },
-            "completionEvents": [
-              "onCommand:aozora.openPreview"
-            ]
-          },
-          {
-            "id": "gaiji-fold",
-            "title": "外字の折りたたみ",
-            "description": "`※[#…]` のような外字注記は、カーソルが上にない時は **解決字 1 文字** に折りたたまれて表示されます。Settings の `aozora.gaijiFold.enabled` で切替可能。",
-            "media": {
-              "markdown": "media/walkthrough/05-gaiji-fold.md"
-            }
-          }
-        ]
-      }
-    ]
+    }
   },
   "scripts": {
     "compile": "node esbuild.mjs --production",
@@ -389,7 +334,9 @@
     "@biomejs/biome": "^2.4.13",
     "@types/node": "^26.0.1",
     "@types/vscode": "^1.91.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
+    "ovsx": "^1.0.2",
     "typescript": "^7.0.2"
   }
 }

@@ -60,7 +60,7 @@ use crate::text_edit::ByteEdit;
 
 /// Documents larger than this skip whole-document semantic analysis —
 /// diagnostics, the HTML preview, and the per-request tree access that
-/// powers hover / completion / inlay hints. Tree-sitter syntax features
+/// powers hover / completion. Tree-sitter syntax features
 /// and plain editing keep working; only the `aozora`-parser-backed
 /// paths degrade.
 ///

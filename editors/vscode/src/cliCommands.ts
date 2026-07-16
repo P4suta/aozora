@@ -12,11 +12,8 @@
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
+import type { RenderHtmlResult } from "./lspWire";
 import { aozoraNotationStyles } from "./notationStyles";
-
-interface RenderHtmlResult {
-  html: string;
-}
 
 export function registerCliCommands(
   context: vscode.ExtensionContext,
@@ -40,16 +37,26 @@ async function exportHtml(client: LanguageClient): Promise<void> {
   }
   const document = editor.document;
 
-  let html: string;
+  let result: RenderHtmlResult;
   try {
-    const result = await client.sendRequest<RenderHtmlResult>("aozora/renderHtml", {
+    result = await client.sendRequest<RenderHtmlResult>("aozora/renderHtml", {
       uri: document.uri.toString(),
     });
-    html = wrapStandalone(documentTitle(document.uri), result.html ?? "");
   } catch (err) {
     void vscode.window.showErrorMessage(`aozora: render failed: ${asMessage(err)}`);
     return;
   }
+
+  // A paused render carries a notice instead of the document. Stop
+  // before the save dialog: exporting it would write a placeholder to
+  // the user's chosen path and report success.
+  if (result.paused) {
+    void vscode.window.showWarningMessage(
+      "aozora: this document is too large for the server to render, so there is nothing to export.",
+    );
+    return;
+  }
+  const html = wrapStandalone(documentTitle(document.uri), result.html ?? "");
 
   const target = await vscode.window.showSaveDialog({
     saveLabel: "Export HTML",

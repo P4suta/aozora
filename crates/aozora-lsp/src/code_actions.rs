@@ -474,8 +474,8 @@ mod tests {
 
     #[test]
     fn action_titles_localize_by_lang() {
-        // Titles come from the shared catalog: `ja` keeps the migrated
-        // Japanese, `zh` the new Chinese; `en` is asserted via the shim above.
+        // Titles come from the shared catalog, one per locale; `en` is
+        // asserted via the shim above.
         let src = "青空";
         let sel = Range::new(Position::new(0, 0), Position::new(0, 2));
         let idx = LineIndex::new(src);

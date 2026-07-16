@@ -23,7 +23,7 @@ path = "src/lib.rs"
 aozora = { workspace = true }
 # Direct deps on internal crates the LSP reaches past the umbrella's curated
 # surface: `aozora_pipeline::lexer::sanitize` (incremental parse-cache) and
-# `aozora_encoding::gaiji` (hover / inlay-hint resolution). Both are
+# `aozora_encoding::gaiji` (hover resolution). Both are
 # no-contract internal surfaces the umbrella deliberately does not re-export.
 aozora-pipeline = { workspace = true }
 aozora-encoding = { workspace = true }
@@ -66,9 +66,10 @@ criterion = { version = "0.8", features = ["html_reports"] }
 tower = "0.5"
 futures = "0.3"
 # Snapshot tests (tests/snapshots.rs): lock the structured shape of
-# semantic-token deltas, the document-symbol outline, and the diagnostic
-# catalogue so a regression in any of them is a reviewable diff.
-insta = "1"
+# semantic-token deltas, the document-symbol outline, the diagnostic
+# catalogue, and the advertised capability set so a regression in any of them
+# is a reviewable diff.
+insta = { workspace = true }
 # Corpus iteration for the `measure_reparse_pending` profiling example
 # (AOZORA_CORPUS_ROOT-gated, like aozora-bench's benches). Shift-JIS decode
 # for that example comes from the `aozora-encoding` runtime dependency above.
@@ -103,6 +104,13 @@ required-features = ["internals"]
 
 [[test]]
 name = "snapshots"
+required-features = ["internals"]
+
+# Its own binary on purpose: the server's UI language is a process-global
+# resolved once, and every other test handshakes without a locale. See the
+# module docs.
+[[test]]
+name = "client_locale"
 required-features = ["internals"]
 
 [[test]]
@@ -147,10 +155,13 @@ required-features = ["internals"]
 
 [features]
 default = []
-# Exposes the `internals` module (internal API for the crate's own tests,
-# benches, examples, and fuzz targets). `#[doc(hidden)]` and carries NO semver
-# guarantee — see the module docs. Off by default so the stable surface stays
-# `Cli` + `run()`.
+# Selects the heavy targets — the `required-features` test binaries, benches,
+# and examples that drive the `internals` module. Off by default so `cargo test`
+# stays the fast inner loop; CI runs them via `just test-internals`.
+#
+# It does NOT gate the module: `internals` is `#[doc(hidden)]`, which is what
+# keeps it out of `cargo public-api` / `semver-checks` and out of the stable
+# surface. Turning this feature off does not hide it.
 internals = []
 # Opt-in: enables the `shuttle_doc_state` randomized-schedule test
 # (the only test that depends on the shuttle crate). Gating it

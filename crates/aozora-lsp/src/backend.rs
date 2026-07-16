@@ -6,11 +6,10 @@
 //! lock graph). Handlers read via `state.snapshot()` — a single atomic
 //! load, wait-free, so the debounced reparse never blocks them.
 //!
-//! `text_document_sync` is [`TextDocumentSyncKind::INCREMENTAL`]:
-//! `did_change` applies byte-range edits via `OpenDocument::apply_changes`
-//! and schedules a debounced semantic re-parse + diagnostic publish on
-//! `spawn_blocking`, so async hover / inlay / codeAction requests don't
-//! stall.
+//! Text sync is incremental (see [`crate::capabilities`]): `did_change`
+//! applies byte-range edits via `OpenDocument::apply_changes` and schedules
+//! a debounced semantic re-parse + diagnostic publish on `spawn_blocking`,
+//! so async hover / codeAction requests don't stall.
 
 use std::slice;
 use std::sync::Arc;
@@ -20,6 +19,7 @@ use dashmap::DashMap;
 use tokio::task::{spawn_blocking, yield_now};
 use tokio::time::sleep;
 
+use crate::capabilities::{server_capabilities, server_info};
 use crate::code_actions::{quick_fix_actions, wrap_selection_actions};
 use crate::commands::{COMMAND_CANONICALIZE_SLUG, canonicalize_slug_edit};
 use crate::completion::completion_at;
@@ -28,9 +28,9 @@ use crate::doc_line_view::DocLineView;
 use crate::formatting::format_edits;
 use crate::half_width_emmet::emmet_completions;
 use crate::hover::hover_at;
-use crate::i18n::ui_lang;
+use crate::i18n::{init_ui_lang, ui_lang};
 use crate::linked_editing::linked_editing_at;
-use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};
+use crate::on_type_formatting::format_on_type;
 use crate::parse_cache::{MAX_DOCUMENT_BYTES, exceeds_document_cap};
 use crate::rename::{prepare_rename_at, rename_edit};
 use crate::state::OpenDocument;
@@ -38,29 +38,25 @@ use crate::structured_snippets::snippet_completions;
 use crate::text_edit::ByteEdit;
 use tower_lsp::jsonrpc::{Error as JsonRpcError, Result};
 use tower_lsp::lsp_types::{
-    CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
-    CodeActionResponse, CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
+    CodeActionParams, CodeActionResponse, CompletionItem, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentOnTypeFormattingOptions,
-    DocumentOnTypeFormattingParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    ExecuteCommandOptions, ExecuteCommandParams, FoldingRange, FoldingRangeParams,
-    FoldingRangeProviderCapability, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, LinkedEditingRangeParams,
-    LinkedEditingRangeServerCapabilities, LinkedEditingRanges, MessageType, OneOf, Position,
-    PrepareRenameResponse, Range, RenameOptions, RenameParams, SemanticTokens,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
-    TextDocumentContentChangeEvent, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentOnTypeFormattingParams,
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
+    FoldingRange, FoldingRangeParams, Hover, HoverParams, InitializeParams, InitializeResult,
+    InitializedParams, LinkedEditingRangeParams, LinkedEditingRanges, MessageType, Position,
+    PrepareRenameResponse, Range, RenameParams, SemanticTokens, SemanticTokensParams,
+    SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentPositionParams, TextEdit,
+    Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
 use aozora_encoding::gaiji;
+use aozora_i18n::{FluentArgs, LanguageIdentifier};
 
 use crate::document_symbol::document_symbols;
 use crate::folding_range::folding_ranges;
 use crate::position::position_to_byte_offset;
-use crate::semantic_tokens::{legend as semantic_token_legend, semantic_tokens_full};
+use crate::semantic_tokens::semantic_tokens_full;
 
 /// LSP backend for aozora documents.
 ///
@@ -70,7 +66,7 @@ use crate::semantic_tokens::{legend as semantic_token_legend, semantic_tokens_fu
 /// clone — `Client` is a channel handle and `docs` is
 /// `Arc<DashMap<...>>`.
 #[derive(Debug, Clone)]
-pub(crate) struct AozoraLanguageServer {
+pub struct AozoraLanguageServer {
     client: Client,
     docs: Arc<DashMap<Url, Arc<OpenDocument>>>,
 }
@@ -89,9 +85,18 @@ const fn as_mib(bytes: usize) -> usize {
     bytes / (1024 * 1024)
 }
 
+/// `$size` / `$limit` for the oversize catalog messages: the document's own
+/// size and the cap it crossed, both in whole MiB.
+fn oversize_args(byte_len: usize) -> FluentArgs<'static> {
+    let mut args = FluentArgs::new();
+    args.set("size", as_mib(byte_len).to_string());
+    args.set("limit", as_mib(MAX_DOCUMENT_BYTES).to_string());
+    args
+}
+
 /// The single informational diagnostic published for a document above
 /// [`MAX_DOCUMENT_BYTES`], anchored at the start of the file.
-fn oversize_notice(byte_len: usize) -> Diagnostic {
+fn oversize_notice(byte_len: usize, lang: &LanguageIdentifier) -> Diagnostic {
     Diagnostic {
         range: Range {
             start: Position::new(0, 0),
@@ -99,26 +104,19 @@ fn oversize_notice(byte_len: usize) -> Diagnostic {
         },
         severity: Some(DiagnosticSeverity::INFORMATION),
         source: Some("aozora-lsp".to_owned()),
-        message: format!(
-            "This document is {} MiB, above the {} MiB limit for full analysis. \
-             Editing and syntax highlighting keep working; diagnostics and the HTML \
-             preview are paused for this file.",
-            as_mib(byte_len),
-            as_mib(MAX_DOCUMENT_BYTES),
-        ),
+        message: aozora_i18n::tf(lang, "lsp-oversize-diagnostic", &oversize_args(byte_len)),
         ..Default::default()
     }
 }
 
 /// Inert HTML fragment returned by `aozora/renderHtml` for an oversized
-/// document. Plain text only — no document content is interpolated, so
-/// it is safe in the (script-free, strict-CSP) preview webview.
-fn oversize_html_notice(byte_len: usize) -> String {
+/// document. The prose is the built-in catalog's and the only interpolations
+/// are two integers — no document content reaches it, so it is safe in the
+/// (script-free, strict-CSP) preview webview.
+fn oversize_html_notice(byte_len: usize, lang: &LanguageIdentifier) -> String {
     format!(
-        "<p>Preview paused — this document is {} MiB, above the {} MiB limit. \
-         Editing still works.</p>",
-        as_mib(byte_len),
-        as_mib(MAX_DOCUMENT_BYTES),
+        "<p>{}</p>",
+        aozora_i18n::tf(lang, "lsp-oversize-preview", &oversize_args(byte_len)),
     )
 }
 
@@ -127,7 +125,7 @@ impl AozoraLanguageServer {
     /// `FnOnce(Client) -> AozoraLanguageServer` requirement, so users call this
     /// as `LspService::new(AozoraLanguageServer::new)`.
     #[must_use]
-    pub(crate) fn new(client: Client) -> Self {
+    pub fn new(client: Client) -> Self {
         Self {
             client,
             docs: Arc::new(DashMap::new()),
@@ -144,7 +142,7 @@ impl AozoraLanguageServer {
             // (`len_bytes()` off the rope avoids materialising `doc_text()`
             // solely for the size check.)
             if exceeds_document_cap(rope.len_bytes()) {
-                return vec![oversize_notice(rope.len_bytes())];
+                return vec![oversize_notice(rope.len_bytes(), ui_lang())];
             }
             // Map diagnostic spans against the doc-level rope (O(log n) line
             // lookups, byte-identical to a LineIndex over the raw text since
@@ -195,7 +193,7 @@ impl AozoraLanguageServer {
         }
 
         // Incremental reparse off the async runtime so concurrent hover /
-        // codeAction / inlay requests do not stall on an executor thread.
+        // codeAction requests do not stall on an executor thread.
         // `reparse_pending` drains the debounce-window edits under the
         // buffer lock and returns the exact text it parsed (so the LSP
         // position mapping is consistent) plus the edit-version that text
@@ -219,7 +217,7 @@ impl AozoraLanguageServer {
         // on the text that was actually parsed, not a possibly-stale
         // snapshot length.
         let publish_diags = if exceeds_document_cap(raw.len_bytes()) {
-            vec![oversize_notice(raw.len_bytes())]
+            vec![oversize_notice(raw.len_bytes(), ui_lang())]
         } else {
             // Map spans against the parsed rope directly — the per-keystroke
             // hot path no longer rebuilds an O(doc) line table (Mechanism A).
@@ -246,8 +244,8 @@ impl AozoraLanguageServer {
     /// lock-step with the editor buffer.
     ///
     /// Argument shape: `{ "uri": "file:///…" }`. Returns
-    /// `{ "html": "<…>" }` or an `invalid_params` error when no
-    /// document is open at the URI.
+    /// `{ "html": "<…>", "paused": false }` or an `invalid_params`
+    /// error when no document is open at the URI.
     ///
     /// # Errors
     ///
@@ -264,7 +262,8 @@ impl AozoraLanguageServer {
         // oversized documents and return a short inert notice instead.
         if exceeds_document_cap(text.len()) {
             return Ok(RenderHtmlResult {
-                html: oversize_html_notice(text.len()),
+                html: oversize_html_notice(text.len(), ui_lang()),
+                paused: true,
             });
         }
         let html = spawn_blocking(move || {
@@ -277,7 +276,10 @@ impl AozoraLanguageServer {
             err.message = format!("renderHtml panicked: {join_err}").into();
             err
         })?;
-        Ok(RenderHtmlResult { html })
+        Ok(RenderHtmlResult {
+            html,
+            paused: false,
+        })
     }
 
     /// Custom LSP request `aozora/gaijiSpans`.
@@ -346,6 +348,13 @@ pub(crate) struct RenderHtmlParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RenderHtmlResult {
     pub(crate) html: String,
+    /// True when `html` is the oversize placeholder rather than a rendering
+    /// of the document. A client that treats the placeholder as the
+    /// document's HTML silently loses the document — the VS Code
+    /// extension's "Export HTML" would write the notice to disk and report
+    /// success — so the distinction is on the wire, not left to prose
+    /// sniffing.
+    pub(crate) paused: bool,
 }
 
 /// Parameters for the `aozora/gaijiSpans` custom LSP request — the
@@ -408,128 +417,15 @@ fn lsp_change_to_edit(source: &str, change: &TextDocumentContentChangeEvent) -> 
 
 #[tower_lsp::async_trait]
 impl LanguageServer for AozoraLanguageServer {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // The editor's own UI language, reported by every client that speaks
+        // the spec (VS Code's `env.language`, and the same field helix /
+        // neovim / Zed send). It decides the server's, once — see
+        // `crate::i18n` for where it sits in the precedence chain.
+        init_ui_lang(params.locale.as_deref());
         Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::INCREMENTAL,
-                )),
-                document_formatting_provider: Some(OneOf::Left(true)),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                // `inlay_hint_provider` deliberately omitted — the
-                // VS Code extension renders gaiji inlines via
-                // decoration in `gaijiFold.ts`, and adding an LSP
-                // inlay layer on top duplicated the `→ X` glyph.
-                // Clients that want the data use `aozora/gaijiSpans`.
-                linked_editing_range_provider: Some(LinkedEditingRangeServerCapabilities::Simple(
-                    true,
-                )),
-                // Coupled rename (the LSP face of the #202 splice engine):
-                // renaming one site of a coupling (a container open marker, a
-                // forward-reference / heading-hint / margin-note directive)
-                // edits its partner coherently. `prepare_provider` advertises
-                // `textDocument/prepareRename`, which gates the rename to
-                // coupled regions only.
-                rename_provider: Some(OneOf::Right(RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: WorkDoneProgressOptions::default(),
-                })),
-                completion_provider: Some(CompletionOptions {
-                    // Two completion paths share the trigger list:
-                    //
-                    // * Slug catalogue (`crate::completion`) — fires
-                    //   on `＃` (after `［`) or `#` (after `[`), and
-                    //   on `「` for forward-reference quotes
-                    //   (`［＃「target」に傍点］`).
-                    // * Half-width emmet (`crate::half_width_emmet`)
-                    //   — fires on `[`, `]`, `<`, `>`, `|`, `*`. Each
-                    //   suggests the corresponding full-width glyph
-                    //   (`［`, `］`, `《...》`, `》`, `｜`, `※`) and
-                    //   on accept replaces the typed prefix verbatim.
-                    //   The completion path is the secondary surface;
-                    //   the primary surface is `onTypeFormatting`
-                    //   below, which converts on every keystroke
-                    //   without needing the user to dismiss a popup.
-                    trigger_characters: Some(vec![
-                        "＃".to_owned(),
-                        "#".to_owned(),
-                        "「".to_owned(),
-                        "[".to_owned(),
-                        "]".to_owned(),
-                        "<".to_owned(),
-                        ">".to_owned(),
-                        "|".to_owned(),
-                        "*".to_owned(),
-                        // Structured-snippet triggers — fire after
-                        // `onTypeFormatting` has converted the
-                        // half-width form. The completion handler
-                        // routes these to `crate::structured_snippets`.
-                        "｜".to_owned(),
-                        "《".to_owned(),
-                        "※".to_owned(),
-                    ]),
-                    resolve_provider: Some(false),
-                    ..Default::default()
-                }),
-                // The primary half-width → full-width conversion
-                // surface. VS Code fires `onTypeFormatting` the
-                // moment any of these chars is typed and applies the
-                // returned `TextEdit` immediately — no popup, no
-                // accept keystroke. See `crate::on_type_formatting`
-                // for the rationale and safety analysis. Requires
-                // `editor.formatOnType: true` on the client; the
-                // VS Code extension sets that as a default for the
-                // `aozora` language.
-                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
-                    first_trigger_character: ON_TYPE_TRIGGERS[0].to_owned(),
-                    more_trigger_character: Some(
-                        ON_TYPE_TRIGGERS[1..]
-                            .iter()
-                            .map(|&s| s.to_owned())
-                            .collect(),
-                    ),
-                }),
-                execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![COMMAND_CANONICALIZE_SLUG.to_owned()],
-                    ..Default::default()
-                }),
-                code_action_provider: Some(CodeActionProviderCapability::Options(
-                    CodeActionOptions {
-                        // Advertised so VS Code shows the actions
-                        // under right-click → Refactor and the
-                        // Ctrl+. lightbulb. Resolve is not yet wired
-                        // because every action ships a complete
-                        // edit; resolve_provider stays None until a
-                        // future heavier action (e.g. "rename slug
-                        // across document") needs lazy loading.
-                        code_action_kinds: Some(vec![
-                            CodeActionKind::QUICKFIX,
-                            CodeActionKind::REFACTOR_REWRITE,
-                        ]),
-                        ..CodeActionOptions::default()
-                    },
-                )),
-                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
-                document_symbol_provider: Some(OneOf::Left(true)),
-                semantic_tokens_provider: Some(
-                    SemanticTokensServerCapabilities::SemanticTokensOptions(
-                        SemanticTokensOptions {
-                            work_done_progress_options: WorkDoneProgressOptions::default(),
-                            legend: SemanticTokensLegend {
-                                token_types: semantic_token_legend(),
-                                token_modifiers: Vec::new(),
-                            },
-                            range: Some(false),
-                            full: Some(SemanticTokensFullOptions::Bool(true)),
-                        },
-                    ),
-                ),
-                ..Default::default()
-            },
-            server_info: Some(ServerInfo {
-                name: "aozora-lsp".to_owned(),
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
-            }),
+            capabilities: server_capabilities(),
+            server_info: Some(server_info()),
         })
     }
 
@@ -693,19 +589,8 @@ impl LanguageServer for AozoraLanguageServer {
         Ok(hover_at(snap.doc_text(), position, ui_lang()))
     }
 
-    // `inlay_hint` deliberately *not* implemented on the
-    // LanguageServer trait — the gaiji-fold decoration in the
-    // VS Code extension already renders the resolved character
-    // inline, so an LSP-side inlay just adds a redundant `→ X`
-    // alongside the fold's substituted glyph. The extension owns
-    // the cursor-aware "show → X only on the unfurled span"
-    // behaviour because the LSP can't know the cursor; trying to
-    // emit blanket inlays on the server side and hide them on the
-    // client would be impossible (decorations cannot suppress
-    // inlays). `crate::inlay_hints` stays as an internal helper
-    // (exercised by tests/benches) in case we later advertise
-    // `inlayHint`; clients that want the data today consume the
-    // `aozora/gaijiSpans` custom request.
+    // `inlay_hint` deliberately *not* implemented — see
+    // `crate::capabilities`, which declines to advertise it.
 
     #[tracing::instrument(
         skip_all,
@@ -987,6 +872,13 @@ mod tests {
 
     use super::*;
     use tower_lsp::lsp_types::{Position, Range};
+
+    /// The locale-parameterised helpers below are pinned to English rather
+    /// than read through `ui_lang()` — these tests must not depend on a
+    /// process-global the rest of the binary also seeds.
+    fn en() -> LanguageIdentifier {
+        "en".parse().expect("en parses")
+    }
 
     fn synth_change(range: Option<Range>, text: &str) -> TextDocumentContentChangeEvent {
         TextDocumentContentChangeEvent {
@@ -1363,10 +1255,10 @@ mod tests {
     /// anchor but cannot kill that mutant.)
     #[test]
     fn oversize_notice_pins_source_severity_and_message() {
-        let diag = oversize_notice(20 * 1024 * 1024);
+        let diag = oversize_notice(20 * 1024 * 1024, &en());
         assert_eq!(diag.source.as_deref(), Some("aozora-lsp"));
         assert!(
-            diag.message.contains("20 MiB") && diag.message.contains("above the"),
+            diag.message.contains("20 MiB") && diag.message.contains("16 MiB"),
             "message must quote the document size and the limit: {}",
             diag.message,
         );
@@ -1375,6 +1267,36 @@ mod tests {
             diag.range,
             Range::new(Position::new(0, 0), Position::new(0, 0)),
         );
+    }
+
+    /// Both oversize messages resolve out of the catalog with their `$size` /
+    /// `$limit` bound. A missing key surfaces as the bare key (`aozora_i18n`'s
+    /// gap signal) and an unbound placeable as `{$size}` — neither carries the
+    /// numbers, so asserting on those catches either.
+    #[test]
+    fn oversize_messages_resolve_in_every_locale() {
+        for tag in ["en", "ja", "zh"] {
+            let lang: LanguageIdentifier = tag.parse().expect("test locale tag parses");
+            for text in [
+                oversize_notice(20 * 1024 * 1024, &lang).message,
+                oversize_html_notice(20 * 1024 * 1024, &lang),
+            ] {
+                assert!(
+                    text.contains("20") && text.contains("16"),
+                    "{tag}: size and limit must be bound: {text}",
+                );
+                assert!(!text.contains('{'), "{tag}: unbound placeable: {text}");
+            }
+        }
+    }
+
+    /// The preview notice is a single inert paragraph — the webview renders it
+    /// as HTML, so nothing but the catalog's prose may reach it.
+    #[test]
+    fn oversize_html_notice_is_one_inert_paragraph() {
+        let html = oversize_html_notice(20 * 1024 * 1024, &en());
+        assert!(html.starts_with("<p>") && html.ends_with("</p>"), "{html}");
+        assert!(!html[3..html.len() - 4].contains('<'), "{html}");
     }
 }
 
@@ -1492,9 +1414,13 @@ mod e2e {
         }
 
         /// `initialize` + `initialized` so the client send-gate opens.
+        ///
+        /// Reports a locale like a real client does, which fixes the UI
+        /// language these tests run against instead of leaving it to the
+        /// `LANG` of whoever runs them.
         async fn handshake(&mut self) -> Value {
             let caps = self
-                .request("initialize", json!({ "capabilities": {} }))
+                .request("initialize", json!({ "capabilities": {}, "locale": "en" }))
                 .await;
             self.notify("initialized", json!({})).await;
             caps
@@ -1565,12 +1491,12 @@ mod e2e {
     /// True when `diag` is the single informational oversize notice
     /// (`oversize_notice`) rather than a real analysis diagnostic. Used
     /// by the boundary tests to tell "analysed normally" apart from
-    /// "replaced by the oversize notice".
+    /// "replaced by the oversize notice". The MiB figures it quotes are the
+    /// one thing no analysis diagnostic says — and they read the same in
+    /// every locale, so this does not pin the notice's prose.
     fn is_oversize_notice(diag: &Value) -> bool {
         diag["severity"] == json!(3 /* INFORMATION */)
-            && diag["message"]
-                .as_str()
-                .is_some_and(|m| m.contains("above the"))
+            && diag["message"].as_str().is_some_and(|m| m.contains("MiB"))
     }
 
     /// Fetch a document's rendered HTML body (custom `aozora/renderHtml`).
@@ -1608,22 +1534,68 @@ mod e2e {
     // Lifecycle + capabilities
     // -----------------------------------------------------------------
 
+    /// The handshake hands back exactly what [`crate::capabilities`]
+    /// declares. The equality pins the seam; the field assertions pin the
+    /// contents against the wire, naming each provider by the key a client
+    /// reads — so deleting one from `server_capabilities` fails here, in a
+    /// test that runs without the `internals` feature (the capability
+    /// snapshot in `tests/snapshots.rs` is behind it, and a self-referential
+    /// `to_value(server_capabilities())` compare would move with the deletion).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn initialize_advertises_capabilities_and_server_info() {
         let mut server = TestServer::new();
         let caps = server.handshake().await;
-        let c = &caps["capabilities"];
-        assert_eq!(c["hoverProvider"], json!(true));
-        assert_eq!(c["documentFormattingProvider"], json!(true));
-        assert_eq!(c["documentSymbolProvider"], json!(true));
-        assert!(c["completionProvider"].is_object());
-        assert!(c["semanticTokensProvider"].is_object());
-        assert!(
-            c["executeCommandProvider"]["commands"]
-                .as_array()
-                .is_some_and(|cmds| cmds.iter().any(|v| v == COMMAND_CANONICALIZE_SLUG))
+        let advertised = &caps["capabilities"];
+        assert_eq!(
+            *advertised,
+            serde_json::to_value(server_capabilities()).expect("capabilities serialize"),
         );
-        assert_eq!(caps["serverInfo"]["name"], "aozora-lsp");
+
+        // Incremental sync (kind 2), so a keystroke ships a delta not the file.
+        assert_eq!(advertised["textDocumentSync"], json!(2));
+        // The provider set clients dispatch on: each must be present, and
+        // deleting its field from `server_capabilities` must reach this test.
+        assert_eq!(advertised["documentFormattingProvider"], json!(true));
+        assert_eq!(advertised["hoverProvider"], json!(true));
+        assert_eq!(advertised["documentSymbolProvider"], json!(true));
+        assert_eq!(advertised["foldingRangeProvider"], json!(true));
+        assert_eq!(advertised["linkedEditingRangeProvider"], json!(true));
+        assert_eq!(advertised["renameProvider"]["prepareProvider"], json!(true));
+        assert!(
+            advertised["completionProvider"]["triggerCharacters"].is_array(),
+            "completion must advertise trigger characters: {caps}",
+        );
+        assert_eq!(
+            advertised["completionProvider"]["resolveProvider"],
+            json!(false),
+        );
+        assert!(
+            advertised["documentOnTypeFormattingProvider"]["firstTriggerCharacter"].is_string(),
+            "on-type formatting must advertise a first trigger character: {caps}",
+        );
+        assert_eq!(
+            advertised["executeCommandProvider"]["commands"],
+            json!([COMMAND_CANONICALIZE_SLUG]),
+        );
+        assert_eq!(
+            advertised["codeActionProvider"]["codeActionKinds"],
+            json!(["quickfix", "refactor.rewrite"]),
+        );
+        assert!(
+            advertised["semanticTokensProvider"]["legend"]["tokenTypes"].is_array(),
+            "semantic tokens must advertise a legend: {caps}",
+        );
+        // The deliberate omission is a contract too (see `crate::capabilities`).
+        assert!(
+            advertised["inlayHintProvider"].is_null(),
+            "inlay hints are deliberately not advertised: {caps}",
+        );
+
+        assert_eq!(
+            caps["serverInfo"],
+            serde_json::to_value(server_info()).expect("server info serializes"),
+        );
+        assert_eq!(caps["serverInfo"]["name"], json!("aozora-lsp"));
     }
 
     // -----------------------------------------------------------------
@@ -2183,14 +2155,39 @@ mod e2e {
         assert_eq!(diags.len(), 1, "oversize doc gets exactly one notice");
         assert_eq!(diags[0]["severity"], json!(3 /* INFORMATION */));
 
-        let html = server
+        let render = server
             .request("aozora/renderHtml", json!({ "uri": URI }))
             .await;
+        assert_eq!(
+            render["paused"],
+            json!(true),
+            "oversize render must flag the placeholder so the client does not \
+             mistake it for the document: {render}",
+        );
         assert!(
-            html["html"]
+            render["html"]
                 .as_str()
-                .is_some_and(|h| h.contains("Preview paused")),
-            "oversize render returns the inert notice, got: {html}",
+                .is_some_and(|h| h.starts_with("<p>")),
+            "oversize render returns the inert notice, got: {render}",
+        );
+    }
+
+    /// The counterpart to the oversize path: an analysed document renders its
+    /// own HTML and says so, so `paused` actually discriminates.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rendered_document_is_not_flagged_paused() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("｜青空《あおぞら》").await;
+        let render = server
+            .request("aozora/renderHtml", json!({ "uri": URI }))
+            .await;
+        assert_eq!(render["paused"], json!(false), "{render}");
+        assert!(
+            render["html"]
+                .as_str()
+                .is_some_and(|h| h.contains("あおぞら")),
+            "{render}",
         );
     }
 
@@ -2200,53 +2197,6 @@ mod e2e {
         server.handshake().await;
         let resp = server.request("shutdown", json!(null)).await;
         assert!(resp.is_null());
-    }
-
-    // -----------------------------------------------------------------
-    // Capability advertisement — pin every field a "delete struct
-    // field" mutation could silently drop from `initialize`.
-    // -----------------------------------------------------------------
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn initialize_pins_deletable_capability_fields() {
-        let mut server = TestServer::new();
-        let caps = server.handshake().await;
-        let c = &caps["capabilities"];
-        // text_document_sync = INCREMENTAL (2).
-        assert_eq!(c["textDocumentSync"], json!(2), "{c}");
-        // linked_editing_range_provider = Simple(true).
-        assert_eq!(c["linkedEditingRangeProvider"], json!(true), "{c}");
-        // folding_range_provider = Simple(true).
-        assert_eq!(c["foldingRangeProvider"], json!(true), "{c}");
-        // document_on_type_formatting_provider — object with a first trigger.
-        assert!(
-            c["documentOnTypeFormattingProvider"]["firstTriggerCharacter"].is_string(),
-            "onType formatting provider must be advertised: {c}",
-        );
-        // code_action_provider — present, carrying its code_action_kinds.
-        assert!(
-            c["codeActionProvider"].is_object(),
-            "code action provider must be advertised as options: {c}",
-        );
-        assert!(
-            c["codeActionProvider"]["codeActionKinds"]
-                .as_array()
-                .is_some_and(|k| !k.is_empty()),
-            "code_action_kinds list must be advertised: {c}",
-        );
-        // completion_provider — trigger_characters non-empty AND
-        // resolve_provider explicitly false (not merely absent).
-        assert!(
-            c["completionProvider"]["triggerCharacters"]
-                .as_array()
-                .is_some_and(|t| !t.is_empty()),
-            "completion trigger_characters must be advertised: {c}",
-        );
-        assert_eq!(
-            c["completionProvider"]["resolveProvider"],
-            json!(false),
-            "{c}"
-        );
     }
 
     /// The `initialized` handler logs a readiness line to the client.
