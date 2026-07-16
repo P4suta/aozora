@@ -329,8 +329,6 @@ impl AozoraLanguageServer {
             views.push(GaijiSpanView {
                 range: Range::new(start, end),
                 resolved: buf,
-                description: span.description.to_string(),
-                mencode: span.mencode.as_deref().map(str::to_owned),
             });
         }
         Ok(GaijiSpansResult { spans: views })
@@ -377,8 +375,6 @@ pub(crate) struct GaijiSpansParams {
 pub(crate) struct GaijiSpanView {
     pub(crate) range: Range,
     pub(crate) resolved: String,
-    pub(crate) description: String,
-    pub(crate) mencode: Option<String>,
 }
 
 /// Result for `aozora/gaijiSpans` — every resolvable gaiji in the
