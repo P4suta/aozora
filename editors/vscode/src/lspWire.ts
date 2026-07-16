@@ -35,8 +35,6 @@ export interface GaijiSpansResponse {
 export interface GaijiSpanWire {
   readonly range: { start: VsPositionLike; end: VsPositionLike };
   readonly resolved: string;
-  readonly description: string;
-  readonly mencode: string | null;
 }
 
 /** An LSP position: zero-based line, UTF-16 character offset. */
