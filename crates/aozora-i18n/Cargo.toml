@@ -20,6 +20,17 @@ fluent-bundle = { workspace = true }
 unic-langid = { workspace = true }
 fluent-langneg = { workspace = true }
 
+[dev-dependencies]
+# The live diagnostic catalogue, so the catalog-parity test drives itself off
+# `Diagnostic::ALL_CODES` instead of a hand-copied list. Test-only: this crate
+# stays a leaf for consumers. Path-only (no `version`) per the workspace root's
+# internal-dev-dep rule, which keeps it out of the published manifest.
+aozora-spec = { path = "../aozora-spec" }
+# Fluent's AST, so the catalog-parity test reads each locale's message ids out
+# of the resource Fluent itself parsed instead of re-scanning `.ftl` text with a
+# second grammar. Test-only: production code never walks the AST.
+fluent-syntax = { workspace = true }
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
