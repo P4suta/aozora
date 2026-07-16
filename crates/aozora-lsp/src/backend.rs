@@ -1535,21 +1535,67 @@ mod e2e {
     // -----------------------------------------------------------------
 
     /// The handshake hands back exactly what [`crate::capabilities`]
-    /// declares — this pins the seam, not the contents. *What* is declared is
-    /// pinned structurally by the capability snapshot in
-    /// `tests/snapshots.rs`.
+    /// declares. The equality pins the seam; the field assertions pin the
+    /// contents against the wire, naming each provider by the key a client
+    /// reads — so deleting one from `server_capabilities` fails here, in a
+    /// test that runs without the `internals` feature (the capability
+    /// snapshot in `tests/snapshots.rs` is behind it, and a self-referential
+    /// `to_value(server_capabilities())` compare would move with the deletion).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn initialize_advertises_capabilities_and_server_info() {
         let mut server = TestServer::new();
         let caps = server.handshake().await;
+        let advertised = &caps["capabilities"];
         assert_eq!(
-            caps["capabilities"],
+            *advertised,
             serde_json::to_value(server_capabilities()).expect("capabilities serialize"),
         );
+
+        // Incremental sync (kind 2), so a keystroke ships a delta not the file.
+        assert_eq!(advertised["textDocumentSync"], json!(2));
+        // The provider set clients dispatch on: each must be present, and
+        // deleting its field from `server_capabilities` must reach this test.
+        assert_eq!(advertised["documentFormattingProvider"], json!(true));
+        assert_eq!(advertised["hoverProvider"], json!(true));
+        assert_eq!(advertised["documentSymbolProvider"], json!(true));
+        assert_eq!(advertised["foldingRangeProvider"], json!(true));
+        assert_eq!(advertised["linkedEditingRangeProvider"], json!(true));
+        assert_eq!(advertised["renameProvider"]["prepareProvider"], json!(true));
+        assert!(
+            advertised["completionProvider"]["triggerCharacters"].is_array(),
+            "completion must advertise trigger characters: {caps}",
+        );
+        assert_eq!(
+            advertised["completionProvider"]["resolveProvider"],
+            json!(false),
+        );
+        assert!(
+            advertised["documentOnTypeFormattingProvider"]["firstTriggerCharacter"].is_string(),
+            "on-type formatting must advertise a first trigger character: {caps}",
+        );
+        assert_eq!(
+            advertised["executeCommandProvider"]["commands"],
+            json!([COMMAND_CANONICALIZE_SLUG]),
+        );
+        assert_eq!(
+            advertised["codeActionProvider"]["codeActionKinds"],
+            json!(["quickfix", "refactor.rewrite"]),
+        );
+        assert!(
+            advertised["semanticTokensProvider"]["legend"]["tokenTypes"].is_array(),
+            "semantic tokens must advertise a legend: {caps}",
+        );
+        // The deliberate omission is a contract too (see `crate::capabilities`).
+        assert!(
+            advertised["inlayHintProvider"].is_null(),
+            "inlay hints are deliberately not advertised: {caps}",
+        );
+
         assert_eq!(
             caps["serverInfo"],
             serde_json::to_value(server_info()).expect("server info serializes"),
         );
+        assert_eq!(caps["serverInfo"]["name"], json!("aozora-lsp"));
     }
 
     // -----------------------------------------------------------------
