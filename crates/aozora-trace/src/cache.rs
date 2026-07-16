@@ -26,8 +26,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Trace;
 
-/// On-disk cache form. Keyed by (`library_name`, `debug_id`) so two
-/// rebuilds of the same library don't poison each other's caches.
+/// On-disk cache form. Keyed by library name; the stored `debug_id`
+/// is validated on apply (a mismatched build-id is rejected),
+/// catching a rebuilt-binary stale cache.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SymbolCache {
     /// Map: library `name` → (`debug_id`, addr → resolved function name).

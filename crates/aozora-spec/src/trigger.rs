@@ -158,13 +158,13 @@ pub const TRIGGER_MIDDLE_BYTES: [u8; 4] = [0x80, 0x89, 0xBC, 0xBD];
 /// Every single-character trigger trigram as raw UTF-8 byte arrays —
 /// one per [`TriggerKind`] variant.
 ///
-/// In PHF-table iteration order. Consumed by the multi-pattern scan
-/// backends (Teddy, multi-pattern DFA) which need the
-/// patterns directly rather than going through `classify_trigger_bytes`.
+/// Consumed by the multi-pattern scan backends (Teddy, multi-pattern
+/// DFA) which need the patterns directly rather than going through
+/// `classify_trigger_bytes`.
 ///
-/// The accompanying `tests::all_trigger_trigrams_match_phf` test
-/// asserts that every entry round-trips through the PHF, so adding /
-/// removing a trigger keeps this list and the PHF in sync.
+/// `tests::classify_match_and_trigram_array_cannot_drift` pins this list
+/// against `classify_trigger_bytes`, so adding / removing a trigger in
+/// one place without the other fails CI.
 pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 13] = [
     [0xEF, 0xBD, 0x9C], // ｜ Bar
     [0xE3, 0x80, 0x8A], // 《 RubyOpen
@@ -189,8 +189,6 @@ mod tests {
 
     #[test]
     fn single_char_trigger_byte_lens_match_utf8() {
-        // For each single-character variant, look up via PHF and assert
-        // the encoded length is 3.
         for kind in [
             TriggerKind::Bar,
             TriggerKind::RubyOpen,

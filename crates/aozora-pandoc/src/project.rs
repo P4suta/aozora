@@ -436,7 +436,7 @@ fn gaiji_inline(g: Gaiji, store: &NodeStore) -> Inline {
     Inline::Span(class_attr_kv("gaiji", kvs), inner)
 }
 
-/// Project a single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
+/// Project a single-line layout directive.
 fn line_inline(lf: LineFormat) -> Inline {
     let attr = match lf {
         LineFormat::Indent { amount, end_offset } => {

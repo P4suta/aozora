@@ -4,8 +4,10 @@
 //! locally-extracted `aozorabunko_text` clone (or any other directory
 //! of aozora-format text), letting sweep tests run invariants against
 //! every candidate file. The directory structure is not inspected:
-//! labels are paths relative to the root, and ordering follows
-//! [`walkdir`]'s default (lexicographic per-directory).
+//! labels are paths relative to the root, and paths are yielded in
+//! [`walkdir`]'s directory-entry (`readdir(2)`) order, which is OS- and
+//! filesystem-dependent and NOT lexicographic; callers needing
+//! determinism must sort.
 //!
 //! Files with extensions other than `.txt` are skipped silently.
 //! Symbolic links are not followed (walkdir's default `follow_links =
@@ -58,8 +60,10 @@ impl FilesystemCorpus {
     /// Enumerate every `.txt` file under the root WITHOUT reading its
     /// bytes. Useful for splitting walkdir cost from read cost in
     /// per-phase load benchmarks and for fanning the read step
-    /// across rayon workers. The returned iterator yields
-    /// absolute paths in walkdir's lexicographic-per-directory order.
+    /// across rayon workers. The returned iterator yields absolute
+    /// paths in walkdir's directory-entry (`readdir(2)`) order, which
+    /// is OS- and filesystem-dependent and NOT lexicographic; callers
+    /// needing determinism must sort.
     ///
     /// Uses `DirEntry::file_type()` for the file-vs-directory check —
     /// walkdir caches that from the underlying `readdir(2)` so no

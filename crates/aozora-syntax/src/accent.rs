@@ -3,7 +3,7 @@
 //! Spec: <https://www.aozora.gr.jp/accent_separation.html>
 //!
 //! The scheme encodes accented Latin letters using a base ASCII letter followed
-//! by a one-character marker. The full 118-entry table from the spec is
+//! by a one-character marker. The full 114-entry table from the spec is
 //! encoded here as a compile-time slice so the lexer (for pre-parse
 //! rewriting) and downstream tools share the same authoritative lookup.
 //!

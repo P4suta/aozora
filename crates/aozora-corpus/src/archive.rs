@@ -287,7 +287,7 @@ impl Archive {
 
         let mut entries = Vec::with_capacity(count);
         let mut cursor = HEADER_LEN;
-        for i in 0..count {
+        for _ in 0..count {
             if cursor + INDEX_FIXED_LEN > bytes.len() {
                 return Err(ArchiveError::Truncated {
                     what: "index entry header",
@@ -351,7 +351,6 @@ impl Archive {
                     what: "index entry payload past end of file",
                 });
             }
-            let _ = i; // bound-check uses i implicitly via cursor advance
             entries.push(EntryMeta {
                 payload_offset,
                 payload_len,

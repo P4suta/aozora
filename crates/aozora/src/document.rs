@@ -122,9 +122,11 @@ impl Document {
     /// `replacement` is the new text to splice in. The result is a
     /// new `Document` whose source equals
     /// `self.source[..span.start] + replacement + self.source[span.end..]`.
-    /// The arena is rebuilt — incremental re-parse over the unchanged
-    /// region is a future improvement (see the architecture handbook
-    /// chapter on incremental parse).
+    /// `edit` intentionally does a full rebuild: `span` is a raw,
+    /// untrusted byte range, so the arena is reparsed from the spliced
+    /// source. Callers that want subtree reuse over the unchanged region
+    /// take a [`Region`](crate::Region) through
+    /// [`Self::edit_region`] / [`Tree::splice`](crate::Tree::splice).
     ///
     /// The signature is the supported entry point for editor surfaces
     /// implementing `textDocument/didChange`. Even with a full reparse
@@ -361,8 +363,7 @@ impl<'a> Tree<'a> {
     /// (including ones in literal regions) and recover the original text from
     /// `SourceNode::source_span` + [`Span::slice`](crate::Span::slice);
     /// resolving only "normal"-text sentinels leaks the raw sentinel and
-    /// desyncs the registry cursor. See the *Notations in host literal
-    /// contexts* recipe in the handbook.
+    /// desyncs the registry cursor.
     #[must_use]
     pub fn source_nodes(&self) -> &[SourceNode] {
         &self.inner().source_nodes

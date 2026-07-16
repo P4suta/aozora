@@ -324,11 +324,12 @@ pub fn sjis_boundary_bytes() -> impl Strategy<Value = Vec<u8>> {
 /// Generate deeply nested paired delimiters up to `max_depth` nesting
 /// levels.
 ///
-/// `《`/`》` and `［＃`/`］` open/close pairs nested without any
-/// content between. Drives the parser's stack-based pairing logic
-/// against pathological depth — a regression that would slip past
-/// the workhorse `aozora_fragment` generator (which spreads atoms
-/// thin) but still corrupt the parser's frame stack.
+/// Emits several paired-delimiter shapes, including a deliberately
+/// mismatched open/close, nested without any content between. Drives
+/// the parser's stack-based pairing logic against pathological depth —
+/// a regression that would slip past the workhorse `aozora_fragment`
+/// generator (which spreads atoms thin) but still corrupt the parser's
+/// frame stack.
 ///
 /// `max_depth` is an upper bound; the generator draws a nesting depth
 /// in `0..=max_depth` so shrinking can report the smallest failing

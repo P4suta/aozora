@@ -10,12 +10,12 @@
 //! ## DSL grammar
 //!
 //! ```text
-//! query   := pattern ('\n' pattern)* '\n'?
+//! query   := ws? pattern (ws pattern)* ws?
 //! pattern := '(' kind capture? ')'
 //!          | '(' '_'  capture? ')'
 //! kind    := SyntaxKind ident      // e.g. `Construct`, `Container`
 //! capture := '@' ident
-//! ident   := [A-Za-z_][A-Za-z0-9_-]*
+//! ident   := [A-Za-z0-9_-]+
 //! ```
 //!
 //! - `(Construct)` matches every `Construct` node.
@@ -23,7 +23,7 @@
 //!   `ruby` so the iterator yields one [`Capture`] per match.
 //! - `(_)` matches any node kind; combine with `@name` for a
 //!   "tour every node" walker.
-//! - Multiple patterns separated by newlines run as an OR — every
+//! - Multiple patterns separated by whitespace run as an OR — every
 //!   matching node yields one capture per pattern that hits.
 //!
 //! ## Execution model

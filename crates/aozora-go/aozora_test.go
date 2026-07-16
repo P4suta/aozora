@@ -7,7 +7,7 @@ import (
 )
 
 // TestEndToEnd loads the embedded aozora.wasm through the Extism Go host
-// SDK and exercises every export across the real plugin ABI — the Go
+// SDK and exercises the JSON and HTML exports across the real plugin ABI — the Go
 // analogue of the Rust `host_smoke` test. It proves the Go transport
 // (wazero → wasm → wire JSON → generated structs) works end to end; the
 // byte-identical-to-aozora::json guarantee itself is pinned by the Rust

@@ -3,8 +3,8 @@
 //! Each analysis returns a typed report struct (e.g. [`crate::analysis::HotReport`]).
 //! Reports implement [`TableRenderable`] so the CLI can pretty-print
 //! them uniformly. We deliberately don't pull in `comfy-table` /
-//! `tabled` etc. — the format is fixed-width 3-column "rank / pct /
-//! label" and rolling our own keeps the dep graph trivial.
+//! `tabled` etc. — the tables are small and fixed-width, so rolling
+//! our own keeps the dep graph trivial.
 
 /// Implemented by every analysis report. Renders to stdout-friendly
 /// fixed-width text; every report also derives [`serde::Serialize`],

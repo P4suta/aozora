@@ -85,11 +85,12 @@ pub struct Panicked;
 
 /// Run `f`, turning an upstream `aozora` parser panic into a typed [`Panicked`].
 ///
-/// Instead of a process abort, the panic is caught (via `panic = "unwind"` and
-/// `catch_unwind`). The default panic hook is silenced for the duration so a
-/// caught panic doesn't also print "thread 'main' panicked …"; the caller
-/// reports it instead. Shared with the `aozora` CLI (`render`, `lint`) so every
-/// entry point that drives the parser gets the same no-abort guarantee.
+/// `catch_unwind` only intercepts the panic under `panic = "unwind"` — the
+/// dev/test default and `aozora-lsp`'s dist profile. The shipping release binary
+/// sets `panic = "abort"`, so there a parser panic aborts the process before the
+/// catch runs, exactly as the sibling `source` module documents. The default panic hook is
+/// silenced for the duration so a caught panic doesn't also print "thread 'main'
+/// panicked …"; the caller reports it instead.
 ///
 /// # Errors
 ///
@@ -102,8 +103,9 @@ pub fn guard<T>(f: impl FnOnce() -> T) -> Result<T, Panicked> {
     result.map_err(|_| Panicked)
 }
 
-/// Format `source` under [`guard`]. In `--write` mode the no-abort guarantee
-/// means no file is touched after a panic.
+/// Format `source` under [`guard`]. In `--write` mode a caught panic surfaces
+/// as an error before any write, so no file is touched (where [`guard`] can
+/// catch — see its note on `panic = "unwind"` vs `"abort"`).
 pub(crate) fn format_guarded(source: &str, opts: SerializeOptions) -> Result<String> {
     guard(|| format_source_with(source, opts)).map_err(|_| {
         anyhow!(

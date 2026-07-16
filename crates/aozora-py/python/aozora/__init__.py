@@ -64,7 +64,8 @@ class Document:
     """A parsed Aozora Bunko document.
 
     ``unsendable``: a ``Document`` is pinned to the thread that created it
-    (the parser owns a bump arena with interior mutability). Touching one
+    (a conservative marker; the underlying document is thread-safe but the
+    handle is pinned to its constructing thread). Touching one
     from another thread raises ``RuntimeError`` rather than sharing
     unsoundly.
     """

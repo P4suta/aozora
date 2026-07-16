@@ -25,7 +25,7 @@
 //!
 //! ```rust,ignore
 //! use std::path::Path;
-//! use aozora_trace::{Trace, Symbolicator, analysis::{self, RollupConfig}};
+//! use aozora_trace::{Trace, Symbolicator, RollupConfig, analysis};
 //!
 //! // 1. Load the gzipped JSON trace.
 //! let mut trace = Trace::load(Path::new("/tmp/aozora-corpus.json.gz"))?;
@@ -33,7 +33,8 @@
 //! // 2. Symbolicate against the binary that produced it (DWARF lookup).
 //! let mut sym = Symbolicator::new();
 //! sym.add_binary("throughput_by_class", Path::new("target/release/examples/throughput_by_class"))?;
-//! trace.symbolicate(&sym);
+//! let mut cache = SymbolCache::default();
+//! sym.resolve_into(&mut trace, &mut cache);
 //!
 //! // 3. Run any analysis. Reports are printable + serialisable.
 //! let hot = analysis::hot_leaves(&trace, 25);

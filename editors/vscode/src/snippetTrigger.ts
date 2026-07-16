@@ -47,17 +47,6 @@
 // `［${0}］］`. The suppression checks `the next char after the typed
 // open` and bails if it's already the matching close.
 //
-// ## Trigger map
-//
-// | Just typed (after onType) | Action                                                | Cursor lands |
-// |---------------------------|-------------------------------------------------------|---------------|
-// | `［`                       | wrap → `［${0}］`                                      | between brackets |
-// | `《`                       | wrap → `《${1:reading}》${0}`                          | `${1:reading}` selected |
-// | `｜`                       | wrap → `｜${1:base}《${2:reading}》${0}`                | `${1:base}` selected |
-// | `※`                       | wrap → `※［＃「${1:description}」、${2:mencode}］${0}` | `${1:description}` |
-// | `#`                       | wrap → `［＃${0}］` + `triggerSuggest`                  | between brackets, catalogue popup |
-// | `］` `》` `」` `』`         | skip-over if next char matches                        | past the existing close |
-//
 // ## Re-entry guard
 //
 // `editor.insertSnippet` itself fires `onDidChangeTextDocument` for

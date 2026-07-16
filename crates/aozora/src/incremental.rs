@@ -2906,7 +2906,7 @@ mod mut_tests_pieces {
         assert!(!SanitizedSrc::is_empty(&RawSrc("x".to_owned())));
     }
 
-    // ---- <&str as SanitizedSrc>::is_empty (line 102) ----
+    // ---- <&str as SanitizedSrc>::is_empty ----
 
     #[test]
     fn str_impl_is_empty_true_and_false() {
@@ -2918,7 +2918,7 @@ mod mut_tests_pieces {
         assert!(!SanitizedSrc::is_empty(&filled.as_str()));
     }
 
-    // ---- <&str as SanitizedSrc>::debug_assert_unchanged_outside (line 127) ----
+    // ---- <&str as SanitizedSrc>::debug_assert_unchanged_outside ----
 
     #[cfg(debug_assertions)]
     #[test]
@@ -2932,7 +2932,7 @@ mod mut_tests_pieces {
         SanitizedSrc::debug_assert_unchanged_outside(&old, &new, 2..3, 3);
     }
 
-    // ---- RegionIndex::build ruby-pair filter (line 312, == -> !=) ----
+    // ---- RegionIndex::build ruby-pair filter (== -> !=) ----
 
     #[test]
     fn build_ruby_pair_filter_matches_ruby_kind() {
@@ -2953,7 +2953,7 @@ mod mut_tests_pieces {
         );
     }
 
-    // ---- Piece::narrow node/diag partitions (lines 509, 512, 515, 516) ----
+    // ---- Piece::narrow node/diag partitions ----
 
     /// A single whole-document piece with nodes and diagnostics landing exactly
     /// on the splice endpoints, spliced at the interior region `40..60`. The
@@ -2973,20 +2973,20 @@ mod mut_tests_pieces {
         let seq = narrow_spliced();
         let (nodes, _pairs, diags) = seq.flatten();
         let node_starts: Vec<u32> = nodes.iter().map(|n| n.source_span.start).collect();
-        // node@40 is in the region (dropped, kills line 512 `<=`); node@60 lands
-        // in the suffix (kept, kills line 509 `<=`).
+        // node@40 is in the region (dropped, kills `<=`); node@60 lands
+        // in the suffix (kept, kills `<=`).
         assert_eq!(node_starts, vec![20, 60, 80]);
         let diag_spans: Vec<(u32, u32)> = diags
             .iter()
             .map(|d| (d.span().start, d.span().end))
             .collect();
-        // diag@40 dropped with the region (kills line 516); diag@60 kept in the
-        // suffix (kills line 515).
+        // diag@40 dropped with the region (kills `<=`); diag@60 kept in the
+        // suffix (kills `<=`).
         assert_eq!(diag_spans, vec![(20, 22), (60, 62), (80, 82)]);
         assert_eq!(seq.node_count(), 3);
     }
 
-    // ---- PieceSeq::splice endpoint guards (lines 728, 731) ----
+    // ---- PieceSeq::splice endpoint guards ----
 
     #[test]
     fn splice_left_boundary_uses_strict_lt() {
@@ -3007,7 +3007,7 @@ mod mut_tests_pieces {
         assert_eq!(out.piece_count(), 2, "doc-end region: [prefix, relexed]");
     }
 
-    // ---- PieceSeq::container_depth_at (lines 773, 779) ----
+    // ---- PieceSeq::container_depth_at ----
 
     #[test]
     fn container_depth_at_reads_prefix_and_sums() {
@@ -3018,14 +3018,14 @@ mod mut_tests_pieces {
         // finalize `+= -> *=` (product from 0 collapses to 0).
         assert_eq!(seq.node_count(), 3);
         // off exactly at the second open's start (10): the strict `<` excludes
-        // that open, so the prefix depth is 1 (line 773 `< -> <=` reads 2).
+        // that open, so the prefix depth is 1 (`< -> <=` reads 2).
         assert_eq!(seq.container_depth_at(10), 1);
         // off past both opens (18): base_depth(0) + local(2) == 2; the `+ -> -`
-        // mutant (line 779) yields -2.
+        // mutant yields -2.
         assert_eq!(seq.container_depth_at(18), 2);
     }
 
-    // ---- PieceSeq::find_piece (lines 905, 906) ----
+    // ---- PieceSeq::find_piece ----
 
     #[test]
     fn find_piece_boundary_and_interior_index() {
@@ -3034,13 +3034,13 @@ mod mut_tests_pieces {
         let seq = PieceSeq::from_contiguous(&[], &[], &[], 90);
         let out = seq.splice(30..60, &[], &[], &[], 0);
         assert_eq!(out.piece_count(), 3);
-        // At the boundary 30 the piece *ending* there is piece 0 (line 905 `<`;
+        // At the boundary 30 the piece *ending* there is piece 0 (`<`;
         // `<=` would select piece 1).
         assert_eq!(out.find_piece(30), 0);
         // Interior of the middle piece.
         assert_eq!(out.find_piece(45), 1);
         // Out-of-range `off` (past the document total) must still clamp to the
-        // last valid piece index via `.min(pieces.len() - 1)` (line 906): the
+        // last valid piece index via `.min(pieces.len() - 1)`: the
         // `- 1` guarantees an in-bounds result. `/1` (→ `len`) or `+1` (→
         // `len + 1`) would let `find_piece` return an out-of-bounds index.
         assert_eq!(out.find_piece(10_000), out.piece_count() - 1);
@@ -3193,7 +3193,7 @@ mod mut_tests_relex {
         out
     }
 
-    // ---- is_ruby_node (line 1258) -----------------------------------------
+    // ---- is_ruby_node -----------------------------------------
 
     #[test]
     fn is_ruby_node_true_for_ruby_false_otherwise() {
@@ -3225,7 +3225,7 @@ mod mut_tests_relex {
         );
     }
 
-    // ---- relexed_is_balanced (lines 1359-1372) ----------------------------
+    // ---- relexed_is_balanced ----------------------------
 
     #[test]
     fn relexed_is_balanced_pins_arms_ops_and_boundary() {
@@ -3267,7 +3267,7 @@ mod mut_tests_relex {
         );
     }
 
-    // ---- splice_prologue: edit-bounds guard (line 1438) -------------------
+    // ---- splice_prologue: edit-bounds guard -------------------
 
     #[test]
     fn splice_prologue_admits_interior_replacement() {
@@ -3322,7 +3322,7 @@ mod mut_tests_relex {
         );
     }
 
-    // ---- splice_prologue: carries_structure guard (line 1463) ------------
+    // ---- splice_prologue: carries_structure guard ------------
 
     #[test]
     fn splice_prologue_declines_when_only_old_slice_is_structural() {
@@ -3354,7 +3354,7 @@ mod mut_tests_relex {
         );
     }
 
-    // ---- splice_prologue: diagnostic-straddle guard (line 1483) ----------
+    // ---- splice_prologue: diagnostic-straddle guard ----------
 
     #[test]
     fn splice_prologue_declines_diag_straddling_one_boundary() {

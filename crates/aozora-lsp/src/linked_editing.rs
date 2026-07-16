@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(result.ranges[1].start, pos(&src, close_byte));
     }
 
-    /// Kills `char_at_offset` `||`→`&&` (line 81). A mid-codepoint
+    /// Kills `char_at_offset` `||`→`&&`. A mid-codepoint
     /// `offset` (strictly less than `len`, not a boundary) must be
     /// rejected as `None`. Under `&&` the early return is skipped and
     /// `source[offset..]` panics on the non-boundary slice.
@@ -337,8 +337,8 @@ mod tests {
         assert!(char_at_offset("あい", 1).is_none());
     }
 
-    /// Kills `find_partner_forward` `<`→`<=` on the window bound
-    /// (line 155:38). A `target` sitting exactly `SCAN_WINDOW` bytes
+    /// Kills `find_partner_forward` `<`→`<=` on the window bound.
+    /// A `target` sitting exactly `SCAN_WINDOW` bytes
     /// from `start` is outside the half-open window and must not be
     /// found; `<=` would wrongly admit it.
     #[test]
@@ -349,8 +349,8 @@ mod tests {
         assert_eq!(find_partner_forward(&src, 0, '》'), None);
     }
 
-    /// Kills `find_partner_forward` `idx - start`→`idx + start`
-    /// (line 155:30). The window is the distance walked *from*
+    /// Kills `find_partner_forward` `idx - start`→`idx + start`.
+    /// The window is the distance walked *from*
     /// `start`, so a large `start` with the partner right beside it is
     /// still inside the window and found; `idx + start` would exceed
     /// it spuriously.
@@ -363,7 +363,7 @@ mod tests {
     }
 
     /// Kills `find_partner_forward` end offset `idx + ch.len_utf8()`
-    /// mutated to `idx - len` or `idx * len` (line 161:35). The
+    /// mutated to `idx - len` or `idx * len`. The
     /// partner span end must be exactly `idx` plus the char's UTF-8
     /// length.
     #[test]
@@ -373,8 +373,8 @@ mod tests {
         assert_eq!(find_partner_forward("xxx》", 0, '》'), Some((3, 6)));
     }
 
-    /// Kills `find_partner_backward` `floor += 1`→`floor -= 1`
-    /// (line 177). The floor must snap *up* to the next boundary,
+    /// Kills `find_partner_backward` `floor += 1`→`floor -= 1`.
+    /// The floor must snap *up* to the next boundary,
     /// dropping a char that straddles the `end - SCAN_WINDOW` mark.
     #[test]
     fn backward_scan_snaps_floor_up_to_boundary() {
@@ -388,7 +388,7 @@ mod tests {
     }
 
     /// Kills `find_partner_backward` end offset `abs + ch_len` mutated
-    /// to `abs - ch_len` or `abs * ch_len` (line 189:35). The partner
+    /// to `abs - ch_len` or `abs * ch_len`. The partner
     /// span end must be exactly `abs` plus the char's UTF-8 length.
     #[test]
     fn backward_scan_partner_end_is_abs_plus_char_len() {

@@ -2,7 +2,7 @@ import { snippet } from '@codemirror/autocomplete';
 import { EditorView, type Command, type KeyBinding } from '@codemirror/view';
 
 export interface WrapShape {
-  /** Stable id, matches the in-repo VSCode extension's command names. */
+  /** Stable id for this wrap action. */
   id: string;
   /** Snippet template with `BASE` for the selection and `${0}` for the final cursor. */
   template: string;
@@ -11,11 +11,8 @@ export interface WrapShape {
 }
 
 /**
- * 6 selection-wrap actions, ported from the in-repo VSCode extension
- * (`editors/vscode/src/wrap.ts`). The shapes (and the choice to always
- * emit a leading `｜` for ruby) are kept identical so users alternating
- * between the VSCode extension and the web playground get the same
- * muscle memory.
+ * The playground's 6 selection-wrap actions. Ruby always emits a
+ * leading `｜` so its span is unambiguous.
  */
 export const WRAP_SHAPES: readonly WrapShape[] = [
   { id: 'aozora.wrap.ruby', template: '｜BASE《${0}》', description: 'ルビ' },
@@ -74,8 +71,7 @@ export function getWrapCommand(id: string): Command | null {
  * Keybindings registered globally. Mirrors the in-repo VSCode
  * extension's bindings: Ctrl/Cmd+Alt+R for ruby, Ctrl/Cmd+Alt+B for
  * bouten. angleQuote is on Shift+Ctrl/Cmd+Alt+R (the extension leaves
- * it unbound; we pick the natural extension since the playground has
- * no command palette plumbing yet).
+ * it unbound).
  */
 export const aozoraWrapKeymap: KeyBinding[] = [
   {

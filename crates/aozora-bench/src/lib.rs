@@ -1,11 +1,10 @@
 //! Bench harness for the aozora parser.
 //!
-//! This crate hosts criterion benchmarks shared across the workspace
-//! and is also the **canonical PGO profile source**: when the
-//! release pipeline is configured to do PGO + BOLT, the profile
-//! collection step runs `cargo run --release --bin aozora_pgo_train`
-//! against the full corpus to gather an even sample of real-world
-//! parse work.
+//! This crate hosts criterion benchmarks shared across the workspace.
+//! PGO profile collection lives in `scripts/pgo-build.sh`, which runs
+//! `cargo pgo build` on `aozora-cli` and exercises the instrumented
+//! binary against `$AOZORA_CORPUS_ROOT` to gather real-world parse
+//! samples — it does not run anything from this crate.
 //!
 //! ## Why a separate crate?
 //!
@@ -18,62 +17,14 @@
 
 #![forbid(unsafe_code)]
 
-use std::hint::black_box;
-use std::path::Path;
-
 use core::str;
 use std::cell::RefCell;
 use std::mem;
 use std::path::PathBuf;
 
-use aozora::Document;
-use aozora_corpus::{
-    Archive, ArchivePayload, CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool,
-};
-use aozora_encoding::{decode_auto, decode_auto_into};
+use aozora_corpus::{Archive, ArchivePayload, CorpusItem, FilesystemCorpus, with_load_pool};
+use aozora_encoding::decode_auto_into;
 use rayon::prelude::*;
-
-/// Iterate the corpus rooted at `root`, decode each document to UTF-8
-/// (auto-detecting Shift_JIS vs already-UTF-8 source), and parse it.
-///
-/// Returns the `(decode_error_count, io_error_count, parsed_doc_count)`
-/// triple. Used by the PGO training binary AND by the
-/// synthetic-corpus criterion harness.
-///
-/// # Errors
-///
-/// Returns `Err` on a corpus-construction failure (typically: the
-/// supplied root is not a directory). Per-file errors are counted
-/// internally rather than raised — the goal is "exercise as much of
-/// the parse path as possible" for profiling.
-pub fn parse_corpus<P: AsRef<Path>>(
-    root: P,
-) -> Result<(usize, usize, usize), aozora_corpus::CorpusError> {
-    let corpus = FilesystemCorpus::new(root.as_ref())?;
-    let mut decode_errors = 0;
-    let mut io_errors = 0;
-    let mut parsed = 0;
-    for item in corpus.iter() {
-        match item {
-            Ok(CorpusItem { bytes, .. }) => match decode_auto(&bytes) {
-                Ok(text) => {
-                    let doc = Document::new(text.clone());
-                    let tree = doc.parse();
-                    // Touch the tree so the optimizer can't hoist
-                    // the parse out — a real consumer reads
-                    // diagnostics and the registry, both of which we
-                    // surface here to match prod-shaped pressure.
-                    let diag_count = tree.diagnostics().len();
-                    black_box(diag_count);
-                    parsed += 1;
-                }
-                Err(_) => decode_errors += 1,
-            },
-            Err(_) => io_errors += 1,
-        }
-    }
-    Ok((decode_errors, io_errors, parsed))
-}
 
 /// Size band a corpus document falls into, by post-decode UTF-8 byte count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -536,6 +487,10 @@ pub fn build_pathological_aozora(target_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+
+    use aozora::Document;
+
     use super::*;
 
     #[test]
@@ -580,9 +535,9 @@ mod tests {
 
     #[test]
     fn log_histogram_ns_distributes_samples_across_buckets() {
-        // 1µs..1s, 6 buckets — ratio per bucket ≈ √(1e6) ≈ 31.6×.
+        // 1µs..1s, 6 buckets — ratio per bucket = (1e6)^(1/6) ≈ 10×.
         let samples: Vec<u64> = vec![
-            1_500,         // bucket 0 (≈ 1µs..32µs)
+            1_500,         // bucket 0 (≈ 1µs..10µs)
             10_000,        // bucket 0 or 1
             1_000_000,     // bucket 2 or 3
             500_000_000,   // bucket 5

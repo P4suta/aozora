@@ -179,13 +179,13 @@ mod tests {
         let (start, end) = middle_chunk_span(rope.byte_slice(..));
         let src = RopeSrc::new(rope.byte_slice(..));
 
-        // First probe: memo empty -> miss path (line 94).
+        // First probe: memo empty -> miss path.
         assert_eq!(
             src.byte(start),
             s.as_bytes()[start],
             "miss-path byte at the interior chunk start must equal the source",
         );
-        // Second probe in the same chunk: memo hit (line 86).
+        // Second probe in the same chunk: memo hit.
         let hit = start + 1;
         assert!(
             hit < end,

@@ -872,7 +872,7 @@ mod tests {
         assert!(!ruby_needs_bar(&[all_gaiji], None, &store));
         assert!(ruby_needs_bar(&[mixed], None, &store));
 
-        // The predecessor clause (line 360) must be exercised deterministically,
+        // The predecessor clause must be exercised deterministically,
         // not left to the property suite: a SAME-class predecessor forces the bar
         // even for a uniform base (kills `|| -> &&` and the `class == base`
         // `== -> !=`), a bar predecessor forces it via the `c == '｜'` arm, and a

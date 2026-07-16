@@ -429,12 +429,12 @@ mod tests {
         // `[#` and `［#`: walking back from the trailing hash we hit the
         // opening bracket before any closer, so the slug catalogue owns
         // the cursor. Pins `in_slug_context` == true, which kills:
-        //   * `||`→`&&` at line 190 (would demand the tail end with both
+        //   * `||`→`&&` (would demand the tail end with both
         //     `#` AND `＃` — impossible — so it would always return
         //     false),
-        //   * `&&`→`||` at line 199 (would run the snap loop up to
+        //   * `&&`→`||` (would run the snap loop up to
         //     `cursor`, emptying the look-back window → false),
-        //   * deletion of the `'[' | '［'` arm at line 205 (the bracket
+        //   * deletion of the `'[' | '［'` arm (the bracket
         //     would fall through to `_` and never report true).
         assert!(in_slug_context("[#", 2));
         assert!(in_slug_context("［#", "［#".len()));
@@ -444,7 +444,7 @@ mod tests {
     fn slug_context_false_when_closer_or_newline_precedes_hash() {
         // A `]`, `］`, or newline seen before the `[` means the cursor is
         // NOT inside an open slug bracket, so each must short-circuit to
-        // false. Without the `']' | '］' | '\n'` arm (line 206) the scan
+        // false. Without the `']' | '］' | '\n'` arm the scan
         // would run past the closer, reach the leading `[`, and wrongly
         // report true — so these pin that arm's three alternatives.
         assert!(!in_slug_context("[]#", 3));
@@ -468,12 +468,12 @@ mod tests {
         assert_eq!(src.len(), 261);
         let cursor = src.len();
         // This single assertion kills four mutants at once:
-        //   * `<`→`==` and `<`→`>` (line 199): the snap loop never runs,
+        //   * `<`→`==` and `<`→`>`: the snap loop never runs,
         //     leaving `start` mid-codepoint → `&source[start..cursor]`
         //     panics.
-        //   * `+=`→`*=` (line 200): once entered, the snap loop can never
+        //   * `+=`→`*=`: once entered, the snap loop can never
         //     advance → non-termination (caught by cargo-mutants timeout).
-        //   * `+=`→`-=` (line 200): the loop snaps BACKWARD onto the start
+        //   * `+=`→`-=`: the loop snaps BACKWARD onto the start
         //     of `［`, so the window includes the bracket and the result
         //     flips to true.
         assert!(!in_slug_context(&src, cursor));
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn emmet_item_kind_reflects_snippet_vs_plain() {
-        // `kind` must be populated (line 241) and reflect whether the
+        // `kind` must be populated and reflect whether the
         // snippet body carries a `${0}` tabstop. Deleting the field
         // defaults it to `None`, failing both arms below.
         let snippet_item = only_item("<", pos(0, 1));
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn emmet_item_carries_markdown_documentation() {
-        // `documentation` must be present (line 243); deleting the field
+        // `documentation` must be present; deleting the field
         // defaults it to `None` and the destructure below panics.
         let item = only_item("[", pos(0, 1));
         let Some(Documentation::MarkupContent(mc)) = item.documentation else {
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn emmet_item_is_preselected() {
-        // `preselect` must be `Some(true)` (line 255) so a single Enter
+        // `preselect` must be `Some(true)` so a single Enter
         // accepts the substitution; deleting the field defaults it to
         // `None`.
         let item = only_item("[", pos(0, 1));

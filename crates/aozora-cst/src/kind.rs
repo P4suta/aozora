@@ -43,14 +43,8 @@ pub enum SyntaxKind {
     ContainerClose,
 }
 
-const SYNTAX_KIND_COUNT: u16 = 7;
-
 impl SyntaxKind {
     fn from_raw_u16(raw: u16) -> Self {
-        assert!(
-            raw < SYNTAX_KIND_COUNT,
-            "SyntaxKind raw discriminant {raw} out of range"
-        );
         match raw {
             0 => Self::Document,
             1 => Self::Container,

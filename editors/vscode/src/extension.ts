@@ -274,7 +274,7 @@ function resolveVars(input: string): string {
 
 // Aozora-bunko "input manual" feature detection.
 //
-// We look at the leading ~4 KiB of the buffer for three independent
+// We look at the leading ~4 KiB of the buffer for four independent
 // signals:
 //
 //   1. `［＃...］` — any editor annotation.
