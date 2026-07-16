@@ -111,18 +111,21 @@ doctor:
 
 # --- build/shell --------------------------------------------------------------
 
-# Build all workspace crates.
+# Package selection shared by every workspace-wide runner below, defined
+# once so no two of them can end up selecting a different workspace.
 #
-# `aozora-bench` is excluded from every workspace-wide CI gate
-# (build / test / coverage / clippy / shear) because it's a
-# bench-only harness whose dep tree pulls in `zstd-sys`,
-# `criterion`, `addr2line`, `gimli`, `object`, and `ruzstd` —
-# adding ~100 s of cold-cache compile time that no other crate in
-# the workspace needs. Bench runs go through `just bench`, which
-# explicitly invokes `cargo bench --workspace` and gets the full
+# `aozora-bench` is out because it's a bench-only harness whose dep tree
+# pulls in `zstd-sys`, `criterion`, `addr2line`, `gimli`, `object`, and
+# `ruzstd` — ~100 s of cold-cache compile time no other crate needs — and
+# because its iai-callgrind `perf_gate` bench answers `--list` with a
+# summary line `cargo nextest` refuses to parse. Bench runs go through
+# `just bench`, which invokes `cargo bench --workspace` and gets the full
 # tree on demand.
+_ws := "--workspace --exclude aozora-bench"
+
+# Build all workspace crates.
 build:
-    {{_dev}} cargo build --workspace --exclude aozora-bench --all-targets
+    {{_dev}} cargo build {{_ws}} --all-targets
 
 # Fastest "does it still compile?" gate. `cargo check` skips codegen,
 # so it's the inner-loop signal; `just build` stays the --all-targets
@@ -131,11 +134,11 @@ build:
 # --all-targets`, so the "still compiles?" answer is the same surface
 # everywhere.
 check:
-    {{_dev}} cargo check --workspace --exclude aozora-bench --all-targets
+    {{_dev}} cargo check {{_ws}} --all-targets
 
 # Build release binaries
 build-release:
-    {{_dev}} cargo build --release --workspace --exclude aozora-bench
+    {{_dev}} cargo build --release {{_ws}}
 
 # Drop into an interactive dev shell
 shell:
@@ -155,7 +158,7 @@ example NAME *ARGS:
 # Run the full test suite (unit + integration + snapshot).
 # `aozora-bench` is excluded — see `build` above for rationale.
 test *ARGS:
-    {{_dev}} cargo nextest run --workspace --exclude aozora-bench --all-targets {{ARGS}}
+    {{_dev}} cargo nextest run {{_ws}} --all-targets {{ARGS}}
 
 # Run only the tests whose name matches FILTER — the single-test inner
 # loop. Uses nextest's filterset DSL: a bare string is a substring
@@ -165,7 +168,7 @@ test *ARGS:
 #   just t '/ruby|bouten/'     # regex
 #   just t ruby --no-capture   # forward nextest flags
 t FILTER *ARGS:
-    {{_dev}} cargo nextest run --workspace --exclude aozora-bench -E 'test({{FILTER}})' {{ARGS}}
+    {{_dev}} cargo nextest run {{_ws}} -E 'test({{FILTER}})' {{ARGS}}
 
 # Run doctests (nextest skips these by design)
 test-doc:
@@ -188,8 +191,12 @@ test-doc-all:
 # CLI tool (`cargo insta`) is intentionally not used; the
 # `INSTA_UPDATE` env knob is the same surface and stays inside the
 # already-vendored `insta` workspace dep.
+#
+# `--all-features` where `just test` is feature-light: a writer that
+# cannot see every snapshot leaves the ones it misses to be hand-edited.
+# `aozora-lsp`'s live behind `required-features = ["internals"]`.
 snapshot-update:
-    {{_dev}} env INSTA_UPDATE=always cargo nextest run --workspace --all-targets
+    {{_dev}} env INSTA_UPDATE=always cargo nextest run {{_ws}} --all-features --all-targets
 
 # Phase K3 — byte-identical render gate. Loads aozora-conformance
 # fixtures and asserts current parse → render output matches golden
@@ -976,7 +983,7 @@ coverage:
     # rebuild cheap (~45 s warm) since the compile cache survives the rm.
     {{_dev}} sh -c 'rm -rf "${CARGO_TARGET_DIR:-target}/llvm-cov-target"'
     {{_dev}} cargo llvm-cov nextest \
-        --workspace --exclude aozora-bench \
+        {{_ws}} \
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --fail-under-regions {{_COV_FLOOR}}
 
@@ -1001,7 +1008,7 @@ test-internals:
 # for opening `coverage/html/index.html` in a browser.
 coverage-html:
     {{_dev}} cargo llvm-cov nextest \
-        --workspace --exclude aozora-bench \
+        {{_ws}} \
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --html --output-dir coverage/html
 
@@ -1011,7 +1018,7 @@ coverage-html:
 coverage-branch:
     {{_dev}} cargo +nightly llvm-cov nextest \
         --branch \
-        --workspace --exclude aozora-bench \
+        {{_ws}} \
         --ignore-filename-regex '{{_COV_IGNORE}}'
 
 # --- mutation testing --------------------------------------------------------
@@ -1384,7 +1391,7 @@ fmt:
 # it benches. Bench breakage gets caught the moment you actually
 # run `just bench`, where it should.
 clippy:
-    {{_dev}} cargo clippy --workspace --exclude aozora-bench --lib --bins --tests --all-features -- -D warnings
+    {{_dev}} cargo clippy {{_ws}} --lib --bins --tests --all-features -- -D warnings
 
 # Strict variant: full `--all-targets` (lib + bins + tests + examples
 # + benches), and the bench crate is no longer excluded. This is the
@@ -1734,6 +1741,9 @@ ci:
     # explicitly if needed.
     just playground-typecheck
     just playground-test
+    # VS Code extension gates — biome + tsc, the esbuild bundle, and the
+    # `node --test` suite, i.e. the same commands the CI `vscode` job runs.
+    just vscode-ci
     # No-op when AOZORA_CORPUS_ROOT is unset (the recipe prints an
     # informational line and exits 0). On a developer machine that
     # has a corpus checkout exported in the environment, this gives
@@ -1769,10 +1779,9 @@ ci:
 #      compile instead of three.
 #   2. Every gate that does NOT take the container's /cargo/target build
 #      lock runs in the BACKGROUND so its wall-time hides behind the
-#      foreground cargo chain: deny / audit (metadata)
-#      (network), smoke-ffi (host-side target/), playground-typecheck /
-#      playground-test (bun), and the non-compiling lint gates
-#      fmt-check / typos / strict-code.
+#      foreground cargo chain: deny / audit (metadata + network),
+#      smoke-ffi (host-side target/), playground-ci / vscode-ci (bun), and
+#      the non-compiling lint gates fmt-check / typos / strict-code.
 #   3. The 4096-case `prop-deep` sweep launches AFTER the foreground
 #      `prop` gate (so it reuses the just-built `property_*` binaries —
 #      no build-lock contention) and runs in the background, overlapping
@@ -1851,32 +1860,67 @@ ci-parallel:
             echo ":: AOZORA_CI_FAST: change-aware run — touched categories: [${cats:-none}] (cloud CI still runs the full matrix)."
         fi
     fi
-    # want <category> — 0 = run this gate, 1 = skip. Full mode runs all;
+    # The bucket universe `scripts/ci-classify.sh` can emit. `want` checks
+    # every argument against it — on EVERY run, full mode included — so a
+    # bucket that has been renamed away fails loudly here instead of
+    # quietly matching nothing and skipping its gate forever.
+    CATEGORIES="code play vscode book infra"
+
+    # Gate → the bucket(s) whose inputs it consumes; a gate runs when ANY of
+    # them is touched. The lanes below index this table rather than naming
+    # buckets inline, so a new bucket is one edit here plus the classifier —
+    # not a `want` line to remember at a dozen call sites. A gate the lanes
+    # launch but never declare aborts the run (`set -u` above), which is the
+    # right direction to fail: a missing entry must never read as "skip".
+    # Absent by construction: the always-on lane (it never asks — "always"
+    # is not a bucket the classifier can emit) and `infra` (an infra change
+    # forces the full matrix above, so no gate can select on it).
+    declare -A GATE_CATS=(
+        [deny]="code" [audit]="code" [smoke-ffi]="code"
+        [verify-spec-vectors]="code"
+        [playground-ci]="play"
+        [vscode-ci]="vscode"
+        [clippy-strict]="code" [clippy-wasm]="code" [check]="code"
+        # drift-gate's `xtask docs check` resolves the `docs/**.md` paths the
+        # workflows and this file cite, so deleting a cited page — a `book`
+        # change touching no Rust — is one of its failure modes.
+        [drift-gate]="code book"
+        [conformance]="code" [coverage]="code" [test-internals]="code"
+        [prop]="code" [prop-deep]="code" [shear]="code"
+        [test-doc]="code" [test-doc-all]="code" [extism-build]="code"
+        [parity-wasm]="code" [smoke-go]="code" [doc]="code"
+        [corpus-sweep]="code"
+    )
+
+    # want <category>… — 0 = run this gate, 1 = skip. True when ANY of the
+    # listed categories was touched. Full mode runs all.
     want() {
+        [[ $# -gt 0 ]] || { echo "::error title=ci-parallel::want: no category given"; exit 1; }
+        local c hit=1
+        for c in "$@"; do
+            [[ " $CATEGORIES " == *" $c "* ]] \
+                || { echo "::error title=ci-parallel::want: unknown category '$c' (known: $CATEGORIES)"; exit 1; }
+            [[ " $cats " == *" $c "* ]] && hit=0
+        done
         [[ "$run_all" -eq 1 ]] && return 0
-        case "$1" in
-            code) [[ " $cats " == *" code "* ]] ;;
-            play) [[ " $cats " == *" play "* ]] ;;
-            *) return 0 ;;
-        esac
+        return "$hit"
     }
     skip() { echo ":: [skip] $1 (AOZORA_CI_FAST: inputs untouched)"; }
 
     # Background lane — no /cargo/target build-lock contention.
     # verify-spec-vectors is host-side (like smoke-ffi): it drift-checks the
     # vendored spec-vectors/ against the sibling spec repo, a no-op
-    # (--allow-missing) where the spec isn't checked out.
-    for g in deny audit smoke-ffi verify-spec-vectors; do want code && launch "$g" just "$g"; done
+    # (--allow-missing) where the spec isn't checked out. playground-ci and
+    # vscode-ci are each ONE job per frontend project: both bundle their
+    # project's `bun install` with its checks so the install runs exactly
+    # once, single-threaded (see the recipes).
+    for g in deny audit smoke-ffi verify-spec-vectors playground-ci vscode-ci; do
+        if want ${GATE_CATS[$g]}; then launch "$g" just "$g"; else skip "$g"; fi
+    done
     # fmt-check / typos / strict-code / readme-gate are
     # cheap and apply to any file — always run. ci-fast-selftest guards the
     # change-aware classifier itself (instant host bash).
     for g in fmt-check typos strict-code readme-gate ci-fast-selftest; do launch "$g" just "$g"; done
-    # playground-typecheck + playground-test share one `node_modules`
-    # volume; launching them as two concurrent gates makes their
-    # `_playground-ensure` (`bun install`) hard-link into that volume in
-    # parallel and intermittently fail with `EEXIST`. Run both through one
-    # sequential job so the install happens exactly once, single-threaded.
-    if want play; then launch playground-ci just playground-ci; else skip playground-ci; fi
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
     # Lint runs the AUTHORITATIVE surface, not the lighter per-commit
@@ -1892,22 +1936,20 @@ ci-parallel:
     # default-feature suite (and measures regions); test-internals then runs
     # aozora-lsp's `internals`-gated integration suites that coverage skips.
     for gate in clippy-strict clippy-wasm check drift-gate conformance coverage test-internals prop; do
-        want code || { skip "$gate"; continue; }
+        want ${GATE_CATS[$gate]} || { skip "$gate"; continue; }
         if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
     done
 
     # property_* binaries are now built → deep sweep reuses them (no
     # rebuild) and overlaps the remaining foreground gates.
     if [[ -z "$fg_failed" ]]; then
-        if want code && [[ "${SKIP_TAGS:-}" != *deep* ]]; then
+        if want ${GATE_CATS[prop-deep]} && [[ "${SKIP_TAGS:-}" != *deep* ]]; then
             launch prop-deep just prop-deep
         else
             echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
         for gate in shear test-doc test-doc-all extism-build parity-wasm smoke-go doc corpus-sweep; do
-            case "$gate" in
-                *) want code || { skip "$gate"; continue; } ;;
-            esac
+            want ${GATE_CATS[$gate]} || { skip "$gate"; continue; }
             if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
         done
     fi
@@ -1949,19 +1991,25 @@ ci-fast-selftest:
             echo "FAIL $label → got [$got] want [$expected]"; fail=1
         fi
     }
-    check "rust source"        "code"       "crates/aozora-syntax/src/format.rs"
-    check "rust doc comment"   "code"       "crates/aozora/src/document.rs"
-    check "Cargo manifest"     "code"       "crates/aozora/Cargo.toml"
-    check "conformance vector" "code"       "crates/aozora-conformance/spec-vectors/x.json"
-    check "playground only"    "play"       "playground/src/App.tsx"
-    check "ADR / docs"         "book"       "docs/adr/0017-x.md"
-    check "root README"        "code"       "README.md"
-    check "Justfile = infra"   "infra"      "Justfile"
-    check "workflow = infra"   "infra"      ".github/workflows/ci.yml"
-    check "scripts = infra"    "infra"      "scripts/ci-classify.sh"
-    check "docs + code"        "code book"  "crates/aozora/src/document.rs" "docs/adr/0017-x.md"
-    check "play + docs"        "play book"  "playground/src/App.tsx" "docs/x.md"
-    check "infra forces full"  "code infra" "crates/x/src/a.rs" "lefthook.yml"
+    check "rust source"        "code"        "crates/aozora-syntax/src/format.rs"
+    check "rust doc comment"   "code"        "crates/aozora/src/document.rs"
+    check "Cargo manifest"     "code"        "crates/aozora/Cargo.toml"
+    check "conformance vector" "code"        "crates/aozora-conformance/spec-vectors/x.json"
+    check "playground only"    "play"        "playground/src/App.tsx"
+    check "extension only"     "vscode"      "editors/vscode/src/preview.ts"
+    # The bucket is the one extension, not editors/**: a sibling editor is a
+    # different project and must fall to the conservative `code` default
+    # rather than inherit the skips of a bucket named for VS Code.
+    check "sibling editor"     "code"        "editors/x/src/a.ts"
+    check "ADR / docs"         "book"        "docs/adr/0017-x.md"
+    check "root README"        "code"        "README.md"
+    check "Justfile = infra"   "infra"       "Justfile"
+    check "workflow = infra"   "infra"       ".github/workflows/ci.yml"
+    check "scripts = infra"    "infra"       "scripts/ci-classify.sh"
+    check "docs + code"        "code book"   "crates/aozora/src/document.rs" "docs/adr/0017-x.md"
+    check "code + extension"   "code vscode" "crates/aozora-lsp/src/lib.rs" "editors/vscode/src/preview.ts"
+    check "play + docs"        "play book"   "playground/src/App.tsx" "docs/x.md"
+    check "infra forces full"  "code infra"  "crates/x/src/a.rs" "lefthook.yml"
     if [[ $fail -eq 0 ]]; then
         echo "ci-fast-selftest: all classifications correct ✔"
     else
@@ -2112,15 +2160,30 @@ playground-e2e: playground-wasm _playground-ensure
 # --- VS Code extension (TypeScript, esbuild-bundled) --------------------------
 #
 # The extension lives under `editors/vscode/` and is its own Bun project.
-# `vscode-ci` mirrors the CI `vscode` job: biome lint + tsc typecheck
-# (`check`), the esbuild bundle (`compile`, which inlines the renderer's
-# canonical stylesheet — ADR-0024), and the `node --test` security suite. It
-# runs in the dev image (bun present) over the bind-mounted checkout. Like
-# `playground-e2e`, it's a bun gate kept out of the change-aware `ci-parallel`;
-# the CI `vscode` job (host runner) is the authoritative gate — run this for a
-# quick local check.
-vscode-ci:
-    {{_dev}} bash -euc 'cd editors/vscode && bun install --frozen-lockfile && bun run check && bun run compile && bun run test'
+# Every gate runs in the dev image (bun is present) over the bind-mounted
+# checkout, so contributors don't need bun on the host. Unlike the
+# playground, `editors/vscode/node_modules` is part of that plain bind mount
+# — there is no named volume for it (see docker-compose.yml), so these gates
+# contend with nothing and take no /cargo/target build lock.
+
+# Ensure the extension's bun deps exist before a check. A fast lockfile
+# verification on a warm checkout; a real install on a fresh one.
+_vscode-ensure:
+    {{_dev}} bash -euc 'cd editors/vscode && bun install --frozen-lockfile'
+
+# Type-check the extension's TypeScript. The tsc half of `vscode-ci`'s
+# `check`, split out for the pre-commit hook: biome + the bundle + the test
+# suite are more than a commit should pay for.
+vscode-typecheck: _vscode-ensure
+    {{_dev}} bash -euc 'cd editors/vscode && bun run typecheck'
+
+# The extension's full gate, mirroring the CI `vscode` job: biome lint + tsc
+# typecheck (`check`), the esbuild bundle (`compile`, which inlines the
+# renderer's canonical stylesheet — ADR-0024), and the `node --test` security
+# suite. One sequential job, so `ci-parallel` can run it as a background lane
+# with its `bun install` happening exactly once.
+vscode-ci: _vscode-ensure
+    {{_dev}} bash -euc 'cd editors/vscode && bun run check && bun run compile && bun run test'
 
 # --- profiling (samply, host-only) -------------------------------------------
 # samply uses perf_event_open(2) which Docker's seccomp profile blocks; the

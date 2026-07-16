@@ -83,6 +83,17 @@ pre-commit:
       fail_text: |
         Playground TypeScript failed to compile. Re-run
         `just playground-typecheck` for the full tsc output.
+    # VS Code extension type-check, on the same terms as the playground's:
+    # only when TS / JSON under `editors/vscode/` actually changed
+    # (`tsconfig.json` / `package.json` count too). The rest of the
+    # extension's gate — biome, the esbuild bundle, `node --test` — runs
+    # pre-push inside `ci-parallel`.
+    vscode-typecheck:
+      glob: "editors/vscode/**/*.{ts,json}"
+      run: just vscode-typecheck
+      fail_text: |
+        VS Code extension TypeScript failed to compile. Re-run
+        `just vscode-typecheck` for the full tsc output.
 
 commit-msg:
   commands:
@@ -202,7 +213,7 @@ pre-push:
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / shear / coverage /
-    # playground-typecheck / playground-test). The three CI-only jobs
+    # playground-ci / vscode-ci). The three CI-only jobs
     # that need extra runtime (pandoc-smoke / wasm-build /
     # python-wheel) stay unreachable here — the dev image
     # deliberately omits pandoc / maturin (wasm-pack is now baked in
@@ -218,8 +229,8 @@ pre-push:
         `just ci-parallel` failed. The `::error title=<gate>::` line above
         names the gate that bombed (a foreground gate aborts immediately;
         background gates — deny / audit / smoke-ffi /
-        playground-* / fmt-check / typos / strict-code — are reaped at the
-        end, each with its captured log).
+        playground-ci / vscode-ci / fmt-check / typos / strict-code — are
+        reaped at the end, each with its captured log).
 
         - Re-run the single gate for a clean repro, e.g. `just clippy`,
           `just coverage`, `just conformance`.
