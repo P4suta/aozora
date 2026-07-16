@@ -1132,7 +1132,7 @@ fn display_path(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    // --- classify_err: main's final error disposition (main.rs:417 guard) ---
+    // --- classify_err: main's final error disposition ---
 
     #[test]
     fn classify_err_maps_broken_pipe_to_silent_success() {
@@ -1158,7 +1158,7 @@ mod tests {
         assert_eq!(classify_err(&err), ErrDisposition::Failure);
     }
 
-    // --- watch_target_paths: fmt --watch stdin filter (main.rs:611 `!=`) ---
+    // --- watch_target_paths: fmt --watch stdin filter ---
 
     #[test]
     fn watch_target_paths_drops_stdin_marker() {
@@ -1185,7 +1185,7 @@ mod tests {
         assert!(watch_target_paths(&paths).is_empty());
     }
 
-    // --- run_pandoc_once: real return differs from the default (main.rs:742) ---
+    // --- run_pandoc_once: real return differs from the default ---
 
     #[test]
     fn run_pandoc_once_propagates_read_errors() {

@@ -3,6 +3,27 @@
 Contracts an agent cannot derive from the tree. Everything else is in
 `just --list`, `aozora --help`, and the code.
 
+## Comments
+
+Default to none — the code is the source of truth, and a comment that
+restates it is drift waiting to happen (#553 shipped a table whose comment
+named a key it did not use, and nobody was checking). Write only the *why*
+the code cannot show.
+
+Never write a coordinate (`file.rs:417`), a hand-counted total ("14 kinds"),
+or a copy of code that lives elsewhere: each rots the moment its referent
+moves. Name a symbol instead — the compiler keeps that honest — and `xtask
+lint coordinates` rejects the coordinate form.
+
+State an invariant as a check — an `assert!`, a type, a test, a gate — never
+as prose telling the next reader to uphold it. Prose is never re-read against
+the code.
+
+So a comment earns its place only as one of: a doc `missing_docs` requires
+(trimmed to what a reader needs), a load-bearing *why* that is underivable
+(cite the ADR or the corpus measurement), or something the toolchain demands
+(`// SAFETY:`, a `mutants::skip` reason, an `#[allow(reason = …)]`).
+
 ## Running anything
 
 Docker only. `just` wraps `docker compose run`; never call `cargo` /

@@ -13,8 +13,8 @@
 //!
 //! Deleting or moving a page does not break the reference to it — it
 //! makes the reference wrong while everything stays green. Measured in
-//! #525: `fuzz.yml:3` cited `docs/fuzz-workflow.md`, which #550 deleted
-//! because `Justfile:718-747` said the same thing next to the recipes.
+//! #525: `.github/workflows/fuzz.yml` cited `docs/fuzz-workflow.md`, which
+//! #550 deleted because the Justfile documented it next to the fuzz recipes.
 //! That is the case this gate catches, and the reason it exists.
 //!
 //! It is necessary and not sufficient. Content can move out of a page
@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use regex::Regex;
+
+use crate::scan::workspace_root;
 
 /// Trees whose prose names doc pages a reader is expected to open.
 ///
@@ -78,14 +80,6 @@ fn strip_selftest(text: &str) -> Result<String, String> {
         }
     }
     Ok(out)
-}
-
-fn workspace_root() -> Result<PathBuf, String> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    dir.ancestors()
-        .find(|p| p.join("Cargo.lock").is_file())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "workspace root not found".to_owned())
 }
 
 /// Collect every repo-relative `docs/**.md` path named in `text`.

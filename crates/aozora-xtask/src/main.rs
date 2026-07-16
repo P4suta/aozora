@@ -53,6 +53,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod ci;
 mod conformance;
+mod coords;
 mod corpus;
 mod deps;
 mod docs;
@@ -60,6 +61,7 @@ mod grammar;
 mod lint;
 mod msrv;
 mod publish;
+mod scan;
 mod schema;
 mod spec_vectors;
 mod trace;
@@ -179,6 +181,10 @@ enum LintOp {
     /// baseline (grew → a new suppression slipped in; shrank → lower the
     /// baseline to the printed number). Wired into `drift-gate`.
     Suppressions,
+    /// Fail when a comment cites source by `file:line` — a coordinate that
+    /// rots on the next edit above it. Name a symbol instead. Wired into
+    /// `drift-gate`.
+    Coordinates,
 }
 
 #[derive(Args)]
@@ -469,6 +475,7 @@ fn main() {
         },
         Cmd::Lint(args) => match args.op {
             LintOp::Suppressions => lint::check(),
+            LintOp::Coordinates => coords::check(),
         },
     };
     if let Err(err) = result {

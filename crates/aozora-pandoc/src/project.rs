@@ -35,10 +35,8 @@ pub fn to_pandoc(out: &LexOutput) -> Pandoc {
     Pandoc {
         meta: pandoc_ast::Map::new(),
         blocks: converter.blocks,
-        // Pandoc 3.x carries this version; 1.23 is what `pandoc -t
-        // json` emits as of late 2025. Older Pandoc readers
-        // back-compat all the way to 1.20 (the minimum `pandoc_ast`
-        // accepts).
+        // The pandoc 3.x JSON API version. `pandoc_ast` accepts 1.20 or
+        // newer, so an older reader still parses this output.
         pandoc_api_version: vec![1, 23],
     }
 }
