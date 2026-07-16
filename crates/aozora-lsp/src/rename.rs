@@ -84,7 +84,7 @@ pub fn prepare_rename_at(
 ///
 /// Propagates [`SpliceError`] when the underlying [`Tree::splice`] declines the
 /// coupled edit.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "mirrors the LSP rename request shape (document, position, new name) \
               over the cached tree + line index; bundling would obscure the surface"
@@ -135,7 +135,7 @@ pub fn rename_edit(
 /// re-deriving the partner: the primary's new bytes are exactly `new_name`,
 /// and the partner's new bytes are read out of `new_source` by arithmetic
 /// (splice changed only the two disjoint regions).
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "passes the splice inputs and outputs through verbatim; a wrapper \
               struct would add a type without reducing the data threaded"
@@ -175,7 +175,7 @@ fn edits_for_splice(
 ///
 /// Returns `None` if the computed partner slice falls out of bounds — the
 /// caller then uses the minimal-diff fallback.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the two spans plus the before/after texts are all load-bearing \
               inputs to the disjoint-region arithmetic"

@@ -123,7 +123,7 @@ fn extract_title(
     untitled.to_owned()
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the symbol's line/level/title data plus the localized untitled \
               fallback for an empty title; untitled is cross-cutting, not a \
@@ -162,7 +162,7 @@ fn build_symbol(
     };
     // `lsp_types::DocumentSymbol` keeps a deprecated `deprecated` field
     // for LSP <3.15 compat; we pass `None` and use `tags` instead.
-    #[allow(
+    #[expect(
         deprecated,
         reason = "upstream lsp_types field retained for LSP <3.15 compat"
     )]

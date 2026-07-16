@@ -71,7 +71,7 @@ pub struct Allocator {
     store: NodeStore,
 }
 
-#[allow(
+#[expect(
     clippy::unused_self,
     reason = "every builder takes &(mut) self even when it is a pure wrapper, so call sites have a uniform shape."
 )]
@@ -274,7 +274,7 @@ impl Allocator {
     /// # Panics
     ///
     /// Panics if `target` is empty.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is part of the bouten contract — kind / target / position / origin each carry independent semantics."
     )]
@@ -408,7 +408,7 @@ impl Allocator {
     /// # Panics
     ///
     /// Panics if `target` is empty.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is an independent part of the 見出し指定 contract — level / style / target / self_contained."
     )]
@@ -436,7 +436,7 @@ impl Allocator {
     /// # Panics
     ///
     /// Panics if `file` is empty.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is an independent part of the 挿絵 contract — file / number / dimensions / caption."
     )]

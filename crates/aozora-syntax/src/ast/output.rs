@@ -72,7 +72,7 @@ impl LexOutput {
     /// `Allocator`), then hands the whole field set here. Every argument
     /// maps to the identically-named field.
     #[must_use]
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "constructs the non_exhaustive LexOutput from its complete already-owned field set; a parameter object would only restate the field set"
     )]

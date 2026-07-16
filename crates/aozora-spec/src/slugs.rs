@@ -907,7 +907,7 @@ mod tests {
     /// matching the slug convention 改丁→`kaicho`). Test-only — the
     /// production slugs are hand-written in [`RENDER_SLUGS`]; this
     /// re-derives them from `reading` to catch a misspelling.
-    #[allow(
+    #[expect(
         clippy::too_many_lines,
         reason = "exhaustive kana→romaji morae tables read clearest inline"
     )]

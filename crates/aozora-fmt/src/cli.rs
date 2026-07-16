@@ -49,7 +49,7 @@ pub struct Cli {
 /// The formatter's argument surface for the standalone `aozora-fmt` binary
 /// ([`Cli`]). The `aozora fmt` subcommand defines its own arguments.
 #[derive(Args, Debug)]
-#[allow(
+#[expect(
     clippy::struct_excessive_bools,
     reason = "a clap flag struct: each bool is an independent CLI switch, collapsed into Mode by mode()"
 )]

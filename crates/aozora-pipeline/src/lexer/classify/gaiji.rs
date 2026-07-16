@@ -61,12 +61,11 @@ impl RecogniseCtx<'_, '_> {
     /// byte the gaiji span folds back to (`※` start for the refmark form,
     /// `［` start for standalone); `standalone` records whether the source
     /// carried a `※` so the serializer can round-trip the bracket verbatim.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
-        clippy::too_many_lines,
-        reason = "a flat gaiji body recogniser (quoted form, bare form, validation, \
-                  resolution) over four independent inputs; splitting it would scatter \
-                  the I3-idempotency reasoning"
+        reason = "a flat gaiji body recogniser over four independent inputs (view, \
+                  consume_start, standalone, bracket_open_idx); splitting it would \
+                  scatter the I3-idempotency reasoning"
     )]
     pub(super) fn recognize_gaiji_core(
         &mut self,

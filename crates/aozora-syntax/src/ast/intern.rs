@@ -175,7 +175,7 @@ impl StrInterner {
         }
 
         let hash = fx_hash(bytes);
-        #[allow(
+        #[expect(
             clippy::cast_possible_truncation,
             reason = "low bits of u64 hash extracted as usize on purpose"
         )]
@@ -228,7 +228,7 @@ impl StrInterner {
         let ids: Vec<StrId> = self.table.iter().flatten().copied().collect();
         for id in ids {
             let h = fx_hash(self.resolve(id).as_bytes());
-            #[allow(
+            #[expect(
                 clippy::cast_possible_truncation,
                 reason = "low bits of u64 hash extracted as usize on purpose"
             )]
@@ -284,7 +284,7 @@ impl StrInterner {
         if probed == 0 {
             0.0
         } else {
-            #[allow(
+            #[expect(
                 clippy::cast_precision_loss,
                 reason = "probe count fits in f64 mantissa for any plausible workload"
             )]

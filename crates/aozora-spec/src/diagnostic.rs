@@ -981,7 +981,7 @@ fn doc_for(code: &str) -> Option<&'static DiagnosticDoc> {
     DOCS.iter().find(|d| d.code == code)
 }
 
-#[allow(
+#[expect(
     clippy::same_name_method,
     reason = "intentional: our inherent severity() / code() return strongly-typed (Severity enum, &'static str) values that mirror miette::Diagnostic's loosely-typed defaults — callers prefer the inherent method"
 )]

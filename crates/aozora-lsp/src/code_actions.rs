@@ -32,7 +32,7 @@ use std::collections::HashMap;
 /// `selection` in `source`. Returns an empty vec when the selection
 /// is empty or unresolvable.
 #[must_use]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the wrap request (source, line index, uri, selection) plus the \
               resolved UI language for the action titles; lang is a \
@@ -230,7 +230,7 @@ fn build_quick_fix(
     }
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the quick-fix context (uri, diagnostic, pair kind, close glyph) \
               plus the resolved UI language for the title; lang is a \

@@ -57,6 +57,7 @@ mod corpus;
 mod deps;
 mod docs;
 mod grammar;
+mod lint;
 mod msrv;
 mod publish;
 mod schema;
@@ -157,6 +158,27 @@ enum Cmd {
     /// does not break the reference to it — it makes the reference wrong
     /// while everything stays green.
     Docs(DocsArgs),
+    /// Suppression-hygiene ratchet: per-crate `#[allow(...)]` counts (outer
+    /// and blanket inner, tracked separately) may only decrease from a
+    /// hardcoded baseline, and the `aozora-pipeline` `.expect(` count may
+    /// not grow. Every silenced lint is a question nobody re-asks; this
+    /// keeps their quantity a monotonically-shrinking number. Wired into
+    /// `drift-gate`.
+    Lint(LintArgs),
+}
+
+#[derive(Args)]
+struct LintArgs {
+    #[command(subcommand)]
+    op: LintOp,
+}
+
+#[derive(Subcommand)]
+enum LintOp {
+    /// Fail when a crate's `#[allow]` count differs from its recorded
+    /// baseline (grew → a new suppression slipped in; shrank → lower the
+    /// baseline to the printed number). Wired into `drift-gate`.
+    Suppressions,
 }
 
 #[derive(Args)]
@@ -444,6 +466,9 @@ fn main() {
         Cmd::Msrv(args) => msrv::dispatch(&args),
         Cmd::Docs(args) => match args.op {
             DocsOp::Check => docs::check(),
+        },
+        Cmd::Lint(args) => match args.op {
+            LintOp::Suppressions => lint::check(),
         },
     };
     if let Err(err) = result {
@@ -747,7 +772,7 @@ fn current_yyyymmdd_hhmmss() -> String {
 
 /// Tiny epoch-seconds → (Y, M, D, h, m, s) for filename timestamps.
 /// Doesn't handle leap seconds or pre-1970 inputs (irrelevant here).
-#[allow(
+#[expect(
     clippy::cast_possible_truncation,
     reason = "epoch sub-day quantities and the day index fit in u32; explicit `as u32` is the simplest expression for this throwaway date-format helper"
 )]

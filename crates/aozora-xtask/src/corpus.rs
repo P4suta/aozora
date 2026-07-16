@@ -45,7 +45,6 @@
 )]
 
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -2968,12 +2967,6 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
     out
 }
 
-#[allow(
-    dead_code,
-    reason = "OsString is used by the parent module's command surface; clippy can't see across module boundaries"
-)]
-fn _unused_marker(_: OsString) {}
-
 // ================= WS-1: stratified golden-works selection (#414) =================
 //
 // The `fixtures/works/` golden set byte-compares the parser's own `to_html()`
@@ -3743,12 +3736,6 @@ fn select_works(
                 .filter(|f| !covered.contains(*f))
                 .map(|&f| weight(f))
                 .sum();
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_precision_loss,
-                clippy::cast_possible_wrap,
-                reason = "integer keys scale float coverage gains for deterministic ranking"
-            )]
             let key = if gain > 0.0 {
                 // (phase=1, weighted gain per byte, weighted gain)
                 (

@@ -402,7 +402,7 @@ pub unsafe extern "C" fn aozora_bytes_free(bytes: AozoraBytes) {
 /// caller takes responsibility for releasing the buffer via
 /// [`aozora_bytes_free`], which inverts the `forget` by calling
 /// `Vec::from_raw_parts`.
-#[allow(
+#[expect(
     clippy::disallowed_methods,
     reason = "transferring ownership across the C ABI; aozora_bytes_free is the inverse"
 )]

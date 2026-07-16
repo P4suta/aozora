@@ -659,10 +659,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one exact-label assertion per NodeKind variant — the exhaustiveness is the test"
-    )]
     fn describe_node_labels_are_exact() {
         assert_eq!(
             describe_node(NodeKind::Ruby),

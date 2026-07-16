@@ -932,7 +932,7 @@ fn is_editor_note_body(body: &str) -> bool {
 /// families. Returns `None` if the body matches no body-only family;
 /// the caller then falls through to forward classifiers and finally
 /// the `Directive{Unknown}` catch-all.
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "single match arm per BodyFamily — splitting would scatter \
               the dispatch logic and obscure the intentional 1:1 mapping"

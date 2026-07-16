@@ -813,7 +813,7 @@ mod tests {
     // --- canonical_to_snippet placeholder-brace consumption ----------------
 
     #[test]
-    #[allow(
+    #[expect(
         clippy::literal_string_with_formatting_args,
         reason = "`${1:N}` is LSP snippet placeholder syntax in the expected output, not a Rust format arg"
     )]

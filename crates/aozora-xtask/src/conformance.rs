@@ -531,7 +531,7 @@ fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
     Ok((root.to_sexp(), root.has_error()))
 }
 
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "one linear pass: read fixtures, parse each, then either refresh \
               the sexp goldens + ERROR-free baseline or gate on drift + the \
@@ -685,12 +685,6 @@ struct TsVectorSnapshot {
 /// per-tier pass rate report (no ERROR nodes) plus a single
 /// S-expression snapshot gate (`TS_VECTORS_SNAPSHOT_REL`). `--update`
 /// regenerates the snapshot after an intentional grammar change.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one linear pass: read every spec vector, parse each, then either \
-              refresh the sexp snapshot + ERROR-free baseline or gate on drift + \
-              the ratchet — splitting the flow would fragment a single narrative"
-)]
 fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);

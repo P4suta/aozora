@@ -261,7 +261,7 @@ impl RecogniseCtx<'_, '_> {
     ///   carried through the later arms via `tcy_pending`. Pinned by
     ///   `tcy_target_not_found_fires_as_warning` (node-absence by
     ///   `forward_tcy_without_preceding_target_falls_through`).
-    #[allow(
+    #[expect(
         clippy::too_many_lines,
         reason = "a flat dispatch chain over the forward-reference recognisers \
                   (body / bouten / 縦中横 / heading / emphasis) — each block is \

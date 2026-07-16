@@ -116,7 +116,7 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     /// leaving room for a future reuse-the-allocation optimisation.
     /// Today the impl just delegates to the slice form.
     #[must_use]
-    #[allow(
+    #[expect(
         clippy::needless_pass_by_value,
         reason = "API takes ownership to permit future allocation reuse"
     )]

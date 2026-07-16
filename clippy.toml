@@ -32,11 +32,12 @@ too-many-arguments-threshold = 4
 # beyond 80 lines is probably hiding multiple responsibilities.
 too-many-lines-threshold = 80
 
-# clippy default: 25. A lower cap forces extract-method refactors earlier.
-cognitive-complexity-threshold = 18
-
-# Dozens of nested type parameters on one fn signature make call sites
-# unreadable. Cap at 3.
+# type_complexity scores a type by how deeply its generic arguments,
+# tuples, and references nest, and fires once that score crosses this
+# threshold. 250 is clippy's own default: unlike the tightened caps above
+# it is left as-is, because the parser's legitimately-parameterised
+# signatures would make a lower type-nesting bar noisy without catching any
+# real unreadability.
 type-complexity-threshold = 250
 
 # Boolean-flag functions become hard to read at the call site. Reject two

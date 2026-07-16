@@ -69,7 +69,7 @@ pub fn resolve(paths: &[PathBuf]) -> Result<Input> {
 /// paths verbatim. A missing path is pushed as-is so it surfaces as a read
 /// error during processing — keeping all per-file error accounting in one
 /// place rather than splitting it across discovery and processing.
-#[allow(
+#[expect(
     clippy::filetype_is_file,
     reason = "recursion intentionally processes regular files only; symlinks are skipped to match WalkDir's follow_links(false)"
 )]
