@@ -597,6 +597,36 @@ mod tests {
     }
 
     #[test]
+    fn edit_rejects_off_boundary_endpoints_independently() {
+        // "あ" is a single 3-byte codepoint, so byte offsets 1 and 2 land
+        // mid-sequence. Each endpoint's codepoint-boundary guard must reject
+        // on its own: a start that lands off a boundary while the end is
+        // valid, and an end that lands off a boundary while the start is
+        // valid. Neither case triggers the ordering (`start > end`) or the
+        // length (`end > len`) guard, so only the endpoint under test is at
+        // fault — exercising each side of the boundary check separately.
+        let d = Document::new("あ");
+
+        // Start alone is off a boundary (end = len, itself a boundary).
+        let bad_start = d
+            .try_edit(Span::new(1, 3), "")
+            .expect_err("off-boundary start must be rejected");
+        assert!(matches!(
+            bad_start,
+            crate::SpliceError::InvalidEditSpan { .. }
+        ));
+
+        // End alone is off a boundary (start = 0, itself a boundary).
+        let bad_end = d
+            .try_edit(Span::new(0, 1), "")
+            .expect_err("off-boundary end must be rejected");
+        assert!(matches!(
+            bad_end,
+            crate::SpliceError::InvalidEditSpan { .. }
+        ));
+    }
+
+    #[test]
     fn round_trip_through_serialize_is_a_fixed_point() {
         let s = "｜青梅《おうめ》";
         let first = Document::new(s).parse().to_source();

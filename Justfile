@@ -1050,8 +1050,14 @@ coverage-branch:
 # sccache'd `/cargo/target/debug`, so neither build clobbers the other.
 # Config: repo-root `mutants.toml` via --config (`.gitignore` hides the
 # tool's default `.cargo/` location).
+#
+# `set -f` disables this shell's own pathname expansion so a forwarded
+# `--exclude 'src/foo/**'` glob reaches cargo-mutants verbatim instead of
+# being expanded against the host tree first (cargo-mutants does its own
+# glob matching). Fixed args carry no glob metacharacters, so it is a
+# no-op for every other invocation.
 mutants *ARGS:
-    docker compose run --rm \
+    set -f; docker compose run --rm \
         -e CARGO_TARGET_DIR=/cargo/target/mutants \
         -e CARGO_INCREMENTAL=1 \
         -e RUSTC_WRAPPER= \

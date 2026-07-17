@@ -371,11 +371,16 @@ jobs:
   # lines (cost-bounded) and is skipped on non-Rust PRs (the `needs.changes` /
   # `pull_request` guards below), so docs / CI-only PRs still merge.
   #
-  # KNOWN BLIND SPOT: `--in-diff` runs at the virtual-workspace root and cannot
-  # pass `--features`, so feature-gated product modules (`aozora::json` under
-  # `json`, the `schema_*` fns) are NOT mutated per-PR; the weekly featured
-  # `mutants.yml` matrix is their authoritative sweep. Only runs on
-  # pull_request — `--in-diff` needs the PR base to diff against.
+  # KNOWN BLIND SPOT: `--in-diff` runs at the virtual-workspace root on DEFAULT
+  # features and cannot pass `--features`, so aozora's feature-gated modules
+  # (`pandoc`, `cst`, `query`, `fmt`, `json` — aozora's `default = []`) are
+  # cfg-OFF here: their mutant-killing tests do not even compile, so every
+  # mutant on a changed line inside them is a false "missed". They are
+  # `--exclude`d from the step below and covered report-only by the weekly
+  # featured `mutants.yml` sweep, which builds them with their features on. The
+  # core default-feature surface plus `aozora-ffi` / `aozora-extism` stay fully
+  # blocking here. Only runs on pull_request — `--in-diff` needs the PR base to
+  # diff against.
   mutants-in-diff:
     needs: [changes, dev-image]
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
@@ -402,8 +407,21 @@ jobs:
       # gate (its mutant-killing test binaries run on default features), so the
       # former `--features internals` special-case is gone: every changed line
       # is judged on default features, as everywhere else in the workspace.
+      #
+      # `--exclude` (a cargo-mutants file glob, distinct from `--exclude-re`,
+      # which filters mutant *names*) drops aozora's feature-gated modules —
+      # cfg-off on default features here, so their mutants are false "missed"
+      # (see KNOWN BLIND SPOT above). It is a CLI-only flag layered over
+      # `mutants.toml`, so the weekly `mutants.yml` sweep (same recipe, no such
+      # flag, features on) still mutates these modules and stays authoritative.
       - name: Mutate the changed lines
-        run: just mutants --in-diff pr.diff
+        run: >-
+          just mutants --in-diff pr.diff
+          --exclude 'crates/aozora/src/pandoc/**'
+          --exclude 'crates/aozora/src/cst/**'
+          --exclude 'crates/aozora/src/query/**'
+          --exclude 'crates/aozora/src/fmt.rs'
+          --exclude 'crates/aozora/src/json.rs'
 
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
