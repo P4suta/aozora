@@ -67,13 +67,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { crate: aozora-pipeline, target: lex }
-          - { crate: aozora-pipeline, target: classify }
-          - { crate: aozora-pipeline, target: ffi_no_abort }
-          - { crate: aozora-render, target: render_html }
-          - { crate: aozora-render, target: serialize_round_trip }
-          - { crate: aozora-render, target: catalogue_normalization }
-          - { crate: aozora-encoding, target: decode_sjis }
+          - { crate: pipeline, target: lex }
+          - { crate: pipeline, target: classify }
+          - { crate: pipeline, target: ffi_no_abort }
+          - { crate: render, target: render_html }
+          - { crate: render, target: serialize_round_trip }
+          - { crate: render, target: catalogue_normalization }
+          - { crate: encoding, target: decode_sjis }
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -87,7 +87,7 @@ jobs:
       - name: Restore fuzz corpus
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: crates/${{ matrix.crate }}/fuzz/corpus/${{ matrix.target }}
+          path: crates/aozora/fuzz/${{ matrix.crate }}/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.crate }}-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-${{ matrix.crate }}-${{ matrix.target }}-
@@ -105,7 +105,7 @@ jobs:
         run: |
           set +e
           docker compose run --rm dev bash -c \
-            "cd crates/${CRATE}/fuzz && cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${TARGET} -- -max_total_time=600"
+            "cd crates/aozora/fuzz/${CRATE} && cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${TARGET} -- -max_total_time=600"
           code=$?
           set -e
           if [ "$code" -ne 0 ]; then
@@ -124,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
-          path: crates/${{ matrix.crate }}/fuzz/artifacts/${{ matrix.target }}/
+          path: crates/aozora/fuzz/${{ matrix.crate }}/artifacts/${{ matrix.target }}/
           retention-days: 30
           if-no-files-found: warn
 

@@ -8,7 +8,7 @@ import './styles.css';
 // レンダラ所有の正準記法スタイルシート（単一の権威）。main.tsx と同じ二枚を
 // 同順で読み込み、ギャラリーも実 render 出力を実 CSS で表示する。テーマ橋渡しと
 // 枠のレイアウトは続く aozora.css が上書きする。
-import '../../crates/aozora-render/assets/aozora-notation.css';
+import '../../crates/aozora/assets/aozora-notation.css';
 import './aozora.css';
 import './gallery.css';
 

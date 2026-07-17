@@ -3,9 +3,9 @@ source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"doctor\", \"--help\"])"
 ---
 Run an end-user runtime self-check: the discovered `.aozora.toml` and the effective settings (with
-each value's source), whether `pandoc` and `aozora-lsp` are on `PATH`, and the terminal's colour
-capabilities. Exits 0 when all-green, 1 on a blocking problem (a malformed config). The runtime
-counterpart to the contributor-facing `just doctor`
+each value's source), whether `pandoc` is on `PATH`, and the terminal's colour capabilities. Exits 0
+when all-green, 1 on a blocking problem (a malformed config). The runtime counterpart to the
+contributor-facing `just doctor`
 
 Usage: aozora doctor [OPTIONS]
 

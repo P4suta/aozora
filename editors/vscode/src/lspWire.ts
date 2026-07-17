@@ -1,10 +1,10 @@
 // Payload shapes for the `aozora/*` LSP custom requests.
 //
 // These are hand-written counterparts to the Rust structs the server
-// serialises (`crates/aozora-lsp/src/backend.rs`), and there is no
+// serialises (`crates/aozora-cli/src/lsp/backend.rs`), and there is no
 // generator between them: the Rust side is `pub(crate)`, so producing
 // these from it would mean re-exporting server internals, teaching
-// `xtask` about `aozora-lsp`, and drift-gating the result — a lot of
+// `xtask` about the in-process language server, and drift-gating the result — a lot of
 // machinery for three payloads. They live here instead of beside their
 // callers so that at least the TypeScript half has one definition:
 // `RenderHtmlResult` was declared twice and the two copies had already

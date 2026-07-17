@@ -14,7 +14,7 @@ import { t, tf } from '../i18n';
  * raw kind name displayed.
  *
  * Wording is loosely modelled on the in-repo
- * `crates/aozora-lsp/src/diagnostics.rs` but tuned for casual
+ * `crates/aozora-cli/src/lsp/diagnostics.rs` but tuned for casual
  * playground use rather than typesetter precision.
  */
 function classify(entry: DiagnosticEntry): { severity: Diagnostic['severity']; message: string } {

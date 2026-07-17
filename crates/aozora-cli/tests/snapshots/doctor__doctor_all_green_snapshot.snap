@@ -19,8 +19,6 @@ Effective settings
 External tools
   pandoc       not found on PATH
     ↳ needed for `aozora pandoc -t FMT`; install from https://pandoc.org
-  aozora-lsp   not found on PATH
-    ↳ needed for `aozora lsp`; part of the aozora toolchain
 
 Terminal
   stdout            not a terminal

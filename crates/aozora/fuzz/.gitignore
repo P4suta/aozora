@@ -1,0 +1,10 @@
+# cargo-fuzz working state for the relocated encoding / pipeline / render fuzz
+# crates: the rolling `corpus/`, crash `artifacts/`, build `target/`, and the
+# nightly-resolved `Cargo.lock` are local working state, not source (matching
+# the repo-root policy for the pre-collapse `crates/*/fuzz/` layout). The
+# permanent regression seeds are committed under
+# `crates/aozora/tests/fuzz_regressions/`, not here.
+*/corpus/
+*/artifacts/
+*/target/
+*/Cargo.lock

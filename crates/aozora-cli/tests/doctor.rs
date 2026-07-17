@@ -3,7 +3,7 @@
 //! Every spawn is pinned hermetic: [`common::hermetic_command`] seals the
 //! global XDG config layer and the message language (`AOZORA_LANG=en`), and
 //! each test additionally runs in a fresh empty working directory with an empty
-//! `PATH` (so `pandoc` / `aozora-lsp` deterministically report "not found") and
+//! `PATH` (so `pandoc` deterministically reports "not found") and
 //! with the colour env vars stripped — so the report is a pure function of the
 //! fixture, not of the host box `doctor` is meant to inspect.
 
@@ -67,8 +67,9 @@ fn doctor_all_green_snapshot() {
 
 #[test]
 fn doctor_reports_missing_optional_tools_without_blocking() {
-    // pandoc / aozora-lsp are optional, so their absence is advisory only —
-    // the report still exits 0 and closes with the all-passed summary.
+    // pandoc is optional, so its absence is advisory only — the report still
+    // exits 0 and closes with the all-passed summary. (The LSP is built into
+    // the binary, so there is no external daemon to probe.)
     let (code, stdout) = run_doctor();
     assert_eq!(
         code, 0,
@@ -77,10 +78,6 @@ fn doctor_reports_missing_optional_tools_without_blocking() {
     assert!(
         stdout.contains("pandoc       not found on PATH"),
         "pandoc probe reported: {stdout:?}"
-    );
-    assert!(
-        stdout.contains("aozora-lsp   not found on PATH"),
-        "aozora-lsp probe reported: {stdout:?}"
     );
     assert!(
         stdout.contains("All checks passed."),

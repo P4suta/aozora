@@ -1,8 +1,0 @@
----
-source: crates/aozora-lsp/tests/snapshots.rs
-expression: symbol_outline(HEADINGS)
----
-[
-    "第一章 [Class]",
-    "  第一節 [Namespace]",
-]

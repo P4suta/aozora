@@ -1,14 +1,14 @@
 // Shared notation styling for the preview pane and the HTML export.
 //
 // The renderer emits only `aozora-*` class hooks and ships a canonical
-// reference stylesheet (crates/aozora-render/assets/aozora-notation.css,
+// reference stylesheet (crates/aozora/assets/aozora-notation.css,
 // see ADR-0024); esbuild inlines it as a string (see esbuild.mjs). We
 // consume that single source of truth here instead of hand-rolling
 // `.aozora-*` rules — the old hand-rolled copies had drifted to dead
 // class names (`aozora_gaiji`, `aozora_tcy`) so gaiji highlighting and
 // 縦中横 both silently broke.
 
-import notationCss from "../../../crates/aozora-render/assets/aozora-notation.css";
+import notationCss from "../../../crates/aozora/assets/aozora-notation.css";
 
 /**
  * The canonical notation stylesheet plus a theme bridge, ready to drop

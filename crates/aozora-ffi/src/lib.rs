@@ -364,6 +364,181 @@ pub unsafe extern "C" fn aozora_document_pairs_json(
     AozoraStatus::Ok as c_int
 }
 
+/// Re-emit the document as Aozora source text (round-trip
+/// serialization), returning the result as an owned byte buffer.
+///
+/// Parses and walks the tree back to canonical source — the inverse of
+/// [`aozora_document_to_html`]. This is the `to_source` surface shared
+/// bit-for-bit with the WASM (`toSource`), PyO3 (`to_source`), and
+/// Extism/Go drivers.
+///
+/// On success, writes the bytes to `*out_source` and returns
+/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
+/// the returned [`AozoraBytes`] to release the memory.
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_source` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_to_source(
+    doc: *const AozoraDocument,
+    out_source: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_source.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let source = doc_ref.inner.parse().to_source();
+    let bytes = into_owned_bytes(source.into_bytes());
+    // SAFETY: caller guarantees out_source is writable.
+    unsafe { out_source.write(bytes) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Render the document's matched container open/close pairs as a JSON
+/// byte buffer.
+///
+/// Each entry has the shape
+/// `{ kind, open: { start, end }, close: { start, end } }` in
+/// sanitized-source coordinates, covering block-level enclosures
+/// (indent / jisage / caption blocks) rather than the inline pairs of
+/// [`aozora_document_pairs_json`].
+///
+/// On success, writes the bytes to `*out_json` and returns
+/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
+/// `{"schemaVersion":…,"data":[]}` (version is
+/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
+/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
+/// with the WASM, PyO3, and Extism/Go drivers.
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_container_pairs_json(
+    doc: *const AozoraDocument,
+    out_json: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_json.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let tree = doc_ref.inner.parse();
+    let json = aozora::json::container_pairs(&tree);
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Render the document's resolved gaiji references (`※［＃…］`) as a
+/// JSON byte buffer.
+///
+/// Each entry records the source span of a gaiji directive alongside its
+/// resolved canonical form (JIS X 0213 men-ku-ten, Unicode scalar, …).
+/// The scan runs over the document's source string directly.
+///
+/// On success, writes the bytes to `*out_json` and returns
+/// [`AozoraStatus::Ok`]. A source with no gaiji → the empty envelope
+/// `{"schemaVersion":…,"data":[]}` (version is
+/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
+/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
+/// with the WASM (`gaijiJson`), PyO3 (`gaiji_json`), and Extism/Go
+/// drivers.
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_gaiji_json(
+    doc: *const AozoraDocument,
+    out_json: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_json.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let json = aozora::json::gaiji(doc_ref.inner.source());
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Write the document's source byte length to `*out_len`.
+///
+/// This is the length of the UTF-8 source buffer the handle owns — the
+/// same quantity the WASM (`sourceByteLen`) and PyO3 (`source_byte_len`)
+/// drivers return. Hosts use it to size buffers and to convert the `u32`
+/// source coordinates in the JSON projections back into their own string
+/// indices.
+///
+/// On success, writes the length to `*out_len` and returns
+/// [`AozoraStatus::Ok`].
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_len` must point to a writable `usize` slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_source_byte_len(
+    doc: *const AozoraDocument,
+    out_len: *mut usize,
+) -> c_int {
+    if doc.is_null() || out_len.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let len = doc_ref.inner.source().len();
+    // SAFETY: caller guarantees out_len is writable.
+    unsafe { out_len.write(len) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Render the spec's canonical slug catalogue as a JSON byte buffer.
+///
+/// This is document-independent — it projects the static slug table from
+/// [`aozora::json::slugs`], the same authority behind the WASM
+/// (`slugsJson`) and PyO3 (`slugs_json`) exports. Editor front ends use
+/// it to drive directive completion.
+///
+/// On success, writes the bytes to `*out_json` and returns
+/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
+/// the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
+/// with the WASM, PyO3, and Extism/Go drivers.
+///
+/// # Safety
+///
+/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_slugs_json(out_json: *mut AozoraBytes) -> c_int {
+    if out_json.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    let json = aozora::json::slugs();
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
 /// Free a document handle returned by [`aozora_document_new`].
 ///
 /// # Safety
@@ -522,6 +697,107 @@ mod tests {
         assert!(json.contains(r#""close":"#), "pairs json: {json}");
         unsafe { aozora_bytes_free(pairs) };
         unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: `to_source` round-trips ruby back to canonical Aozora
+    /// source through the C ABI.
+    #[test]
+    fn to_source_round_trips_ruby_input() {
+        let src = "｜青梅《おうめ》";
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut out = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_to_source(doc, &mut out) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
+            .expect("source is utf8");
+        // Byte-identical to the library's own round-trip authority.
+        let want = aozora::Document::new(src.to_owned()).parse().to_source();
+        assert_eq!(got, want, "to_source drift");
+        unsafe { aozora_bytes_free(out) };
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: container-pairs JSON is the empty envelope for inline-only
+    /// input and shares the wire authority.
+    #[test]
+    fn container_pairs_json_matches_wire_authority() {
+        let src = "plain";
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut out = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_container_pairs_json(doc, &mut out) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
+            .expect("json is utf8");
+        let want = aozora::json::container_pairs(&aozora::Document::new(src.to_owned()).parse());
+        assert_eq!(got, want, "container_pairs_json drift");
+        unsafe { aozora_bytes_free(out) };
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: gaiji JSON resolves a `※［＃…］` reference and shares the
+    /// wire authority.
+    #[test]
+    fn gaiji_json_matches_wire_authority() {
+        let src = "※［＃「魚＋更」、第4水準2-93-32］";
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut out = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_gaiji_json(doc, &mut out) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
+            .expect("json is utf8");
+        let want = aozora::json::gaiji(src);
+        assert_eq!(got, want, "gaiji_json drift");
+        unsafe { aozora_bytes_free(out) };
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: source byte length reports the owned UTF-8 buffer length.
+    #[test]
+    fn source_byte_len_reports_utf8_length() {
+        let src = "｜青梅《おうめ》";
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut len: usize = 0;
+        let status = unsafe { aozora_document_source_byte_len(doc, &mut len) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        assert_eq!(len, src.len());
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: the document-independent slug catalogue matches the wire
+    /// authority.
+    #[test]
+    fn slugs_json_matches_wire_authority() {
+        let mut out = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_slugs_json(&mut out) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
+            .expect("json is utf8");
+        assert_eq!(got, aozora::json::slugs(), "slugs_json drift");
+        unsafe { aozora_bytes_free(out) };
     }
 
     #[test]

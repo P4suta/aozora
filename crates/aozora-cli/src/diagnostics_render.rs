@@ -17,10 +17,10 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
 
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use aozora::Document;
 use aozora::json;
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
-use aozora_pipeline::lexer::sanitize;
+use aozora::unstable::sanitize::sanitize;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
 

@@ -66,6 +66,38 @@ func TestEndToEnd(t *testing.T) {
 	if len(containers.Data) == 0 || containers.Data[0].Kind != "indent" {
 		t.Errorf("ContainerPairs: expected an indent container, got %+v", containers.Data)
 	}
+
+	source, err := p.ToSource(ruby)
+	if err != nil {
+		t.Fatalf("ToSource: %v", err)
+	}
+	if !strings.Contains(source, "青梅") {
+		t.Errorf("ToSource: base text missing from round-trip: %q", source)
+	}
+
+	gaiji, err := p.Gaiji("※［＃「弓＋鰐のつくり」、第4水準2-84-40］")
+	if err != nil {
+		t.Fatalf("Gaiji: %v", err)
+	}
+	if !strings.Contains(gaiji, "mencode") {
+		t.Errorf("Gaiji: expected a resolved gaiji record, got %q", gaiji)
+	}
+
+	slugs, err := p.Slugs()
+	if err != nil {
+		t.Fatalf("Slugs: %v", err)
+	}
+	if !strings.Contains(slugs, "schemaVersion") {
+		t.Errorf("Slugs: expected a wire envelope, got %q", slugs)
+	}
+
+	version, err := p.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if version == "" {
+		t.Error("Version: expected a non-empty build version")
+	}
 }
 
 func hasNodeKind(nodes []Node, kind string) bool {

@@ -1,8 +1,9 @@
 # VS Code extension release workflow.
 #
-# Cross-compiles `aozora-lsp` to all platforms VS Code supports as
+# Cross-compiles the `aozora` binary (the language server runs in-process
+# as its `aozora lsp` subcommand) to all platforms VS Code supports as
 # extension targets, packages one platform-specific `.vsix` per target
-# with the binary bundled at `editors/vscode/server/aozora-lsp(.exe)`,
+# with the binary bundled at `editors/vscode/server/aozora(.exe)`,
 # and on a `vscode-v*` tag publishes every `.vsix` to both the VS Code
 # Marketplace and Open VSX. Marketplace fans the right platform out
 # automatically based on the user's editor at install time, so the
@@ -114,21 +115,21 @@ jobs:
       # binary calling itself a dev build, the exact inversion of what that
       # stamp is for. The value is the crate's, not the tag's: the extension
       # rides its own Marketplace version line (ADR-0016), so `vscode-v0.1.0`
-      # says nothing about which aozora-lsp is inside.
+      # says nothing about which `aozora` build is inside.
       - name: Resolve build-version stamp
         shell: bash
         run: |
           set -euo pipefail
           echo "AOZORA_BUILD_VERSION=$(cargo run -p aozora-xtask -q -- version --channel stable)" >> "$GITHUB_ENV"
 
-      - name: Build aozora-lsp (dist profile)
+      - name: Build aozora (dist profile)
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ matrix.cross }}" == "true" ]]; then
-            cross build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora-lsp
+            cross build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora
           else
-            cargo build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora-lsp
+            cargo build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora
           fi
 
       - name: Stage binary into editors/vscode/server/
@@ -140,8 +141,8 @@ jobs:
           # expression out of the `[[ … ]]` test (shellcheck SC2193 false
           # positive on a templated literal) and out of direct interpolation.
           target="${{ matrix.cargo_target }}"
-          src="target/${target}/dist/aozora-lsp"
-          dst="editors/vscode/server/aozora-lsp"
+          src="target/${target}/dist/aozora"
+          dst="editors/vscode/server/aozora"
           if [[ "${target}" == *-windows-* ]]; then
             cp "${src}.exe" "${dst}.exe"
           else

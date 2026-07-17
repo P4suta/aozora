@@ -1,0 +1,41 @@
+[package]
+name = "aozora-render-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# The render + pipeline crates folded into `aozora`; `render_html` / `serialize`
+# live at the `aozora::render` facade and `lex` at `aozora::unstable`.
+aozora = { path = "../.." }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "render_html"
+path = "fuzz_targets/render_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialize_round_trip"
+path = "fuzz_targets/serialize_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "catalogue_normalization"
+path = "fuzz_targets/catalogue_normalization.rs"
+test = false
+doc = false
+bench = false

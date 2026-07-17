@@ -1,7 +1,7 @@
 {
   "name": "aozora-vscode",
   "displayName": "aozora — aozora-flavored markdown",
-  "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by aozora-lsp.",
+  "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by the aozora language server.",
   "version": "0.1.0",
   "publisher": "yasunobu-sakashita",
   "license": "Apache-2.0 OR MIT",
@@ -243,8 +243,8 @@
       "properties": {
         "aozora.lsp.path": {
           "type": "string",
-          "default": "aozora-lsp",
-          "description": "Path to the aozora-lsp executable. Defaults to looking it up on PATH."
+          "default": "aozora",
+          "description": "Path to the `aozora` executable (run as `aozora lsp --stdio`). Defaults to looking it up on PATH."
         },
         "aozora.cli.path": {
           "type": "string",
@@ -259,7 +259,7 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Trace LSP messages between VS Code and aozora-lsp."
+          "description": "Trace LSP messages between VS Code and the aozora language server."
         },
         "aozora.autoDetect.plaintext": {
           "type": "boolean",

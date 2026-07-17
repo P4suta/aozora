@@ -39,8 +39,8 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_sjis;
 use aozora_corpus::{CorpusItem, FilesystemCorpus};
-use aozora_encoding::decode_sjis;
 use rayon::prelude::*;
 
 const NS_PER_S: f64 = 1_000_000_000.0;

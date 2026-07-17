@@ -4,7 +4,7 @@
 // `aozora.canonicalizeSlug` workspace command.
 //
 // The LSP server already implements the full canonicalisation logic
-// (see `crates/aozora-lsp/src/commands.rs`); the extension just needs
+// (see `crates/aozora-cli/src/lsp/commands.rs`); the extension just needs
 // to (1) locate the slug span containing the cursor and (2) forward
 // `{uri, range, body}` over `workspace/executeCommand`. The server
 // returns a `WorkspaceEdit` and applies it via `workspace/applyEdit`.

@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::fs::read_to_string;
 
 use aozora::Document;
-use aozora_encoding::decode_auto;
+use aozora::encoding::decode_auto;
 
 #[test]
 fn corpus_round_trip_is_a_fixed_point() {

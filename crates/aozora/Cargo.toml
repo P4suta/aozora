@@ -11,25 +11,44 @@ authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+# Absorbed from aozora-encoding: the gaiji / JIS X 0213 PHF table codegen.
+build = "build.rs"
+# Package the codegen inputs and render CSS asset — cargo would otherwise
+# ship neither the data nor the build script with the published crate.
+include = [
+  "src/**/*.rs",
+  "build.rs",
+  "data/*.tsv",
+  "assets/aozora-notation.css",
+  "README.md",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+]
 
 [lints]
 workspace = true
 
 [dependencies]
-# Document wraps the lex pipeline and returns a `Tree<'_>` whose
-# lifetime borrows only the source; the parsed AST is owned. The five
-# building-block crates below are published in their own right (the
-# umbrella is on crates.io, so its transitive deps must be too), but
-# carry no API-stability contract of their own. This meta crate is the
-# recommended single front door: it re-exports a *curated* surface (the
-# parsed-AST types at the crate root plus the `aozora::syntax::ast` /
-# `aozora::render` / `aozora::encoding` modules — never a `::*` glob),
-# so most consumers depend on just `aozora`.
-aozora-render = { workspace = true }
-aozora-pipeline = { workspace = true }
-aozora-syntax = { workspace = true }
-aozora-spec = { workspace = true }
-aozora-encoding = { workspace = true }
+# The core parse/render chain (aozora-spec, aozora-veb, aozora-scan,
+# aozora-encoding, aozora-syntax, aozora-pipeline, aozora-render) is now
+# folded into this crate as private modules; the runtime deps below are the
+# deduped union of what those crates needed.
+memchr = { workspace = true }
+# Multi-pattern search: the trigger-trigram scan automaton (crate::scan) and
+# the annotation-keyword body dispatcher (crate::pipeline). Now unconditional
+# — the folded scanner is std-only, so aho-corasick must always compile in.
+aho-corasick = { workspace = true }
+bumpalo = { workspace = true }
+smallvec = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+encoding_rs = { workspace = true }
+# PHF — the gaiji table is emitted via `phf_codegen` in `build.rs` (runtime
+# reads `phf::Map` from the generated file); additionally the folded
+# `syntax::accent` module builds ACCENT_DIGRAPHS with the `phf::phf_map!`
+# macro, so the `macros` feature (from the workspace pin) is required — the
+# encoding crate's old `default-features = false` override cannot carry over.
+phf = { workspace = true }
 
 # Driver-shared wire format (see `aozora::json`). Optional so library
 # consumers that only use the owned-AST surface do not have to
@@ -42,20 +61,14 @@ serde_json = { workspace = true, optional = true }
 # `schema_*()` functions and shouldn't pull schemars into their
 # dep tree.
 schemars = { workspace = true, optional = true }
-# Phase N4 — Aozora-shaped proptest generators. Optional, enabled
-# only by the `proptest` feature so library consumers don't pay
-# the proptest dep cost unless they're writing property tests
-# themselves.
-aozora-proptest = { workspace = true, optional = true }
-proptest = { workspace = true, optional = true }
-# Phase N1 — lossless concrete syntax tree. Optional, enabled by
-# the `cst` feature so library-only consumers don't pull in rowan
-# unless they want the editor-grade surface.
-aozora-cst = { workspace = true, optional = true }
-# Phase N5 — tree-sitter-flavoured query DSL over the CST.
-# Optional, enabled by the `query` feature; pulls aozora-cst (and
-# transitively rowan) into the dep tree.
-aozora-query = { workspace = true, optional = true }
+# Pandoc AST projection (`aozora::pandoc`). Optional, enabled by the
+# `pandoc` feature so library-only consumers don't pull pandoc_ast in.
+pandoc_ast = { workspace = true, optional = true }
+# rowan — the lossless concrete syntax tree (`aozora::cst`) and the
+# query DSL (`aozora::query`) that walks it. Optional, enabled by the
+# `cst` feature so library-only consumers don't pull rowan into their
+# dep tree unless they want the editor-grade surface.
+rowan = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -78,18 +91,36 @@ json = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]
 # `schema_pairs` / `schema_container_pairs` (one per envelope).
 # Used by `xtask schema dump` and the introspection CLI subcommand.
 schema = ["json", "dep:schemars"]
-# Aozora-shaped proptest generators (`aozora::proptest::*`).
-# Downstream renderer authors enable this when writing property
-# tests over their own `AozoraVisitor` impls.
-proptest = ["dep:proptest", "dep:aozora-proptest"]
-# Lossless concrete syntax tree (`aozora::cst::*`). Editor-grade
-# surface for source-faithful refactoring / formatters / LSP
-# servers. Pulls rowan into the dep tree.
-cst = ["dep:aozora-cst"]
-# Tree-sitter-flavoured query DSL (`aozora::query::*`) over the
-# CST. Implies `cst` (queries run against `SyntaxNode`); pulls
-# aozora-query (and transitively rowan) into the dep tree.
-query = ["cst", "dep:aozora-query"]
+# Source-formatter algorithm (`aozora::fmt::format_source`). The
+# canonicalising `parse ∘ to_source` round trip; adds no dependency (its
+# byte-identity is inherited from `Document::parse` + `Tree::to_source`).
+# The CLI plumbing that wraps it lives in `aozora-cli`.
+fmt = []
+# Pandoc AST projection (`aozora::pandoc::to_pandoc`). Emits a
+# `pandoc_ast::Pandoc` document consumable by every Pandoc output format.
+pandoc = ["dep:pandoc_ast"]
+# Lossless concrete syntax tree (`aozora::cst::*`). Editor-grade surface for
+# source-faithful refactoring / formatters / LSP servers. Pulls rowan into
+# the dep tree.
+cst = ["dep:rowan"]
+# Tree-sitter-flavoured query DSL (`aozora::query::*`) over the CST. Implies
+# `cst`; names rowan directly, so it enables `dep:rowan` too.
+query = ["cst", "dep:rowan"]
+# UNSTABLE, #[doc(hidden)] — the folded pipeline stage surface plus
+# sentinels / slugs / Sentinel / NaiveScanner / Allocator / InternStats,
+# exposed for the in-workspace aozora-cli / aozora-lsp / aozora-bench /
+# aozora-xtask consumers. No semver contract.
+unstable-internals = []
+# Carried from aozora-pipeline: classify-stage timing instrumentation
+# (dead code when off).
+classify-instrument = []
+
+[build-dependencies]
+# Codegen-time PHF builder — runs in `build.rs` to emit the gaiji /
+# JIS X 0213 tables as a Rust source fragment included via `include!()`.
+# Pinned to 0.14 (a major bump regenerates the tables); mirrors the
+# absorbed aozora-encoding build-dep.
+phf_codegen = "0.14"
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
@@ -102,14 +133,17 @@ query = ["cst", "dep:aozora-query"]
 aozora-corpus = { path = "../aozora-corpus" }
 proptest = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
-
-[package.metadata.cargo-shear]
-# `proptest` is an intentional optional dependency exposed via the
-# `proptest` feature (aozora::proptest::*) for downstream property tests.
-# It also appears in dev-dependencies for this crate's own tests, so
-# cargo-shear sees only the dev usage and flags the optional [dependencies]
-# entry as misplaced — but the feature gate is the supported public surface.
-ignored = ["proptest"]
+# Assertion helper carried in from the folded render / pipeline unit +
+# integration tests.
+pretty_assertions = { workspace = true }
+# The folded `pandoc` module's unit + property tests serialise the projected
+# `pandoc_ast::Pandoc` through serde to assert determinism. A dev-dep (not the
+# optional `json`-feature dep) so those tests compile under `--features pandoc`
+# without also enabling `json`.
+serde_json = { workspace = true }
+# `#[cfg_attr(test, mutants::skip)]` markers carried in from the folded
+# scan / syntax units (ADR-0031); a no-op outside `cargo mutants`.
+mutants = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true

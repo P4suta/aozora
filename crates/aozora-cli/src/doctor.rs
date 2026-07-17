@@ -11,14 +11,14 @@
 //! 2. **Effective settings** — the resolved `encoding` / `format` / `strict` /
 //!    `color` / `lang`, each tagged with the source that decided it
 //!    (`flag` / `env …` / `project` / `global` / `default`).
-//! 3. **External tools** — whether `pandoc` and `aozora-lsp` are on `PATH`
-//!    (with `pandoc`'s version); both are optional, so their absence is
-//!    advisory, never blocking.
+//! 3. **External tools** — whether `pandoc` is on `PATH` (with its version);
+//!    it is optional, so its absence is advisory, never blocking. (The LSP is
+//!    built into this binary — `aozora lsp` — so there is no daemon to probe.)
 //! 4. **Terminal** — whether stdout / stderr are TTYs, the `NO_COLOR` /
 //!    `CLICOLOR` state, and the colour the CLI would actually emit.
 //!
 //! The section headings, status words, and hints are localized through
-//! `aozora-i18n`; the setting / tool identifiers, enum tags, source labels, and
+//! the `i18n` catalog; the setting / tool identifiers, enum tags, source labels, and
 //! tool versions woven in are machine vocabulary and stay literal in every
 //! locale (ADR-0033). The report goes to stdout; the exit code (0 all-green /
 //! 1 blocking) is the machine signal.
@@ -29,8 +29,8 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use clap::ValueEnum;
 
 use crate::config::{ConfigFile, Layers, strict_active};
@@ -158,7 +158,7 @@ struct ConfigPaths {
 }
 
 /// A PATH-tool probe result: absent, or present with an optional detail
-/// (`pandoc`'s version line, `aozora-lsp`'s resolved path).
+/// (`pandoc`'s version line).
 #[derive(Debug)]
 enum ToolStatus {
     Missing,
@@ -186,7 +186,6 @@ struct Doctor {
     config: ConfigReport,
     settings: Vec<SettingRow>,
     pandoc: ToolStatus,
-    lsp: ToolStatus,
     terminal: TerminalReport,
 }
 
@@ -206,7 +205,6 @@ impl Doctor {
             config,
             settings,
             pandoc: probe_pandoc(),
-            lsp: probe_lsp(),
             terminal,
         }
     }
@@ -267,7 +265,6 @@ impl Doctor {
         // -- External tools --
         writeln!(out, "\n{}", i18n::t(lang, "doctor-tools-heading"))?;
         render_tool(out, lang, "pandoc", &self.pandoc, "doctor-hint-pandoc")?;
-        render_tool(out, lang, "aozora-lsp", &self.lsp, "doctor-hint-lsp")?;
 
         // -- Terminal --
         writeln!(out, "\n{}", i18n::t(lang, "doctor-terminal-heading"))?;
@@ -597,12 +594,12 @@ fn resolve_strict(
 }
 
 /// The [`Source`] that decides the message language, mirroring
-/// `aozora_i18n::resolve`: the first present-and-non-blank of `--lang`,
+/// `crate::i18n::resolve`: the first present-and-non-blank of `--lang`,
 /// `AOZORA_LANG`, `config.lang` (project over global), then `LANG`; else the
 /// built-in English default.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the five language sources mirror aozora_i18n::resolve's precedence chain one-to-one; each is a distinct layer"
+    reason = "the five language sources mirror crate::i18n::resolve's precedence chain one-to-one; each is a distinct layer"
 )]
 fn lang_source(
     flag: Option<&str>,
@@ -627,7 +624,7 @@ fn lang_source(
 }
 
 /// True when a language source is present and not blank — the "decides"
-/// predicate `aozora_i18n::resolve` uses when walking its precedence chain.
+/// predicate `crate::i18n::resolve` uses when walking its precedence chain.
 fn present(source: Option<&str>) -> bool {
     source.is_some_and(|value| !value.trim().is_empty())
 }
@@ -768,15 +765,6 @@ fn first_line(stdout: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(stdout);
     let first = text.lines().next()?.trim();
     (!first.is_empty()).then(|| first.to_owned())
-}
-
-/// Probe `aozora-lsp` on PATH. It parses no arguments and serves LSP over stdio
-/// on any invocation, so it must **never** be spawned to read a version — that
-/// would hang. Detect PATH presence only; the resolved path is the detail.
-fn probe_lsp() -> ToolStatus {
-    which("aozora-lsp").map_or(ToolStatus::Missing, |path| ToolStatus::Found {
-        detail: Some(path.display().to_string()),
-    })
 }
 
 #[cfg(test)]
@@ -929,7 +917,7 @@ mod tests {
         );
     }
 
-    // ---- lang_source: mirrors aozora_i18n::resolve's precedence ----
+    // ---- lang_source: mirrors crate::i18n::resolve's precedence ----
 
     #[test]
     fn lang_source_walks_the_full_precedence_chain() {
@@ -1227,7 +1215,6 @@ mod tests {
                 green_row("lang", "en"),
             ],
             pandoc: ToolStatus::Missing,
-            lsp: ToolStatus::Missing,
             terminal: TerminalReport {
                 stdout_tty: false,
                 stderr_tty: false,
@@ -1262,8 +1249,6 @@ mod tests {
                 "External tools\n",
                 "  pandoc       not found on PATH\n",
                 "    ↳ needed for `aozora pandoc -t FMT`; install from https://pandoc.org\n",
-                "  aozora-lsp   not found on PATH\n",
-                "    ↳ needed for `aozora lsp`; part of the aozora toolchain\n",
                 "\n",
                 "Terminal\n",
                 "  stdout            not a terminal\n",

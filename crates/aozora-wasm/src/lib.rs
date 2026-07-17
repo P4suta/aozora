@@ -110,12 +110,27 @@ pub mod bindings {
     /// Examples: `0.5.0` (stable), `0.5.0-dev+g3672e3f` (a local
     /// checkout), or `0.5.0-nightly.20260629+g3672e3f` (a scheduled
     /// build). The playground renders this in its footer so a deployed
-    /// build is traceable back to a commit. Single authority:
-    /// [`aozora_buildstamp::VERSION`] — never a hard-coded literal.
+    /// build is traceable back to a commit. Single authority: the
+    /// `AOZORA_VERSION_STRING` this crate's `build.rs` injects — never a
+    /// hard-coded literal.
     #[wasm_bindgen]
     #[must_use]
     pub fn version() -> String {
-        aozora_buildstamp::VERSION.to_owned()
+        env!("AOZORA_VERSION_STRING").to_owned()
+    }
+
+    /// The wire schema version every `*Json` envelope carries in its
+    /// `schemaVersion` field.
+    ///
+    /// Distinct from [`version`], which is the build/channel string: this
+    /// is the single-authority [`aozora::json::SCHEMA_VERSION`], bumped
+    /// only on a breaking change to the `{ schemaVersion, data }` shape.
+    /// A JS host can assert it against the version it was compiled
+    /// against before trusting an envelope's fields.
+    #[wasm_bindgen(js_name = schemaVersion)]
+    #[must_use]
+    pub fn schema_version() -> u32 {
+        json::SCHEMA_VERSION
     }
 
     /// High-resolution wall-clock for the profile helper. Returns
@@ -176,7 +191,7 @@ pub mod bindings {
         /// Re-emit Aozora source text from the parse tree.
         #[wasm_bindgen(js_name = toSource)]
         #[must_use]
-        pub fn serialize(&self) -> String {
+        pub fn to_source(&self) -> String {
             self.inner.parse().to_source()
         }
 

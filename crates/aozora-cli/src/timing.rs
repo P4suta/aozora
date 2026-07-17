@@ -6,7 +6,7 @@
 //! (render / inspect / pandoc) — in [`std::time::Instant`] and print the
 //! result to **stderr**, so a `render` / `inspect` pipeline's stdout stays
 //! byte-identical with or without `--timing`. `fmt` is the exception: it
-//! delegates to the shared `aozora_fmt::format_source_with` core, which
+//! delegates to the shared `crate::fmt::format_source_with` core, which
 //! fuses parse and serialize, so it reports `read` + a single `format`
 //! stage instead of a separate `parse`.
 //!

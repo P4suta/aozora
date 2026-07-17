@@ -28,9 +28,9 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::lex;
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
 const NS_PER_MS: f64 = 1_000_000.0;
 
 #[derive(Debug, Clone, Copy)]

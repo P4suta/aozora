@@ -55,9 +55,9 @@
 use core::error::Error;
 use core::fmt;
 
-use aozora_render::spelling::source::container_close_source;
-use aozora_spec::{SourceOffset, Span};
-use aozora_syntax::{ForwardOrigin, RegionClose, RegionFormat};
+use crate::render::spelling::source::container_close_source;
+use crate::spec::{SourceOffset, Span};
+use crate::syntax::{ForwardOrigin, RegionClose, RegionFormat};
 
 use crate::{Document, Node, NodeRef, Tree};
 
@@ -199,6 +199,7 @@ pub enum SpliceSafety {
 /// space as [`Tree::to_source_verbatim`] and every `source_span` on
 /// [`Tree::source_nodes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Region {
     /// Half-open byte range in sanitized-source coordinates.
     pub span: Span,
@@ -216,6 +217,7 @@ pub struct Region {
 /// reference's literal precedes its bracket; a container's open precedes its
 /// close).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Coupling {
     /// The relationship between the two regions.
     pub kind: CoupledKind,
@@ -250,6 +252,18 @@ pub enum SpliceError {
         /// The region's role, for diagnostics.
         role: RegionRole,
     },
+    /// A raw edit span handed to [`Document::try_edit`](crate::Document::try_edit)
+    /// was invalid for the source: `start > end`, `end` past the source length,
+    /// or an endpoint that does not fall on a UTF-8 codepoint boundary.
+    /// Returned rather than panicking so a host running under
+    /// `panic = "abort"` (an FFI or WASM embedding) is not torn down by an
+    /// untrusted span.
+    InvalidEditSpan {
+        /// The rejected byte range, in the pre-edit source's coordinates.
+        span: Span,
+        /// Byte length of the source the span was rejected against.
+        source_len: usize,
+    },
 }
 
 impl fmt::Display for SpliceError {
@@ -266,6 +280,13 @@ impl fmt::Display for SpliceError {
                     "region {role:?} has an unclassified node kind and cannot be spliced"
                 )
             }
+            Self::InvalidEditSpan { span, source_len } => write!(
+                f,
+                "edit span {start}..{end} is invalid for a {source_len}-byte source \
+                 (start > end, end past the source, or off a codepoint boundary)",
+                start = span.start,
+                end = span.end,
+            ),
         }
     }
 }
@@ -281,7 +302,7 @@ impl Error for SpliceError {}
 /// resolves by whole-document text search, so a region re-lex cannot localise
 /// it).
 pub(crate) fn classify_node_ref(node: NodeRef) -> (RegionRole, SpliceSafety) {
-    use SpliceSafety::{Coupled, Direct, Opaque};
+    use SpliceSafety::{Coupled, Direct};
 
     match node {
         NodeRef::BlockOpen(_) => (RegionRole::ContainerOpen, Coupled(CoupledKind::Container)),
@@ -328,12 +349,7 @@ pub(crate) fn classify_node_ref(node: NodeRef) -> (RegionRole, SpliceSafety) {
             Node::BodyEnd => (RegionRole::BodyEnd, Direct),
             Node::ForcedBreak => (RegionRole::ForcedBreak, Direct),
             Node::Directive(_) => (RegionRole::Directive, Direct),
-            // `Node` is `#[non_exhaustive]`; an unknown future variant is
-            // declined rather than assumed editable.
-            _ => (RegionRole::Other, Opaque),
         },
-        // `NodeRef` is `#[non_exhaustive]`; decline an unknown future variant.
-        _ => (RegionRole::Other, Opaque),
     }
 }
 
@@ -996,8 +1012,8 @@ mod tests {
     /// directly because no source produces this origin until E1-2/E1-3.
     #[test]
     fn self_contained_forward_is_direct() {
-        use aozora_syntax::ForwardAttr;
-        use aozora_syntax::alloc::Allocator;
+        use crate::syntax::ForwardAttr;
+        use crate::syntax::alloc::Allocator;
 
         let mut a = Allocator::new();
         let t = a.content_plain("X");
@@ -1289,8 +1305,8 @@ mod tests {
     /// allocator (independent of parser reachability) so each arm is isolated.
     #[test]
     fn classify_pins_every_leaf_variant() {
-        use aozora_syntax::alloc::Allocator;
-        use aozora_syntax::{
+        use crate::syntax::alloc::Allocator;
+        use crate::syntax::{
             Container, DirectiveKind, HeadingKind, HeadingStyle, LineFormat, SectionKind,
         };
 
@@ -1354,8 +1370,8 @@ mod tests {
     /// hold, so both true cases would collapse to `false`).
     #[test]
     fn reparsed_in_family_heading_hint_accepts_hint_or_promoted_heading() {
-        use aozora_syntax::alloc::Allocator;
-        use aozora_syntax::{HeadingKind, HeadingStyle};
+        use crate::syntax::alloc::Allocator;
+        use crate::syntax::{HeadingKind, HeadingStyle};
 
         let mut a = Allocator::new();
         let text = a.content_plain("章");

@@ -1,5 +1,0 @@
----
-source: crates/aozora-render/tests/snapshot_html_golden.rs
-expression: "render(\"青空の下を歩く［＃「青空」に傍点］\")"
----
-<p><em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">青空</em>の下を歩く</p>

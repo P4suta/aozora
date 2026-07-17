@@ -77,9 +77,11 @@ func (p *Parser) ToHTML(source string) (string, error) {
 	return p.call("to_html", source)
 }
 
-// Serialize parses source and re-emits it as Aozora notation (round-trip).
-func (p *Parser) Serialize(source string) (string, error) {
-	return p.call("serialize", source)
+// ToSource parses source and re-emits it as Aozora notation (round-trip).
+// The cross-binding name for source re-emission (Rust to_source, WASM
+// toSource, Python to_source).
+func (p *Parser) ToSource(source string) (string, error) {
+	return p.call("to_source", source)
 }
 
 // Diagnostics parses source and returns the diagnostics wire envelope.
@@ -109,6 +111,28 @@ func (p *Parser) ContainerPairs(source string) (AozoraContainerPairsEnvelope, er
 	var env AozoraContainerPairsEnvelope
 	err := p.callJSON("container_pairs_json", source, &env)
 	return env, err
+}
+
+// Gaiji parses source and returns the resolved ※［＃…］ gaiji-reference
+// wire envelope as raw JSON, byte-identical to aozora::json::gaiji.
+func (p *Parser) Gaiji(source string) (string, error) {
+	return p.call("gaiji_json", source)
+}
+
+// Slugs returns the static spec slug catalogue as a raw-JSON wire
+// envelope (byte-identical to aozora::json::slugs). It is input-independent
+// — the same envelope every call — so the result can be cached. Powers
+// ［＃…］ annotation completion.
+func (p *Parser) Slugs() (string, error) {
+	return p.call("slugs_json", "")
+}
+
+// Version returns the parser's channel-aware build version string (e.g.
+// "0.5.0" or "0.5.0-dev+g3672e3f"). This is the engine build stamp,
+// distinct from SchemaVersion (the wire-contract version). Mirrors the
+// version() export of the WASM / Python drivers.
+func (p *Parser) Version() (string, error) {
+	return p.call("version", "")
 }
 
 // call invokes one plugin export with source bytes and returns its raw

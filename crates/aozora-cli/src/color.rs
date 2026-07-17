@@ -35,7 +35,7 @@
 //!   this value is read; but clap 4 honours `NO_COLOR` / `CLICOLOR`
 //!   natively, so env-based consistency still holds.
 
-use aozora_fmt::ColorChoice;
+use crate::fmt::ColorChoice;
 use miette::MietteHandlerOpts;
 
 /// The effective colour choice: `--color`, else the `.aozora.toml` `color` key

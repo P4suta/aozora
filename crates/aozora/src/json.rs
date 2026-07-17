@@ -33,8 +33,9 @@
 
 use serde::Serialize;
 
+use crate::encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
+use crate::spec::SLUGS;
 use crate::{DiagnosticSource, Severity, Tree};
-use aozora_encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -156,12 +157,12 @@ pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPair> {
         .collect()
 }
 
-/// Project the canonical slug catalogue ([`crate::SLUGS`]) into a
+/// Project the canonical slug catalogue ([`crate::unstable::SLUGS`]) into a
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape `{ canonical, family, accepts_param, doc,
 /// partner }`: `family` is the camelCase form of the
-/// [`crate::SlugFamily`] variant, `partner` is `null` for non-paired
+/// [`crate::unstable::SlugFamily`] variant, `partner` is `null` for non-paired
 /// families. A static catalogue, independent of any parse — it powers
 /// editor completion menus for `［＃…］` annotations without
 /// re-implementing the table per driver (`aozora-wasm` / `aozora-py`
@@ -175,7 +176,7 @@ pub fn slugs() -> String {
 /// re-parsing the JSON when a caller needs the catalogue directly.
 #[must_use]
 pub fn slug_entries() -> Vec<Slug> {
-    crate::SLUGS
+    SLUGS
         .iter()
         .map(|s| Slug {
             canonical: s.canonical,
@@ -197,7 +198,7 @@ pub fn slug_entries() -> Vec<Slug> {
 ///
 /// Powers inlay-hint UIs (`→GLYPH` after each reference) and batch gaiji
 /// audits. The scan + resolution are the single authority in
-/// [`aozora_encoding::gaiji`]; this is only their wire projection.
+/// [`crate::encoding::gaiji`]; this is only their wire projection.
 ///
 /// Empty / gaiji-free source → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
@@ -425,24 +426,17 @@ impl From<&crate::Diagnostic> for Diagnostic {
 }
 
 const fn severity_str(s: Severity) -> &'static str {
-    // `Severity` is `#[non_exhaustive]` upstream — the wildcard arm
-    // covers any future variant by defaulting to "error" so consumers
-    // err on the side of surfacing it until they upgrade.
     match s {
         Severity::Warning => "warning",
         Severity::Note => "note",
-        Severity::Error | _ => "error",
+        Severity::Error => "error",
     }
 }
 
 const fn source_str(s: DiagnosticSource) -> &'static str {
-    // `DiagnosticSource` is `#[non_exhaustive]` upstream — the
-    // wildcard arm covers any future variant by defaulting to
-    // "internal" so consumers filtering library-bug diagnostics
-    // catch it until they upgrade.
     match s {
         DiagnosticSource::Source => "source",
-        DiagnosticSource::Internal | _ => "internal",
+        DiagnosticSource::Internal => "internal",
     }
 }
 
@@ -737,10 +731,10 @@ mod tests {
 
     #[test]
     fn container_kind_wire_tags_via_as_json_tag() {
-        use aozora_syntax::{BoutenKind, BoutenPosition, RegionFormat};
+        use crate::syntax::{BoutenKind, BoutenPosition, RegionFormat};
         // `RegionFormat::as_json_tag` is the single authority on the
         // container-pairs wire tag (no `_ => "unknown"` fallback —
-        // exhaustiveness is enforced in aozora-syntax). The scope-specific
+        // exhaustiveness is enforced in the syntax layer). The scope-specific
         // `boutenRange` / `combineUprightRange` strings are preserved verbatim
         // so SCHEMA_VERSION=1 stays byte-stable.
         assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");

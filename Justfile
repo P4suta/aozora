@@ -194,7 +194,8 @@ test-doc-all:
 #
 # `--all-features` where `just test` is feature-light: a writer that
 # cannot see every snapshot leaves the ones it misses to be hand-edited.
-# `aozora-lsp`'s live behind `required-features = ["internals"]`.
+# The feature-gated snapshots (aozora's fmt / pandoc / cst / query, and the
+# in-process LSP folded into aozora-cli) only render under `--all-features`.
 snapshot-update:
     {{_dev}} env INSTA_UPDATE=always cargo nextest run {{_ws}} --all-features --all-targets
 
@@ -312,7 +313,7 @@ drift-gate:
 # Suppression-hygiene ratchet (a drift gate): per-crate #[allow] counts —
 # outer `#[allow]` and blanket inner `#![allow]`, tracked separately — may
 # only shrink from the baselines hardcoded in `xtask lint suppressions`,
-# and the aozora-pipeline `.expect(` count may not grow. Exact-match both
+# and the `aozora` pipeline `.expect(` count may not grow. Exact-match both
 # directions, so a reduction that isn't recorded also fails (it tells you
 # the new number to write). Pure Rust + git — runs on the bare host like
 # the other `xtask` recipes; also folded into `drift-gate`.
@@ -735,17 +736,19 @@ perf-gate:
 
 # --- fuzzing -----------------------------------------------------------------
 #
-# cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as
-# nightly-only sub-crates outside the main workspace (so the workspace
-# build doesn't pull libfuzzer-sys). Targets currently registered:
+# cargo-fuzz harnesses live under `crates/aozora/fuzz/<CRATE>/` (CRATE ∈
+# {pipeline, render, encoding}) as nightly-only sub-crates outside the main
+# workspace (so the workspace build doesn't pull libfuzzer-sys). They target the
+# collapsed `aozora` surface: `aozora::unstable::lex`, `aozora::render::*`,
+# `aozora::encoding::*`. Targets currently registered:
 #
-#   aozora-pipeline / lex
-#   aozora-pipeline / classify
-#   aozora-pipeline / ffi_no_abort
-#   aozora-render   / render_html
-#   aozora-render   / serialize_round_trip
-#   aozora-render   / catalogue_normalization
-#   aozora-encoding / decode_sjis
+#   pipeline / lex
+#   pipeline / classify
+#   pipeline / ffi_no_abort
+#   render   / render_html
+#   render   / serialize_round_trip
+#   render   / catalogue_normalization
+#   encoding / decode_sjis
 #
 # Workflow:
 #   1. `just fuzz-quick CRATE TARGET`    (60 s) — inner-loop smoke
@@ -753,11 +756,11 @@ perf-gate:
 #   3. `just fuzz-marathon CRATE TARGET` (15 min) — strongest soak
 #   4. On crash, `just fuzz-triage CRATE TARGET` prints just the panic
 #      block (panic line + diagnostic context) for every artifact under
-#      crates/<crate>/fuzz/artifacts/<target>/. No manual repro loop.
+#      crates/aozora/fuzz/<CRATE>/artifacts/<target>/. No manual repro loop.
 #   5. `just fuzz-promote CRATE TARGET ARTIFACT` lifts an artifact into
-#      crates/<crate>/tests/fuzz_regressions/<target>/ so the
-#      `tests/fuzz_regressions.rs` integration test replays it on every
-#      `just test` run — no nightly required for the regression case.
+#      crates/aozora/tests/fuzz_regressions/<CRATE>/<target>/ so the
+#      regression integration test replays it on every `just test` run — no
+#      nightly required for the regression case.
 #   6. `just fuzz-status` is the at-a-glance count of pending crashes
 #      vs pinned regressions per target.
 
@@ -773,42 +776,42 @@ _fuzz_target := "x86_64-unknown-linux-gnu"
 # supplies TARGET, the `--target` triple (see `_fuzz_target` above), and any
 # libFuzzer args). The gated recipes below inject `--target` for you.
 fuzz CRATE *ARGS:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{ARGS}}'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run {{ARGS}}'
 
 # 60-second smoke fuzz — fits inside a development inner loop.
 fuzz-quick CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
 
 # 5-minute deep fuzz — the gate to clear before tagging a release.
 fuzz-deep CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
 
 # 15-minute marathon fuzz — the strongest single-target soak we run by
 # hand. Reach for this after a clean fuzz-deep cycle when you want to
 # push the corpus another order of magnitude.
 fuzz-marathon CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
 
 # Run every registered fuzz target in turn for 60 s each.
 fuzz-all-quick:
-    just fuzz-quick aozora-pipeline lex
-    just fuzz-quick aozora-pipeline classify
-    just fuzz-quick aozora-pipeline ffi_no_abort
-    just fuzz-quick aozora-render render_html
-    just fuzz-quick aozora-render serialize_round_trip
-    just fuzz-quick aozora-render catalogue_normalization
-    just fuzz-quick aozora-encoding decode_sjis
+    just fuzz-quick pipeline lex
+    just fuzz-quick pipeline classify
+    just fuzz-quick pipeline ffi_no_abort
+    just fuzz-quick render render_html
+    just fuzz-quick render serialize_round_trip
+    just fuzz-quick render catalogue_normalization
+    just fuzz-quick encoding decode_sjis
 
 # Run every registered fuzz target in turn for 5 min each — the
 # release pre-flight gate.
 fuzz-all-deep:
-    just fuzz-deep aozora-pipeline lex
-    just fuzz-deep aozora-pipeline classify
-    just fuzz-deep aozora-pipeline ffi_no_abort
-    just fuzz-deep aozora-render render_html
-    just fuzz-deep aozora-render serialize_round_trip
-    just fuzz-deep aozora-render catalogue_normalization
-    just fuzz-deep aozora-encoding decode_sjis
+    just fuzz-deep pipeline lex
+    just fuzz-deep pipeline classify
+    just fuzz-deep pipeline ffi_no_abort
+    just fuzz-deep render render_html
+    just fuzz-deep render serialize_round_trip
+    just fuzz-deep render catalogue_normalization
+    just fuzz-deep encoding decode_sjis
 
 # Reproduce every artifact under crates/<crate>/fuzz/artifacts/<target>/
 # and print the panic block (panicked-at line + diagnostic context the
@@ -819,7 +822,7 @@ fuzz-triage CRATE TARGET:
     set -euo pipefail
     crate="{{CRATE}}"
     target="{{TARGET}}"
-    art_dir="crates/${crate}/fuzz/artifacts/${target}"
+    art_dir="crates/aozora/fuzz/${crate}/artifacts/${target}"
     if [[ ! -d "$art_dir" ]]; then
         echo "fuzz-triage: no artifacts for ${crate} / ${target}"
         exit 0
@@ -829,9 +832,9 @@ fuzz-triage CRATE TARGET:
         # `cargo fuzz run` resolves relative paths against the fuzz
         # crate's own directory (we cd into crates/<crate>/fuzz before
         # invoking it), so strip the prefix accordingly.
-        rel="${art#crates/${crate}/fuzz/}"
+        rel="${art#crates/aozora/fuzz/${crate}/}"
         echo "==> ${art}"
-        out=$({{_dev}} bash -c "cd crates/${crate}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
+        out=$({{_dev}} bash -c "cd crates/aozora/fuzz/${crate} && cargo +nightly fuzz run --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
         # Slice out the panic block: from `thread … panicked at`
         # through the line just before the stack trace begins. That's
         # exactly where the fuzz target's panic message prints its
@@ -868,8 +871,8 @@ fuzz-triage CRATE TARGET:
 fuzz-promote CRATE TARGET ARTIFACT:
     #!/usr/bin/env bash
     set -euo pipefail
-    src="crates/{{CRATE}}/fuzz/artifacts/{{TARGET}}/{{ARTIFACT}}"
-    dst_dir="crates/{{CRATE}}/tests/fuzz_regressions/{{TARGET}}"
+    src="crates/aozora/fuzz/{{CRATE}}/artifacts/{{TARGET}}/{{ARTIFACT}}"
+    dst_dir="crates/aozora/tests/fuzz_regressions/{{CRATE}}/{{TARGET}}"
     if [[ ! -f "$src" ]]; then
         echo "fuzz-promote: artifact not found: $src" >&2
         exit 1
@@ -883,13 +886,13 @@ fuzz-status:
     #!/usr/bin/env bash
     set -euo pipefail
     targets=(
-        "aozora-pipeline lex"
-        "aozora-pipeline classify"
-        "aozora-pipeline ffi_no_abort"
-        "aozora-render render_html"
-        "aozora-render serialize_round_trip"
-        "aozora-render catalogue_normalization"
-        "aozora-encoding decode_sjis"
+        "pipeline lex"
+        "pipeline classify"
+        "pipeline ffi_no_abort"
+        "render render_html"
+        "render serialize_round_trip"
+        "render catalogue_normalization"
+        "encoding decode_sjis"
     )
     printf "%-22s  %-22s  %-10s  %-12s\n" crate target pending_crashes pinned_regressions
     printf "%-22s  %-22s  %-10s  %-12s\n" ---------------------- ---------------------- ---------- ------------
@@ -898,8 +901,8 @@ fuzz-status:
         target="${entry#* }"
         crashes=0
         regressions=0
-        art_dir="crates/${crate}/fuzz/artifacts/${target}"
-        reg_dir="crates/${crate}/tests/fuzz_regressions/${target}"
+        art_dir="crates/aozora/fuzz/${crate}/artifacts/${target}"
+        reg_dir="crates/aozora/tests/fuzz_regressions/${crate}/${target}"
         if [[ -d "$art_dir" ]]; then
             crashes=$(find "$art_dir" -maxdepth 1 -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) 2>/dev/null | wc -l | tr -d ' ')
         fi
@@ -997,22 +1000,17 @@ coverage:
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --fail-under-regions {{_COV_FLOOR}}
 
-# Run aozora-lsp's `internals`-gated integration suites (smoke / guardian /
-# concurrent_lsp / concurrency_regressions / shuttle / property_invariants /
-# differential / snapshots / fuzz_regressions). `coverage` runs nextest with
-# DEFAULT features, so these — gated on `required-features = ["internals"]` —
-# are skipped there and would otherwise only ever be COMPILED (by
-# `clippy-strict --all-targets --all-features`), never run. That gap let a
-# stale assertion rot undetected; this gate closes it.
-#
-# Scoped to `-p aozora-lsp` on purpose: a blanket `--workspace
-# --all-features` would also flip on feature flags whose tests need external
-# setup — e.g. aozora-extism's `host-smoke`, which loads a pre-built wasm
-# artifact produced by `extism-build` / `smoke-extism` and fails on a clean
-# runner. aozora-lsp is the only crate whose feature-gated integration tests
-# have no dedicated gate.
+# Run the in-process LSP's integration suites (smoke / guardian /
+# concurrent_lsp / concurrency_regressions / shuttle / fuzz_regressions /
+# rope_src_parity / incremental_rope_e2e / incremental_parse_cache_corpus),
+# re-homed as `#[cfg(test)]` modules under `src/lsp/` when the LSP itself
+# folded into `aozora-cli` (WS-2, #523 withdrawn). Scoped to `-p aozora-cli
+# --all-features` on purpose: a blanket `--workspace --all-features` would also
+# flip on feature flags whose tests need external setup — e.g. aozora-extism's
+# `host-smoke`, which loads a pre-built wasm artifact produced by
+# `extism-build` / `smoke-extism` and fails on a clean runner.
 test-internals:
-    {{_dev}} cargo nextest run -p aozora-lsp --all-features
+    {{_dev}} cargo nextest run -p aozora-cli --all-features
 
 # HTML coverage report for local inspection. No threshold — intended
 # for opening `coverage/html/index.html` in a browser.
@@ -1040,7 +1038,7 @@ coverage-branch:
 # tests to kill surviving mutants, and `#[mutants::skip]` (with a reason)
 # the equivalent / unreachable ones.
 #
-#   just mutants -p aozora-cst                          # one crate (fast)
+#   just mutants -p aozora-ffi                          # one crate (fast)
 #   just mutants --in-diff <(git diff origin/main)      # only changed lines
 #
 # Runs in a DEDICATED target dir on the persistent cargo-target volume
@@ -1052,8 +1050,14 @@ coverage-branch:
 # sccache'd `/cargo/target/debug`, so neither build clobbers the other.
 # Config: repo-root `mutants.toml` via --config (`.gitignore` hides the
 # tool's default `.cargo/` location).
+#
+# `set -f` disables this shell's own pathname expansion so a forwarded
+# `--exclude 'src/foo/**'` glob reaches cargo-mutants verbatim instead of
+# being expanded against the host tree first (cargo-mutants does its own
+# glob matching). Fixed args carry no glob metacharacters, so it is a
+# no-op for every other invocation.
 mutants *ARGS:
-    docker compose run --rm \
+    set -f; docker compose run --rm \
         -e CARGO_TARGET_DIR=/cargo/target/mutants \
         -e CARGO_INCREMENTAL=1 \
         -e RUSTC_WRAPPER= \
@@ -1067,8 +1071,8 @@ mutants *ARGS:
 # container's locale-pinned reproducibility for wall-clock — it skips the
 # compose spin-up and drives cargo-mutants' own `-j` parallelism natively.
 #
-#   just mutants-host -p aozora-scan              # one crate, 4-way parallel
-#   MUTANTS_JOBS=6 just mutants-host -p aozora-pipeline   # override the fan-out
+#   just mutants-host -p aozora-ffi              # one crate, 4-way parallel
+#   MUTANTS_JOBS=6 just mutants-host -p aozora   # override the fan-out
 #   just mutants-host --in-diff <(git diff origin/main)  # only changed lines
 #
 # A dedicated `target/mutants-host` keeps these serial-rebuild artefacts out
@@ -1191,7 +1195,7 @@ strict-code:
     # as generated Rust code — they are not actual Rust attributes
     # under strict-code's purview.
     #
-    # (The per-crate *count* of #[allow], and the aozora-pipeline
+    # (The per-crate *count* of #[allow], and the `aozora` pipeline
     # `.expect(` count, are ratcheted by `xtask lint suppressions`.)
     src_files=()
     for f in "${files[@]}"; do
@@ -1231,7 +1235,7 @@ strict-code:
         '(^|[^a-zA-Z_#])unsafe\s+(fn|impl|trait|\{)' || failed=1
 
     # ---- Notation slug misspellings (regression guard) --------------------
-    # The romaji CSS slugs are centralised in `aozora-spec::RENDER_SLUGS`
+    # The romaji CSS slugs are centralised in `aozora`'s `spec::RENDER_SLUGS`
     # and machine-checked against their kana reading there. These greps
     # are the cheap last line of defence: `koshogaki` was a misreading of
     # 小書き (こがき → `kogaki`); `choho`/`dan`/`spread` are the pre-Hepburn
@@ -1275,7 +1279,7 @@ strict-code:
     # `build.rs` is also exempt: `println!("cargo:rerun-if-changed=...")`
     # is the documented cargo build-script protocol, not a stray
     # debug print — see https://doc.rust-lang.org/cargo/reference/build-scripts.html
-    lib_files=(crates/aozora-syntax/**/*.rs crates/aozora-lexer/**/*.rs crates/aozora-lex/**/*.rs crates/aozora-render/**/*.rs crates/aozora-encoding/**/*.rs)
+    lib_files=(crates/aozora/src/**/*.rs)
     print_hits=$(grep -nE '(^|[^[:alnum:]_])e?print(ln)?!\s*\(' "${lib_files[@]}" 2>/dev/null \
         | grep -vE '/(tests|benches|examples|fuzz_targets)/|/build\.rs:' || true)
     if [[ -n "$print_hits" ]]; then
@@ -1365,8 +1369,8 @@ fmt:
 # per-lint allow carve-outs (e.g. `redundant_pub_crate`). Keep the CLI
 # surface to `-D warnings` only.
 # `--lib --bins --tests` instead of `--all-targets` skips the
-# example / bench targets. Several crates (aozora-pipeline,
-# aozora-syntax, aozora-scan) declare `[[bench]]` entries that pull
+# example / bench targets. `aozora-bench` (and any micro-benches folded
+# into `aozora`) declare `[[bench]]` entries that pull
 # `criterion`'s entire dep tree (zstd / object / addr2line / gimli)
 # into the clippy build for no real lint signal — clippy on a bench
 # harness almost never fires anything that wouldn't fire on the lib
@@ -1427,12 +1431,12 @@ shear:
 # baseline, so exclude the crates that have never been published — until their
 # first crates.io release, at which point they drop off this list. (Bin-only
 # and `publish = false` members are skipped automatically; a real break makes
-# the run exit non-zero, which is expected on a breaking release.)
+# the run exit non-zero, which is expected on a breaking release.) After the
+# 18→3 collapse the only checked crate is `aozora` (the 0.4.1 baseline);
+# `aozora-cli` is bin-only (auto-skipped) and `tree-sitter-aozora` is a first
+# publish with no baseline yet.
 semver:
     {{_dev}} cargo semver-checks check-release --workspace \
-        --exclude aozora-buildstamp \
-        --exclude aozora-fmt \
-        --exclude aozora-lsp \
         --exclude tree-sitter-aozora
 
 # --- dependency follow-up (local-only, no remote CI) -------------------------
@@ -1641,24 +1645,23 @@ ci-precheck *ARGS:
 ci-act *ARGS:
     cargo run -q --release -p aozora-xtask -- ci act {{ARGS}}
 
-# Cross-compile aozora-scan to aarch64 + run the proptest suite
-# under qemu-user via cross-rs. Verifies the NEON Teddy inner kernel
-# matches NaiveScanner byte-identically. Requires `cross` and Docker
-# on the host (`cargo install cross` once); mirrors the
-# `cross-aarch64` job in ci.yml.
+# Cross-compile `aozora` (the folded scanner lives in `aozora::scan`) to
+# aarch64 + run its proptest suite under qemu-user via cross-rs. Verifies the
+# NEON Teddy inner kernel matches `aozora::unstable::NaiveScanner`
+# byte-identically. Requires `cross` and Docker on the host (`cargo install
+# cross` once); mirrors the `cross-aarch64` job in ci.yml.
 test-aarch64:
-    cross test --target aarch64-unknown-linux-gnu -p aozora-scan
+    cross test --target aarch64-unknown-linux-gnu -p aozora
 
-# Cross-compile aozora-scan to wasm32-wasip1 to verify the WASM
-# SIMD128 kernel codegen. Build-only: `cargo test` is structurally
-# impossible on wasm32 because proptest's transitive deps
-# (rusty-fork / wait-timeout) require Unix fork() APIs the target
-# lacks. The native `cargo nextest run -p aozora-scan` already
-# exercises the chunk-level proptests against ScalarTeddyKernel.
-# Mirrors the `wasm-test` job in ci.yml; requires `rustup target
-# add wasm32-wasip1` once.
+# Cross-compile `aozora` to wasm32-wasip1 to verify the WASM SIMD128 kernel
+# codegen of the folded `aozora::scan`. Build-only: `cargo test` is structurally
+# impossible on wasm32 because proptest's transitive deps (rusty-fork /
+# wait-timeout) require Unix fork() APIs the target lacks. The native
+# `cargo nextest run -p aozora` already exercises the chunk-level proptests
+# against the scalar Teddy kernel. Mirrors the `wasm-test` job in ci.yml;
+# requires `rustup target add wasm32-wasip1` once.
 test-wasm:
-    cargo build --target wasm32-wasip1 -p aozora-scan
+    cargo build --target wasm32-wasip1 -p aozora
 
 # --- aggregate ----------------------------------------------------------------
 
@@ -1916,7 +1919,7 @@ ci-parallel:
     fg_failed=""
     # `test-internals` runs RIGHT AFTER `coverage`: coverage executes the
     # default-feature suite (and measures regions); test-internals then runs
-    # aozora-lsp's `internals`-gated integration suites that coverage skips.
+    # aozora-cli's full `--all-features` suite (the in-process LSP included).
     for gate in clippy-strict clippy-wasm check drift-gate conformance coverage test-internals prop; do
         want ${GATE_CATS[$gate]} || { skip "$gate"; continue; }
         if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
@@ -1973,7 +1976,7 @@ ci-fast-selftest:
             echo "FAIL $label → got [$got] want [$expected]"; fail=1
         fi
     }
-    check "rust source"        "code"        "crates/aozora-syntax/src/format.rs"
+    check "rust source"        "code"        "crates/aozora/src/syntax/format.rs"
     check "rust doc comment"   "code"        "crates/aozora/src/document.rs"
     check "Cargo manifest"     "code"        "crates/aozora/Cargo.toml"
     check "conformance vector" "code"        "crates/aozora-conformance/spec-vectors/x.json"
@@ -1989,7 +1992,7 @@ ci-fast-selftest:
     check "workflow = infra"   "infra"       ".github/workflows/ci.yml"
     check "scripts = infra"    "infra"       "scripts/ci-classify.sh"
     check "docs + code"        "code book"   "crates/aozora/src/document.rs" "docs/adr/0017-x.md"
-    check "code + extension"   "code vscode" "crates/aozora-lsp/src/lib.rs" "editors/vscode/src/preview.ts"
+    check "code + extension"   "code vscode" "crates/aozora-cli/src/lsp/backend.rs" "editors/vscode/src/preview.ts"
     check "play + docs"        "play book"   "playground/src/App.tsx" "docs/x.md"
     check "infra forces full"  "code infra"  "crates/x/src/a.rs" "lefthook.yml"
     if [[ $fail -eq 0 ]]; then

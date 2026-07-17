@@ -14,13 +14,13 @@
 
 use core::fmt;
 
-use aozora_pipeline::{LexOutput, SourceNode, lex};
-use aozora_render::{
+use crate::pipeline::{LexOutput, SourceNode, lex};
+use crate::render::{
     DirectiveNormalization, RenderOptions, SerializeOptions, render_html, render_html_normalized,
     serialize, serialize_with,
 };
-use aozora_spec::{Diagnostic, PairLink, SourceOffset};
-use aozora_syntax::ast::ContainerPair;
+use crate::spec::{Diagnostic, DiagnosticSource, PairLink, SourceOffset, Span};
+use crate::syntax::ast::ContainerPair;
 
 /// Diagnostic policy applied at parse time.
 ///
@@ -41,7 +41,7 @@ pub enum DiagnosticPolicy {
     #[default]
     CollectAll,
     /// Drop diagnostics whose [`Diagnostic::source`] is
-    /// [`DiagnosticSource::Internal`](aozora_spec::DiagnosticSource::Internal).
+    /// [`DiagnosticSource::Internal`].
     /// Library bugs (the four legacy internal sanity checks) are
     /// hidden from the result; CLI / batch consumers that prefer a
     /// terser stream can opt in.
@@ -119,10 +119,10 @@ impl Document {
     /// Apply an in-place text edit and return a fresh [`Document`].
     ///
     /// `span` is a byte range in the *current* source (`self.source`);
-    /// `replacement` is the new text to splice in. The result is a
+    /// `replacement` is the new text to splice in. On success the result is a
     /// new `Document` whose source equals
     /// `self.source[..span.start] + replacement + self.source[span.end..]`.
-    /// `edit` intentionally does a full rebuild: `span` is a raw,
+    /// `try_edit` intentionally does a full rebuild: `span` is a raw,
     /// untrusted byte range, so the arena is reparsed from the spliced
     /// source. Callers that want subtree reuse over the unchanged region
     /// take a [`Region`](crate::Region) through
@@ -131,28 +131,29 @@ impl Document {
     /// The signature is the supported entry point for editor surfaces
     /// implementing `textDocument/didChange`. Even with a full reparse
     /// inside, callers get a stable API today and a transparent
-    /// upgrade path to subtree-aware reuse later.
+    /// upgrade path to subtree-aware reuse later. It is fallible (rather
+    /// than panicking) so a bad span cannot tear down a host running under
+    /// `panic = "abort"` — symmetric with [`Self::edit_region`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `span.start > span.end`, if `span.end > source.len()`,
-    /// or if `span.start` / `span.end` does not lie on a UTF-8
-    /// codepoint boundary in `self.source`. These are programmer
-    /// errors — editor integrations should clamp the span via the
-    /// existing `aozora::Span` constructor's bounds checking.
-    #[must_use]
-    pub fn edit(&self, span: aozora_spec::Span, replacement: &str) -> Self {
+    /// Returns [`SpliceError::InvalidEditSpan`](crate::SpliceError::InvalidEditSpan)
+    /// if `span.start > span.end`, if `span.end > source.len()`, or if
+    /// `span.start` / `span.end` does not lie on a UTF-8 codepoint boundary in
+    /// `self.source`. On error the original document is unchanged.
+    pub fn try_edit(&self, span: Span, replacement: &str) -> Result<Self, crate::SpliceError> {
         let start = span.start as usize;
         let end = span.end as usize;
-        assert!(start <= end, "edit: span start ({start}) > end ({end})");
-        assert!(
-            end <= self.source.len(),
-            "edit: span end ({end}) past source length ({len})",
-            len = self.source.len(),
-        );
-        // Boundary-validate by slicing — `&str` indexing panics on
-        // mid-codepoint, which is the exact error mode we want to
-        // surface to the caller as a precondition violation.
+        if start > end
+            || end > self.source.len()
+            || !self.source.is_char_boundary(start)
+            || !self.source.is_char_boundary(end)
+        {
+            return Err(crate::SpliceError::InvalidEditSpan {
+                span,
+                source_len: self.source.len(),
+            });
+        }
         let prefix = &self.source[..start];
         let suffix = &self.source[end..];
 
@@ -166,9 +167,9 @@ impl Document {
         new_source.push_str(replacement);
         new_source.push_str(suffix);
 
-        ParseOptions::new()
+        Ok(ParseOptions::new()
             .diagnostic_policy(self.diagnostic_policy)
-            .build(new_source.into_boxed_str())
+            .build(new_source.into_boxed_str()))
     }
 
     /// Apply a node-aware minimal-diff edit and return a fresh [`Document`].
@@ -176,7 +177,7 @@ impl Document {
     /// `region` must come from this document's
     /// [`Tree::regions`](crate::Tree::regions) /
     /// [`Tree::region_at`](crate::Tree::region_at); `replacement`
-    /// is the new source for the region's own bytes. Unlike [`Self::edit`] —
+    /// is the new source for the region's own bytes. Unlike [`Self::try_edit`] —
     /// which takes a raw byte span and trusts the caller — this routes through
     /// [`Tree::splice`](crate::Tree::splice): a
     /// [`Coupled`](crate::SpliceSafety::Coupled) region's partner (a forward
@@ -185,7 +186,7 @@ impl Document {
     /// desync.
     ///
     /// The returned document's source is the **sanitized**-then-spliced text:
-    /// byte-identical to [`Self::edit`] on inputs that triggered no sanitize
+    /// byte-identical to [`Self::try_edit`] on inputs that triggered no sanitize
     /// rewrite, and equal to `splice + Document::new` otherwise (a
     /// sanitized-coordinate region cannot be applied to un-sanitized bytes).
     ///
@@ -228,14 +229,14 @@ impl Document {
     /// [`Self::parse`].
     ///
     /// This is the entry point the #237 incremental-reparse LSP consumer holds
-    /// across edits; renderers reach it through `aozora_render`'s owned paths
+    /// across edits; renderers reach it through `crate::render`'s owned paths
     /// (`serialize` / `render_html`).
     #[must_use]
     pub fn lex(&self) -> LexOutput {
         let mut out = lex(&self.source);
         if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
             out.diagnostics
-                .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
+                .retain(|d| d.source() != DiagnosticSource::Internal);
         }
         out
     }
@@ -257,7 +258,7 @@ impl fmt::Debug for Document {
 /// (the usual [`Document::parse`] case) or **borrowed** from a longer-lived
 /// holder (via [`Tree::view`], used by caches such as the LSP `ParseCache`
 /// that retain the owned output and want tree access without re-parsing).
-/// Renderer methods dispatch to `aozora_render`'s owned-AST implementations;
+/// Renderer methods dispatch to `crate::render`'s owned-AST implementations;
 /// the side-table accessors return owned types (`SourceNode` /
 /// `NodeRef`) whose payload text resolves through the output's
 /// `NodeStore`.
@@ -334,7 +335,7 @@ impl<'a> Tree<'a> {
 
     /// Find the node whose source span covers `src_off` — a
     /// sanitized-source byte offset, typed as
-    /// [`aozora_spec::SourceOffset`] so callers cannot
+    /// [`crate::spec::SourceOffset`] so callers cannot
     /// accidentally mix up source and normalized coordinates.
     /// Returns `None` if the offset falls inside a `SpanKind::Plain`
     /// run between Aozora constructs.
@@ -394,7 +395,7 @@ impl<'a> Tree<'a> {
     /// through container bodies use the open/close offsets to slice
     /// the normalized text.
     ///
-    /// Coordinates are [`aozora_spec::NormalizedOffset`] — they index the
+    /// Coordinates are [`crate::spec::NormalizedOffset`] — they index the
     /// PUA-rewritten text, not the original source.
     #[must_use]
     pub fn container_pairs(&self) -> &[ContainerPair] {
@@ -416,8 +417,8 @@ impl<'a> Tree<'a> {
     /// default render never depends on the notation-hygiene catalogue.
     ///
     /// With `directives` not `Off`, verified near-misses (per the single
-    /// `aozora_syntax::lint::canonical_directive` authority — plus, at the
-    /// `Degraded` level, the lossy / judgment `aozora_syntax::degraded`
+    /// `crate::syntax::lint::canonical_directive` authority — plus, at the
+    /// `Degraded` level, the lossy / judgment `crate::syntax::degraded`
     /// reductions — reached transitively through the formatter rewrite) render
     /// as if they were their canonical spelling. This is the opt-in, read-only
     /// "render as if canonical" role of ADR-0022 / ADR-0026: it reuses the
@@ -493,7 +494,8 @@ impl<'a> Tree<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_pipeline::NodeRef;
+    use crate::spec::PairKind;
+    use crate::syntax::ast::NodeRef;
 
     #[test]
     fn document_borrows_source() {
@@ -528,8 +530,8 @@ mod tests {
     fn edit_splices_source_at_span() {
         // Replace "world" with "Aozora" in "hello world!".
         let d = Document::new("hello world!");
-        let span = aozora_spec::Span::new(6, 11);
-        let edited = d.edit(span, "Aozora");
+        let span = Span::new(6, 11);
+        let edited = d.try_edit(span, "Aozora").expect("in-bounds span");
         assert_eq!(edited.source(), "hello Aozora!");
     }
 
@@ -537,11 +539,15 @@ mod tests {
     fn edit_at_start_and_end_boundaries() {
         let d = Document::new("middle");
         // Insert at start (zero-length span at offset 0).
-        let head = d.edit(aozora_spec::Span::new(0, 0), "PRE-");
+        let head = d
+            .try_edit(Span::new(0, 0), "PRE-")
+            .expect("zero-length span at 0");
         assert_eq!(head.source(), "PRE-middle");
         // Append at end (zero-length span at len()).
         let len = u32::try_from(d.source().len()).expect("test source fits u32");
-        let tail = d.edit(aozora_spec::Span::new(len, len), "-POST");
+        let tail = d
+            .try_edit(Span::new(len, len), "-POST")
+            .expect("zero-length span at len");
         assert_eq!(tail.source(), "middle-POST");
     }
 
@@ -555,13 +561,15 @@ mod tests {
         // Replace 《おうめ》 with 《せいばい》.
         let span_start = original.source().find('《').expect("《 present");
         let span_end = original.source().find('》').expect("》 present") + '》'.len_utf8();
-        let edited = original.edit(
-            aozora_spec::Span::new(
-                u32::try_from(span_start).expect("test span fits u32"),
-                u32::try_from(span_end).expect("test span fits u32"),
-            ),
-            "《せいばい》",
-        );
+        let edited = original
+            .try_edit(
+                Span::new(
+                    u32::try_from(span_start).expect("test span fits u32"),
+                    u32::try_from(span_end).expect("test span fits u32"),
+                ),
+                "《せいばい》",
+            )
+            .expect("in-bounds span");
 
         let spliced_source = format!(
             "{prefix}{replacement}{suffix}",
@@ -581,9 +589,41 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "span start")]
     fn edit_rejects_inverted_span() {
-        drop(Document::new("ok").edit(aozora_spec::Span::new(2, 1), ""));
+        let err = Document::new("ok")
+            .try_edit(Span::new(2, 1), "")
+            .expect_err("inverted span must be rejected");
+        assert!(matches!(err, crate::SpliceError::InvalidEditSpan { .. }));
+    }
+
+    #[test]
+    fn edit_rejects_off_boundary_endpoints_independently() {
+        // "あ" is a single 3-byte codepoint, so byte offsets 1 and 2 land
+        // mid-sequence. Each endpoint's codepoint-boundary guard must reject
+        // on its own: a start that lands off a boundary while the end is
+        // valid, and an end that lands off a boundary while the start is
+        // valid. Neither case triggers the ordering (`start > end`) or the
+        // length (`end > len`) guard, so only the endpoint under test is at
+        // fault — exercising each side of the boundary check separately.
+        let d = Document::new("あ");
+
+        // Start alone is off a boundary (end = len, itself a boundary).
+        let bad_start = d
+            .try_edit(Span::new(1, 3), "")
+            .expect_err("off-boundary start must be rejected");
+        assert!(matches!(
+            bad_start,
+            crate::SpliceError::InvalidEditSpan { .. }
+        ));
+
+        // End alone is off a boundary (start = 0, itself a boundary).
+        let bad_end = d
+            .try_edit(Span::new(0, 1), "")
+            .expect_err("off-boundary end must be rejected");
+        assert!(matches!(
+            bad_end,
+            crate::SpliceError::InvalidEditSpan { .. }
+        ));
     }
 
     #[test]
@@ -602,7 +642,7 @@ mod tests {
         let pairs = t.pairs();
         assert_eq!(pairs.len(), 1);
         let link = pairs[0];
-        assert_eq!(link.kind, aozora_spec::PairKind::Ruby);
+        assert_eq!(link.kind, PairKind::Ruby);
         // The open span begins at the `《` byte, the close at the `》` byte.
         let src = t.source();
         let open_byte = src.find('《').expect("source contains 《");
@@ -714,10 +754,10 @@ mod tests {
 
     /// The independent oracle: run the real sanitize stage on `doc` and
     /// assert the parsed tree reproduces it verbatim through both
-    /// surfaces. `sanitize` is reached through the internal
-    /// `aozora-pipeline` crate directly (same path `cst::from_tree` uses).
+    /// surfaces. `sanitize` is reached through the internal lex
+    /// pipeline directly (same path `cst::from_tree` uses).
     fn assert_verbatim_equals_sanitize(doc: &str) {
-        use aozora_pipeline::lexer::sanitize::sanitize;
+        use crate::pipeline::lexer::sanitize::sanitize;
         let expected = sanitize(doc).text;
         let d = Document::new(doc);
         let t = d.parse();
@@ -882,7 +922,7 @@ mod tests {
         );
         assert_eq!(
             diags[0].source(),
-            aozora_spec::DiagnosticSource::Source,
+            DiagnosticSource::Source,
             "retained diagnostic is Source-origin, not Internal",
         );
     }

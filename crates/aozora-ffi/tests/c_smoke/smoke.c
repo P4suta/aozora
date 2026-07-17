@@ -7,10 +7,17 @@
  *
  *   1. aozora_document_new            — construct from bytes
  *   2. aozora_document_to_html        — render HTML
- *   3. aozora_document_diagnostics_json — diagnostic projection
- *   4. aozora_document_diagnostics_text — plain-text diagnostics
- *   5. aozora_bytes_free              — release returned buffers
- *   6. aozora_document_free           — release the document handle
+ *   3. aozora_document_to_source      — round-trip source re-emission
+ *   4. aozora_document_diagnostics_json — diagnostic projection
+ *   5. aozora_document_diagnostics_text — plain-text diagnostics
+ *   6. aozora_document_nodes_json     — source-keyed node projection
+ *   7. aozora_document_pairs_json     — inline open/close pair links
+ *   8. aozora_document_container_pairs_json — block enclosure pairs
+ *   9. aozora_document_gaiji_json     — resolved gaiji references
+ *  10. aozora_document_source_byte_len — owned source buffer length
+ *  11. aozora_slugs_json              — document-independent slug table
+ *  12. aozora_bytes_free              — release returned buffers
+ *  13. aozora_document_free           — release the document handle
  *
  * It also checks the input-size guard: a src_len greater than
  * UINT32_MAX must return SOURCE_TOO_LARGE (-5) instead of driving the
@@ -88,6 +95,72 @@ int main(void) {
                           memcmp(diag.ptr, expected, expected_len) == 0);
     }
     aozora_bytes_free(diag);
+
+    /* 3b. round-trip source — to_source re-emits canonical Aozora
+     *     source. Plain text round-trips to itself. */
+    AozoraBytes source = {NULL, 0, 0};
+    status = aozora_document_to_source(doc, &source);
+    failures += check("aozora_document_to_source returns Ok", status == 0);
+    failures += check("source buffer is non-empty", source.len > 0);
+    char *source_str = (char *)malloc(source.len + 1);
+    memcpy(source_str, source.ptr, source.len);
+    source_str[source.len] = '\0';
+    failures += check("round-trip source contains \"Hello\"",
+                      strstr(source_str, "Hello") != NULL);
+    free(source_str);
+    aozora_bytes_free(source);
+
+    /* 3c. container pairs — envelope-shaped JSON; inline-only input has
+     *     no block enclosures, so the empty envelope. */
+    AozoraBytes cpairs = {NULL, 0, 0};
+    status = aozora_document_container_pairs_json(doc, &cpairs);
+    failures += check("aozora_document_container_pairs_json returns Ok", status == 0);
+    {
+        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
+        size_t expected_len = sizeof(expected) - 1;
+        failures += check("container-pairs JSON is the empty envelope",
+                          cpairs.len == expected_len &&
+                          memcmp(cpairs.ptr, expected, expected_len) == 0);
+    }
+    aozora_bytes_free(cpairs);
+
+    /* 3d. gaiji — no gaiji directive in this source, so the empty
+     *     envelope. */
+    AozoraBytes gaiji = {NULL, 0, 0};
+    status = aozora_document_gaiji_json(doc, &gaiji);
+    failures += check("aozora_document_gaiji_json returns Ok", status == 0);
+    {
+        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
+        size_t expected_len = sizeof(expected) - 1;
+        failures += check("gaiji JSON is the empty envelope",
+                          gaiji.len == expected_len &&
+                          memcmp(gaiji.ptr, expected, expected_len) == 0);
+    }
+    aozora_bytes_free(gaiji);
+
+    /* 3e. source byte length — equals strlen(src) for this ASCII input. */
+    size_t src_len = 0;
+    status = aozora_document_source_byte_len(doc, &src_len);
+    failures += check("aozora_document_source_byte_len returns Ok", status == 0);
+    failures += check("source byte length equals input length",
+                      src_len == strlen(src));
+
+    /* 3f. slug catalogue — document-independent, envelope-shaped, and
+     *     non-empty (the spec ships a populated slug table). */
+    AozoraBytes slugs = {NULL, 0, 0};
+    status = aozora_slugs_json(&slugs);
+    failures += check("aozora_slugs_json returns Ok", status == 0);
+    failures += check("slug catalogue JSON is non-empty", slugs.len > 0);
+    {
+        char *slugs_str = (char *)malloc(slugs.len + 1);
+        memcpy(slugs_str, slugs.ptr, slugs.len);
+        slugs_str[slugs.len] = '\0';
+        failures += check("slug catalogue carries the wire envelope",
+                          strstr(slugs_str, "schemaVersion") != NULL &&
+                          strstr(slugs_str, "data") != NULL);
+        free(slugs_str);
+    }
+    aozora_bytes_free(slugs);
 
     /* 4. free the document */
     aozora_document_free(doc);

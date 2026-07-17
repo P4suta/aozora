@@ -3,5 +3,5 @@
 node_modules/
 out/
 *.vsix
-# Staging dir for the bundled aozora-lsp binary (release-vscode.yml).
+# Staging dir for the bundled `aozora` server binary (release-vscode.yml).
 server/

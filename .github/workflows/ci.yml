@@ -136,7 +136,7 @@ jobs:
           key: msrv
       # Two lanes, because the contract is "every feature a crates.io
       # consumer can turn on" — which the old bare `--all-targets` never
-      # covered (`aozora/schema`, `aozora-syntax/serde`, … went unchecked).
+      # covered (`aozora/schema`, `aozora/cst`, `aozora/pandoc`, … went unchecked).
       #
       # `aozora-extism` is excluded from the --all-features lane and
       # checked on default features instead: it is `publish = false`, and
@@ -282,14 +282,12 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just playground-ci
 
-  # `coverage` runs nextest with DEFAULT features, so aozora-lsp's
-  # integration suites gated on `required-features = ["internals"]` (smoke /
-  # guardian / concurrent_lsp / shuttle / …) are SKIPPED there —
-  # `clippy-strict` compiles them but nothing runs their assertions. This job
-  # runs `-p aozora-lsp --all-features` so those tests actually execute.
-  # Scoped to aozora-lsp (not a blanket `--workspace --all-features`) so it
-  # does not flip on feature flags whose tests need external setup, e.g.
-  # aozora-extism's `host-smoke` wasm artifact (covered by `extism-build`).
+  # The in-process LSP (folded into aozora-cli, WS-2) carries integration
+  # suites (smoke / guardian / concurrent_lsp / shuttle / …). This job runs
+  # `-p aozora-cli --all-features` so they execute. Scoped to aozora-cli (not a
+  # blanket `--workspace --all-features`) so it does not flip on feature flags
+  # whose tests need external setup, e.g. aozora-extism's `host-smoke` wasm
+  # artifact (covered by `extism-build`).
   test-internals:
     needs: [changes, dev-image]
     if: needs.changes.outputs.rust == 'true'
@@ -373,11 +371,16 @@ jobs:
   # lines (cost-bounded) and is skipped on non-Rust PRs (the `needs.changes` /
   # `pull_request` guards below), so docs / CI-only PRs still merge.
   #
-  # KNOWN BLIND SPOT: `--in-diff` runs at the virtual-workspace root and cannot
-  # pass `--features`, so feature-gated product modules (`aozora::json` under
-  # `json`, the `schema_*` fns) are NOT mutated per-PR; the weekly featured
-  # `mutants.yml` matrix is their authoritative sweep. Only runs on
-  # pull_request — `--in-diff` needs the PR base to diff against.
+  # KNOWN BLIND SPOT: `--in-diff` runs at the virtual-workspace root on DEFAULT
+  # features and cannot pass `--features`, so aozora's feature-gated modules
+  # (`pandoc`, `cst`, `query`, `fmt`, `json` — aozora's `default = []`) are
+  # cfg-OFF here: their mutant-killing tests do not even compile, so every
+  # mutant on a changed line inside them is a false "missed". They are
+  # `--exclude`d from the step below and covered report-only by the weekly
+  # featured `mutants.yml` sweep, which builds them with their features on. The
+  # core default-feature surface plus `aozora-ffi` / `aozora-extism` stay fully
+  # blocking here. Only runs on pull_request — `--in-diff` needs the PR base to
+  # diff against.
   mutants-in-diff:
     needs: [changes, dev-image]
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
@@ -400,25 +403,25 @@ jobs:
         run: |
           git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
           echo "diff is $(wc -l < pr.diff) lines"
-      # `--features internals`: aozora-lsp's mutant-killing test binaries are
-      # behind it (`required-features`), so without it a mutant on a line those
-      # tests cover reports as a survivor when the test that kills it did not
-      # run. But aozora-lsp is the ONLY crate defining the feature, so passing
-      # it to a diff that mutates only other crates makes cargo reject it
-      # ("none of the selected packages contains this feature: internals").
-      # List first (a static pass, no build) and add the feature only when
-      # aozora-lsp is among the mutated crates — the one case it is both needed
-      # and valid. The weekly full sweep (`mutants.yml`) ratchets aozora-lsp on
-      # default features against a baseline; this per-diff gate does not read
-      # that baseline, so it judges a changed line by whether a test *can*
-      # catch it.
+      # After the 18→3 collapse the LSP folded into aozora-cli with no feature
+      # gate (its mutant-killing test binaries run on default features), so the
+      # former `--features internals` special-case is gone: every changed line
+      # is judged on default features, as everywhere else in the workspace.
+      #
+      # `--exclude` (a cargo-mutants file glob, distinct from `--exclude-re`,
+      # which filters mutant *names*) drops aozora's feature-gated modules —
+      # cfg-off on default features here, so their mutants are false "missed"
+      # (see KNOWN BLIND SPOT above). It is a CLI-only flag layered over
+      # `mutants.toml`, so the weekly `mutants.yml` sweep (same recipe, no such
+      # flag, features on) still mutates these modules and stays authoritative.
       - name: Mutate the changed lines
-        run: |
-          if just mutants --in-diff pr.diff --list 2>/dev/null | grep -q 'crates/aozora-lsp/'; then
-            just mutants --features internals --in-diff pr.diff
-          else
-            just mutants --in-diff pr.diff
-          fi
+        run: >-
+          just mutants --in-diff pr.diff
+          --exclude 'crates/aozora/src/pandoc/**'
+          --exclude 'crates/aozora/src/cst/**'
+          --exclude 'crates/aozora/src/query/**'
+          --exclude 'crates/aozora/src/fmt.rs'
+          --exclude 'crates/aozora/src/json.rs'
 
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
@@ -690,8 +693,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: cross-aarch64
-      - name: cross test (aarch64-unknown-linux-gnu, aozora-scan)
-        run: cross test --target aarch64-unknown-linux-gnu -p aozora-scan
+      - name: cross test (aarch64-unknown-linux-gnu, aozora)
+        run: cross test --target aarch64-unknown-linux-gnu -p aozora
 
   # wasm32-wasip1 codegen check for the SIMD scanner. Build-only:
   # `cargo test` is structurally impossible on wasm32 because the
@@ -726,8 +729,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm-test
-      - name: cargo build --target wasm32-wasip1 (aozora-scan)
-        run: cargo build --target wasm32-wasip1 -p aozora-scan
+      - name: cargo build --target wasm32-wasip1 (aozora)
+        run: cargo build --target wasm32-wasip1 -p aozora
 
   # Python wheel build + functional test. abi3 (`cp311-abi3`) means ONE
   # wheel per platform loads on every supported CPython; this job builds

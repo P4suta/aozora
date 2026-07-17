@@ -29,8 +29,8 @@ use std::hint::black_box;
 use std::process;
 use std::time::Instant;
 
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
+use aozora::encoding::decode_auto;
+use aozora::unstable::lex;
 /// Size bands in bytes: `[lo, hi)`.
 const BANDS: &[(&str, u64, u64)] = &[
     ("< 50 KiB", 0, 50 * 1024),

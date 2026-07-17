@@ -1,0 +1,27 @@
+---
+source: crates/aozora-cli/src/lsp/snapshots.rs
+expression: semantic_token_view(RUBY_GAIJI)
+---
+[
+    (
+        0,
+        1,
+        2,
+        1,
+        0,
+    ),
+    (
+        0,
+        3,
+        4,
+        2,
+        0,
+    ),
+    (
+        0,
+        6,
+        19,
+        0,
+        0,
+    ),
+]

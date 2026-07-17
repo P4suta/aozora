@@ -28,9 +28,8 @@ use serde_json::{Map, Value};
 use std::fmt::Write as _;
 
 use aozora::json::SCHEMA_VERSION;
-use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
-use aozora_pipeline::{NodeRef, PairKind};
-use aozora_syntax::{NodeKind, RegionFormat};
+use aozora::unstable::{InternalCheckCode, Sentinel};
+use aozora::{DiagnosticSource, NodeKind, NodeRef, PairKind, RegionFormat, Severity};
 
 use crate::TypesArgs;
 use crate::TypesOp;
@@ -111,7 +110,7 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "PairKind",
-        &ts_string_union(&PairKind::ALL, PairKind::as_json_tag),
+        &ts_string_union(PairKind::ALL, PairKind::as_json_tag),
     );
     out.push_str("/** Container kind for `container_pairs` output. */\n");
     push_export_type(

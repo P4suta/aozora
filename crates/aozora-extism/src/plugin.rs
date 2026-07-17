@@ -25,8 +25,8 @@ pub fn to_html(input: String) -> FnResult<String> {
 /// Parse the input source and re-emit it as Aozora source text
 /// (round-trip serialization).
 #[plugin_fn]
-pub fn serialize(input: String) -> FnResult<String> {
-    Ok(logic::render_serialize(input).map_err(Error::msg)?)
+pub fn to_source(input: String) -> FnResult<String> {
+    Ok(logic::render_source(input).map_err(Error::msg)?)
 }
 
 /// Parse the input source and return the diagnostics wire envelope
@@ -55,6 +55,29 @@ pub fn pairs_json(input: String) -> FnResult<String> {
 #[plugin_fn]
 pub fn container_pairs_json(input: String) -> FnResult<String> {
     Ok(logic::render_container_pairs_json(input).map_err(Error::msg)?)
+}
+
+/// Parse the input source and return the resolved `※［＃…］` gaiji
+/// references as a wire envelope.
+#[plugin_fn]
+pub fn gaiji_json(input: String) -> FnResult<String> {
+    Ok(logic::render_gaiji_json(&input).map_err(Error::msg)?)
+}
+
+/// Return the static spec slug catalogue as a wire envelope. Input is
+/// ignored; the same envelope every call, so hosts can cache it. Powers
+/// `［＃…］` annotation completion.
+#[plugin_fn]
+pub fn slugs_json(_input: String) -> FnResult<String> {
+    Ok(logic::slugs_json())
+}
+
+/// Return the parser's channel-aware build version (e.g. `0.5.0`).
+/// Input is ignored; hosts call this to surface the plugin build in a
+/// footer / diagnostics, distinct from the wire `schema_version`.
+#[plugin_fn]
+pub fn version(_input: String) -> FnResult<String> {
+    Ok(logic::version().to_owned())
 }
 
 /// Return the wire-format schema version as a decimal string. Input

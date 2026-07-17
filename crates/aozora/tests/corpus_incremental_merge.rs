@@ -13,9 +13,14 @@
 //!
 //! Skipped silently when `AOZORA_CORPUS_ROOT` is unset; never hard-fails on
 //! a missing corpus (mirrors `corpus_sweep`).
+//!
+//! The incremental engine is `unstable-internals`-gated (`#[doc(hidden)]`, no
+//! semver contract); this whole differential gate compiles only with that
+//! feature on.
+#![cfg(feature = "unstable-internals")]
 
+use aozora::encoding::decode_auto;
 use aozora::{DiagBaseRef, Diagnostic, Document, PieceSeq, reparse_incremental_diagnostics_only};
-use aozora_encoding::decode_auto;
 
 /// #237 Tier 1: the **diagnostics-only** incremental engine
 /// ([`aozora::reparse_incremental_diagnostics_only`]) — the LSP's per-keystroke

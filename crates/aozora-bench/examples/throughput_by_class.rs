@@ -64,13 +64,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::lex;
 use aozora_bench::{
     SizeBand, SizeBandedCorpus, archive_size_bands, corpus_size_bands_from_decoded,
     parallel_size_bands,
 };
 use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
 use rayon::prelude::*;
 
 // One Arena per worker thread, reused across the docs that worker

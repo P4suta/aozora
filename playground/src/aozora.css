@@ -1,7 +1,7 @@
 /* Playground preview shell + theme bridge.
  *
  * 記法そのものの見た目（`.aozora-*`）は、レンダラが所有する正準スタイルシート
- * crates/aozora-render/assets/aozora-notation.css が単一の権威。main.tsx が
+ * crates/aozora/assets/aozora-notation.css が単一の権威。main.tsx が
  * それを import し、ここでは (1) プレビュー枠のレイアウト／スクロール、
  * (2) 正準シートの `--aozora-*` フックを Playground テーマ変数へ橋渡し、だけを行う。
  * これで VS Code プレビュー等と記法スタイルが二重管理にならず drift しない。 */

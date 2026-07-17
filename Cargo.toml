@@ -1,33 +1,24 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/aozora-spec",
-  "crates/aozora-syntax",
-  "crates/aozora-encoding",
-  "crates/aozora-corpus",
-  "crates/aozora-cli",
-  "crates/aozora-proptest",
-  "crates/aozora-veb",
-  "crates/aozora-scan",
-  "crates/aozora-conformance",
-  "crates/aozora-pipeline",
-  "crates/aozora-render",
+  # Published: the Rust library front door, the CLI+LSP tool binary, and the
+  # tree-sitter grammar. The former building-block crates (spec / syntax /
+  # scan / encoding / veb / pipeline / render / fmt / pandoc / cst / query)
+  # are folded into `aozora`; lsp / i18n / buildstamp fold into `aozora-cli`.
   "crates/aozora",
+  "crates/aozora-cli",
+  "crates/tree-sitter-aozora",
+  # Dev-only / distribution (publish = false or a separate channel).
+  "crates/aozora-corpus",
+  "crates/aozora-proptest",
+  "crates/aozora-conformance",
   "crates/aozora-ffi",
   "crates/aozora-wasm",
   "crates/aozora-extism",
   "crates/aozora-py",
   "crates/aozora-bench",
   "crates/aozora-xtask",
-  "crates/aozora-buildstamp",
   "crates/aozora-trace",
-  "crates/aozora-pandoc",
-  "crates/aozora-cst",
-  "crates/aozora-query",
-  "crates/aozora-fmt",
-  "crates/aozora-i18n",
-  "crates/tree-sitter-aozora",
-  "crates/aozora-lsp",
 ]
 # `aozora-go` is a standalone Go module (host SDK) with no Cargo manifest.
 # Listed in `exclude` so `cargo` ignores it during workspace globbing even
@@ -147,21 +138,12 @@ redundant_pub_crate = "allow"
 large_enum_variant = "allow"
 
 [workspace.dependencies]
-# Internal crates — paths within this workspace. These carry a `version`
-# so the umbrella `aozora` (and the other publishable crates) can depend
-# on them on crates.io. NOTE: internal crates used only as a
-# *dev-dependency* are declared path-only (no `version`) at their use
-# sites — NOT via `workspace = true` — so cargo strips them from the
-# published manifest. A versioned internal dev-dep must already exist on
-# crates.io at publish time, which would block the first publish and
-# create unpublishable dev-dep cycles (e.g. aozora-pipeline ↔ aozora-render).
-aozora-spec = { version = "0.4.1", path = "crates/aozora-spec" }
-aozora-syntax = { version = "0.4.1", path = "crates/aozora-syntax" }
-aozora-veb = { version = "0.4.1", path = "crates/aozora-veb" }
-aozora-scan = { version = "0.4.1", path = "crates/aozora-scan" }
-aozora-pipeline = { version = "0.4.1", path = "crates/aozora-pipeline" }
-aozora-render = { version = "0.4.1", path = "crates/aozora-render" }
+# Published crates — carry a `version` so they can depend on each other on
+# crates.io. `aozora-cli` depends on `aozora` + `tree-sitter-aozora` (all three
+# published), so the published set is closed. The former building-block crates
+# are folded into `aozora`, so they no longer appear here.
 aozora = { version = "0.4.1", path = "crates/aozora" }
+tree-sitter-aozora = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
 # publish=false → path-only (no crates.io version): a version pin here would go
 # stale on the workspace-lockstep bump (release-plz never releases it) and break
 # `cargo update`, and force a non-existent registry version onto consumers.
@@ -179,24 +161,14 @@ smallvec = "1.15"
 # SIMD-friendly substring scan
 memchr = "2.8"
 
-# Multi-pattern search: the trigger-trigram scan automaton in `aozora-scan`
-# and the annotation-keyword body dispatcher in `aozora-pipeline`
-# (`classify::directive::build_body_dispatcher`). `default-features = false`
+# Multi-pattern search: the trigger-trigram scan automaton (`aozora::scan`)
+# and the annotation-keyword body dispatcher (`aozora::pipeline`
+# `classify::directive::build_body_dispatcher`). `default-features = false`
 # at the workspace level so each consumer opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
-aozora-encoding = { version = "0.4.1", path = "crates/aozora-encoding" }
 # publish=false → path-only (see aozora-trace above).
 aozora-corpus = { path = "crates/aozora-corpus" }
-aozora-pandoc = { version = "0.4.1", path = "crates/aozora-pandoc" }
-aozora-cst = { version = "0.4.1", path = "crates/aozora-cst" }
-aozora-query = { version = "0.4.1", path = "crates/aozora-query" }
-aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
-aozora-fmt = { version = "0.4.1", path = "crates/aozora-fmt" }
-aozora-i18n = { version = "0.4.1", path = "crates/aozora-i18n" }
-# Build-identity leaf: depended on ONLY by the binaries (aozora-cli / aozora-lsp)
-# so its git-probing build.rs never invalidates the hot library crates' caches.
-aozora-buildstamp = { version = "0.4.1", path = "crates/aozora-buildstamp" }
-tree-sitter-aozora = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
+aozora-proptest = { path = "crates/aozora-proptest" }
 
 # Error handling
 thiserror = "2.0.18"
@@ -237,10 +209,10 @@ encoding_rs = "0.8.35"
 phf = { version = "0.14", features = ["macros"] }
 
 # Filesystem walking — used by aozora-corpus to iterate test corpora and by
-# aozora-fmt to recurse directories
+# the folded formatter batch engine (aozora-cli `src/fmt/`) to recurse directories
 walkdir = "2.5"
 
-# aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
+# aozora-cli formatter (`src/fmt/`): coloured unified diff for `--diff`, TTY-aware stdout
 similar = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
 anstyle = "1.0"
@@ -256,7 +228,7 @@ anstyle = "1.0"
 # subtree; `console` already measures East-Asian-Wide filenames correctly.
 indicatif = "0.18"
 
-# aozora-lsp runtime (language server: tower-lsp over tokio stdio)
+# In-process LSP runtime (aozora-cli `src/lsp/`: tower-lsp over tokio stdio)
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
 dashmap = "6"
@@ -268,9 +240,9 @@ ropey = { version = "1.6", default-features = false, features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 hdrhistogram = { version = "7.5", default-features = false } # constant-memory percentile metrics
-shuttle = "0.9" # randomized concurrency model checker (aozora-lsp shuttle-tests feature)
+shuttle = "0.9" # randomized concurrency model checker (aozora-cli LSP shuttle tests)
 
-# Lossless syntax tree backbone for `aozora-cst` (Phase N1).
+# Lossless syntax tree backbone for `aozora`'s `cst` feature (Phase N1).
 # rowan over cstree: 86 reverse deps vs ~3, maintained by the
 # rust-analyzer team, established as the rust-language-tooling
 # default. The bumpalo-arena vs Arc-tree dual-allocator overhead is
@@ -278,7 +250,7 @@ shuttle = "0.9" # randomized concurrency model checker (aozora-lsp shuttle-tests
 # editor-grade lossless surface.
 rowan = "0.16"
 
-# Pandoc AST serde for the Phase M1 `aozora-pandoc` integration.
+# Pandoc AST serde for `aozora`'s `pandoc` feature (Phase M1).
 # `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs
 # ~900/mo), more recently updated, and explicitly designed for
 # writing filters. Both crates serialize the same JSON ABI Pandoc
@@ -394,20 +366,20 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 crossterm = "0.29"
 tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
 
-# Localization (aozora-i18n) — the Project Fluent stack, the de-facto Rust
+# Localization (aozora-cli `src/i18n.rs`) — the Project Fluent stack, the de-facto Rust
 # i18n standard (Mozilla's localization system, the engine behind Firefox).
 # Message catalogs are external `.ftl` files so translators never touch Rust
 # and a new language is one file. `fluent-bundle` is the core runtime (FTL
 # parse + message formatting); `unic-langid` models BCP-47 language
 # identifiers; `fluent-langneg` negotiates a requested locale against the
 # available catalogs. The CLI and LSP share the one catalog. All are pinned
-# per ADR-0017 and consumed only by aozora-i18n (no `langid!` macro — it
+# per ADR-0017 and consumed only by aozora-cli's i18n module (no `langid!` macro — it
 # expands to `unsafe`, which the workspace forbids — so no `macros` feature).
 fluent-bundle = "0.16"
 # Fluent's own parser/AST crate. `FluentResource::entries()` hands back
 # `fluent_syntax::ast::Entry`, and fluent-bundle re-exports neither the module
 # nor the type, so reading a catalog's message ids back out of the parsed
-# resource needs it named directly (aozora-i18n, test-only). Must track the
+# resource needs it named directly (aozora-cli i18n, test-only). Must track the
 # version fluent-bundle itself depends on — 0.16 wants 0.12 — or `ast::Entry`
 # resolves to two unrelated types.
 fluent-syntax = "0.12"
@@ -442,11 +414,11 @@ iai-callgrind = "0.16.1"
 
 [profile.release]
 # `lto = "fat"` (vs the prior "thin") so cross-crate function calls
-# in the lex pipeline (aozora-render → aozora → aozora-lex →
-# aozora-lexer phase functions) inline across the boundary. Measured
+# in the folded lex pipeline (aozora::render → aozora::pipeline →
+# aozora::scan phase functions) inline across the boundary. Measured
 # 30%+ wall-clock regression on the corpus sweep with thin LTO once
-# the lex orchestrator was split out of aozora-lexer's monolithic
-# `lex()`; fat LTO recovers it. The compile-time cost is acceptable
+# the lex orchestrator was split out of the monolithic `lex()`; fat LTO
+# recovers it. The compile-time cost is acceptable
 # because the workspace already pins `codegen-units = 1` for release.
 lto = "fat"
 codegen-units = 1
@@ -455,7 +427,7 @@ panic = "abort"
 opt-level = 3
 
 # Distribution profile for the binary bundled in the VS Code extension's .vsix
-# (`aozora-lsp`, built by `release-vscode.yml`). Optimises for size over speed.
+# (the `aozora` CLI binary's in-process LSP, built by `release-vscode.yml`). Optimises for size over speed.
 # Overrides `panic = "unwind"`: a language server is a long-lived daemon, so a
 # panic in one request handler should unwind (tower-lsp keeps serving) rather
 # than abort the whole process and drop the editor's language features.

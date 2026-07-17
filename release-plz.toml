@@ -49,26 +49,13 @@ name = "aozora"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 changelog_update = true
-# Fold every other publishable crate's commits into the one root changelog
+# Fold the other two published crates' commits into the one root changelog
 # section (each commit is owned by exactly one crate by path, so this is the
-# union of all commits, with none counted twice).
+# union of all commits, with none counted twice). The former building-block
+# crates are folded into `aozora`, so their commits already land on this
+# package by path.
 changelog_include = [
-  "aozora-buildstamp",
   "aozora-cli",
-  "aozora-cst",
-  "aozora-encoding",
-  "aozora-fmt",
-  "aozora-i18n",
-  "aozora-lsp",
-  "aozora-pandoc",
-  "aozora-pipeline",
-  "aozora-proptest",
-  "aozora-query",
-  "aozora-render",
-  "aozora-scan",
-  "aozora-spec",
-  "aozora-syntax",
-  "aozora-veb",
   "tree-sitter-aozora",
 ]
 

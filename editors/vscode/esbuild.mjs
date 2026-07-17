@@ -55,7 +55,7 @@ const baseConfig = {
   // version.
   external: ["vscode"],
   // Inline the renderer's canonical notation stylesheet
-  // (crates/aozora-render/assets/aozora-notation.css) as a string at
+  // (crates/aozora/assets/aozora-notation.css) as a string at
   // build time, so the preview + HTML export share one source of truth
   // instead of hand-rolling `.aozora-*` CSS (which had drifted to dead
   // class names). The `.vsix` ships the inlined copy — no asset file.

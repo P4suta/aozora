@@ -12,7 +12,7 @@ import { Annotation, EditorSelection, EditorState, type ChangeSpec } from '@code
  *
  * `(` / `)` は地の文の半角丸括弧として残すケースが多い（青空文庫
  * ソース内でも頻出）ので変換対象外。リポジトリ内 LSP の
- * `crates/aozora-lsp/src/on_type_formatting.rs` とも揃えている。
+ * `crates/aozora-cli/src/lsp/on_type_formatting.rs` とも揃えている。
  */
 interface ReplacementSpec {
   /** 挿入文字列（半角 1 文字の置換先）。 */

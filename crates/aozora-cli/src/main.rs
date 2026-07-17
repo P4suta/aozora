@@ -48,10 +48,9 @@
 //!   and terminal colour capabilities.
 //!
 //! Tooling:
-//! - `aozora lsp [ARGS…]` — locate the `aozora-lsp` language-server
-//!   daemon and hand off to it (a git-`<x>`-style exec-delegate),
-//!   forwarding every argument (e.g. `--stdio`) untouched. The CLI
-//!   bundles no LSP machinery of its own.
+//! - `aozora lsp [--stdio]` — run the aozora language server in-process,
+//!   speaking LSP over stdio. `--stdio` is accepted (and ignored) for
+//!   editor compatibility.
 //! - `aozora completions <shell>` — print a shell completion script
 //!   (bash / zsh / fish / powershell / elvish / nushell), generated
 //!   from the live command tree.
@@ -71,11 +70,14 @@
 )]
 #![forbid(unsafe_code)]
 
+mod buildstamp;
 mod color;
 mod completions;
 mod config;
 mod diagnostics_render;
 mod doctor;
+mod fmt;
+mod i18n;
 mod init;
 mod input;
 mod introspect;
@@ -94,15 +96,16 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
+use aozora::pandoc::to_pandoc;
 use aozora::{
     DiagnosticSource, Document, json,
     render::{DirectiveNormalization, RenderOptions, SerializeOptions},
 };
-// The formatter crate owns both the source-encoding value-enum (so both
-// frontends share one decoder) and the colour-policy enum; re-exported
+// The formatter crate owns both the source-encoding value-enum (so every
+// subcommand shares one decoder) and the colour-policy enum; re-exported
 // crate-wide so `config` can name them.
-pub(crate) use aozora_fmt::{ColorChoice, Encoding};
-use aozora_i18n::{self as i18n, LanguageIdentifier};
+pub(crate) use crate::fmt::{ColorChoice, Encoding};
+use crate::i18n::LanguageIdentifier;
 
 use anyhow::{Context, Result};
 use clap::builder::PossibleValue;
@@ -166,7 +169,7 @@ Introspection:
 Setup & tooling:
   init         Scaffold a new project (`.aozora.toml` + a sample document)
   doctor       Runtime self-check — config, PATH tools, terminal capabilities
-  lsp          Delegate to the aozora-lsp language server (forwards --stdio / …)
+  lsp          Run the aozora language server in-process (LSP over stdio)
   completions  Print a shell completion script (bash / zsh / fish / …)
 
 Options:
@@ -176,7 +179,7 @@ Options:
 #[command(
     name = "aozora",
     about = "Aozora Bunko notation parser CLI",
-    version = aozora_buildstamp::VERSION,
+    version = crate::buildstamp::VERSION,
     propagate_version = true,
     styles = HELP_STYLES,
     help_template = HELP_TEMPLATE,
@@ -264,8 +267,8 @@ enum Command {
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
     /// Run an end-user runtime self-check: the discovered `.aozora.toml` and
-    /// the effective settings (with each value's source), whether `pandoc` and
-    /// `aozora-lsp` are on `PATH`, and the terminal's colour capabilities.
+    /// the effective settings (with each value's source), whether `pandoc` is
+    /// on `PATH`, and the terminal's colour capabilities.
     /// Exits 0 when all-green, 1 on a blocking problem (a malformed config).
     /// The runtime counterpart to the contributor-facing `just doctor`.
     Doctor,
@@ -290,11 +293,10 @@ enum Command {
     /// `--watch`. `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the
     /// preview view, `Ctrl-Q` quits. An optional `[FILE]` opens for editing.
     Tui(TuiArgs),
-    /// Delegate to the `aozora-lsp` language-server daemon, forwarding every
-    /// argument (e.g. `--stdio`) verbatim — a git-`<x>`-style exec-delegate.
-    /// The CLI bundles no LSP machinery of its own; it locates `aozora-lsp` on
-    /// `PATH` (or next to this binary) and hands the process over to it. When
-    /// the daemon is not installed it prints an actionable hint and exits 2.
+    /// Run the aozora language server in-process, speaking LSP over stdio
+    /// until the client disconnects. `--stdio` is accepted (and ignored) for
+    /// editor compatibility; stdout carries the JSON-RPC wire protocol and logs
+    /// go to stderr.
     Lsp(LspArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
     /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
@@ -310,7 +312,7 @@ enum Command {
 
 /// Where to read a single document and how to decode it — the input source
 /// shared by the FILE-taking document subcommands (check / render / inspect /
-/// pandoc). `fmt` reads many PATHs, so it uses `aozora_fmt::FmtArgs` instead.
+/// pandoc). `fmt` reads many PATHs, so it uses `crate::fmt::FmtArgs` instead.
 #[derive(Debug, Parser)]
 struct InputArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
@@ -428,16 +430,14 @@ struct LintArgs {
     fix: bool,
 }
 
-/// `aozora fmt` — the standalone formatter's full surface (positional PATHs,
-/// `--check` / `--write` / `--diff` / `--list` / `--json` / `--fix` /
-/// `-E/--encoding`), backed by the one `aozora-fmt` engine, plus the CLI's
-/// cross-cutting `--config` / `--timing` / `--watch`. Both frontends share the
-/// single `aozora_fmt::FmtArgs` definition, so the canonical form and the flag
-/// vocabulary can never drift between `aozora fmt` and `aozora-fmt`.
+/// `aozora fmt` — the formatter's full surface (positional PATHs, `--check` /
+/// `--write` / `--diff` / `--list` / `--json` / `--fix` / `-E/--encoding`),
+/// backed by the shared `crate::fmt` engine, plus the CLI's cross-cutting
+/// `--config` / `--timing` / `--watch`.
 #[derive(Debug, Parser)]
 struct FmtCmd {
     #[command(flatten)]
-    fmt: aozora_fmt::FmtArgs,
+    fmt: fmt::FmtArgs,
 
     #[command(flatten)]
     cross: CrossCutArgs,
@@ -748,9 +748,9 @@ enum ErrDisposition {
 /// Classify a top-level `err` into its [`ErrDisposition`]. Broken pipe wins over
 /// oversize wins over the generic failure, matching `main`'s arm order.
 fn classify_err(err: &anyhow::Error) -> ErrDisposition {
-    if aozora_fmt::is_broken_pipe(err) {
+    if fmt::is_broken_pipe(err) {
         ErrDisposition::SilentSuccess
-    } else if aozora_fmt::is_oversize_input(err) {
+    } else if fmt::is_oversize_input(err) {
         ErrDisposition::Usage
     } else {
         ErrDisposition::Failure
@@ -902,11 +902,9 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
     if path.as_os_str() == "-" {
         anyhow::bail!("lint --fix needs a file path; it cannot rewrite stdin");
     }
-    let opts = SerializeOptions {
-        directives: DirectiveNormalization::Canonical,
-    };
-    let fmt = aozora_fmt::read_and_format(path, opts, encoding)?;
-    aozora_fmt::write_back(path, &fmt, opts)?;
+    let opts = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
+    let fmt = fmt::read_and_format(path, opts, encoding)?;
+    fmt::write_back(path, &fmt, opts)?;
 
     // Re-lint the written form: the Tier1 autofix resolves every flagged
     // near-miss, so this is normally empty, but reporting the residue keeps
@@ -944,10 +942,8 @@ fn run_fmt(
 ) -> Result<ExitCode> {
     // Anti-hang guard: fmt reading an interactive TTY with no file would block
     // forever. `resolve` reports whether the paths degrade to stdin.
-    if matches!(
-        aozora_fmt::resolve(args.fmt.paths()),
-        Ok(aozora_fmt::Input::Stdin)
-    ) && let Some(code) = input::guard_stdin(Path::new("-"), "fmt", lang)
+    if matches!(fmt::resolve(args.fmt.paths()), Ok(fmt::Input::Stdin))
+        && let Some(code) = input::guard_stdin(Path::new("-"), "fmt", lang)
     {
         return Ok(code);
     }
@@ -989,8 +985,7 @@ fn run_fmt_once(
     lang: &LanguageIdentifier,
 ) -> Result<ExitCode> {
     // Fold `.aozora.toml` into the effective encoding (flag/env > config >
-    // auto), then hand off to the single shared engine — the same code the
-    // standalone `aozora-fmt` binary runs, so behaviour can never diverge.
+    // auto), then hand off to the shared formatter engine.
     let cwd = env::current_dir().context("failed to read the working directory")?;
     let cfg = config::ConfigFile::resolve(args.cross.config.as_deref(), &cwd)?;
     let encoding = args.fmt.encoding().or(cfg.encoding).unwrap_or_default();
@@ -998,14 +993,14 @@ fn run_fmt_once(
     // The presentation policy: `--color` drives the `--diff` hunks, while
     // `--quiet` and the resolved message language govern the TTY-gated
     // directory-fmt progress bar and localized summary on stderr.
-    let presentation = aozora_fmt::Presentation {
+    let presentation = fmt::Presentation {
         color,
         quiet,
         lang: lang.clone(),
     };
     let mut timer = Timer::new(args.cross.timing);
     let code = timer.measure("format", || {
-        aozora_fmt::run_engine(&args.fmt, encoding, "aozora fmt", &presentation)
+        fmt::run_engine(&args.fmt, encoding, "aozora fmt", &presentation)
     });
     timer.report()?;
     Ok(code)
@@ -1025,17 +1020,15 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
-    let opts = RenderOptions {
-        // --degraded implies --normalize and adds Tier2; --normalize alone is
-        // Tier1; neither is the byte-identical default.
-        directives: if args.degraded {
-            DirectiveNormalization::Degraded
-        } else if args.normalize {
-            DirectiveNormalization::Canonical
-        } else {
-            DirectiveNormalization::Off
-        },
-    };
+    // --degraded implies --normalize and adds Tier2; --normalize alone is
+    // Tier1; neither is the byte-identical default.
+    let opts = RenderOptions::default().directives(if args.degraded {
+        DirectiveNormalization::Degraded
+    } else if args.normalize {
+        DirectiveNormalization::Canonical
+    } else {
+        DirectiveNormalization::Off
+    });
     let html = timer.measure("render", || tree.to_html_with(opts));
     let mut stdout = io::stdout().lock();
     stdout
@@ -1105,9 +1098,7 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let doc = Document::new(source);
     let owned = timer.measure("parse", || doc.lex());
     let json = timer
-        .measure("pandoc", || {
-            serde_json::to_string(&aozora_pandoc::to_pandoc(&owned))
-        })
+        .measure("pandoc", || serde_json::to_string(&to_pandoc(&owned)))
         .context("serialize Pandoc AST")?;
     timer.report()?;
 
@@ -1154,16 +1145,16 @@ fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
         "reading and decoding input"
     );
     // The formatter crate owns both the guarded readers and the decoder, so
-    // `check`/`render`/`inspect`/`pandoc` and both `fmt` frontends read and
+    // `check`/`render`/`inspect`/`pandoc` and `fmt` read and
     // resolve bytes identically — including the oversize-input rejection
     // (before the read for files, mid-read for stdin, and after decode for
     // Shift_JIS → UTF-8 expansion).
     let raw = if path.as_os_str() == "-" {
-        aozora_fmt::read_stdin()?
+        fmt::read_stdin()?
     } else {
-        aozora_fmt::read_file(path)?
+        fmt::read_file(path)?
     };
-    aozora_fmt::decode(&raw, encoding)
+    fmt::decode(&raw, encoding)
 }
 
 fn display_path(path: &Path) -> String {
@@ -1190,8 +1181,8 @@ mod tests {
     fn classify_err_maps_oversize_input_to_usage() {
         // is_broken_pipe is false, is_oversize_input true -> Usage (exit 2).
         // Forcing the oversize guard false would route this to Failure instead.
-        let err = anyhow::Error::new(aozora_fmt::OversizeInput {
-            bytes: aozora_fmt::MAX_SOURCE_BYTES + 1,
+        let err = anyhow::Error::new(fmt::OversizeInput {
+            bytes: fmt::MAX_SOURCE_BYTES + 1,
         });
         assert_eq!(classify_err(&err), ErrDisposition::Usage);
     }

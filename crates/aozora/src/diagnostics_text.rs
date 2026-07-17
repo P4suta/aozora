@@ -14,7 +14,7 @@
 
 use std::fmt::{self, Write as _};
 
-use aozora_pipeline::lexer::sanitize;
+use crate::pipeline::lexer::sanitize;
 
 use crate::Diagnostic;
 

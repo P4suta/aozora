@@ -2,7 +2,7 @@
 //!
 //! Requires the `aozora-pipeline/classify-instrument` feature (enforced via
 //! `required-features` in `aozora-bench/Cargo.toml`). When the feature
-//! is on, each recogniser entry inside [`aozora_pipeline::lexer::classify`](mod@aozora_pipeline::lexer::classify)
+//! is on, each recogniser entry inside `aozora::unstable::classify`
 //! emits an [`instrumentation::SubsystemGuard`] that records elapsed
 //! nanoseconds into a thread-local table. This probe drains the table
 //! per document, accumulates totals across the corpus, and reports
@@ -47,10 +47,10 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
+use aozora::instrumentation::{Subsystem, TimingTable};
+use aozora::unstable::lex;
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
-use aozora_pipeline::lexer::instrumentation::{Subsystem, TimingTable};
 const NS_PER_MS: f64 = 1_000_000.0;
 
 #[derive(Debug, Default, Clone)]

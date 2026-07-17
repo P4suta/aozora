@@ -13,7 +13,7 @@
 // become compile errors instead of "command not found at runtime".
 //
 // The LSP `code_action` path in
-// `crates/aozora-lsp/src/code_actions.rs` mirrors these shapes for
+// `crates/aozora-cli/src/lsp/code_actions.rs` mirrors these shapes for
 // non-VS Code clients (helix, neovim).
 
 import {

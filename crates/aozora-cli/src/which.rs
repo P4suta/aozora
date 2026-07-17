@@ -1,11 +1,8 @@
 //! A hand-rolled `which`: locate an executable on `PATH` (or in a single
 //! directory) without pulling in a dependency for one small probe.
 //!
-//! Two consumers share it: `doctor` reports whether `pandoc` / `aozora-lsp`
-//! are reachable, and `lsp` resolves the `aozora-lsp` daemon it delegates to
-//! (on `PATH`, else beside the running executable). Keeping the search in one
-//! place means both agree on what "executable" means — the exec-bit check on
-//! Unix and the `PATHEXT` expansion on Windows.
+//! `doctor` uses it to report whether `pandoc` is reachable on `PATH` — the
+//! exec-bit check on Unix and the `PATHEXT` expansion on Windows.
 
 use std::env;
 use std::ffi::OsStr;

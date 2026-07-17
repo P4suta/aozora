@@ -6,7 +6,7 @@ import { bootstrapLang } from './i18n';
 import './styles.css';
 // レンダラ所有の正準記法スタイルシート（単一の権威）。テーマ橋渡しと枠の
 // レイアウトは続く aozora.css が上書きする。
-import '../../crates/aozora-render/assets/aozora-notation.css';
+import '../../crates/aozora/assets/aozora-notation.css';
 import './aozora.css';
 
 bootstrapTheme();

@@ -19,8 +19,8 @@
 //! invariant to the full 青空文庫 corpus. Skipped silently when
 //! `AOZORA_CORPUS_ROOT` is unset; never hard-fails on missing corpus.
 
+use aozora::encoding::decode_auto;
 use aozora::{CoupledKind, Document, Region, RegionRole, SpliceSafety};
-use aozora_encoding::decode_auto;
 
 /// Cap the collected failures so a systemic regression does not produce
 /// a multi-megabyte assertion message.

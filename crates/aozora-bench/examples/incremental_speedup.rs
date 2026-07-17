@@ -44,8 +44,8 @@ use std::hint::black_box;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
 use aozora::{DiagBaseRef, Document, PieceSeq, reparse_incremental_diagnostics_only};
-use aozora_encoding::decode_auto;
 
 /// Size bands in bytes (sanitized length): `[lo, hi)`.
 const BANDS: &[(&str, u64, u64)] = &[
