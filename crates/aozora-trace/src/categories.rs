@@ -29,8 +29,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         "scan",
         &[
             r"aho_corasick::packed",
-            r"aozora_scan::backends",
-            r"aozora_scan::naive",
+            r"aozora::scan",
             // AVX2 SIMD primitives only used inside Teddy / packed
             // (the production scanner). Attribute to the caller.
             r"core::core_arch::x86_64::avx::_mm256_extract",
@@ -42,17 +41,17 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"core::core_arch::x86::avx2::_mm256_alignr",
         ],
     ),
-    ("tokenize", &[r"aozora_pipeline::lexer::tokenize"]),
-    ("sanitize", &[r"aozora_pipeline::lexer::sanitize"]),
-    ("pair", &[r"aozora_pipeline::lexer::pair"]),
+    ("tokenize", &[r"aozora::pipeline::lexer::tokenize"]),
+    ("sanitize", &[r"aozora::pipeline::lexer::sanitize"]),
+    ("pair", &[r"aozora::pipeline::lexer::pair"]),
     (
         "classify",
         &[
-            r"aozora_pipeline::lexer::classify",
-            r"aozora_pipeline::lexer::recognise",
+            r"aozora::pipeline::lexer::classify",
+            r"aozora::pipeline::lexer::recognise",
         ],
     ),
-    ("intern", &[r"aozora_syntax::ast::intern", r"Interner"]),
+    ("intern", &[r"aozora::syntax::ast::intern", r"Interner"]),
     (
         "memchr_scan",
         &[
@@ -66,7 +65,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         "corpus_load_sjis",
         &[
             r"encoding_rs",
-            r"aozora_encoding",
+            r"aozora::encoding",
             r"shift_jis",
             r"Utf8Bmp",
             r"Utf8Destination",
@@ -75,7 +74,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     ("corpus_walk", &[r"aozora_corpus", r"walkdir"]),
     (
         "pipeline_orchestration",
-        &[r"aozora_pipeline::pipeline", r"run_to_completion"],
+        &[r"aozora::pipeline::state_machine", r"run_to_completion"],
     ),
     (
         "hashing",
@@ -183,7 +182,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"^__libc_write",
         ],
     ),
-    ("rendering", &[r"aozora_render"]),
+    ("rendering", &[r"aozora::render"]),
     // Generic helpers that can't be attributed to a specific stage
     // because the same primitive is called from many places. Useful
     // to surface as a single bucket so they don't drown in `unknown`.
@@ -303,7 +302,7 @@ impl RollupConfig {
     /// ```toml
     /// [[categories]]
     /// name = "scan"
-    /// patterns = ["aho_corasick::packed::teddy", "aozora_scan"]
+    /// patterns = ["aho_corasick::packed::teddy", "aozora::scan"]
     ///
     /// [[categories]]
     /// name = "..."

@@ -53,13 +53,15 @@ use std::time::Instant;
 
 use std::cell::RefCell;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::Allocator;
+use aozora::unstable::classify::{ClassifiedSpan, classify};
+use aozora::unstable::lex;
+use aozora::unstable::pair::{PairEvent, pair};
+use aozora::unstable::sanitize::sanitize;
+use aozora::unstable::token::Token;
+use aozora::unstable::tokenize;
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
-use aozora_pipeline::lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
-use aozora_syntax::alloc::Allocator;
 use rayon::prelude::*;
 
 // One arena per worker thread per measurement role. Reused across

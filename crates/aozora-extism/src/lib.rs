@@ -117,7 +117,7 @@ mod logic {
     ///
     /// `Err` when the source exceeds the parser's span limit (see
     /// [`guard_len`]).
-    pub(crate) fn render_serialize(source: String) -> Result<String, &'static str> {
+    pub(crate) fn render_source(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         Ok(Document::new(source).parse().to_source())
     }
@@ -176,6 +176,33 @@ mod logic {
         Ok(json::container_pairs(&doc.parse()))
     }
 
+    /// Parse `source` and serialize its resolved `※［＃…］` gaiji
+    /// references through the shared [`aozora::json`] authority.
+    ///
+    /// # Errors
+    ///
+    /// `Err` when the source exceeds the parser's span limit (see
+    /// [`guard_len`]).
+    pub(crate) fn render_gaiji_json(source: &str) -> Result<String, &'static str> {
+        guard_len(source.len())?;
+        Ok(json::gaiji(source))
+    }
+
+    /// Serialize the static spec slug catalogue through the shared
+    /// [`aozora::json`] authority. Input-independent — the same envelope
+    /// every call — so hosts can cache it. Powers `［＃…］` completion.
+    pub(crate) fn slugs_json() -> String {
+        json::slugs()
+    }
+
+    /// The parser's channel-aware build version (e.g. `0.5.0`,
+    /// `0.5.0-dev+g3672e3f`). Single authority: the
+    /// `AOZORA_VERSION_STRING` this crate's `build.rs` injects — never a
+    /// hard-coded literal. Mirrors `aozora-wasm`'s `version()`.
+    pub(crate) fn version() -> &'static str {
+        env!("AOZORA_VERSION_STRING")
+    }
+
     /// The wire-format schema version this plugin emits. Hosts assert it
     /// against their own expected [`aozora::json::SCHEMA_VERSION`] at
     /// load time to catch a plugin/SDK version skew.
@@ -195,20 +222,22 @@ mod plugin;
 mod tests {
     use super::logic::{
         MAX_SOURCE_BYTES, OVERSIZE_MSG, guard_len, render_container_pairs_json,
-        render_diagnostics_json, render_html, render_nodes_json, render_pairs_json,
-        render_serialize, schema_version,
+        render_diagnostics_json, render_gaiji_json, render_html, render_nodes_json,
+        render_pairs_json, render_source, schema_version, slugs_json, version,
     };
     use aozora::{Document, json};
 
     /// Inputs that, between them, exercise every serializer with
     /// non-empty data: plain text, a ruby span (nodes + pairs), a
-    /// PUA-collision (diagnostics), and an indent container (container
-    /// pairs). The first three mirror the cross-driver `wire.rs` tests.
-    const CORPUS: [&str; 4] = [
+    /// PUA-collision (diagnostics), an indent container (container
+    /// pairs), and a gaiji reference (gaiji). The first three mirror the
+    /// cross-driver `wire.rs` tests.
+    const CORPUS: [&str; 5] = [
         "plain",
         "｜青梅《おうめ》",
         "abc\u{E001}def",
         "［＃ここから2字下げ］あ［＃ここで字下げ終わり］",
+        "※［＃「弓＋鰐のつくり」、第4水準2-84-40］",
     ];
 
     /// The whole point of routing through `aozora::json`: every plugin
@@ -226,9 +255,9 @@ mod tests {
                 "to_html src: {src}"
             );
             assert_eq!(
-                render_serialize(src.to_owned()).expect("within span limit"),
+                render_source(src.to_owned()).expect("within span limit"),
                 tree.to_source(),
-                "serialize src: {src}"
+                "to_source src: {src}"
             );
             assert_eq!(
                 render_diagnostics_json(src.to_owned()).expect("within span limit"),
@@ -250,7 +279,34 @@ mod tests {
                 json::container_pairs(&tree),
                 "container_pairs_json src: {src}"
             );
+            assert_eq!(
+                render_gaiji_json(src).expect("within span limit"),
+                json::gaiji(src),
+                "gaiji_json src: {src}"
+            );
         }
+    }
+
+    /// The static-catalogue exports (`slugs`, `version`) take no source,
+    /// so they sit outside the per-input loop. Each must be byte-identical
+    /// to its shared authority.
+    #[test]
+    fn static_exports_match_their_authority() {
+        assert_eq!(slugs_json(), json::slugs());
+        assert_eq!(version(), env!("AOZORA_VERSION_STRING"));
+    }
+
+    /// The gaiji corpus input must actually resolve — otherwise the gaiji
+    /// serializer is only ever exercised on empty data and a regression
+    /// there would pass silently.
+    #[test]
+    fn gaiji_input_produces_non_empty_gaiji_envelope() {
+        let out = render_gaiji_json("※［＃「弓＋鰐のつくり」、第4水準2-84-40］")
+            .expect("within span limit");
+        assert!(
+            out.contains(r#""mencode""#),
+            "expected a resolved gaiji record: {out}"
+        );
     }
 
     /// Guard against the corpus silently failing to exercise the

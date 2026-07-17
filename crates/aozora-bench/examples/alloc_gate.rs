@@ -46,9 +46,9 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::lex;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
 use dhat::{HeapStats, Profiler};
 use serde_json::{Value, from_str, json, to_string_pretty};
 

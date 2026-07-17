@@ -30,13 +30,15 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
-use aozora_pipeline::lexer::{
-    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
-};
-use aozora_syntax::alloc::Allocator;
-use aozora_syntax::ast::Node;
+use aozora::Node;
+use aozora::encoding::decode_auto;
+use aozora::unstable::Allocator;
+use aozora::unstable::classify::{ClassifiedSpan, SpanKind, classify};
+use aozora::unstable::lex;
+use aozora::unstable::pair::{PairEvent, pair};
+use aozora::unstable::sanitize::sanitize;
+use aozora::unstable::token::Token;
+use aozora::unstable::tokenize;
 
 /// Default pathological doc — kaeriten / annotation density extreme.
 /// Override via the `AOZORA_PROBE_DOC` env var (relative to
@@ -161,7 +163,7 @@ fn main() {
     // a local stand-in feature defined in this crate's Cargo.toml.)
     #[cfg(feature = "instrument")]
     {
-        use aozora_pipeline::lexer::instrumentation::{
+        use aozora::instrumentation::{
             PendingSizeHistogram, Subsystem, TimingTable, YieldCounters,
         };
         TimingTable::reset();
@@ -267,7 +269,7 @@ fn main() {
         pp("64-255", phist.size_64_255);
         pp("256+", phist.size_256_plus);
 
-        let replay_sizes = aozora_pipeline::lexer::instrumentation::snapshot_replay_sizes();
+        let replay_sizes = aozora::instrumentation::snapshot_replay_sizes();
         if !replay_sizes.is_empty() {
             let mut sorted = replay_sizes.clone();
             sorted.sort_unstable();
@@ -280,7 +282,7 @@ fn main() {
             );
             println!("  body sizes (sorted): {:?}", sorted);
         }
-        aozora_pipeline::lexer::instrumentation::reset_replay_sizes();
+        aozora::instrumentation::reset_replay_sizes();
     }
 
     // Single high-precision parse to dump classify shape (annotation
@@ -338,10 +340,10 @@ fn main() {
     for ev in &pair_events {
         if let PairEvent::PairOpen { kind, .. } = ev {
             match kind {
-                aozora_pipeline::lexer::PairKind::Bracket => {
+                aozora::PairKind::Bracket => {
                     bracket_pair_count += 1;
                 }
-                aozora_pipeline::lexer::PairKind::Quote => quote_open_count += 1,
+                aozora::PairKind::Quote => quote_open_count += 1,
                 _ => {}
             }
         }

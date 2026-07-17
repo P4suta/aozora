@@ -144,19 +144,25 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 name = "aozora"
 version = "0.4.1"
 dependencies = [
+ "aho-corasick",
  "aozora-corpus",
- "aozora-cst",
- "aozora-encoding",
- "aozora-pipeline",
  "aozora-proptest",
- "aozora-query",
- "aozora-render",
- "aozora-spec",
- "aozora-syntax",
+ "bumpalo",
+ "encoding_rs",
+ "memchr",
+ "miette",
+ "mutants",
+ "pandoc_ast",
+ "phf",
+ "phf_codegen",
+ "pretty_assertions",
  "proptest",
+ "rowan",
  "schemars",
  "serde",
  "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -165,11 +171,6 @@ version = "0.4.1"
 dependencies = [
  "aozora",
  "aozora-corpus",
- "aozora-encoding",
- "aozora-pipeline",
- "aozora-render",
- "aozora-scan",
- "aozora-syntax",
  "criterion",
  "dhat",
  "iai-callgrind",
@@ -179,40 +180,55 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-buildstamp"
-version = "0.4.1"
-
-[[package]]
 name = "aozora-cli"
 version = "0.4.1"
 dependencies = [
+ "anstream",
+ "anstyle",
  "anyhow",
  "aozora",
- "aozora-buildstamp",
  "aozora-conformance",
- "aozora-fmt",
- "aozora-i18n",
- "aozora-pandoc",
- "aozora-pipeline",
+ "aozora-corpus",
+ "arc-swap",
  "clap",
  "clap_complete",
  "clap_complete_nushell",
  "clap_mangen",
  "comfy-table",
  "crossterm",
+ "dashmap 6.2.1",
+ "fluent-bundle",
+ "fluent-langneg",
+ "fluent-syntax",
+ "futures",
+ "hdrhistogram",
+ "indicatif",
  "insta",
  "miette",
  "mutants",
  "notify",
+ "parking_lot",
+ "proptest",
  "ratatui",
+ "ropey",
  "rustyline",
  "serde",
  "serde_json",
+ "shuttle",
+ "similar 3.1.1",
  "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
  "toml 1.1.3+spec-1.1.0",
+ "tower 0.5.3",
+ "tower-lsp",
  "tracing",
  "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-aozora",
  "tui-textarea-2",
+ "unic-langid",
+ "walkdir",
 ]
 
 [[package]]
@@ -239,29 +255,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-cst"
-version = "0.4.1"
-dependencies = [
- "aozora",
- "aozora-pipeline",
- "aozora-proptest",
- "proptest",
- "rowan",
-]
-
-[[package]]
-name = "aozora-encoding"
-version = "0.4.1"
-dependencies = [
- "encoding_rs",
- "miette",
- "phf",
- "phf_codegen",
- "proptest",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "aozora-extism"
 version = "0.4.1"
 dependencies = [
@@ -280,100 +273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-fmt"
-version = "0.4.1"
-dependencies = [
- "anstream",
- "anstyle",
- "anyhow",
- "aozora",
- "aozora-encoding",
- "aozora-i18n",
- "clap",
- "indicatif",
- "mutants",
- "proptest",
- "serde",
- "serde_json",
- "similar 3.1.1",
- "walkdir",
-]
-
-[[package]]
-name = "aozora-i18n"
-version = "0.4.1"
-dependencies = [
- "aozora-spec",
- "fluent-bundle",
- "fluent-langneg",
- "fluent-syntax",
- "unic-langid",
-]
-
-[[package]]
-name = "aozora-lsp"
-version = "0.4.1"
-dependencies = [
- "aozora",
- "aozora-buildstamp",
- "aozora-corpus",
- "aozora-encoding",
- "aozora-fmt",
- "aozora-i18n",
- "aozora-pipeline",
- "arc-swap",
- "clap",
- "criterion",
- "dashmap 6.2.1",
- "futures",
- "hdrhistogram",
- "insta",
- "parking_lot",
- "proptest",
- "ropey",
- "serde",
- "serde_json",
- "shuttle",
- "thiserror 2.0.18",
- "tokio",
- "tower 0.5.3",
- "tower-lsp",
- "tracing",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-aozora",
-]
-
-[[package]]
-name = "aozora-pandoc"
-version = "0.4.1"
-dependencies = [
- "aozora",
- "aozora-proptest",
- "pandoc_ast",
- "proptest",
- "serde_json",
-]
-
-[[package]]
-name = "aozora-pipeline"
-version = "0.4.1"
-dependencies = [
- "aho-corasick",
- "aozora-encoding",
- "aozora-proptest",
- "aozora-render",
- "aozora-scan",
- "aozora-spec",
- "aozora-syntax",
- "criterion",
- "insta",
- "memchr",
- "proptest",
- "smallvec",
-]
-
-[[package]]
 name = "aozora-proptest"
 version = "0.4.1"
 dependencies = [
@@ -386,72 +285,6 @@ version = "0.4.1"
 dependencies = [
  "aozora",
  "pyo3",
-]
-
-[[package]]
-name = "aozora-query"
-version = "0.4.1"
-dependencies = [
- "aozora",
- "aozora-cst",
- "aozora-pipeline",
- "aozora-proptest",
- "proptest",
- "rowan",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aozora-render"
-version = "0.4.1"
-dependencies = [
- "aozora-pipeline",
- "aozora-proptest",
- "aozora-spec",
- "aozora-syntax",
- "insta",
- "memchr",
- "pretty_assertions",
- "proptest",
-]
-
-[[package]]
-name = "aozora-scan"
-version = "0.4.1"
-dependencies = [
- "aho-corasick",
- "aozora-proptest",
- "aozora-spec",
- "bumpalo",
- "criterion",
- "mutants",
- "proptest",
-]
-
-[[package]]
-name = "aozora-spec"
-version = "0.4.1"
-dependencies = [
- "aozora-proptest",
- "miette",
- "proptest",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aozora-syntax"
-version = "0.4.1"
-dependencies = [
- "aozora-encoding",
- "aozora-spec",
- "aozora-veb",
- "criterion",
- "miette",
- "mutants",
- "phf",
- "serde",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -469,19 +302,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-veb"
-version = "0.4.1"
-dependencies = [
- "aozora-proptest",
- "proptest",
-]
-
-[[package]]
 name = "aozora-wasm"
 version = "0.4.1"
 dependencies = [
  "aozora",
- "aozora-buildstamp",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
@@ -494,10 +318,6 @@ version = "0.4.1"
 dependencies = [
  "aozora",
  "aozora-corpus",
- "aozora-encoding",
- "aozora-pipeline",
- "aozora-render",
- "aozora-syntax",
  "aozora-trace",
  "blake3",
  "clap",

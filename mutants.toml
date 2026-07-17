@@ -24,7 +24,7 @@ minimum_test_timeout = 30.0
 # Files cargo-mutants must not mutate.
 #
 # Generated code is deliberately NOT listed: none is checked in. The
-# encoding tables (aozora-encoding/build.rs) and the TypeScript `.d.ts`
+# encoding tables (aozora/build.rs) and the TypeScript `.d.ts`
 # (xtask `types`) are emitted into OUT_DIR / build artifacts — never the
 # source tree — so cargo-mutants never parses them, and the tree-sitter
 # `parser.c` is C. Test code is skipped automatically (cargo-mutants does
@@ -34,11 +34,6 @@ minimum_test_timeout = 30.0
 # What remains to exclude is non-product source:
 #   - aozora-bench: performance benchmarks, not correctness assertions
 #   - **/fuzz:      libFuzzer harnesses (separate crates; belt-and-suspenders)
-#   - aozora-buildstamp: a compile-time build-identifier leaf (~20 lines,
-#     no tests) that only surfaces version/commit metadata; it carries no
-#     runtime logic an assertion could pin, so every mutant would be a
-#     vacuous survivor. Excluded rather than left as permanent report-only
-#     noise in the full-adoption matrix.
 #   - pipeline classify instrumentation: the whole module is
 #     `#![cfg(feature = "classify-instrument")]` — opt-in profiling
 #     scaffolding (per-subsystem timing tables) compiled out of every
@@ -72,8 +67,7 @@ minimum_test_timeout = 30.0
 exclude_globs = [
   "crates/aozora-bench/**",
   "**/fuzz/**",
-  "crates/aozora-buildstamp/**",
-  "crates/aozora-pipeline/src/lexer/instrumentation.rs",
+  "crates/aozora/src/pipeline/lexer/instrumentation.rs",
   "crates/aozora-extism/src/plugin.rs",
   "crates/aozora-wasm/**",
   "crates/aozora-py/**",

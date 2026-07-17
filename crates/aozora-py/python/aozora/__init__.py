@@ -1,10 +1,18 @@
 """Aozora Bunko notation parser — Python bindings.
 
 The public surface is the :class:`Document` class plus the module-level
-helpers :func:`parse_to_html`, :func:`prewarm`, and :func:`decode_sjis`.
+helpers :func:`parse_to_html`, :func:`prewarm`, :func:`decode_sjis`,
+:func:`slugs`, :func:`version`, and :func:`schema_version`.
 Parsing is pure-functional: construct a ``Document`` from source text
 (or Shift_JIS / UTF-8 bytes via :meth:`Document.from_bytes`) and call the
 render / inspection methods.
+
+Two version numbers, deliberately distinct: :func:`version` is the
+parser engine's channel-aware *build* stamp (shared with the WASM /
+Extism / Go drivers), while ``__version__`` is the installed PyPI
+*package* version from distribution metadata. :func:`schema_version`
+is the cross-driver *wire* schema version stamped into every
+``*_json()`` envelope.
 
 Inspection methods come in two flavours:
 
@@ -22,24 +30,34 @@ The compiled extension lives in the private submodule
 from __future__ import annotations
 
 import json
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 from typing import Any
 
 from . import _aozora
-from ._aozora import decode_sjis, parse_to_html, prewarm, slugs_json
+from ._aozora import (
+    decode_sjis,
+    parse_to_html,
+    prewarm,
+    schema_version,
+    slugs_json,
+    version,
+)
 
 __all__ = [
     "Document",
     "decode_sjis",
     "parse_to_html",
     "prewarm",
+    "schema_version",
     "slugs",
     "slugs_json",
+    "version",
     "__version__",
 ]
 
 try:
-    __version__ = version("aozora")
+    __version__ = _dist_version("aozora")
 except PackageNotFoundError:  # source tree / editable build without dist metadata
     __version__ = "0.0.0+unknown"
 

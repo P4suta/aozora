@@ -14,8 +14,8 @@
 //!   serialize→lex pass would otherwise re-lex it to Unknown).
 
 use aozora::Document;
-use aozora_syntax::degraded::degraded_directive;
-use aozora_syntax::lint::canonical_directive;
+use aozora::syntax::degraded::degraded_directive;
+use aozora::syntax::lint::canonical_directive;
 use proptest::prelude::*;
 
 /// True when `body` parses to a recognised (non-Unknown) directive — i.e. the

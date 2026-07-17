@@ -18,8 +18,8 @@ heading."
 
 The marker itself emits no visible content; renderers that *honour*
 the hint elevate the previously-matched span to a `<h2>` /
-`<h3>` retroactively. The default HTML renderer in `aozora-render`
-emits a structural marker comment.
+`<h3>` retroactively. The default HTML renderer emits a structural
+marker comment.
 
 ## Source output
 

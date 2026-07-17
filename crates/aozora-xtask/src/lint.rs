@@ -57,21 +57,20 @@ const OUTER_BASELINE: &[(&str, usize)] = &[("aozora-py", 1)];
 /// so it deserves its own visible ledger. Same edit rule as
 /// [`OUTER_BASELINE`].
 const INNER_BASELINE: &[(&str, usize)] = &[
-    ("aozora", 1),
-    ("aozora-cli", 2),
+    ("aozora", 2),
+    ("aozora-cli", 4),
     ("aozora-corpus", 7),
     ("aozora-extism", 1),
     ("aozora-ffi", 1),
-    ("aozora-lsp", 2),
-    ("aozora-pipeline", 1),
     ("aozora-trace", 4),
     ("aozora-xtask", 15),
 ];
 
 /// Source root of the `.expect(` tripwire migrated out of `just
 /// strict-code`. Kept here so every count-baseline in the workspace lives
-/// in one Rust asset.
-const EXPECT_CRATE_SRC: &str = "crates/aozora-pipeline/src";
+/// in one Rust asset. After the 18→3 collapse the lexer pipeline lives at
+/// `crates/aozora/src/pipeline`.
+const EXPECT_CRATE_SRC: &str = "crates/aozora/src/pipeline";
 
 /// Ceiling for `.expect(`-bearing lines under [`EXPECT_CRATE_SRC`]. A
 /// coarse "no new runtime state-assertions" tripwire, not a precise audit
@@ -350,7 +349,7 @@ mod tests {
     #[test]
     fn generated_and_harness_paths_are_excluded() {
         assert!(is_excluded(Path::new(
-            "crates/aozora-pipeline/target/debug/build/foo-abc/out/gen.rs"
+            "crates/aozora/target/debug/build/foo-abc/out/gen.rs"
         )));
         assert!(is_excluded(Path::new("crates/aozora-cli/tests/cli.rs")));
         assert!(is_excluded(Path::new(
@@ -360,15 +359,15 @@ mod tests {
         assert!(is_excluded(Path::new(
             "crates/aozora-ffi/fuzz/fuzz_targets/roundtrip.rs"
         )));
-        assert!(is_excluded(Path::new("crates/aozora-buildstamp/build.rs")));
+        assert!(is_excluded(Path::new("crates/aozora/build.rs")));
         assert!(!is_excluded(Path::new("crates/aozora/src/lib.rs")));
     }
 
     #[test]
     fn crate_of_reads_the_second_path_component() {
         assert_eq!(
-            crate_of(Path::new("crates/aozora-lsp/src/main.rs")),
-            "aozora-lsp"
+            crate_of(Path::new("crates/aozora-cli/src/main.rs")),
+            "aozora-cli"
         );
     }
 

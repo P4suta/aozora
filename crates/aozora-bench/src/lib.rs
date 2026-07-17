@@ -22,8 +22,8 @@ use std::cell::RefCell;
 use std::mem;
 use std::path::PathBuf;
 
+use aozora::encoding::decode_auto_into;
 use aozora_corpus::{Archive, ArchivePayload, CorpusItem, FilesystemCorpus, with_load_pool};
-use aozora_encoding::decode_auto_into;
 use rayon::prelude::*;
 
 /// Size band a corpus document falls into, by post-decode UTF-8 byte count.

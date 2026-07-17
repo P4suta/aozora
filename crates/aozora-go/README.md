@@ -43,9 +43,11 @@ func main() {
 }
 ```
 
-`Parser` also exposes `Serialize`, `Diagnostics`, `Pairs`, and
-`ContainerPairs`, each returning the matching JSON envelope. A `Parser` is
-not safe for concurrent use — open one per goroutine.
+`Parser` also exposes `ToSource`, `Diagnostics`, `Pairs`,
+`ContainerPairs`, and `Gaiji` (each returning the matching JSON envelope),
+plus `Slugs` (the static annotation-slug catalogue) and `Version` (the
+engine build stamp, distinct from `SchemaVersion`). A `Parser` is not safe
+for concurrent use — open one per goroutine.
 
 ## Layout
 

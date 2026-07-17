@@ -10,7 +10,7 @@
 //! Like [`crate::repl`], it owns **no** parsing, rendering, or diagnostic
 //! logic. The preview is the exact engine surface the document subcommands
 //! emit — [`aozora::Tree::to_html`] (as `aozora render`), [`json::nodes`] (as
-//! `aozora inspect nodes`), and [`aozora_pandoc::to_pandoc`] (as `aozora
+//! `aozora inspect nodes`), and [`aozora::pandoc::to_pandoc`] (as `aozora
 //! pandoc`) — and the diagnostics pane is [`aozora::diagnostics_text`], the
 //! portable plain-text report. So the panes can never disagree with the rest
 //! of the CLI, and the TUI defines no machine surface of its own.
@@ -35,7 +35,7 @@
 //! [`event_loop`] draw / input loop) need a real tty.
 //!
 //! The chrome (pane titles, the keybind legend, save / error status) is
-//! localized through `aozora-i18n`; the preview and diagnostic *bytes* are the
+//! localized through the `i18n` catalog; the preview and diagnostic *bytes* are the
 //! machine axis and stay identical in every locale (ADR-0033). The edit buffer
 //! is Unicode text and `Ctrl-S` always writes UTF-8 — the engine still decodes
 //! a Shift_JIS file on open (`-E sjis`), but a Shift_JIS write-back is out of
@@ -47,9 +47,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use crate::fmt::{decode, read_file};
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
+use aozora::pandoc::to_pandoc;
 use aozora::{Document, json};
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use clap::{Parser, ValueEnum};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{execute, terminal};
@@ -167,8 +169,7 @@ fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived 
             // Pretty-printed for the pane (the compact `aozora pandoc` bytes
             // would wrap into an unreadable blob); serializing cannot fail in
             // practice, so surface the error text rather than panicking.
-            serde_json::to_string_pretty(&aozora_pandoc::to_pandoc(&owned))
-                .unwrap_or_else(|err| err.to_string())
+            serde_json::to_string_pretty(&to_pandoc(&owned)).unwrap_or_else(|err| err.to_string())
         }
     };
 
@@ -291,9 +292,9 @@ impl App {
     fn new(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<Self> {
         let (source, path) = match &args.file {
             Some(path) => {
-                let raw = aozora_fmt::read_file(path)
+                let raw = read_file(path)
                     .with_context(|| format!("failed to read {}", path.display()))?;
-                let text = aozora_fmt::decode(&raw, args.encoding)?;
+                let text = decode(&raw, args.encoding)?;
                 (text, Some(path.clone()))
             }
             None => (String::new(), None),

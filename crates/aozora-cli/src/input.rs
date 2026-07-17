@@ -15,7 +15,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 
 /// The pure decision behind [`stdin_is_interactive`], split out so both
 /// outcomes are unit-testable without a real TTY: it is `true` only when
@@ -39,7 +39,7 @@ fn stdin_is_interactive(path: &Path) -> bool {
 /// `cmd` is the subcommand tag shown in the copy-pasteable examples, e.g.
 /// `check` or `inspect nodes`. The message text (and its per-language
 /// alignment, tuned for the script's glyph widths) lives in the `stdin-empty`
-/// key of the `aozora-i18n` catalog; the catalog value has no trailing
+/// key of the `i18n` catalog; the catalog value has no trailing
 /// newline, so `writeln!` supplies the final one.
 fn write_stdin_hint(w: &mut impl Write, cmd: &str, lang: &LanguageIdentifier) -> io::Result<()> {
     let mut args = FluentArgs::new();

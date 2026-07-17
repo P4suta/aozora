@@ -18,8 +18,8 @@
 //! differential gate.
 //!
 //! All coordinates here are **sanitized-source** byte offsets (the space every
-//! [`LexOutput::source_span`](crate::SourceNode::source_span) and
-//! [`LexOutput::pairs`](crate::LexOutput::pairs) indexes); the
+//! [`LexOutput::source_span`](crate::unstable::SourceNode::source_span) and
+//! [`LexOutput::pairs`](crate::unstable::LexOutput::pairs) indexes); the
 //! raw↔sanitized bridge belongs to a later wiring PR. A cut is admitted only
 //! where the block-container depth is zero and no resolved delimiter pair
 //! straddles it — see [`structurally_safe`].
@@ -28,11 +28,9 @@ use core::ops::Range;
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::pipeline::{LexOutput, SourceNode};
 use crate::splice::{RegionRole, classify_node_ref};
-use crate::{
-    CoupledKind, Diagnostic, Document, LexOutput, Node, NodeRef, PairKind, PairLink, SourceNode,
-    SpliceSafety,
-};
+use crate::{CoupledKind, Diagnostic, Document, Node, NodeRef, PairKind, PairLink, SpliceSafety};
 
 /// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
 /// scans, and re-lexes against.
@@ -49,7 +47,7 @@ use crate::{
 ///
 /// [`byte`]: SanitizedSrc::byte
 /// [`slice`]: SanitizedSrc::slice
-pub trait SanitizedSrc {
+pub trait SanitizedSrc: SanitizedSrcSealed {
     /// Byte length of the buffer (`str::len`).
     fn len(&self) -> usize;
 
@@ -92,6 +90,20 @@ pub trait SanitizedSrc {
     ) {
     }
 }
+
+/// Seals [`SanitizedSrc`] against arbitrary downstream implementations.
+///
+/// A supertrait bound `SanitizedSrc` carries so only this crate — and the
+/// in-workspace consumers that opt into `unstable-internals` and can therefore
+/// name this hidden marker — may add impls. A stable downstream crate never
+/// sees it (the whole incremental surface is `unstable-internals`-gated and
+/// `#[doc(hidden)]`), so it cannot implement `SanitizedSrc`. The engine relies
+/// on the two in-crate impls (`&str`, and the `ropey` rope source the
+/// in-workspace LSP adds) being byte-faithful mirrors of `str`.
+#[doc(hidden)]
+pub trait SanitizedSrcSealed {}
+
+impl SanitizedSrcSealed for &str {}
 
 impl SanitizedSrc for &str {
     fn len(&self) -> usize {
@@ -1568,7 +1580,7 @@ fn splice_prologue<S: SanitizedSrc>(
 /// store-independent), the `NodeRef` **discriminant** (`BlockOpen` /
 /// `BlockClose` / `Inline` / …), plus the ruby's `Copy` `base_emphasis`
 /// Option-tag (`.is_some()`, a store-free read of the inline
-/// [`ForwardAttr`](aozora_syntax::ForwardAttr) niche) — and never resolves a
+/// [`ForwardAttr`](crate::syntax::ForwardAttr) niche) — and never resolves a
 /// `StrId`/`ContentRange` against a store. The `debug_assert` below pins this
 /// invariant: a future
 /// change that resolves a region node's payload here must instead graft it into
@@ -2071,8 +2083,8 @@ mod tests {
     /// producer in E1-2/E1-3.
     #[test]
     fn self_contained_forward_forbids_region_reuse() {
-        use aozora_syntax::alloc::Allocator;
-        use aozora_syntax::{ForwardAttr, ForwardOrigin};
+        use crate::syntax::alloc::Allocator;
+        use crate::syntax::{ForwardAttr, ForwardOrigin};
 
         let mut a = Allocator::new();
         let t = a.content_plain("X");
@@ -2090,8 +2102,8 @@ mod tests {
     /// parse to a referent-bearing hint.
     #[test]
     fn self_contained_heading_forbids_region_reuse() {
-        use aozora_syntax::alloc::Allocator;
-        use aozora_syntax::{HeadingKind, HeadingStyle};
+        use crate::syntax::alloc::Allocator;
+        use crate::syntax::{HeadingKind, HeadingStyle};
 
         let mut a = Allocator::new();
         let node = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
@@ -2141,8 +2153,8 @@ mod tests {
     /// freely reusable.
     #[test]
     fn ruby_base_emphasis_forbids_region_reuse() {
-        use aozora_syntax::ForwardAttr;
-        use aozora_syntax::alloc::Allocator;
+        use crate::syntax::ForwardAttr;
+        use crate::syntax::alloc::Allocator;
 
         let mut a = Allocator::new();
         let base = a.content_plain("青梅");
@@ -2250,7 +2262,8 @@ mod oracle_proptests {
         is_ruby_node, is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse,
         splice_prologue, structurally_safe,
     };
-    use crate::{Diagnostic, Document, PairKind, PairLink, SourceNode};
+    use crate::syntax::ast::SourceNode;
+    use crate::{Diagnostic, Document, PairKind, PairLink};
 
     /// Parse a generated document to its owned lex output.
     fn output(src: &str) -> LexOutput {
@@ -2884,6 +2897,7 @@ mod mut_tests_pieces {
     /// A backing source that does **not** override `is_empty`, so it exercises
     /// the trait's default emptiness probe (`self.len() == 0`).
     struct RawSrc(String);
+    impl SanitizedSrcSealed for RawSrc {}
     impl SanitizedSrc for RawSrc {
         fn len(&self) -> usize {
             self.0.len()
@@ -3197,7 +3211,7 @@ mod mut_tests_relex {
 
     #[test]
     fn is_ruby_node_true_for_ruby_false_otherwise() {
-        use aozora_syntax::alloc::Allocator;
+        use crate::syntax::alloc::Allocator;
 
         let mut a = Allocator::new();
         let base = a.content_plain("青梅");

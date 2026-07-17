@@ -1,0 +1,8 @@
+---
+source: crates/aozora-cli/src/lsp/snapshots.rs
+expression: diagnostic_view(DIAG_SOURCE)
+---
+[
+    "aozora::lex::source_contains_pua | WARNING | 1:2..1:3",
+    "aozora::lex::unclosed_bracket | ERROR | 0:2..0:3",
+]

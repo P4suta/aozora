@@ -17,8 +17,8 @@ use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use notify::{Event, RecursiveMode, Watcher};
 use tracing::{debug, trace};
 

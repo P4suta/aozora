@@ -18,29 +18,28 @@ publish = false
 workspace = true
 
 [dependencies]
+# The parse/render chain is now folded into `aozora`; the bench probes reach
+# the internal stage surface through its `aozora::unstable` / `aozora::encoding`
+# / `aozora::render` modules (and `aozora::instrumentation` under the
+# `classify-instrument` feature, activated by this crate's `instrument`).
 aozora = { workspace = true }
 aozora-corpus = { workspace = true }
-aozora-encoding = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 dhat = { workspace = true }
 iai-callgrind = { workspace = true }
-aozora-pipeline = { workspace = true }
-aozora-render = { workspace = true } # render_hot_path example: aozora_render::render_html
-aozora-scan = { workspace = true }
-aozora-syntax = { workspace = true }
 memchr = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
 default = []
-# Activate the upstream `aozora-pipeline/classify-instrument` so examples
-# (notably `pathological_probe`) can dump per-subsystem timings.
+# Activate `aozora/classify-instrument` so examples (notably
+# `pathological_probe`) can dump per-subsystem timings.
 # Use: `cargo run --release --example pathological_probe -p aozora-bench
 #       --features instrument`
-instrument = ["aozora-pipeline/classify-instrument"]
+instrument = ["aozora/classify-instrument"]
 
 [[bench]]
 name = "crime_and_punishment"
@@ -58,10 +57,9 @@ harness = false
 name = "perf_gate"
 harness = false
 
-# `classify_subsystems` requires the opt-in instrumentation feature on
-# `aozora-pipeline`. Run with:
+# `classify_subsystems` requires the opt-in classify instrumentation. Run with:
 # `cargo run --release --example classify_subsystems -p aozora-bench \
-#    --features 'aozora-pipeline/classify-instrument'`
+#    --features 'aozora/classify-instrument'`
 [[example]]
 name = "classify_subsystems"
-required-features = ["aozora-pipeline/classify-instrument"]
+required-features = ["aozora/classify-instrument"]

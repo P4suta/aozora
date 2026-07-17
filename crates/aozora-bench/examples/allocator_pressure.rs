@@ -33,9 +33,9 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::lex;
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
 #[derive(Debug, Clone, Copy)]
 struct DocSample {
     source_bytes: u64,

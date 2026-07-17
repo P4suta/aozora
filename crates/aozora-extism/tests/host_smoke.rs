@@ -25,12 +25,13 @@ use extism::{Manifest, Plugin, Wasm};
 const WASM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dist/aozora.wasm");
 
 /// Same corpus as the library unit tests: plain text, a ruby span, a
-/// PUA-collision diagnostic, and an indent container.
-const CORPUS: [&str; 4] = [
+/// PUA-collision diagnostic, an indent container, and a gaiji reference.
+const CORPUS: [&str; 5] = [
     "plain",
     "｜青梅《おうめ》",
     "abc\u{E001}def",
     "［＃ここから2字下げ］あ［＃ここで字下げ終わり］",
+    "※［＃「弓＋鰐のつくり」、第4水準2-84-40］",
 ];
 
 fn load_plugin() -> Plugin {
@@ -51,8 +52,8 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
         let html: &str = plugin.call("to_html", src).expect("to_html");
         assert_eq!(html, tree.to_html(), "to_html src: {src}");
 
-        let serialized: &str = plugin.call("serialize", src).expect("serialize");
-        assert_eq!(serialized, tree.to_source(), "serialize src: {src}");
+        let serialized: &str = plugin.call("to_source", src).expect("to_source");
+        assert_eq!(serialized, tree.to_source(), "to_source src: {src}");
 
         let diagnostics: &str = plugin
             .call("diagnostics_json", src)
@@ -77,12 +78,30 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
             json::container_pairs(&tree),
             "container_pairs_json src: {src}"
         );
+
+        let gaiji: &str = plugin.call("gaiji_json", src).expect("gaiji_json");
+        assert_eq!(gaiji, json::gaiji(src), "gaiji_json src: {src}");
     }
 }
 
+/// The input-independent exports (`slugs_json`, `version`,
+/// `schema_version`) sit outside the per-input loop — hosts call them
+/// with empty input. Each must be byte-identical to its shared authority.
 #[test]
-fn schema_version_export_matches_wire() {
+fn static_exports_match_their_authority() {
     let mut plugin = load_plugin();
-    let version: &str = plugin.call("schema_version", "").expect("schema_version");
-    assert_eq!(version, json::SCHEMA_VERSION.to_string());
+
+    let slugs: &str = plugin.call("slugs_json", "").expect("slugs_json");
+    assert_eq!(slugs, json::slugs());
+
+    let schema: &str = plugin.call("schema_version", "").expect("schema_version");
+    assert_eq!(schema, json::SCHEMA_VERSION.to_string());
+
+    // The plugin was compiled in this same checkout, so its baked
+    // `AOZORA_VERSION_STRING` shares this test binary's base triple.
+    let version: &str = plugin.call("version", "").expect("version");
+    assert!(
+        version.starts_with(env!("CARGO_PKG_VERSION")),
+        "plugin version {version:?} does not start with the crate version"
+    );
 }

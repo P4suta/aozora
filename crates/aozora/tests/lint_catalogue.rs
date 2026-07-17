@@ -12,8 +12,8 @@
 
 use aozora::Document;
 use aozora::render::{DirectiveNormalization, RenderOptions, SerializeOptions};
-use aozora_syntax::degraded::{DEGRADED_SAMPLES, degraded_directive};
-use aozora_syntax::lint::{CATALOGUE_SAMPLES, EDITORIAL_MUST_STAY_UNKNOWN, canonical_directive};
+use aozora::syntax::degraded::{DEGRADED_SAMPLES, degraded_directive};
+use aozora::syntax::lint::{CATALOGUE_SAMPLES, EDITORIAL_MUST_STAY_UNKNOWN, canonical_directive};
 
 const LINT_CODE: &str = "aozora::lint::non_canonical_directive";
 
@@ -65,9 +65,7 @@ fn every_variant_is_unknown_and_fires_the_lint() {
 /// idempotency guard depends on the last property.
 #[test]
 fn fix_resolves_every_variant_and_is_idempotent() {
-    let fix = SerializeOptions {
-        directives: DirectiveNormalization::Canonical,
-    };
+    let fix = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
     for &variant in CATALOGUE_SAMPLES {
         let input = format!("あ［＃{variant}］");
 
@@ -134,9 +132,7 @@ fn render_context_source(variant: &str) -> String {
 /// in the opt-in path.
 #[test]
 fn normalize_render_replaces_every_inert_variant() {
-    let norm = RenderOptions {
-        directives: DirectiveNormalization::Canonical,
-    };
+    let norm = RenderOptions::default().directives(DirectiveNormalization::Canonical);
     for &variant in CATALOGUE_SAMPLES {
         let source = render_context_source(variant);
 
@@ -305,15 +301,9 @@ fn tier1_and_tier2_are_disjoint() {
 /// lossy Tier2 reduction can never rewrite source.
 #[test]
 fn degraded_reductions_are_render_only() {
-    let degraded = RenderOptions {
-        directives: DirectiveNormalization::Degraded,
-    };
-    let canonical = RenderOptions {
-        directives: DirectiveNormalization::Canonical,
-    };
-    let fix = SerializeOptions {
-        directives: DirectiveNormalization::Canonical,
-    };
+    let degraded = RenderOptions::default().directives(DirectiveNormalization::Degraded);
+    let canonical = RenderOptions::default().directives(DirectiveNormalization::Canonical);
+    let fix = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
     for &sample in DEGRADED_SAMPLES {
         let source = degraded_context(sample);
         // (a) --degraded reinterprets it: no inert directive span.

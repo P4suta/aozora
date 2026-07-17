@@ -13,7 +13,7 @@
 //! consulted — the CLI's logging is namespaced to its own variable, so a
 //! `RUST_LOG` set for some other tool never changes `aozora`'s output.
 //!
-//! Mirrors the `aozora-lsp` idiom (`EnvFilter` + `fmt` to stderr); the only
+//! Mirrors the LSP idiom (`EnvFilter` + `fmt` to stderr); the only
 //! differences are the `AOZORA_LOG` env var name and the `-v`/`-q` default,
 //! since the daemon has no verbosity flags to fold in.
 

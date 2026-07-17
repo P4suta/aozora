@@ -20,19 +20,26 @@ name = "aozora"
 path = "src/main.rs"
 
 [dependencies]
-# `schema` enables `aozora::json::schema_*()` and pulls schemars in for
-# the `aozora spec schema` introspection subcommand. CLI is the only
-# binary that needs schema runtime, so feature-gating here keeps the
-# library `aozora` crate light for plain library consumers.
-aozora = { workspace = true, features = ["schema"] }
-# Direct dep on the internal lexer crate: the diagnostics renderer reaches
-# `aozora_pipeline::lexer::sanitize` for caret placement — an internal,
-# no-contract surface the umbrella deliberately does not re-export.
-aozora-pipeline = { workspace = true }
-aozora-buildstamp = { workspace = true } # channel-aware `--version` stamp
-aozora-fmt = { workspace = true } # shared format core + the `Encoding` decoder
-aozora-i18n = { workspace = true } # Fluent catalog for the human shell strings
-aozora-pandoc = { workspace = true }
+# The one published library dependency. Features enabled here:
+#   schema  → `aozora::json::schema_*()` for `aozora spec schema` (implies json)
+#   fmt     → `aozora::fmt::format_source*` (the pure canonicalising core the
+#             `fmt`/`lint`/`repl`/`tui`/`timing` plumbing in `src/fmt/` wraps)
+#   pandoc  → `aozora::pandoc::to_pandoc` for `aozora pandoc`
+#   unstable-internals → the in-process LSP reaches `aozora::unstable::*`
+#             (sanitize / Sentinel / SLUGS / LexOutput / InternalCheckCode) and
+#             the diagnostics-only incremental engine (DiagBaseRef / PieceSeq /
+#             reparse_incremental_diagnostics_only_in) — a no-contract surface.
+aozora = { workspace = true, features = [
+  "schema",
+  "fmt",
+  "pandoc",
+  "unstable-internals",
+] }
+# The tree-sitter grammar the in-process LSP drives (semantic tokens, gaiji
+# spans, folding, …) — a published crate, so the CLI's public dep set stays
+# {aozora, tree-sitter-aozora} + external.
+tree-sitter-aozora = { workspace = true }
+tree-sitter = "0.26" # tree-sitter runtime for the LSP's incremental CST
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_complete_nushell = { workspace = true }
@@ -49,11 +56,37 @@ ratatui = { workspace = true } # immediate-mode TUI framework for `aozora tui`
 crossterm = { workspace = true } # terminal backend (raw mode / events) for the TUI
 tui-textarea-2 = { workspace = true } # multi-line source EDIT pane widget for the TUI
 # stderr-only structured logging for the CLI shell, gated behind `-v`/`-q` /
-# `AOZORA_LOG`. Already in `[workspace.dependencies]` (aozora-lsp is the other
-# consumer); `env-filter` + `fmt` features are inherited from there, so this
-# adds no new workspace dependency — only a new consumer of an existing one.
+# `AOZORA_LOG`; also the tracing surface the in-process LSP emits on.
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+thiserror = { workspace = true } # the LSP's typed edit errors (text_edit)
+
+# --- Localization (folded from aozora-i18n): the Project Fluent stack backing
+# the human shell strings and the LSP's diagnostic prose (see `src/i18n.rs`). ---
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
+fluent-langneg = { workspace = true }
+
+# --- Formatter batch engine (folded from aozora-fmt CLI plumbing, `src/fmt/`) ---
+similar = { workspace = true } # unified diff for --diff
+walkdir = { workspace = true } # directory recursion
+anstream = { workspace = true } # TTY-aware stdout for coloured diffs
+anstyle = { workspace = true } # diff colour styling
+indicatif = { workspace = true } # TTY-gated batch progress bar / spinner (stderr)
+
+# --- In-process language server (folded from aozora-lsp, `src/lsp/`):
+# tower-lsp over tokio stdio, with rope-backed incremental documents. ---
+tower-lsp = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+arc-swap = { workspace = true }
+ropey = { workspace = true }
+hdrhistogram = { workspace = true }
+# Optional: enabled via `--features shuttle-tests` to run the randomized-schedule
+# model check in `src/lsp/shuttle_doc_state.rs`. Off by default so routine
+# `cargo test` doesn't pull the shuttle model checker into the dependency graph.
+shuttle = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -69,6 +102,26 @@ mutants = { workspace = true }
 # versioned dev-dep would make crates.io require aozora-conformance to
 # exist on the registry and would fail the `aozora-cli` publish.
 aozora-conformance = { path = "../aozora-conformance" }
+# Property tests cross-checking the rope-backed sanitized source against the
+# `&str` reference through the incremental engine (`src/lsp/rope_src_parity.rs`).
+proptest = { workspace = true }
+# In-process LSP end-to-end harness (`src/lsp/backend.rs` `mod e2e`): drives the
+# `LspService` as a `tower::Service` and drains the loopback `ClientSocket`.
+tower = "0.5"
+futures = "0.3"
+# Fluent's AST, so the i18n catalog-parity test (`src/i18n.rs`) reads each
+# locale's message ids from the resource Fluent itself parsed.
+fluent-syntax = { workspace = true }
+# Corpus loader for the AOZORA_CORPUS_ROOT-gated incremental parse-cache sweep
+# (`src/lsp/incremental_parse_cache_corpus.rs`): vacuous pass when unset.
+aozora-corpus = { workspace = true }
+
+[features]
+# Opt-in: enables the `shuttle_doc_state` randomized-schedule model check (the
+# only test that depends on the shuttle crate). Gating it behind a feature keeps
+# the default `cargo test` fast and avoids pulling shuttle into the dependency
+# graph for routine builds. Run it with `cargo test --features shuttle-tests`.
+shuttle-tests = ["dep:shuttle"]
 
 [package.metadata.docs.rs]
 all-features = true

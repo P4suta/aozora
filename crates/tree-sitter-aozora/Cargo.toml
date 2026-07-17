@@ -1,13 +1,13 @@
 [package]
 name = "tree-sitter-aozora"
-description = "Tree-sitter grammar for Aozora Bunko notation — used by aozora-lsp for incremental parsing"
+description = "Tree-sitter grammar for Aozora Bunko notation — used by aozora-cli's in-process LSP for incremental parsing"
 # Inherit the unified workspace version (mirrors the pinned `aozora` parser), so
 # there is a single number to bump — same as the other workspace members.
 version.workspace = true
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-# Publishable to crates.io: `aozora-lsp` depends on it by path, so it has to be
-# a published crate for `aozora-lsp` itself to publish. Metadata mirrors the
+# Publishable to crates.io: `aozora-cli` depends on it by path, so it has to be
+# a published crate for `aozora-cli` itself to publish. Metadata mirrors the
 # other members (repository/homepage/authors) for a clean crates.io listing.
 authors.workspace = true
 repository.workspace = true
@@ -23,6 +23,8 @@ include = [
   "build.rs",
   "grammar.js",
   "README.md",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
 ]
 
 [lib]

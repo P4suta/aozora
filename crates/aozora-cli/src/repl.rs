@@ -8,7 +8,7 @@
 //! It owns **no** parsing, rendering, or diagnostic logic. Every view is the
 //! exact engine surface the other subcommands emit — [`json::nodes`] (as
 //! `aozora inspect nodes`), [`aozora::Tree::to_html`] (as `aozora render`),
-//! [`aozora_pandoc::to_pandoc`] (as `aozora pandoc`), and
+//! [`aozora::pandoc::to_pandoc`] (as `aozora pandoc`), and
 //! [`aozora::diagnostics_text`] (the portable plain-text report) — so the REPL
 //! can never disagree with the rest of the CLI. It defines no machine surface
 //! of its own: the output is human chrome around unmodified engine bytes.
@@ -17,7 +17,7 @@
 //!
 //! - `:mode {nodes,html,pandoc,all}` — which view(s) to show (default `all`).
 //! - `:lang {en,ja,zh}` — the message language of the chrome (resolved through
-//!   the same [`aozora_i18n::resolve`] the `--lang` flag uses).
+//!   the same [`crate::i18n::resolve`] the `--lang` flag uses).
 //! - `:encoding {auto,utf8,sjis}` — the decoder `:load` applies (typed lines
 //!   are already UTF-8, so this only affects file loads).
 //! - `:load FILE` — parse a file's contents through the current mode.
@@ -31,7 +31,7 @@
 //! `printf '…\n:quit\n' | aozora repl` is scriptable.
 //!
 //! The chrome (banner, labels, acknowledgements, help, errors) is localized
-//! through `aozora-i18n`; the view *bytes* — node JSON, HTML, Pandoc JSON, and
+//! through the `i18n` catalog; the view *bytes* — node JSON, HTML, Pandoc JSON, and
 //! the English diagnostic report — are the machine axis and stay identical in
 //! every locale (ADR-0033).
 
@@ -39,9 +39,11 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use crate::fmt::{decode, read_file};
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
+use aozora::pandoc::to_pandoc;
 use aozora::{Document, json};
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use clap::{Parser, ValueEnum};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
@@ -277,8 +279,8 @@ fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
         let owned = doc.lex();
         // Serializing the Pandoc AST cannot fail in practice; surface the error
         // text rather than panicking if that assumption ever breaks.
-        let pandoc = serde_json::to_string(&aozora_pandoc::to_pandoc(&owned))
-            .unwrap_or_else(|err| err.to_string());
+        let pandoc =
+            serde_json::to_string(&to_pandoc(&owned)).unwrap_or_else(|err| err.to_string());
         sections.push(section(&i18n::t(lang, "repl-label-pandoc"), &pandoc));
     }
 
@@ -332,9 +334,8 @@ fn help(lang: &LanguageIdentifier) -> String {
 /// decoder — the exact byte path `read_source` in `main` uses, so a loaded
 /// file parses identically to `aozora render FILE`.
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
-    let raw = aozora_fmt::read_file(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    aozora_fmt::decode(&raw, encoding)
+    let raw = read_file(path).with_context(|| format!("failed to read {}", path.display()))?;
+    decode(&raw, encoding)
 }
 
 /// Run the loop: print the banner, then read lines — with `rustyline` editing /

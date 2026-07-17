@@ -1,6 +1,7 @@
-// aozora VS Code extension — launches the aozora-lsp language server over
-// stdio and wires it to .afm / .aozora / .aozora.txt documents, plus
-// any plaintext .txt file whose content looks like an aozora-bunko work.
+// aozora VS Code extension — launches the aozora language server over
+// stdio (`aozora lsp --stdio`, in-process inside the `aozora` binary) and
+// wires it to .afm / .aozora / .aozora.txt documents, plus any plaintext
+// .txt file whose content looks like an aozora-bunko work.
 
 import { chmodSync, existsSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -38,19 +39,25 @@ export async function activate(context: ExtensionContext): Promise<void> {
   const config = workspace.getConfiguration("aozora");
   const lspPath = resolveLspBinary(context, config);
 
+  // The language server is the `aozora` binary's `lsp` subcommand, run
+  // in-process. `--stdio` is accepted for editor compatibility; stdio is
+  // the only transport.
+  const serverArgs = ["lsp", "--stdio"];
   const serverOptions: ServerOptions = {
     run: {
       command: lspPath,
+      args: serverArgs,
       transport: TransportKind.stdio,
     },
     debug: {
       command: lspPath,
+      args: serverArgs,
       transport: TransportKind.stdio,
       options: {
         env: {
           ...process.env,
           // biome-ignore lint/style/useNamingConvention: env var name is an external contract
-          RUST_LOG: "aozora_lsp=debug",
+          AOZORA_LOG: "aozora_cli=debug",
         },
       },
     },
@@ -178,7 +185,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     void window.showErrorMessage(
-      `aozora-lsp failed to start (${lspPath}): ${message}. ` +
+      `aozora language server failed to start (${lspPath} lsp --stdio): ${message}. ` +
         "Set `aozora.lsp.path` in Settings if you have a custom build, " +
         "or reinstall the extension to restore the bundled server binary.",
     );
@@ -189,24 +196,28 @@ export async function activate(context: ExtensionContext): Promise<void> {
 //
 //   1. If the user explicitly set `aozora.lsp.path` to a non-default
 //      value, honour that — they want their own build.
-//   2. Otherwise prefer the bundled `server/aozora-lsp(.exe)` shipped
+//   2. Otherwise prefer the bundled `server/aozora(.exe)` shipped
 //      inside this extension's platform-specific .vsix. This is the
 //      zero-config path that hits the moment a fresh user installs.
-//   3. Fall back to looking up `aozora-lsp` on the user's PATH — covers
+//   3. Fall back to looking up `aozora` on the user's PATH — covers
 //      the case of a platform-neutral .vsix install (no bundled
-//      binary) where the user manually `cargo install`-ed the server.
+//      binary) where the user manually `cargo install`-ed the CLI.
+//
+// The resolved binary is always invoked as `<binary> lsp --stdio`: the
+// language server is a subcommand of the `aozora` CLI, not a program of
+// its own.
 //
 // On Unix we also chmod 0755 the bundled binary on first activation:
 // vsce ships .vsix archives via a zip codepath that doesn't preserve
 // the executable bit (rust-analyzer hits the same issue). The chmod
 // is idempotent and cheap.
 function resolveLspBinary(context: ExtensionContext, config: WorkspaceConfiguration): string {
-  const userSetting = config.get<string>("lsp.path", "aozora-lsp").trim();
-  if (userSetting !== "" && userSetting !== "aozora-lsp") {
+  const userSetting = config.get<string>("lsp.path", "aozora").trim();
+  if (userSetting !== "" && userSetting !== "aozora") {
     return resolveVars(userSetting);
   }
 
-  const exe = process.platform === "win32" ? "aozora-lsp.exe" : "aozora-lsp";
+  const exe = process.platform === "win32" ? "aozora.exe" : "aozora";
   const bundled = pathJoin(context.extensionPath, "server", exe);
   if (existsSync(bundled)) {
     if (process.platform !== "win32") {
@@ -224,7 +235,7 @@ function resolveLspBinary(context: ExtensionContext, config: WorkspaceConfigurat
     return bundled;
   }
 
-  return "aozora-lsp";
+  return "aozora";
 }
 
 export async function deactivate(): Promise<void> {
@@ -262,7 +273,7 @@ function registerLspFeatureShortcuts(context: ExtensionContext): void {
 
 // Minimal VS Code variable resolver for the few substitutions that
 // matter inside `aozora.lsp.path` — enough to let settings.json carry
-// `${workspaceFolder}/../target/release/aozora-lsp` instead of a hard-
+// `${workspaceFolder}/../target/release/aozora` instead of a hard-
 // coded absolute path.
 function resolveVars(input: string): string {
   const ws = workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";

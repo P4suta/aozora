@@ -1,14 +1,14 @@
 //! Tree-sitter binding for aozora-flavored markdown.
 //!
 //! Exposes [`LANGUAGE`] — a [`tree_sitter_language::LanguageFn`] —
-//! that the consuming crate (today: `aozora-lsp`) feeds into a
+//! that the consuming crate (today: `aozora-cli`'s in-process LSP) feeds into a
 //! `tree_sitter::Parser` to incrementally parse aozora source.
 //! (We don't intra-doc-link `tree_sitter` because this crate doesn't
 //! depend on it directly — only consumers do.)
 //!
 //! ## Why this crate exists
 //!
-//! `aozora-lsp` needs **size-independent** request latency. The
+//! The in-process LSP needs **size-independent** request latency. The
 //! semantic Rust parser (`aozora`) re-parses the entire
 //! document on every call — fine for KB-sized docs, painful for
 //! 40-100 KB docs (414 ms per parse, multiple handlers per

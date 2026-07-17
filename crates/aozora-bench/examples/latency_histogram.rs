@@ -27,14 +27,16 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::Allocator;
+use aozora::unstable::classify::{ClassifiedSpan, classify};
+use aozora::unstable::lex;
+use aozora::unstable::pair::{PairEvent, pair};
+use aozora::unstable::sanitize::sanitize;
+use aozora::unstable::token::Token;
+use aozora::unstable::tokenize;
 use aozora_bench::{log_histogram_ns, render_bar_row};
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lex;
-use aozora_pipeline::lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
-use aozora_syntax::alloc::Allocator;
 const BUCKETS: usize = 10;
 const MIN_NS: u64 = 1_000;
 const MAX_NS: u64 = 1_000_000_000;

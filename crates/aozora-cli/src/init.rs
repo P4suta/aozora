@@ -23,7 +23,7 @@
 //! already-scaffolded directory changes nothing and still exits 0.
 //!
 //! The report chrome (heading, per-file outcome words, next-steps hints) is
-//! localized through `aozora-i18n`; the file names, the scaffolded file
+//! localized through the `i18n` catalog; the file names, the scaffolded file
 //! *contents*, and the literal `aozora …` example commands are language-neutral
 //! project artifacts and stay identical in every locale (mirroring the
 //! machine-vocabulary / example-neutrality policy of ADR-0033).
@@ -34,8 +34,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use crate::i18n::{self as i18n, LanguageIdentifier};
 use anyhow::{Context, Result};
-use aozora_i18n::{self as i18n, LanguageIdentifier};
 use clap::Parser;
 
 /// The scaffolded file names — literal project artifacts, the same in every

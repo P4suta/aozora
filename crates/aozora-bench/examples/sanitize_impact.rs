@@ -38,12 +38,12 @@ use std::time::Instant;
 
 use memchr::memmem;
 
-use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lexer::{
+use aozora::encoding::decode_auto;
+use aozora::unstable::sanitize::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
-    tokenize,
 };
+use aozora::unstable::tokenize;
+use aozora_corpus::CorpusItem;
 
 const TORTOISE_OPEN: &str = "〔";
 const BUCKETS: [&str; 8] = [

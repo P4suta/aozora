@@ -21,7 +21,7 @@ Yonekawa = "Yonekawa"
 Masao = "Masao"
 Yasunobu = "Yasunobu"
 # Hepburn romaji morae in the render-slug consistency test
-# (`aozora-spec/src/slugs.rs` `tests::hepburn`) — valid kana
+# (`aozora/src/spec/slugs.rs` `tests::hepburn`) — valid kana
 # romanisations that collide with the dictionary.
 gya = "gya"
 myu = "myu"
@@ -30,12 +30,12 @@ ba = "ba"
 [files]
 extend-exclude = [
   "spec/aozora/fixtures/", # Aozora Bunko source files
-  # Vendored JIS X 0213 / Unicode standard tables — kanji codepoint
-  # rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary on
-  # uppercase 2-letter hex spans like `BA` → `BY/BE`.
-  "crates/aozora-encoding/data/",
-  "crates/aozora-encoding/build/",
-  "crates/aozora-encoding/src/jisx0213_table.rs", # generated from data/
+  # Vendored JIS X 0213 / Unicode standard tables (folded into `aozora`) —
+  # kanji codepoint rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary
+  # on uppercase 2-letter hex spans like `BA` → `BY/BE`. The PHF table itself is
+  # generated into OUT_DIR (never the source tree), so only the `data/` inputs
+  # need excluding.
+  "crates/aozora/data/",
   "target/",
   "coverage/",
   "*.html",

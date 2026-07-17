@@ -120,7 +120,7 @@ fn category_compile_round_trips() {
         "scan"
     );
     assert_eq!(
-        cat.classify("aozora_pipeline::lexer::tokenize::trigger_kind_at"),
+        cat.classify("aozora::pipeline::lexer::tokenize::trigger_kind_at"),
         "tokenize"
     );
     assert_eq!(
@@ -140,7 +140,7 @@ fn category_toml_round_trips() {
     let toml = r#"
 [[categories]]
 name = "scanner"
-patterns = ["aho_corasick", "aozora_scan"]
+patterns = ["aho_corasick", "aozora::scan"]
 
 [[categories]]
 name = "everything_else"

@@ -16,7 +16,7 @@
 #   ADR-0031:             docs/adr/0031-mutation-testing-for-assertion-strength.md
 #
 # RATCHET, per crate (mutants-baseline.json is the source of truth):
-#   - A crate WITH a committed `max_survivors` (e.g. aozora-spec: 2 documented
+#   - A crate WITH a committed `max_survivors` (e.g. aozora-ffi: 0 documented
 #     equivalent mutants) is ratcheted: the job goes red and opens/updates a
 #     deduped tracking issue when the sweep reports MORE survivors than the
 #     baseline — the class of regression where a test silently stopped catching
@@ -61,9 +61,9 @@ jobs:
   sweep:
     name: sweep (${{ matrix.crate }})
     runs-on: ubuntu-latest
-    # A full-crate sweep rebuilds once per mutant serially; aozora-syntax
-    # (~440 mutants) is the long pole. Generous ceiling — the job is scheduled,
-    # not on any hot path.
+    # A full-crate sweep rebuilds once per mutant serially; the collapsed
+    # `aozora` library (all the former building-block crates in one) is the long
+    # pole. Generous ceiling — the job is scheduled, not on any hot path.
     timeout-minutes: 180
     strategy:
       # Sweep every crate every run — one crate's regression must not mask the rest.
@@ -75,26 +75,22 @@ jobs:
         # baseline is computed with the SAME features, so `just mutants-host`
         # (dev) == this weekly sweep for every crate.
         include:
-          - crate: aozora-syntax    # ratcheted at mutants-baseline.json (3 equivalent survivors)
-          - crate: aozora-spec      # ratcheted at mutants-baseline.json (2 equivalent survivors)
-          - crate: aozora-encoding  # ratcheted at mutants-baseline.json (5 equivalent survivors)
-          - crate: aozora-scan      # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-veb       # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-pipeline  # ratcheted at mutants-baseline.json (39 equivalent survivors)
-          - crate: aozora-render    # ratcheted at mutants-baseline.json (3 equivalent survivors)
-          - crate: aozora-fmt       # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-cst       # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-query     # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-pandoc    # ratcheted at mutants-baseline.json (1 equivalent survivor)
-          - crate: aozora           # ratcheted at mutants-baseline.json (8 equivalent survivors)
-            # json.rs (wire authority), the schema_* introspection fns, and
-            # cst::from_tree are feature-gated; without these the sweep would see
-            # cfg-dead vacuous survivors instead of the real product surface.
-            features: --features schema,query
+          # After the 18→3 collapse the former building-block crates
+          # (spec / syntax / scan / encoding / veb / pipeline / render / fmt /
+          # pandoc / cst / query) are one crate, `aozora`, swept with the full
+          # feature surface so no folded module is cfg-dead vacuous. `aozora`
+          # and `aozora-cli` (which absorbed the LSP) are report-only until a
+          # fresh post-collapse baseline is committed to mutants-baseline.json
+          # (see its `_doc`); a scheduled sweep never goes red on them meanwhile.
+          - crate: aozora
+            # The wire projection (json.rs) + schema introspection + the
+            # feature-gated editor surfaces (fmt / pandoc / cst / query) and the
+            # unstable stage surface must all compile so the sweep sees the real
+            # product, not cfg-dead vacuous survivors.
+            features: --features schema,query,fmt,pandoc,unstable-internals
           - crate: aozora-ffi       # ratcheted at mutants-baseline.json (0 survivors)
           - crate: aozora-extism    # ratcheted at mutants-baseline.json (0 survivors; wasm-only plugin.rs excluded in mutants.toml)
-          - crate: aozora-cli       # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-lsp       # ratcheted at mutants-baseline.json (27 equivalent survivors; default features — internals gates only test targets)
+          - crate: aozora-cli       # report-only post-collapse (absorbed the LSP; awaiting a fresh baseline)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

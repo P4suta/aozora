@@ -17,7 +17,7 @@ import (
 // decoded structs, so a reframed / re-ordered / dropped byte is caught here
 // too — the decoded-struct smoke lives in aozora_test.go. All six surfaces
 // are byte-exact: every plugin export returns the shared aozora::json bytes
-// (and to_html / serialize output) with no framing.
+// (and to_html / to_source output) with no framing.
 func TestFixtureParity(t *testing.T) {
 	root := filepath.Join("..", "aozora-conformance", "fixtures", "render")
 	entries, err := os.ReadDir(root)
@@ -35,7 +35,7 @@ func TestFixtureParity(t *testing.T) {
 	// surface plugin export -> golden file with byte-identical output.
 	surfaces := []struct{ export, file string }{
 		{"to_html", "expected.html"},
-		{"serialize", "expected.serialize.txt"},
+		{"to_source", "expected.serialize.txt"},
 		{"diagnostics_json", "expected.diagnostics.json"},
 		{"nodes_json", "expected.nodes.json"},
 		{"pairs_json", "expected.pairs.json"},

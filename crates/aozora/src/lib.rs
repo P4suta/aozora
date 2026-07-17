@@ -37,17 +37,14 @@
 //! repeated string content; dropping the tree frees the store in one
 //! step, with no per-node `Drop`.
 //!
-//! The build-block crates (`aozora-spec`, `aozora-syntax`,
-//! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are each
-//! published in their own right, but carry **no API-stability contract
-//! of their own** — they are free to churn between minor versions.
-//! This umbrella is the stable seam: it re-exports a *curated* surface
-//! (never a `pub use …::*` glob), so a refactor inside a build-block
-//! crate cannot silently reshape what `aozora` consumers see. The
-//! parsed-AST types live at the crate root ([`Document`], [`Tree`],
-//! [`Node`], [`NodeRef`], [`LexOutput`], …); the [`syntax::ast`] /
-//! [`render`] / [`encoding`] / [`json`] modules expose the few extra
-//! types those surfaces document as stable.
+//! The parse/render chain (`spec`, `syntax`, `scan`, `encoding`,
+//! `collections`, `pipeline`, `render`) lives as private modules inside
+//! this crate; the crate root re-exports a *curated* surface (never a
+//! `pub use …::*` glob), so the internal layering can be refactored
+//! without reshaping what `aozora` consumers see. The parsed-AST types
+//! live at the crate root ([`Document`], [`Tree`], [`Node`], [`NodeRef`],
+//! …); the [`syntax::ast`] / [`render`] / [`encoding`] / [`json`] modules
+//! expose the few extra types those surfaces document as stable.
 //!
 //! ---
 //!
@@ -64,29 +61,76 @@
 // stable — `docsrs` is unset, so this never trips `feature(doc_cfg)`.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "unstable-internals")]
 use core::ops::Range;
 
-pub use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
-pub use aozora_spec::{
-    ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
-    DiagnosticInfo, DiagnosticSource, INLINE_SENTINEL, InternalCheckCode, NormalizedOffset,
-    PairKind, PairLink, RENDER_SLUGS, RenderSlug, SLUGS, Sentinel, Severity, SlugEntry, SlugFamily,
-    SourceOffset, Span, TriggerKind, canonicalise_slug, codes, roman_slug,
+// The core parse/render chain. Leaf primitives (`spec`, `collections`,
+// `scan`) and the lex `pipeline` stay private; `encoding` / `syntax` /
+// `render` carry the curated facade surface (see their re-exports below).
+mod collections;
+mod pipeline;
+mod scan;
+mod spec;
+
+pub mod encoding;
+pub mod render;
+pub mod syntax;
+
+/// Canonical diagnostic / span / pair types — the single definitions live in
+/// the crate-internal `spec` module; re-exported here as the stable crate-root
+/// facade.
+pub use crate::spec::{
+    Diagnostic, DiagnosticInfo, DiagnosticSource, NormalizedOffset, PairKind, PairLink, Severity,
+    SourceOffset, Span,
 };
 /// Owned-AST node types editor surfaces match against (hover, completion,
-/// code actions, semantic tokens). Re-exported so external
-/// consumers don't have to depend on `aozora-syntax` directly — `aozora` is the
-/// single editor-facing front door.
-pub use aozora_syntax::{
+/// code actions, semantic tokens), plus the shared `Copy` style/format enums.
+pub use crate::syntax::{
     BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, EnclosureKind, FontShift,
     Format, ForwardAttr, ForwardOrigin, GaijiCanonical, HeadingKind, HeadingStyle, IndentBlock,
     IndentLayout, Kumi, LineFormat, LineWidth, MenKuTen, NodeKind, RegionClose, RegionFormat,
     Resolved, RubySide, SectionKind,
-    ast::{Content, Node, NodeStore},
+    ast::{Content, Node, NodeRef, NodeStore},
 };
+
+/// **UNSTABLE — no semver contract.** The internal parse-stage surface plus
+/// the sentinel / slug / classifier tables the in-workspace aozora-cli /
+/// aozora-bench / aozora-xtask consumers reach for. Hidden from
+/// docs (the serde `__private` model): always compiled but never advertised and
+/// carrying no stability contract, so it stays off the *documented* minimal
+/// facade while keeping the demoted-off-root items reachable (`dead_code`
+/// satisfied in every configuration). The heavier, seal-bearing incremental
+/// engine is the one piece that is additionally gated behind the
+/// `unstable-internals` feature (see below).
+#[doc(hidden)]
+pub mod unstable {
+    pub use crate::pipeline::lexer::{classify, pair, sanitize, token, tokenize};
+    pub use crate::pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized, lex};
+    pub use crate::scan::NaiveScanner;
+    pub use crate::spec::{
+        ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL,
+        INLINE_SENTINEL, InternalCheckCode, RENDER_SLUGS, RenderSlug, SLUGS, Sentinel, SlugEntry,
+        SlugFamily, TriggerKind, canonicalise_slug, classify_trigger_bytes, codes, roman_slug,
+    };
+    pub use crate::syntax::alloc::Allocator;
+    pub use crate::syntax::ast::InternStats;
+    pub use crate::syntax::ast::{LexOutput, SourceNode};
+    pub use crate::syntax::{degraded, lint};
+}
+
+/// **UNSTABLE — no semver contract.** Classify-stage timing instrumentation.
+/// The read side (`TimingTable::snapshot`,
+/// `Subsystem::ordered`, `snapshot_replay_sizes`, …) is consumed by the
+/// in-workspace `aozora-bench` probes; the record side is compiled into the
+/// classify hot path only under this feature (dead code otherwise). Hidden
+/// from docs and gated behind `classify-instrument`.
+#[cfg(feature = "classify-instrument")]
+#[doc(hidden)]
+pub use crate::pipeline::lexer::instrumentation;
 
 mod diagnostics_text;
 mod document;
+#[cfg(feature = "unstable-internals")]
 mod incremental;
 mod splice;
 
@@ -100,7 +144,12 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, Region, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
+/// **UNSTABLE — no semver contract.** The diagnostics-only incremental
+/// re-parse engine (#237), gated behind `unstable-internals` and hidden from
+/// docs; the in-workspace LSP enables the feature and drives it.
+#[cfg(feature = "unstable-internals")]
+#[doc(hidden)]
+pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc, SanitizedSrcSealed};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
@@ -124,6 +173,8 @@ pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 ///
 /// This is exposed for the in-workspace LSP consumer only; its shape may change
 /// without a major version bump until v0.5.0.
+#[cfg(feature = "unstable-internals")]
+#[doc(hidden)]
 #[must_use]
 #[expect(
     clippy::needless_pass_by_value,
@@ -157,6 +208,8 @@ pub fn reparse_incremental_diagnostics_only(
 ///
 /// The base is taken by reference (not by value like the `&str` entry) because a
 /// rope source holds a cursor and is not `Copy`; callers pass `&DiagBaseRef { .. }`.
+#[cfg(feature = "unstable-internals")]
+#[doc(hidden)]
 #[must_use]
 pub fn reparse_incremental_diagnostics_only_in<S: SanitizedSrc>(
     base: &DiagBaseRef<'_, S>,
@@ -179,8 +232,7 @@ pub fn reparse_incremental_diagnostics_only_in<S: SanitizedSrc>(
 ///
 /// It warms the SIMD trigger-scan backend selection (tokenize stage) and
 /// the annotation-classifier Aho-Corasick DFA (classify stage) — the latter is the
-/// bulk of the cost (~150 microseconds; the `aozora-pipeline` `boot`
-/// bench measures it).
+/// bulk of the cost (~150 microseconds).
 ///
 /// ```
 /// aozora::prewarm();
@@ -188,134 +240,48 @@ pub fn reparse_incremental_diagnostics_only_in<S: SanitizedSrc>(
 /// let _ = doc.parse().to_html();
 /// ```
 pub fn prewarm() {
-    aozora_pipeline::prewarm();
+    pipeline::prewarm();
 }
 
-/// Owned AST node types — [`crate::Node`] and its payload structs, the
-/// [`crate::NodeStore`], `Segment` / `ContentRange` handles, and the
-/// string interner — under the `syntax::ast` path.
+/// Source-canonicalising formatter algorithm.
 ///
-/// The parsed-AST types most callers need are already at the crate
-/// root (reached through [`crate::Document`] / [`crate::Tree`]); this
-/// module is the explicit re-export of the underlying
-/// [`aozora_syntax::ast`] surface
-/// for code that constructs or walks nodes directly (custom renderers,
-/// owned-tree transforms). It is a named re-export of `ast`, **not** a
-/// glob of the whole no-contract `aozora-syntax` crate: the lint /
-/// degraded-lowering helpers and other internals stay private to the
-/// umbrella. Workspace tools that need them depend on `aozora-syntax`
-/// directly.
-pub mod syntax {
-    pub use aozora_syntax::ast;
-}
+/// The `parse ∘ to_source` round trip; its output byte-identity is inherited
+/// from [`Document::parse`] + [`Tree::to_source_with`]. The CLI plumbing that
+/// wraps it lives in `aozora-cli`.
+#[cfg(feature = "fmt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "fmt")))]
+pub mod fmt;
 
-/// Rendering options for the owned-AST emitters.
-///
-/// [`crate::Tree::to_html`] / [`crate::Tree::to_source`] cover the
-/// common cases; [`crate::Tree::to_html_with`] /
-/// [`crate::Tree::to_source_with`] take the [`crate::render::RenderOptions`] /
-/// [`crate::render::SerializeOptions`] re-exported here (a
-/// [`crate::render::DirectiveNormalization`] level selects how an
-/// `Unknown` directive is lowered). These three
-/// option types are the stable render surface. The renderer *functions*
-/// themselves live in the no-contract `aozora-render` crate; a
-/// downstream renderer (EPUB, plain text, LaTeX, …) that drives them —
-/// or reuses the byte-spelling helpers — depends on `aozora-render`
-/// directly.
-pub mod render {
-    pub use aozora_render::{DirectiveNormalization, RenderOptions, SerializeOptions};
-}
-
-/// Shift_JIS / UTF-8 source decoding.
-///
-/// The parser proper is strictly UTF-8; decode a Shift_JIS archive
-/// with [`crate::encoding::decode_sjis`] (force) or
-/// [`crate::encoding::decode_auto`] (sniff) before handing the `String`
-/// to [`crate::Document::new`]. Both are strict — they error on
-/// malformed bytes rather than substituting replacement characters. The
-/// [`crate::encoding::Suijun`] helpers classify a gaiji reference by its
-/// JIS X 0213 level. Gaiji *resolution* is the parser's job: it is read
-/// off the `Gaiji` node (see [`crate::Resolved`]), not called through
-/// this module, so the resolver internals stay in the no-contract
-/// `aozora-encoding` crate.
-pub mod encoding {
-    pub use aozora_encoding::{
-        DecodeError, Suijun, decode_auto, decode_auto_into, decode_sjis, decode_sjis_into,
-        has_utf8_bom, is_platform_dependent, jis_level, level_table_sizes,
-    };
-}
+/// Pandoc AST projection — emit a [`pandoc_ast::Pandoc`] document consumable by
+/// every Pandoc output format (HTML, EPUB, LaTeX/PDF, DOCX, …).
+#[cfg(feature = "pandoc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pandoc")))]
+pub mod pandoc;
 
 /// Lossless concrete syntax tree.
 ///
-/// Re-export of [`aozora_cst`] under the `cst` feature. Enables
-/// editor-grade surfaces (LSP servers, source-faithful
-/// refactoring / formatting tools) without pulling rowan into the
-/// dep tree of plain library consumers.
+/// A rowan-backed `SyntaxNode` projection under the `cst` feature. Enables
+/// editor-grade surfaces (LSP servers, source-faithful refactoring / formatting
+/// tools) without pulling rowan into the dep tree of plain library consumers.
 ///
-/// ```rust,ignore
+/// ```
 /// use aozora::Document;
-/// let doc = Document::new("｜青梅《おうめ》");
-/// let cst = aozora::cst::from_tree(&doc.parse());
+/// let cst = aozora::cst::from_tree(&Document::new("｜青梅《おうめ》").parse());
 /// // Walk the rowan SyntaxNode tree …
+/// assert_eq!(cst.kind(), aozora::cst::SyntaxKind::Document);
 /// ```
 #[cfg(feature = "cst")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cst")))]
-pub mod cst {
-    pub use aozora_cst::{AozoraLanguage, SyntaxKind, SyntaxNode, SyntaxToken, build_cst};
-
-    /// Convenience wrapper over [`aozora_cst::build_cst`].
-    ///
-    /// Runs the sanitize stage internally — `source_nodes` coordinates
-    /// live in sanitized bytes, so we re-derive that text here rather
-    /// than asking callers to thread it through. Sanitize is a pure
-    /// function; calling it again is cheap.
-    #[must_use]
-    pub fn from_tree(tree: &crate::Tree<'_>) -> SyntaxNode {
-        use aozora_pipeline::lexer::sanitize;
-        let sanitized = sanitize(tree.source());
-        build_cst(&sanitized.text, tree.source_nodes())
-    }
-}
+pub mod cst;
 
 /// Tree-sitter-flavoured pattern queries over the CST.
 ///
-/// Re-export of [`aozora_query`] under the `query` feature.
-/// Editor surfaces (`textDocument/documentHighlight`, "find all
-/// ruby annotations") compose against the DSL instead of
-/// re-implementing tree walks.
-///
-/// ```rust,ignore
-/// use aozora::Document;
-/// use aozora::query::compile;
-///
-/// let doc = Document::new("｜青梅《おうめ》");
-/// let cst = aozora::cst::from_tree(&doc.parse());
-/// let q = compile("(Construct @ruby)").unwrap();
-/// let captures = q.captures(&cst);
-/// ```
+/// A tiny selector DSL under the `query` feature (implies `cst`). Editor
+/// surfaces (`textDocument/documentHighlight`, "find all ruby annotations")
+/// compose against the DSL instead of re-implementing tree walks.
 #[cfg(feature = "query")]
 #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
-pub mod query {
-    pub use aozora_query::{Capture, Query, QueryError, compile};
-}
-
-/// Aozora-shaped `proptest` strategies.
-///
-/// Downstream renderer / visitor authors writing their own property
-/// tests reach through this module instead of pulling
-/// `aozora-proptest` directly. Enabled by the `proptest` Cargo
-/// feature on the `aozora` crate; both `aozora::proptest::*` and
-/// the `proptest` crate itself are then in scope for the consumer.
-///
-/// The generators here cover the same shapes the workspace's
-/// `tests/property_*` suites rely on, so any regression noticed
-/// inside the parser also surfaces inside the consumer's test
-/// harness.
-#[cfg(feature = "proptest")]
-#[cfg_attr(docsrs, doc(cfg(feature = "proptest")))]
-pub mod proptest {
-    pub use aozora_proptest::{config, generators};
-}
+pub mod query;
 
 #[cfg(test)]
 mod tests {
@@ -354,7 +320,8 @@ mod tests {
     /// satisfies every splice precondition, so the diagnostics-only reparse must
     /// accept it (return `Some`) rather than fall back — the input that separates
     /// the live wrappers from a `-> None` mutation of their bodies.
-    fn local_edit_fixture() -> (LexOutput, String, usize) {
+    #[cfg(feature = "unstable-internals")]
+    fn local_edit_fixture() -> (syntax::ast::LexOutput, String, usize) {
         let cached = Document::new("｜青梅《おうめ》\n\nかきくけこ\n\n｜山川《やまかわ》\n").lex();
         let san = cached.sanitized.clone();
         let at = san.find("かき").expect("plain middle paragraph") + "かき".len();
@@ -365,6 +332,7 @@ mod tests {
         (cached, new_san, at)
     }
 
+    #[cfg(feature = "unstable-internals")]
     #[test]
     fn reparse_incremental_diagnostics_only_splices_a_local_edit() {
         let (cached, new_san, at) = local_edit_fixture();
@@ -392,6 +360,7 @@ mod tests {
         assert_eq!(splice.pieces.node_count(), cached_nodes);
     }
 
+    #[cfg(feature = "unstable-internals")]
     #[test]
     fn reparse_incremental_diagnostics_only_in_splices_a_local_edit() {
         let (cached, new_san, at) = local_edit_fixture();

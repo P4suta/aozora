@@ -13,7 +13,7 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use aozora::Document;
-use aozora_encoding::decode_auto;
+use aozora::encoding::decode_auto;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const RELATIVE_PATH: &str = "000363/files/56656_ruby_74439/56656_ruby_74439.txt";

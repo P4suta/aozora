@@ -20,9 +20,9 @@
 use std::env;
 use std::process::ExitCode;
 
+use aozora::encoding::decode_auto;
+use aozora::unstable::NaiveScanner;
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_auto;
-use aozora_scan::NaiveScanner;
 
 const DEFAULT_LIMIT: usize = 2000;
 

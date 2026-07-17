@@ -33,11 +33,6 @@ serde-wasm-bindgen = "0.6"
 # profile readings. The `Performance` + `Window` features are tiny
 # (each opens up one JS-bound interface) and add ~1 KB gzip.
 web-sys = { version = "0.3", features = ["Performance", "Window"] }
-# The playground footer shows the parser build version; `aozora-buildstamp`
-# is the single authority for that channel-aware stamp (dev / nightly /
-# stable). Scoped to wasm32 so host workspace builds never pull the
-# build-identity leaf — and its `build.rs` git probe — into their graph.
-aozora-buildstamp = { workspace = true }
 
 [dependencies]
 # Drivers consume the wire format via `aozora::json::*`; serde +

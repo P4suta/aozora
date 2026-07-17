@@ -319,7 +319,7 @@ fn two_pattern_categorizer() -> Categorizer {
     let toml = r#"
 [[categories]]
 name = "scan"
-patterns = ["aho_corasick", "aozora_scan"]
+patterns = ["aho_corasick", "aozora::scan"]
 
 [[categories]]
 name = "alloc"
@@ -392,7 +392,7 @@ fn rollup_emits_zero_sample_categories_for_stable_order() {
 fn rollup_distinct_funcs_counts_unique_labels() {
     // Two distinct scan functions both bucket into `scan`.
     let trace = build_trace(
-        &["aho_corasick::a", "aozora_scan::b"],
+        &["aho_corasick::a", "aozora::scan::b"],
         &[(0, Some(0)), (1, Some(0))],
         &[Some(0)],
         &[(1, 0), (2, 1)],
@@ -458,17 +458,17 @@ fn categorizer_anchored_libc_patterns() {
 fn categorizer_default_buckets_spot_checks() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
     let cases = [
-        ("aozora_pipeline::lexer::sanitize::run", "sanitize"),
-        ("aozora_pipeline::lexer::pair::pair", "pair"),
-        ("aozora_pipeline::lexer::classify::recognise", "classify"),
-        ("aozora_syntax::ast::intern::StrInterner::intern", "intern"),
+        ("aozora::pipeline::lexer::sanitize::run", "sanitize"),
+        ("aozora::pipeline::lexer::pair::pair", "pair"),
+        ("aozora::pipeline::lexer::classify::recognise", "classify"),
+        ("aozora::syntax::ast::intern::StrInterner::intern", "intern"),
         ("memchr::memmem::find", "memchr_scan"),
         ("encoding_rs::Decoder::decode", "corpus_load_sjis"),
         ("aozora_corpus::iter::walk", "corpus_walk"),
         ("bumpalo::Bump::alloc", "alloc_bumpalo_arena"),
         ("__memcpy_avx_unaligned", "alloc_memcpy_memmove"),
         ("alloc::vec::Vec::push", "alloc_rust_std"),
-        ("aozora_render::html::emit", "rendering"),
+        ("aozora::render::html::emit", "rendering"),
         ("hashbrown::map::HashMap::insert", "hashing"),
         ("core::ptr::write_volatile", "core_ptr_ops"),
         ("core::fmt::Formatter::write_str", "core_misc"),

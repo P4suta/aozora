@@ -6,13 +6,12 @@
 //! / `aozora_document_to_html` output is byte-identical to the golden the
 //! in-process `render_gate` pins.
 //!
-//! Surface coverage: the C ABI deliberately exposes a **four-surface
-//! subset** — `to_html`, `diagnostics_json`, `nodes_json`, `pairs_json`.
-//! It carries no `serialize` or `container_pairs` export (an embedder that
-//! needs the round-trip source or container coordinates uses the Python /
-//! WASM / Extism-Go front doors, which do expose all six). The parity gate
-//! pins exactly the surfaces the ABI ships; the six-surface coverage lives
-//! in the sibling `test_fixture_parity.py` / `parity.mjs` / Go walkers.
+//! Surface coverage: the C ABI is at full parity with the Python / WASM /
+//! Extism-Go front doors — `to_html`, `to_source`, `diagnostics_json`,
+//! `nodes_json`, `pairs_json`, and `container_pairs_json` all ship as
+//! `aozora_*` exports. This gate pins every golden-backed surface the ABI
+//! ships against the same authority the sibling `test_fixture_parity.py` /
+//! `parity.mjs` / Go walkers use.
 //!
 //! Framing: every C-ABI accessor hands back the raw `aozora::json` bytes
 //! (or `to_html()` bytes) with no trailing newline, so the comparison is
@@ -28,9 +27,10 @@ use core::ptr;
 
 use aozora_conformance::{RenderFixture, fixtures_root};
 use aozora_ffi::{
-    AozoraBytes, AozoraDocument, AozoraStatus, aozora_bytes_free, aozora_document_diagnostics_json,
-    aozora_document_free, aozora_document_new, aozora_document_nodes_json,
-    aozora_document_pairs_json, aozora_document_to_html,
+    AozoraBytes, AozoraDocument, AozoraStatus, aozora_bytes_free,
+    aozora_document_container_pairs_json, aozora_document_diagnostics_json, aozora_document_free,
+    aozora_document_new, aozora_document_nodes_json, aozora_document_pairs_json,
+    aozora_document_to_html, aozora_document_to_source,
 };
 
 /// A JSON / HTML accessor in the C ABI: `(doc, out_bytes) -> status`.
@@ -111,4 +111,20 @@ fn fixture_parity_ffi_pairs_matches_golden() {
     walk("pairs", aozora_document_pairs_json, |fx| {
         fx.expected_pairs.clone()
     });
+}
+
+#[test]
+fn fixture_parity_ffi_serialize_matches_golden() {
+    walk("serialize", aozora_document_to_source, |fx| {
+        fx.expected_serialize.clone()
+    });
+}
+
+#[test]
+fn fixture_parity_ffi_container_pairs_matches_golden() {
+    walk(
+        "container_pairs",
+        aozora_document_container_pairs_json,
+        |fx| fx.expected_container_pairs.clone(),
+    );
 }

@@ -1,6 +1,6 @@
 [package]
 name = "aozora-proptest"
-description = "Proptest strategies (Aozora-shaped input generators) for the aozora parser. Internal crate; reach it via the aozora crate's `proptest` feature."
+description = "Proptest strategies (Aozora-shaped input generators) for the aozora parser. Dev-only crate; consumed as a dev-dependency by the aozora property tests."
 
 version.workspace = true
 edition.workspace = true
@@ -12,6 +12,11 @@ authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+
+# Dev-only: consumed as a `[dev-dependencies]` entry (path-only) by the
+# aozora property tests. Never a runtime dependency of a published crate, so it
+# stays off crates.io — which also lets its workspace dep be declared path-only.
+publish = false
 
 [lints]
 workspace = true

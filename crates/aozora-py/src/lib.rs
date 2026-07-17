@@ -195,6 +195,8 @@ mod bindings {
         m.add_function(wrap_pyfunction!(prewarm, m)?)?;
         m.add_function(wrap_pyfunction!(decode_sjis, m)?)?;
         m.add_function(wrap_pyfunction!(slugs_json, m)?)?;
+        m.add_function(wrap_pyfunction!(version, m)?)?;
+        m.add_function(wrap_pyfunction!(schema_version, m)?)?;
         Ok(())
     }
 
@@ -247,6 +249,33 @@ mod bindings {
     fn slugs_json() -> String {
         json::slugs()
     }
+
+    /// The parser's channel-aware **build** version.
+    ///
+    /// Examples: `0.5.0` (a published wheel), `0.5.0-dev+g3672e3f` (a
+    /// local checkout), or `0.5.0-nightly.20260629+g3672e3f` (a
+    /// scheduled build). This is the parser engine's build stamp, not
+    /// the `PyPI` package version (`aozora.__version__`, from dist
+    /// metadata). Single authority: the `AOZORA_VERSION_STRING` this
+    /// crate's `build.rs` injects — never a hard-coded literal. Mirrors
+    /// the `version()` export of the WASM / Extism / Go drivers.
+    #[pyfunction]
+    fn version() -> String {
+        env!("AOZORA_VERSION_STRING").to_owned()
+    }
+
+    /// The **wire** schema version this driver emits.
+    ///
+    /// Every `*_json()` envelope carries `"schemaVersion": <this>`;
+    /// [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to
+    /// the cross-driver wire shape. A host can assert this matches its
+    /// own expected value at load time — the parity check the Go SDK's
+    /// `Open` performs. Distinct from [`version`]: the wire contract
+    /// version, not the engine build stamp.
+    #[pyfunction]
+    fn schema_version() -> u32 {
+        json::SCHEMA_VERSION
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +296,13 @@ mod tests {
         let doc = AozoraDoc::new("plain text".to_owned());
         let json = json::diagnostics(doc.parse().diagnostics());
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+    }
+
+    /// The `schema_version()` export must track the wire authority so
+    /// the Python surface never advertises a stale contract.
+    #[test]
+    fn schema_version_matches_wire() {
+        assert_eq!(json::SCHEMA_VERSION, 2);
     }
 
     /// Smoke: `decode_auto` round-trips a `Shift_JIS` payload that

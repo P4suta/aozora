@@ -1,162 +1,241 @@
-//! End-to-end tests for `aozora lsp` — the exec-delegate to the `aozora-lsp`
-//! daemon. Two behaviours the unit tests in `src/lsp.rs` cannot reach through
-//! a spawned process: a real hand-off to a stub daemon on `PATH` (argv is
-//! forwarded verbatim), and the actionable exit-2 error when no daemon is
-//! installed.
+//! End-to-end test for `aozora lsp` — the **in-process** language server.
+//!
+//! Spawns `aozora lsp --stdio` and drives a real LSP session over its stdio:
+//! `initialize` → `initialized` → `didOpen` (of a document with an unclosed
+//! bracket), then reads until the server pushes `textDocument/publishDiagnostics`
+//! for that document. This proves the whole in-process pipeline — argv handling,
+//! the tower-lsp runloop over stdio, parse, and diagnostic projection — without
+//! the retired exec-delegate to a separate `aozora-lsp` binary.
 
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdout, Command, Stdio, abort};
+use std::thread;
+use std::time::Duration;
 
-use tempfile::TempDir;
+use serde_json::{Value, json};
 
 /// The `aozora` binary under test.
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
-/// Pin the message language and seal the global config layer at an empty XDG
-/// dir, so these runs stay deterministic regardless of the host locale or a
-/// developer's real `~/.config/aozora`. Kept local (rather than the shared
-/// `common` harness) so both tests — one of which is Unix-only — always
-/// exercise it and no import is left unused on any platform.
-fn hermetic(cmd: &mut Command, xdg: &Path) {
-    cmd.env("AOZORA_LANG", "en")
-        .env("XDG_CONFIG_HOME", xdg)
-        .env_remove("LANG")
-        .env_remove("LC_ALL");
+/// The document handle used for every handshake here — an opaque identifier the
+/// server only echoes back on `publishDiagnostics`, so one value serves all
+/// tests (each drives its own single-document server).
+const DOC_URI: &str = "file:///doc.aozora";
+
+/// Arm a watchdog that force-kills the whole test process if the server hangs,
+/// converting a deadlock into a visible failure rather than a wedged run.
+fn arm_watchdog() {
+    thread::spawn(|| {
+        thread::sleep(Duration::from_secs(30));
+        eprintln!("lsp handshake watchdog fired: the server did not respond in time");
+        abort();
+    });
 }
 
-/// A directory holding an executable `aozora-lsp` stub that echoes a marker
-/// plus the argv it received, so a test can prove the hand-off happened and
-/// that arguments were forwarded untouched.
-#[cfg(unix)]
-fn stub_dir() -> TempDir {
-    use std::os::unix::fs::PermissionsExt as _;
-    let dir = TempDir::new().expect("stub dir");
-    let stub = dir.path().join("aozora-lsp");
-    fs::write(&stub, b"#!/bin/sh\nprintf 'stub-lsp:%s\\n' \"$*\"\n").expect("write stub");
-    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).expect("chmod +x");
-    dir
-}
-
-#[cfg(unix)]
-#[test]
-fn lsp_delegates_to_the_daemon_forwarding_argv() {
-    let xdg = TempDir::new().expect("xdg dir");
-    let stub = stub_dir();
-    // PATH holds only the stub dir, so the delegate resolves the stub (PATH is
-    // searched before the sibling-of-binary fallback) regardless of any real
-    // `aozora-lsp` in the build output directory.
-    let mut cmd = Command::new(BIN);
-    hermetic(&mut cmd, xdg.path());
-    let output = cmd
-        .args(["lsp", "--stdio"])
-        .env("PATH", stub.path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("spawn aozora lsp");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "delegation exits 0: {output:?}");
-    assert!(
-        stdout.contains("stub-lsp:"),
-        "the daemon stub ran (its marker is on stdout): {stdout:?}"
+/// Drive `initialize` (handshaking as `locale`) → `initialized` → `didOpen` (of
+/// `text`) and return the `diagnostics` array the server pushes for the opened
+/// document.
+fn open_and_collect_diagnostics(
+    stdin: &mut impl Write,
+    reader: &mut BufReader<ChildStdout>,
+    text: &str,
+    locale: &str,
+) -> Value {
+    send(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "capabilities": {}, "locale": locale }
+        }),
     );
-    assert!(
-        stdout.contains("--stdio"),
-        "argv is forwarded verbatim to the daemon: {stdout:?}"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn lsp_finds_the_daemon_next_to_the_binary_when_not_on_path() {
-    use std::os::unix::fs::PermissionsExt as _;
-    // The release-tarball layout: `aozora` and `aozora-lsp` sit side by side in
-    // a directory that need not be on PATH. Copy the CLI into an isolated dir,
-    // drop an executable `aozora-lsp` stub beside it, and run with PATH removed
-    // so ONLY the "next to this binary" fallback (env::current_exe's dir) can
-    // resolve the daemon — proving that fallback actually fires.
-    let xdg = TempDir::new().expect("xdg dir");
-    let home = TempDir::new().expect("isolated home");
-    let exe = home.path().join(exe_name());
-    fs::copy(BIN, &exe).expect("copy the aozora binary");
-    make_executable(&exe);
-    // The sibling daemon stub echoes a marker plus the argv it received; its
-    // `#!/bin/sh` shebang is an absolute path, so it runs with PATH unset.
-    let stub = home.path().join("aozora-lsp");
-    fs::write(&stub, b"#!/bin/sh\nprintf 'stub-lsp:%s\\n' \"$*\"\n").expect("write stub");
-    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).expect("chmod +x");
-
-    let mut cmd = Command::new(&exe);
-    hermetic(&mut cmd, xdg.path());
-    let output = cmd
-        .args(["lsp", "--stdio"])
-        .env_remove("PATH")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("spawn the isolated aozora binary");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "the sibling daemon is reached with no PATH involved: {output:?}"
-    );
-    assert!(
-        stdout.contains("stub-lsp:") && stdout.contains("--stdio"),
-        "the sibling daemon ran with argv forwarded verbatim: {stdout:?}"
-    );
-}
-
-#[test]
-fn lsp_missing_daemon_is_an_actionable_exit_2() {
-    // Copy the binary into an isolated dir so the "next to this binary"
-    // fallback has no `aozora-lsp` sibling to find, then run it with no PATH.
-    // Neither lookup can succeed, so this exercises the not-installed path.
-    let xdg = TempDir::new().expect("xdg dir");
-    let home = TempDir::new().expect("isolated home");
-    let exe = home.path().join(exe_name());
-    fs::copy(BIN, &exe).expect("copy the aozora binary");
-    make_executable(&exe);
-
-    let mut cmd = Command::new(&exe);
-    hermetic(&mut cmd, xdg.path());
-    let output = cmd
-        .args(["lsp", "--stdio"])
-        .env_remove("PATH")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("spawn the isolated aozora binary");
-
+    let init = recv(reader);
     assert_eq!(
-        output.status.code(),
-        Some(2),
-        "a missing daemon is a usage error (exit 2), not a generic failure: {output:?}"
+        init["id"],
+        json!(1),
+        "initialize response carries id 1: {init}"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("aozora-lsp") && stderr.contains("install"),
-        "the error names the daemon and how to fix it: {stderr:?}"
+        init["result"]["capabilities"].is_object(),
+        "initialize result advertises capabilities: {init}"
+    );
+
+    send(
+        stdin,
+        &json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+    );
+    send(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": DOC_URI, "languageId": "aozora", "version": 1, "text": text
+            } }
+        }),
+    );
+
+    // The server may interleave `window/logMessage` or other traffic first.
+    loop {
+        let msg = recv(reader);
+        if msg["method"] == json!("textDocument/publishDiagnostics")
+            && msg["params"]["uri"] == json!(DOC_URI)
+        {
+            break msg["params"]["diagnostics"].clone();
+        }
+    }
+}
+
+/// Frame a JSON-RPC message with its `Content-Length` header and write it to
+/// the server's stdin.
+fn send(stdin: &mut impl Write, msg: &Value) {
+    let body = serde_json::to_vec(msg).expect("serialize JSON-RPC message");
+    write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).expect("write header");
+    stdin.write_all(&body).expect("write body");
+    stdin.flush().expect("flush stdin");
+}
+
+/// Read one `Content-Length`-framed JSON-RPC message off the server's stdout.
+fn recv(reader: &mut BufReader<ChildStdout>) -> Value {
+    let mut content_length: Option<usize> = None;
+    loop {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).expect("read header line");
+        assert!(n != 0, "server closed stdout before a full message arrived");
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break; // blank line terminates the header block
+        }
+        if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
+            content_length = Some(rest.trim().parse().expect("Content-Length is a number"));
+        }
+    }
+    let len = content_length.expect("a Content-Length header preceded the body");
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body).expect("read message body");
+    serde_json::from_slice(&body).expect("body is valid JSON")
+}
+
+/// A killed-on-drop child, so a hung server never wedges the test run.
+struct Daemon(Child);
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _drop = self.0.kill();
+        let _drop = self.0.wait();
+    }
+}
+
+#[test]
+fn in_process_lsp_completes_the_initialize_didopen_diagnostics_handshake() {
+    arm_watchdog();
+
+    let mut child = Command::new(BIN)
+        .args(["lsp", "--stdio"])
+        .env("AOZORA_LANG", "en")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn `aozora lsp`");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
+    let mut daemon = Daemon(child);
+
+    // Handshake + didOpen of a document with an unclosed bracket — the server
+    // must push at least one diagnostic back for it.
+    let diagnostics =
+        open_and_collect_diagnostics(&mut stdin, &mut reader, "本文［＃改ページ", "en");
+    let diags = diagnostics.as_array().expect("diagnostics is an array");
+    assert!(
+        !diags.is_empty(),
+        "the unclosed bracket produces at least one diagnostic: {diagnostics}"
+    );
+    // The code is the dotted `aozora::lex::*` contract the CLI shares.
+    let codes: Vec<&str> = diags.iter().filter_map(|d| d["code"].as_str()).collect();
+    assert!(
+        codes.iter().any(|c| c.starts_with("aozora::lex::")),
+        "diagnostic codes are the dotted aozora::lex::* contract: {codes:?}"
+    );
+
+    // Orderly shutdown, then confirm a clean exit with no server panic.
+    send(
+        &mut stdin,
+        &json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null }),
+    );
+    let _shutdown = recv(&mut reader);
+    send(
+        &mut stdin,
+        &json!({ "jsonrpc": "2.0", "method": "exit", "params": null }),
+    );
+    drop(stdin);
+
+    let status = daemon.0.wait().expect("await server exit");
+    assert!(
+        status.success(),
+        "the server exits cleanly after shutdown/exit: {status:?}"
+    );
+
+    let mut stderr = String::new();
+    if let Some(mut err) = daemon.0.stderr.take() {
+        let _drop = err.read_to_string(&mut stderr);
+    }
+    assert!(
+        !stderr.to_lowercase().contains("panic"),
+        "the server logged no panic: {stderr}"
     );
 }
 
-/// The file name to copy the binary under, preserving the platform extension
-/// (`aozora.exe` on Windows) so the OS still recognises it as executable.
-fn exe_name() -> String {
-    Path::new(BIN)
-        .file_name()
-        .expect("binary has a file name")
-        .to_string_lossy()
-        .into_owned()
+/// Spawn a fresh server that handshakes as `locale`, open a document that always
+/// yields a diagnostic, and return that diagnostic's localized `message`.
+/// `AOZORA_LANG` is cleared so the client's handshake locale — not the daemon's
+/// environment — is what resolves the UI language (it sits above the OS `LANG`
+/// in the precedence chain, so it decides regardless of the test host's `LANG`).
+fn first_diagnostic_message(locale: &str) -> String {
+    let mut child = Command::new(BIN)
+        .args(["lsp", "--stdio"])
+        .env_remove("AOZORA_LANG")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn `aozora lsp`");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
+    let mut daemon = Daemon(child);
+
+    let diagnostics =
+        open_and_collect_diagnostics(&mut stdin, &mut reader, "本文［＃改ページ", locale);
+    let message = diagnostics
+        .as_array()
+        .and_then(|diags| diags.first())
+        .and_then(|diag| diag["message"].as_str())
+        .expect("the server reports a diagnostic with a message")
+        .to_owned();
+
+    // Closing stdin is EOF to the stdio transport, so the server leaves its read
+    // loop and exits; the `Daemon` drop still guards against a hang.
+    drop(stdin);
+    let _exit = daemon.0.wait();
+    message
 }
 
-/// Restore the exec bit that `fs::copy` may not carry across on Unix; a no-op
-/// elsewhere, where an `.exe` is executable by extension.
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("preserve exec bit");
-}
+/// The client's `initialize` locale — not the daemon's own environment — decides
+/// the server's UI language. Two fresh servers open the same document; the one
+/// that handshakes as Japanese must answer in a different language than the one
+/// that handshakes as English. Each server is its own process, so the resolved
+/// language — a process-global fixed by the first handshake — stays
+/// deterministic; a single shared process would let test order decide it.
+#[test]
+fn initialize_locale_decides_the_ui_language() {
+    arm_watchdog();
 
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) {}
+    let ja = first_diagnostic_message("ja");
+    let en = first_diagnostic_message("en");
+
+    assert!(
+        !ja.is_empty() && !en.is_empty(),
+        "both servers report a non-empty diagnostic message (ja: {ja:?}, en: {en:?})",
+    );
+    assert_ne!(
+        ja, en,
+        "the client's locale must decide the server's UI language",
+    );
+}

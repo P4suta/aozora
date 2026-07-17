@@ -38,12 +38,12 @@ use std::time::Instant;
 
 use memchr::memmem;
 
-use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_auto;
-use aozora_pipeline::lexer::{
+use aozora::encoding::decode_auto;
+use aozora::unstable::sanitize::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
     scan_for_sentinel_collisions,
 };
+use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 
 const NS_PER_MS: f64 = 1_000_000.0;
 const BOM: char = '\u{FEFF}';

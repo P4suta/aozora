@@ -22,13 +22,14 @@ use std::io::{self, IsTerminal, Write};
 use std::mem;
 use std::process::ExitCode;
 
+use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result, bail};
-use aozora_i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
+use aozora::unstable::{InternalCheckCode, Sentinel};
 use aozora::{
-    Diagnostic, DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Sentinel, Severity,
+    Diagnostic, DiagnosticSource, NodeKind, PairKind, Severity,
     json::{self, schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
 };
 
@@ -478,7 +479,7 @@ fn explain_kind(tag: &str) -> Option<String> {
 /// that `aozora check` attaches to the diagnostic — the machine axis, sourced
 /// from [`aozora::Diagnostic::explain`] so the two never diverge. The localized
 /// title / body prose and the section labels (repro / fixed / see) are pulled
-/// from the `aozora-i18n` catalog by code + `lang`; the repro / fixed example
+/// from the `i18n` catalog by code + `lang`; the repro / fixed example
 /// pair is the language-neutral Aozora notation carried by `info`.
 fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
     // Accept the full `aozora::lex::<token>` / `aozora::lint::<token>` code or
@@ -525,7 +526,7 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
 // Concept / notation-family keys the reader is likely to type but that are
 // not a one-to-one `NodeKind` page: abbreviations (`tcy`) and Japanese
 // names (`傍点`, `ルビ`, …). Each key routes to a concept slug whose
-// localized title / body prose lives in aozora-i18n as
+// localized title / body prose lives in the `i18n` catalog as
 // `concept-<slug>-{title,body}` (en / ja / zh).
 //
 // No key here may be a `NodeKind` wire tag. `resolve_explain` tries node
@@ -536,7 +537,7 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
 // instead of the node page. `concepts_never_shadow_a_node_page` pins it.
 
 /// `(typed key, concept slug)`. Several keys may share one slug (aliases). The
-/// slug names the `concept-<slug>-{title,body}` catalog keys in aozora-i18n.
+/// slug names the `concept-<slug>-{title,body}` localization catalog keys.
 const CONCEPTS: &[(&str, &str)] = &[
     ("tcy", "tcy"),
     ("縦中横", "tcy"),
@@ -549,7 +550,7 @@ const CONCEPTS: &[(&str, &str)] = &[
 ];
 
 /// Explain a notation concept: `aozora explain tcy` / `aozora explain 傍点`.
-/// Renders the localized concept title + body from aozora-i18n. `None` when
+/// Renders the localized concept title + body from the `i18n` catalog. `None` when
 /// `key` names no concept.
 fn explain_concept(key: &str, lang: &LanguageIdentifier) -> Option<String> {
     let slug = CONCEPTS.iter().find(|(k, _)| *k == key).map(|(_, s)| *s)?;
@@ -766,7 +767,7 @@ mod tests {
     fn describe_pair_covers_every_variant_without_fallback() {
         let fallback =
             "(unrecognised PairKind variant — this build is missing a summary; please report it).";
-        for k in PairKind::ALL {
+        for &k in PairKind::ALL {
             assert_ne!(describe_pair(k), fallback, "{k:?} hit the fallback arm");
         }
     }

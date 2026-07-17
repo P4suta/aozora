@@ -33,13 +33,15 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use aozora::unstable::Allocator;
+use aozora::unstable::classify::{ClassifiedSpan, classify};
+use aozora::unstable::lex;
+use aozora::unstable::pair::{PairEvent, pair};
+use aozora::unstable::sanitize::sanitize;
+use aozora::unstable::token::Token;
+use aozora::unstable::tokenize;
 use aozora_bench::{SizeBand, corpus_size_bands};
 use aozora_corpus::CorpusItem;
-use aozora_pipeline::lex;
-use aozora_pipeline::lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
-use aozora_syntax::alloc::Allocator;
 #[derive(Debug, Default)]
 struct BandStats {
     fused_ns_total: u128,
