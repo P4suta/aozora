@@ -173,7 +173,7 @@ impl ParseOptions {
 /// pipeline and returns a [`Snapshot`] that owns all its AST data and borrows only
 /// `&self`'s source.
 pub struct Document {
-    source: Box<str>,
+    source: Arc<str>,
     diagnostic_policy: DiagnosticPolicy,
     output: Arc<LexOutput>,
 }
@@ -187,7 +187,7 @@ impl Document {
                 .retain(|diagnostic| diagnostic.source() != DiagnosticSource::Internal);
         }
         Self {
-            source,
+            source: Arc::from(source),
             diagnostic_policy,
             output: Arc::new(output),
         }
@@ -217,7 +217,7 @@ impl Document {
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
-            source: Arc::from(self.source.as_ref()),
+            source: Arc::clone(&self.source),
             output: Arc::clone(&self.output),
         }
     }
