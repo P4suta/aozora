@@ -23,7 +23,7 @@ fn fires_lint(body: &str) -> bool {
 
 fn source_fires_lint(source: &str) -> bool {
     Document::new(source.to_owned())
-        .parse()
+        .snapshot()
         .diagnostics()
         .iter()
         .any(|d| d.code() == LINT_CODE)
@@ -37,7 +37,7 @@ fn every_variant_is_unknown_and_fires_the_lint() {
             .unwrap_or_else(|| panic!("catalogue sample {variant:?} did not resolve"));
         // …still be Unknown (renders as the hidden directive span)…
         let vhtml = Document::new(format!("あ［＃{variant}］"))
-            .parse()
+            .snapshot()
             .to_html();
         assert!(
             vhtml.contains("aozora-directive"),
@@ -71,7 +71,7 @@ fn fix_resolves_every_variant_and_is_idempotent() {
 
         // Default fmt keeps the flagged near-miss verbatim and still flagged
         // (the parser stays lossless; only opt-in fmt rewrites).
-        let plain = Document::new(input.clone()).parse().to_source();
+        let plain = Document::new(input.clone()).snapshot().to_source();
         assert!(
             plain.contains(&format!("［＃{variant}］")),
             "default fmt must preserve variant {variant:?} verbatim; got {plain:?}"
@@ -83,7 +83,7 @@ fn fix_resolves_every_variant_and_is_idempotent() {
 
         // --fix rewrites the near-miss to canonical form, so the
         // notation-hygiene lint no longer fires on the result.
-        let fixed = Document::new(input.clone()).parse().to_source_with(fix);
+        let fixed = Document::new(input.clone()).snapshot().to_source_with(fix);
         assert!(
             !source_fires_lint(&fixed),
             "fix should resolve the near-miss {variant:?}; got {fixed:?}"
@@ -91,7 +91,7 @@ fn fix_resolves_every_variant_and_is_idempotent() {
 
         // The rewrite is a second-pass fixed point: every directive is now
         // canonical (non-Unknown), so a further fix pass is a no-op.
-        let again = Document::new(fixed.clone()).parse().to_source_with(fix);
+        let again = Document::new(fixed.clone()).snapshot().to_source_with(fix);
         assert_eq!(fixed, again, "fix must be idempotent for {variant:?}");
     }
 }
@@ -138,7 +138,7 @@ fn normalize_render_replaces_every_inert_variant() {
 
         // (a) Without normalisation the near-miss is inert: the parser keeps it
         // Unknown and renders the hidden `aozora-directive` span.
-        let default_html = Document::new(source.clone()).parse().to_html();
+        let default_html = Document::new(source.clone()).snapshot().to_html();
         assert!(
             default_html.contains("aozora-directive"),
             "variant {variant:?} should render inert by default; got {default_html:?}"
@@ -148,7 +148,7 @@ fn normalize_render_replaces_every_inert_variant() {
         // rendered HTML contains NEITHER `aozora-directive` NOR a ` hidden>`
         // span — the reader sees a visible element (or, for a referent-less /
         // region form, nothing), never an inert directive / heading-hint span.
-        let normalized_html = Document::new(source.clone()).parse().to_html_with(norm);
+        let normalized_html = Document::new(source.clone()).snapshot().to_html_with(norm);
         assert!(
             !normalized_html.contains("aozora-directive") && !normalized_html.contains(" hidden>"),
             "variant {variant:?} still renders inert after normalisation; \
@@ -171,7 +171,7 @@ fn default_render_options_are_byte_identical_to_to_html() {
         "あ［＃中文字、ゴシック体］", // a Tier2 / degraded form
     ] {
         let doc = Document::new(source.to_owned());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         assert_eq!(
             tree.to_html_with(RenderOptions::default()),
             tree.to_html(),
@@ -214,7 +214,7 @@ fn catalogue_refuses_every_editorial_body() {
         );
         // It stays a lossless Unknown: parses to the hidden directive span.
         let html = Document::new(format!("あ\n［＃{body}］\n本文\n"))
-            .parse()
+            .snapshot()
             .to_html();
         assert!(
             html.contains("aozora-directive"),
@@ -253,13 +253,15 @@ fn every_degraded_sample_reduces() {
         let reduced = degraded_directive(sample)
             .unwrap_or_else(|| panic!("degraded sample {sample:?} did not reduce"));
         // The sample itself stays Unknown (inert) — the parser never recognises it.
-        let sample_html = Document::new(degraded_context(sample)).parse().to_html();
+        let sample_html = Document::new(degraded_context(sample)).snapshot().to_html();
         assert!(
             sample_html.contains("aozora-directive"),
             "degraded sample {sample:?} is unexpectedly recognised by the parser"
         );
         // Its reduction parses to a recognised (non-Unknown) construct.
-        let reduced_html = Document::new(degraded_context(&reduced)).parse().to_html();
+        let reduced_html = Document::new(degraded_context(&reduced))
+            .snapshot()
+            .to_html();
         assert!(
             !reduced_html.contains("aozora-directive"),
             "degraded reduction {reduced:?} for {sample:?} must be recognised; got {reduced_html:?}"
@@ -307,14 +309,16 @@ fn degraded_reductions_are_render_only() {
     for &sample in DEGRADED_SAMPLES {
         let source = degraded_context(sample);
         // (a) --degraded reinterprets it: no inert directive span.
-        let deg_html = Document::new(source.clone()).parse().to_html_with(degraded);
+        let deg_html = Document::new(source.clone())
+            .snapshot()
+            .to_html_with(degraded);
         assert!(
             !deg_html.contains("aozora-directive") && !deg_html.contains(" hidden>"),
             "degraded sample {sample:?} still renders inert under --degraded; got {deg_html:?}"
         );
         // (b) --normalize (Tier1 only) leaves it inert — it is not a Tier1 form.
         let canon_html = Document::new(source.clone())
-            .parse()
+            .snapshot()
             .to_html_with(canonical);
         assert!(
             canon_html.contains("aozora-directive"),
@@ -322,7 +326,7 @@ fn degraded_reductions_are_render_only() {
              got {canon_html:?}"
         );
         // (c) fmt --fix leaves the exact bytes verbatim (no source rewrite).
-        let fixed = Document::new(source.clone()).parse().to_source_with(fix);
+        let fixed = Document::new(source.clone()).snapshot().to_source_with(fix);
         assert!(
             fixed.contains(&format!("［＃{sample}］")),
             "fmt --fix must keep degraded sample {sample:?} verbatim; got {fixed:?}"
@@ -345,7 +349,7 @@ fn tier1_never_overrides_parser_spelling_preservation() {
     let preserved = "ここから最後まで3字下げ";
     // The parser keeps it Unknown (inert) — scope preserved.
     let html = Document::new(format!("［＃{preserved}］\n本文\n"))
-        .parse()
+        .snapshot()
         .to_html();
     assert!(
         html.contains("aozora-directive"),

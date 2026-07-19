@@ -9,9 +9,6 @@
 //! classify-stage classifier; recognised nodes build on the shared
 //! `RecogniseCtx`.
 
-#[cfg(feature = "classify-instrument")]
-use super::super::instrumentation::{Subsystem, SubsystemGuard};
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -105,9 +102,6 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     // `「` is U+300C, UTF-8 = E3 80 8C; `」` is U+300D, UTF-8 = E3 80 8D.
     const QUOTE_OPEN: &[u8] = b"\xE3\x80\x8C";
     const QUOTE_CLOSE: &[u8] = b"\xE3\x80\x8D";
-
-    #[cfg(feature = "classify-instrument")]
-    let _classify_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
 
     let bytes = source.as_bytes();
     // Step A.1: cheap up-front count with early break at the
@@ -274,8 +268,6 @@ impl RecogniseCtx<'_, '_> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<AnnotationMatch> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::Directive);
         let events = view.events;
         let PairEvent::PairOpen {
             span: open_span, ..
@@ -925,8 +917,6 @@ fn forward_target_is_preceded(
     open_idx: usize,
     target: &str,
 ) -> bool {
-    #[cfg(feature = "classify-instrument")]
-    let _classify_guard = SubsystemGuard::new(Subsystem::ForwardTargetCheck);
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
     };

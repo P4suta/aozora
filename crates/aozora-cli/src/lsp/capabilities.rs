@@ -115,13 +115,6 @@ pub(super) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            // Advertised so VS Code shows the actions
-            // under right-click → Refactor and the
-            // Ctrl+. lightbulb. Resolve is not yet wired
-            // because every action ships a complete
-            // edit; resolve_provider stays None until a
-            // future heavier action (e.g. "rename slug
-            // across document") needs lazy loading.
             code_action_kinds: Some(vec![
                 CodeActionKind::QUICKFIX,
                 CodeActionKind::REFACTOR_REWRITE,

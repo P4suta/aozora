@@ -6,7 +6,7 @@
     <!-- A strict Content-Security-Policy meta tag is injected here at
          build time only (see PROD_CSP in vite.config.ts): defense-in-depth
          over the renderer's escaping — the HTML preview is mounted via
-         innerHTML, but aozora-render already entity-escapes all text and
+         innerHTML, but the aozora renderer already entity-escapes all text and
          emits no <script>/on*=/external href. It is build-time-only because
          dev mode needs an HMR WebSocket that connect-src 'self' would block
          and a <meta> CSP cannot be relaxed per-environment. -->

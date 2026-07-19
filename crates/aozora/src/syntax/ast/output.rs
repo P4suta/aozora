@@ -8,7 +8,6 @@
 
 use crate::spec::{Diagnostic, PairLink, SourceOffset, Span};
 
-use super::intern::InternStats;
 use super::registry::{ContainerPair, NodeRef, Registry};
 use super::store::NodeStore;
 
@@ -35,30 +34,26 @@ pub struct SourceNode {
 /// Derives `Debug` only.
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct LexOutput {
+pub(crate) struct LexOutput {
     /// Normalized text with PUA sentinels.
-    pub normalized: String,
+    pub(crate) normalized: String,
     /// Verbatim post-sanitize source text (no sentinels, no padding) — the
     /// coordinate space every `source_span` indexes.
-    pub sanitized: String,
+    pub(crate) sanitized: String,
     /// Sentinel-position → node lookup table.
-    pub registry: Registry,
+    pub(crate) registry: Registry,
     /// Non-fatal observations from every stage.
-    pub diagnostics: Vec<Diagnostic>,
-    /// Byte length of the sanitize-stage buffer.
-    pub sanitized_len: u32,
+    pub(crate) diagnostics: Vec<Diagnostic>,
     /// Resolved (open, close) delimiter pairs in sanitized-source coordinates,
     /// close order.
-    pub pairs: Vec<PairLink>,
+    pub(crate) pairs: Vec<PairLink>,
     /// Source-keyed node side-table, sorted by `source_span.start`.
-    pub source_nodes: Vec<SourceNode>,
+    pub(crate) source_nodes: Vec<SourceNode>,
     /// Resolved container open/close pairs in normalized coordinates.
-    pub container_pairs: Vec<ContainerPair>,
-    /// Interner dedup/probe counters.
-    pub intern_stats: InternStats,
+    pub(crate) container_pairs: Vec<ContainerPair>,
     /// Owned backing store (string interner + flat content/segment `Vec`s) the
     /// owned nodes' `StrId`/range payloads resolve against.
-    pub store: NodeStore,
+    pub(crate) store: NodeStore,
 }
 
 impl LexOutput {
@@ -76,16 +71,14 @@ impl LexOutput {
         clippy::too_many_arguments,
         reason = "constructs the non_exhaustive LexOutput from its complete already-owned field set; a parameter object would only restate the field set"
     )]
-    pub fn new(
+    pub(crate) fn new(
         normalized: String,
         sanitized: String,
         registry: Registry,
         diagnostics: Vec<Diagnostic>,
-        sanitized_len: u32,
         pairs: Vec<PairLink>,
         source_nodes: Vec<SourceNode>,
         container_pairs: Vec<ContainerPair>,
-        intern_stats: InternStats,
         store: NodeStore,
     ) -> Self {
         Self {
@@ -93,11 +86,9 @@ impl LexOutput {
             sanitized,
             registry,
             diagnostics,
-            sanitized_len,
             pairs,
             source_nodes,
             container_pairs,
-            intern_stats,
             store,
         }
     }
@@ -105,7 +96,7 @@ impl LexOutput {
     /// Find the [`SourceNode`] whose `source_span` covers `src_off`
     /// (a sanitized-source byte offset). O(log n) binary search.
     #[must_use]
-    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode> {
+    pub(crate) fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode> {
         let raw = src_off.get();
         let idx = self
             .source_nodes
@@ -138,11 +129,9 @@ mod tests {
             String::new(),
             Registry::empty(),
             Vec::new(),
-            0,
             Vec::new(),
             source_nodes,
             Vec::new(),
-            InternStats::default(),
             NodeStore::new(),
         )
     }

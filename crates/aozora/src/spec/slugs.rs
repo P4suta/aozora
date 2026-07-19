@@ -142,7 +142,7 @@ pub struct SlugEntry {
 /// Order is irrelevant for behavior; entries are grouped by family for
 /// readability. The `every_canonical_resolves_through_canonicalise_slug`
 /// test pins identity round-trip for every entry.
-pub const SLUGS: &[SlugEntry] = &[
+pub(crate) const SLUGS: &[SlugEntry] = &[
     // --- Section / page break ----------------------------------------------
     SlugEntry {
         canonical: "改ページ",
@@ -597,7 +597,7 @@ const VARIANTS: &[(&str, &str)] = &[
 /// the same pointer. This lets the LSP's `canonicalize` code action
 /// short-circuit safely.
 #[must_use]
-pub fn canonicalise_slug(input: &str) -> Option<&'static str> {
+pub(crate) fn canonicalise_slug(input: &str) -> Option<&'static str> {
     // Identity short-circuit. SLUGS is small (~40 entries) and the
     // strings are short, so a linear scan beats hashing on cache cost.
     for entry in SLUGS {
@@ -616,7 +616,7 @@ pub fn canonicalise_slug(input: &str) -> Option<&'static str> {
 /// One row of the *render* slug table.
 ///
 /// The single source of truth for the romaji CSS slug emitted for a
-/// given annotation. Kept separate from [`SLUGS`] (the LSP completion
+/// given annotation. Kept separate from the completion catalogue
 /// catalogue) because render slugs key on the enum *keyword* (傍点 kind
 /// / emphasis kind / section kind), a vocabulary the completion table
 /// does not carry.
@@ -871,7 +871,7 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
 /// Returns `None` for an unknown keyword (callers fall back to a
 /// neutral slug).
 #[must_use]
-pub fn roman_slug(canonical: &str) -> Option<&'static str> {
+pub(crate) fn roman_slug(canonical: &str) -> Option<&'static str> {
     RENDER_SLUGS
         .iter()
         .find(|e| e.canonical == canonical)

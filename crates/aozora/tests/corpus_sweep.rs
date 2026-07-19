@@ -47,10 +47,10 @@ fn corpus_round_trip_is_a_fixed_point() {
         }
 
         let doc = Document::new(utf8);
-        let serialized = doc.parse().to_source();
+        let serialized = doc.snapshot().to_source();
 
         let doc2 = Document::new(serialized.clone());
-        let serialized2 = doc2.parse().to_source();
+        let serialized2 = doc2.snapshot().to_source();
 
         if serialized != serialized2 {
             diverged.push((

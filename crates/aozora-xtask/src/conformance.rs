@@ -443,7 +443,7 @@ fn run_case(dir: &Path) -> Result<(), String> {
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("read {}: {err}", source_path.display()))?;
     let doc = aozora::Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let actual_html = tree.to_html();
     let actual_serialize = tree.to_source();
@@ -954,7 +954,7 @@ fn run_vectors() -> Result<(), String> {
 /// pass / fail by level, the second is always informative.
 fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), String> {
     let doc = aozora::Document::new(vector.source.clone());
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let mut mismatches = Vec::new();
 
     if let Some(expected) = vector.expected.serialize.as_ref() {
@@ -967,7 +967,11 @@ fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), Stri
         // "source-exact" check into the single canonical-idempotence
         // invariant, so a golden that is idempotent yet differs from the
         // canonical form of its source is unrepresentable.
-        if aozora::Document::new(expected.clone()).parse().to_source() != *expected {
+        if aozora::Document::new(expected.clone())
+            .snapshot()
+            .to_source()
+            != *expected
+        {
             mismatches.push("serialize-fixed-point".to_owned());
         }
     }
@@ -1450,7 +1454,7 @@ mod tests {
     fn compare_vector_matching_serialize_passes() {
         // Parse once to learn the parser's own serialize output, then pin it.
         let doc = aozora::Document::new("plain text".to_owned());
-        let expected_serialize = doc.parse().to_source();
+        let expected_serialize = doc.snapshot().to_source();
         let mut exp = empty_expected();
         exp.serialize = Some(expected_serialize);
         let v = vector("plain text", exp);

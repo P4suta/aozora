@@ -7,7 +7,7 @@
 #![cfg(feature = "cst")]
 
 use aozora::Document;
-use aozora::cst::from_tree;
+use aozora::cst::from_snapshot;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::{aozora_fragment, pathological_aozora, unicode_adversarial};
 use proptest::prelude::*;
@@ -16,8 +16,8 @@ use proptest::prelude::*;
 /// asserts the two are equal.
 fn reconstruct_sanitized(src: &str) -> (String, String) {
     let doc = Document::new(src);
-    let tree = doc.parse();
-    let cst = from_tree(&tree);
+    let tree = doc.snapshot();
+    let cst = from_snapshot(&tree);
     let mut buf = String::new();
     for step in cst.preorder_with_tokens() {
         if let rowan::WalkEvent::Enter(rowan::NodeOrToken::Token(t)) = step {

@@ -21,12 +21,12 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-# The corpus / render audits reach past the umbrella's curated surface into
-# the folded internal modules: `aozora::unstable::sanitize`,
-# `aozora::render::AOZORA_CLASSES`, `aozora::unstable::{degraded,lint}`,
-# `aozora::encoding::decode_auto`, and `NodeKind`/`RegionFormat`. All
-# no-contract internal surfaces, reached through the one `aozora` crate.
-aozora = { workspace = true, features = ["schema", "json"] }
+# Developer audits use the same stable document, catalogue, encoding, render,
+# and wire surfaces as external consumers.
+aozora = { workspace = true, features = [
+  "schema",
+  "json",
+] }
 aozora-corpus = { workspace = true }
 aozora-trace = { workspace = true }
 blake3 = { workspace = true }

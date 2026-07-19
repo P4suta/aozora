@@ -79,7 +79,7 @@ impl GaijiCanonicalOwned {
     /// # Panics
     ///
     /// Panics if an `Unresolved` mencode `StrId` was not produced by `store`.
-    pub fn write_mencode<W: fmt::Write>(self, store: &NodeStore, w: &mut W) -> fmt::Result {
+    pub(crate) fn write_mencode<W: fmt::Write>(self, store: &NodeStore, w: &mut W) -> fmt::Result {
         self.to_canonical(store).write_mencode(w)
     }
 }
@@ -96,7 +96,7 @@ impl Gaiji {
     /// Panics if `self.hint` / the `Unresolved` mencode `StrId` were not
     /// produced by `store`'s interner.
     #[must_use]
-    pub fn resolve(&self, store: &NodeStore) -> Option<Resolved> {
+    pub(crate) fn resolve(&self, store: &NodeStore) -> Option<Resolved> {
         self.canonical
             .to_canonical(store)
             .resolve(store.resolve_str(self.hint))

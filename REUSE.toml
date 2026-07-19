@@ -1,0 +1,29 @@
+version = 1
+SPDX-PackageName = "aozora"
+SPDX-PackageSupplier = "aozora contributors"
+SPDX-PackageDownloadLocation = "https://github.com/P4suta/aozora"
+
+[[annotations]]
+path = "**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 aozora contributors"
+SPDX-License-Identifier = "Apache-2.0 OR MIT"
+
+[[annotations]]
+path = "docs/specs/aozora/*.html"
+precedence = "override"
+SPDX-FileCopyrightText = "Aozora Bunko volunteers"
+SPDX-License-Identifier = "LicenseRef-Aozora-Bunko-Quotation"
+
+[[annotations]]
+path = [
+  "spec/aozora/fixtures/56656/golden.html",
+  "spec/aozora/fixtures/56656/input.sjis.txt",
+  "spec/aozora/fixtures/56656/input.utf8.txt",
+  "spec/aozora/fixtures/56656/input.zip",
+  "crates/aozora-conformance/fixtures/works/**/source.txt",
+  "crates/aozora-conformance/fixtures/works/**/expected.html",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "LicenseRef-Public-Domain-Japan"

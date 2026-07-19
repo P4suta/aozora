@@ -3,14 +3,14 @@
 #![cfg(feature = "query")]
 
 use aozora::Document;
-use aozora::cst::{SyntaxKind, SyntaxNode, from_tree};
+use aozora::cst::{SyntaxKind, SyntaxNode, from_snapshot};
 use aozora::query::compile;
 
 fn cst_for(src: &str) -> SyntaxNode {
-    // `cst::from_tree` sanitizes the source and builds the CST — byte-equivalent
+    // `cst::from_snapshot` sanitizes the source and builds the CST — byte-equivalent
     // to the standalone `sanitize` + `build_cst` the query crate used before the
     // fold, without reaching into the pipeline's internal surface.
-    from_tree(&Document::new(src).parse())
+    from_snapshot(&Document::new(src).snapshot())
 }
 
 #[test]

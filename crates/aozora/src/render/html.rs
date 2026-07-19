@@ -30,7 +30,7 @@ use crate::render::walk::{SentinelKind, WalkSink, walk};
 /// an inert `<span class="aozora-directive" hidden>`, so output never depends on
 /// the notation-hygiene catalogue.
 ///
-/// Opting in ([`render_html_normalized`]) reinterprets near-misses as their
+/// Opting in through [`crate::Snapshot::to_html_with`] reinterprets near-misses as their
 /// canonical spelling — reached *transitively* through the formatter rewrite,
 /// never a second copy of the catalogue — so a known 揺れ renders as a real
 /// element instead of a hidden directive span. `Canonical` consults Tier1 only
@@ -70,7 +70,7 @@ impl RenderOptions {
 /// the sole construction site of that level, so the lossy / judgment Tier2
 /// reductions can reach only this throwaway render buffer — never source.
 #[must_use]
-pub fn render_html_normalized(out: &LexOutput, level: DirectiveNormalization) -> String {
+pub(crate) fn render_html_normalized(out: &LexOutput, level: DirectiveNormalization) -> String {
     let normalized = serialize_with(out, SerializeOptions { directives: level });
     render_html(&lex(&normalized))
 }
@@ -85,7 +85,7 @@ pub fn render_html_normalized(out: &LexOutput, level: DirectiveNormalization) ->
 /// Does not panic in normal use: `String` cannot fail as a [`fmt::Write`]
 /// sink. The internal `expect` covers the trivially unreachable case.
 #[must_use]
-pub fn render_html(out: &LexOutput) -> String {
+pub(crate) fn render_html(out: &LexOutput) -> String {
     let mut s = String::with_capacity(out.normalized.len().saturating_mul(2));
     render_html_into(out, &mut s).expect("writing to String never fails");
     s
@@ -101,7 +101,7 @@ pub fn render_html(out: &LexOutput) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
 /// lexer's `Span` width contract; in practice unreachable.
-pub fn render_html_into<W: fmt::Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
+pub(crate) fn render_html_into<W: fmt::Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
     let mut sink = HtmlSink {
         store: &out.store,
         out: writer,

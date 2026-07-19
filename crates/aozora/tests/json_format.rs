@@ -12,7 +12,7 @@ use aozora::{Document, json};
 #[test]
 fn empty_parse_serialises_to_canonical_envelope() {
     let doc = Document::new("plain");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let canonical = r#"{"schemaVersion":2,"data":[]}"#;
     assert_eq!(json::diagnostics(tree.diagnostics()), canonical);
     assert_eq!(json::nodes(&tree), canonical);
@@ -29,7 +29,7 @@ fn schema_version_is_pinned_to_one() {
 #[test]
 fn pua_collision_diagnostic_byte_shape() {
     let doc = Document::new("a\u{E001}b");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let json = json::diagnostics(tree.diagnostics());
     // Envelope present.
     assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
@@ -47,7 +47,7 @@ fn pua_collision_diagnostic_byte_shape() {
 #[test]
 fn diagnostic_json_has_severity_and_source_axes() {
     let doc = Document::new("a\u{E001}b");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let json = json::diagnostics(tree.diagnostics());
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
     let entry = parsed
@@ -71,7 +71,7 @@ fn diagnostic_json_has_severity_and_source_axes() {
 #[test]
 fn ruby_node_byte_shape() {
     let doc = Document::new("｜青梅《おうめ》");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let json = json::nodes(&tree);
     assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
     assert!(json.contains(r#""kind":"ruby""#));
@@ -82,7 +82,7 @@ fn ruby_node_byte_shape() {
 #[test]
 fn ruby_pair_byte_shape() {
     let doc = Document::new("｜青梅《おうめ》");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let json = json::pairs(&tree);
     assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
     assert!(json.contains(r#""kind":"ruby""#));
@@ -94,7 +94,7 @@ fn ruby_pair_byte_shape() {
 #[test]
 fn all_three_channels_emit_valid_json() {
     let doc = Document::new("｜青梅《おうめ》abc\u{E001}def");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     for json in [
         json::diagnostics(tree.diagnostics()),
         json::nodes(&tree),

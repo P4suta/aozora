@@ -5,8 +5,6 @@
 //! classify-stage classifier; recognised nodes are built on the shared
 //! [`RecogniseCtx`].
 
-#[cfg(feature = "classify-instrument")]
-use super::super::instrumentation::{Subsystem, SubsystemGuard};
 use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
 use super::{BodyView, RecogniseCtx};
@@ -74,8 +72,6 @@ impl RecogniseCtx<'_, '_> {
         standalone: bool,
         bracket_open_idx: usize,
     ) -> Option<GaijiMatch> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::Gaiji);
         let events = view.events;
         let &PairEvent::PairOpen {
             kind: PairKind::Bracket,

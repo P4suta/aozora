@@ -38,6 +38,9 @@ extend-exclude = [
   "crates/aozora/data/",
   "target/",
   "coverage/",
+  "mutants.out/",
+  "mutants.out.old/",
+  "mutants-*/",
   "*.html",
   "*.lock",
 ]

@@ -79,7 +79,7 @@ const DECORATIVE_RULE_MIN_LEN: usize = 10;
 /// Output of the sanitize stage. `text` is what downstream stages consume;
 /// `diagnostics` carries any non-fatal observations gathered during sanitation.
 #[derive(Debug, Clone)]
-pub struct SanitizeOutput<'s> {
+pub(crate) struct SanitizeOutput<'s> {
     pub text: Cow<'s, str>,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -87,7 +87,7 @@ pub struct SanitizeOutput<'s> {
 /// Apply the four sanitation steps and return the result. See module
 /// documentation for the step order and rationale.
 #[must_use]
-pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
+pub(crate) fn sanitize(source: &str) -> SanitizeOutput<'_> {
     // Strip every leading `U+FEFF`. CommonMark / WHATWG-text-encoding
     // both consider only one BOM, but the `to_source` round-trip would
     // peel one off per pass without this loop, breaking the I3
@@ -218,16 +218,16 @@ const REPLACEMENT_CHAR: char = '\u{FFFD}';
 
 /// Rewrite every `〔...〕` span applying accent decomposition to the body.
 /// Text outside spans is copied verbatim.
-#[doc(hidden)]
+#[cfg(test)]
 #[must_use]
-pub fn rewrite_accent_spans(input: &str) -> String {
+pub(crate) fn rewrite_accent_spans(input: &str) -> String {
     // Discard the per-span notes; the public, diagnostic-free entry point
     // keeps its `-> String` shape for existing callers and tests.
     let mut sink = Vec::new();
     rewrite_accent_spans_collecting(input, &mut sink)
 }
 
-/// As [`rewrite_accent_spans`], but additionally pushes one
+/// As `rewrite_accent_spans`, but additionally pushes one
 /// [`Diagnostic::accent_decomposition_applied`] (a `Note`) for every
 /// `〔…〕` span whose body is actually rewritten — i.e. a digraph was
 /// decomposed (`decompose_fragment` returns a value differing from the
@@ -296,8 +296,7 @@ fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic
 /// Used as a fast-path gate in [`sanitize`]: when the whole document
 /// has no long rule line, the pass is a no-op and [`Cow::Borrowed`]
 /// survives.
-#[doc(hidden)]
-pub fn has_long_rule_line(input: &str) -> bool {
+pub(crate) fn has_long_rule_line(input: &str) -> bool {
     input.lines().any(is_decorative_rule_line)
 }
 
@@ -319,15 +318,8 @@ fn is_decorative_rule_line(line: &str) -> bool {
 /// corpus, the dominant case) the leading `matches!` check rejects
 /// in 2–3 ops and the rest of the function is skipped entirely.
 ///
-/// `pub` (and `#[doc(hidden)]`, like the other sanitize helpers) so the
-/// in-workspace LSP `ParseCache` can reuse the *exact* decorative-rule
-/// predicate when it (a) precomputes which raw lines gained an isolation
-/// blank and (b) gates an incremental edit that would create or destroy a
-/// rule line — sharing the predicate keeps the rope splice byte-identical
-/// to a full sanitize.
-#[doc(hidden)]
 #[must_use]
-pub fn is_rule_line_trimmed(trimmed: &str) -> bool {
+pub(crate) fn is_rule_line_trimmed(trimmed: &str) -> bool {
     let bytes = trimmed.as_bytes();
     if bytes.len() < DECORATIVE_RULE_MIN_LEN {
         return false;
@@ -358,9 +350,8 @@ pub fn is_rule_line_trimmed(trimmed: &str) -> bool {
 /// per line. Real Aozora corpora have ~10⁴ short lines per document
 /// and typically only 1–5 rule line insertions, so the new path
 /// collapses ~10⁴ small `memcpy`s into a small handful of large ones.
-#[doc(hidden)]
 #[must_use]
-pub fn isolate_decorative_rules(input: &str) -> String {
+pub(crate) fn isolate_decorative_rules(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len() + 16);
     let mut line_start: usize = 0;
@@ -427,9 +418,8 @@ pub fn isolate_decorative_rules(input: &str) -> String {
 ///
 /// `\r` (0x0D) is ASCII so `memchr` lands cleanly on UTF-8 boundaries;
 /// no need for `is_char_boundary` checks.
-#[doc(hidden)]
 #[must_use]
-pub fn normalize_line_endings(input: &str) -> String {
+pub(crate) fn normalize_line_endings(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0;
@@ -480,9 +470,8 @@ pub fn normalize_line_endings(input: &str) -> String {
 /// The byte-level scan runs at ~580 MB/s on the corpus profile, vs
 /// ~75 MB/s for a character-by-character `text.chars()` walk that
 /// ran the predicate on every codepoint.
-#[doc(hidden)]
 #[must_use]
-pub fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
+pub(crate) fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
     let bytes = text.as_bytes();
     let mut diagnostics = Vec::new();
     for cand in memchr::memchr_iter(0xEE, bytes) {

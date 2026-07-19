@@ -68,7 +68,6 @@ jobs:
       matrix:
         include:
           - { crate: pipeline, target: lex }
-          - { crate: pipeline, target: classify }
           - { crate: pipeline, target: ffi_no_abort }
           - { crate: render, target: render_html }
           - { crate: render, target: serialize_round_trip }

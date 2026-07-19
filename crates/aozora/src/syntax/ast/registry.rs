@@ -6,7 +6,9 @@
 //! normalized byte position; `node_at` is one binary search.
 
 use crate::collections::EytzingerMap;
-use crate::spec::{NormalizedOffset, Sentinel};
+use crate::spec::NormalizedOffset;
+#[cfg(test)]
+use crate::spec::Sentinel;
 
 use crate::syntax::NodeKind;
 use crate::syntax::format::{RegionClose, RegionFormat};
@@ -25,14 +27,14 @@ use super::payload::Node;
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum NodeRef {
-    /// Hit on an inline-sentinel position ([`Sentinel::Inline`]).
+    /// Hit on an inline-sentinel position.
     Inline(Node),
-    /// Hit on a block-leaf-sentinel position ([`Sentinel::BlockLeaf`]).
+    /// Hit on a block-leaf-sentinel position.
     BlockLeaf(Node),
-    /// Hit on a block-container-open position ([`Sentinel::BlockOpen`]).
+    /// Hit on a block-container-open position.
     /// Carries the authoritative open [`RegionFormat`].
     BlockOpen(RegionFormat),
-    /// Hit on a block-container-close position ([`Sentinel::BlockClose`]).
+    /// Hit on a block-container-close position.
     /// Carries the [`RegionClose`] discriminant.
     BlockClose(RegionClose),
 }
@@ -40,7 +42,8 @@ pub enum NodeRef {
 impl NodeRef {
     /// Sentinel kind that produced this entry.
     #[must_use]
-    pub const fn sentinel_kind(self) -> Sentinel {
+    #[cfg(test)]
+    pub(crate) const fn sentinel_kind(self) -> Sentinel {
         match self {
             Self::Inline(_) => Sentinel::Inline,
             Self::BlockLeaf(_) => Sentinel::BlockLeaf,
@@ -65,7 +68,7 @@ impl NodeRef {
 /// `node_at` is one binary search; every entry's sentinel kind is encoded by
 /// the [`NodeRef`] variant. Not `Copy` (the map owns a `Vec`).
 #[derive(Debug, Clone)]
-pub struct Registry {
+pub(crate) struct Registry {
     /// Single `SoA` lookup table keyed by normalized byte position. Entries
     /// arrive in strictly increasing position order.
     table: EytzingerMap<u32, NodeRef>,
@@ -79,7 +82,7 @@ impl Registry {
     /// Inherits `EytzingerMap::from_sorted_slice`'s debug-only sorted-key
     /// precondition.
     #[must_use]
-    pub fn from_sorted_slice(entries: &[(u32, NodeRef)]) -> Self {
+    pub(crate) fn from_sorted_slice(entries: &[(u32, NodeRef)]) -> Self {
         Self {
             table: EytzingerMap::from_sorted_slice(entries),
         }
@@ -87,44 +90,49 @@ impl Registry {
 
     /// Empty registry.
     #[must_use]
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             table: EytzingerMap::new(),
         }
     }
 
     /// True iff the registry holds no entries.
+    #[cfg(test)]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
 
     /// Total number of entries across all sentinel kinds. O(1).
+    #[cfg(test)]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.table.len()
     }
 
     /// Look up the entry at the given normalized-text byte position.
     #[must_use]
-    pub fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRef> {
+    pub(crate) fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRef> {
         self.table.get(&pos.get()).copied()
     }
 
     /// Iterate `(position, NodeRef)` in ascending position order.
-    pub fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
+    #[cfg(test)]
+    pub(crate) fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
         self.table.iter_sorted().map(|(&p, &nr)| (p, nr))
     }
 
     /// Iterate entries whose [`NodeRef::sentinel_kind`] matches `kind`.
-    pub fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
+    #[cfg(test)]
+    pub(crate) fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
         self.iter_sorted()
             .filter(move |(_, nr)| nr.sentinel_kind() == kind)
     }
 
     /// Count entries whose sentinel kind matches `kind`. O(n).
+    #[cfg(test)]
     #[must_use]
-    pub fn count_kind(&self, kind: Sentinel) -> usize {
+    pub(crate) fn count_kind(&self, kind: Sentinel) -> usize {
         self.iter_kind(kind).count()
     }
 }

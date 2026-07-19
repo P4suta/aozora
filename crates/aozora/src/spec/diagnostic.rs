@@ -56,59 +56,62 @@ use crate::spec::Span;
 /// diagnostic. They are guaranteed stable across patch and minor
 /// releases; major-release variant additions land new constants here
 /// without touching existing ones.
-pub mod codes {
+pub(crate) mod codes {
     /// Source contains a lexer PUA sentinel codepoint.
-    pub const SOURCE_CONTAINS_PUA: &str = "aozora::lex::source_contains_pua";
+    pub(crate) const SOURCE_CONTAINS_PUA: &str = "aozora::lex::source_contains_pua";
 
     /// Open delimiter reached end-of-input with no matching close.
-    pub const UNCLOSED_BRACKET: &str = "aozora::lex::unclosed_bracket";
+    pub(crate) const UNCLOSED_BRACKET: &str = "aozora::lex::unclosed_bracket";
 
     /// Close delimiter saw an empty stack or a mismatched stack top.
-    pub const UNMATCHED_CLOSE: &str = "aozora::lex::unmatched_close";
+    pub(crate) const UNMATCHED_CLOSE: &str = "aozora::lex::unmatched_close";
 
     /// A `〔…〕` accent digraph was decomposed during the sanitize stage.
-    pub const ACCENT_DECOMPOSITION_APPLIED: &str = "aozora::lex::accent_decomposition_applied";
+    pub(crate) const ACCENT_DECOMPOSITION_APPLIED: &str =
+        "aozora::lex::accent_decomposition_applied";
 
     /// A 外字 (gaiji) reference resolved to neither Unicode nor JIS X 0213.
-    pub const UNRESOLVED_GAIJI: &str = "aozora::lex::unresolved_gaiji";
+    pub(crate) const UNRESOLVED_GAIJI: &str = "aozora::lex::unresolved_gaiji";
 
     /// A paired container was closed by a closer of a different kind.
-    pub const MISMATCHED_CONTAINER_CLOSE: &str = "aozora::lex::mismatched_container_close";
+    pub(crate) const MISMATCHED_CONTAINER_CLOSE: &str = "aozora::lex::mismatched_container_close";
 
     /// An explicit-base ruby (`｜base《》`) had an empty reading.
-    pub const EMPTY_RUBY_READING: &str = "aozora::lex::empty_ruby_reading";
+    pub(crate) const EMPTY_RUBY_READING: &str = "aozora::lex::empty_ruby_reading";
 
     /// A ruby reading body itself opened another ruby (`《…《…》…》`).
-    pub const NESTED_RUBY: &str = "aozora::lex::nested_ruby";
+    pub(crate) const NESTED_RUBY: &str = "aozora::lex::nested_ruby";
 
     /// A `［＃ここから…］` opener matched no known container kind.
-    pub const UNRECOGNISED_CONTAINER_DIRECTIVE: &str =
+    pub(crate) const UNRECOGNISED_CONTAINER_DIRECTIVE: &str =
         "aozora::lex::unrecognised_container_directive";
 
     /// A 縦中横 forward reference whose target is absent from the look-back.
-    pub const TCY_TARGET_NOT_FOUND: &str = "aozora::lex::tcy_target_not_found";
+    pub(crate) const TCY_TARGET_NOT_FOUND: &str = "aozora::lex::tcy_target_not_found";
 
     /// A forward-reference bouten target occurs more than once before it.
-    pub const BOUTEN_TARGET_AMBIGUOUS: &str = "aozora::lex::bouten_target_ambiguous";
+    pub(crate) const BOUTEN_TARGET_AMBIGUOUS: &str = "aozora::lex::bouten_target_ambiguous";
 
     /// An inline-style forward reference whose present target cannot be styled
     /// in place.
     ///
     /// `X` is a ruby base, on an earlier line, inside another construct, or one
     /// of several targets. The directive is kept; the styling is not applied.
-    pub const FORWARD_REFERENT_NOT_STYLABLE: &str = "aozora::lex::forward_referent_not_stylable";
+    pub(crate) const FORWARD_REFERENT_NOT_STYLABLE: &str =
+        "aozora::lex::forward_referent_not_stylable";
 
     /// A page/section break appeared inside a single-line container.
-    pub const BREAK_IN_SINGLE_LINE_CONTAINER: &str = "aozora::lex::break_in_single_line_container";
+    pub(crate) const BREAK_IN_SINGLE_LINE_CONTAINER: &str =
+        "aozora::lex::break_in_single_line_container";
 
     /// A bracketed kaeriten (`［＃二］`) has no matching lower-rank partner.
-    pub const BRACKETED_KAERITEN_NO_PAIR: &str = "aozora::lex::bracketed_kaeriten_no_pair";
+    pub(crate) const BRACKETED_KAERITEN_NO_PAIR: &str = "aozora::lex::bracketed_kaeriten_no_pair";
 
     /// A kaeriten appeared outside a 漢文-like context (lookahead heuristic).
-    pub const KAERITEN_OUTSIDE_KANBUN: &str = "aozora::lex::kaeriten_outside_kanbun";
+    pub(crate) const KAERITEN_OUTSIDE_KANBUN: &str = "aozora::lex::kaeriten_outside_kanbun";
 
     /// A 傍点 range opener was closed by a 傍線 closer (or vice-versa).
-    pub const MISMATCHED_BOUTEN_CONTAINER: &str = "aozora::lex::mismatched_bouten_container";
+    pub(crate) const MISMATCHED_BOUTEN_CONTAINER: &str = "aozora::lex::mismatched_bouten_container";
 
     /// A `［＃…］` body spelled as a near-miss of a recognized directive.
     ///
@@ -116,19 +119,19 @@ pub mod codes {
     /// Unknown; the notation-hygiene lint suggests its canonical spelling.
     /// The `aozora::lint::*` namespace marks an advisory authoring lint,
     /// distinct from the `aozora::lex::*` lex faults above.
-    pub const NON_CANONICAL_DIRECTIVE: &str = "aozora::lint::non_canonical_directive";
+    pub(crate) const NON_CANONICAL_DIRECTIVE: &str = "aozora::lint::non_canonical_directive";
 
     /// Prefix of every advisory notation-hygiene *lint* code.
     ///
     /// The single authority for the lint-vs-lex split that
     /// [`crate::spec::Diagnostic::is_lint`] and the LSP filter on: a code in this
     /// namespace is authoring guidance, not a malformed-input fault.
-    pub const LINT_NAMESPACE: &str = "aozora::lint::";
+    pub(crate) const LINT_NAMESPACE: &str = "aozora::lint::";
 
     /// Pipeline-internal: an `［＃` digraph survived classification
     /// into the normalized text. Indicates a missing recogniser for
     /// the keyword.
-    pub const RESIDUAL_ANNOTATION_MARKER: &str = "aozora::lex::residual_annotation_marker";
+    pub(crate) const RESIDUAL_ANNOTATION_MARKER: &str = "aozora::lex::residual_annotation_marker";
 
     /// Pipeline-internal: a PUA sentinel codepoint is present in the
     /// normalized text at a position that is not recorded in the
@@ -136,17 +139,17 @@ pub mod codes {
     ///
     /// Source-side PUA collisions emit [`SOURCE_CONTAINS_PUA`]
     /// upstream; this code is distinct.
-    pub const UNREGISTERED_SENTINEL: &str = "aozora::lex::unregistered_sentinel";
+    pub(crate) const UNREGISTERED_SENTINEL: &str = "aozora::lex::unregistered_sentinel";
 
     /// Pipeline-internal: a placeholder-registry vector is not
     /// strictly ordered by position. Indicates a normalizer driver
     /// bug.
-    pub const REGISTRY_OUT_OF_ORDER: &str = "aozora::lex::registry_out_of_order";
+    pub(crate) const REGISTRY_OUT_OF_ORDER: &str = "aozora::lex::registry_out_of_order";
 
     /// Pipeline-internal: a registry entry references a normalized
     /// byte position whose character does not match the expected
     /// sentinel kind.
-    pub const REGISTRY_POSITION_MISMATCH: &str = "aozora::lex::registry_position_mismatch";
+    pub(crate) const REGISTRY_POSITION_MISMATCH: &str = "aozora::lex::registry_position_mismatch";
 }
 
 /// Severity of a [`Diagnostic`].
@@ -256,7 +259,7 @@ impl InternalCheckCode {
     ];
 
     /// Stable `aozora::lex::*` string identifier for this check.
-    /// Equivalent to the corresponding [`codes`] constant.
+    /// Equivalent to the corresponding internal code constant.
     #[must_use]
     pub const fn as_code(self) -> &'static str {
         match self {
@@ -274,8 +277,7 @@ impl InternalCheckCode {
 pub enum Diagnostic {
     /// Source contains a codepoint that collides with one of the
     /// lexer's PUA sentinel reservations
-    /// ([`crate::spec::INLINE_SENTINEL`], [`crate::spec::BLOCK_LEAF_SENTINEL`],
-    /// [`crate::spec::BLOCK_OPEN_SENTINEL`], [`crate::spec::BLOCK_CLOSE_SENTINEL`]).
+    /// reserved for parser placeholders.
     /// Downstream stages will emit those same codepoints into normalized
     /// text, so a collision means the placeholder registry can no longer
     /// distinguish source-text occurrences from lexer-inserted markers.
@@ -439,7 +441,7 @@ pub enum Diagnostic {
     /// A `［＃…］` body spelled as a verified near-miss of a recognized
     /// directive — kept as `DirectiveKind::Unknown`; the canonical spelling
     /// is offered as a fix. Advisory only, so it never blocks (exit 0 unless
-    /// `--strict`). See [`codes::NON_CANONICAL_DIRECTIVE`].
+    /// `--strict`).
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
         code("aozora::lint::non_canonical_directive"),
@@ -816,7 +818,7 @@ pub enum Diagnostic {
 /// language from the code and the `info.body_args` placeables.
 #[derive(Debug, Clone)]
 pub struct DiagnosticInfo {
-    /// Stable `aozora::lex::*` code (see [`codes`]).
+    /// Stable `aozora::lex::*` code.
     pub code: &'static str,
     /// Severity routing axis.
     pub severity: Severity,
@@ -1315,7 +1317,7 @@ impl Diagnostic {
     }
 
     /// Stable string identifier for this diagnostic. Returns one of
-    /// the constants from [`codes`] for production variants, or the
+    /// the canonical code strings for production variants, or the
     /// `Internal` payload's [`InternalCheckCode::as_code`] for
     /// pipeline-internal checks.
     #[must_use]
@@ -1344,7 +1346,7 @@ impl Diagnostic {
 
     /// True when this diagnostic is an advisory notation-hygiene *lint*.
     ///
-    /// A code in the [`codes::LINT_NAMESPACE`] (`aozora::lint::*`), surfaced by
+    /// A code in the `aozora::lint::*` namespace, surfaced by
     /// `aozora lint` and the LSP as authoring guidance, as opposed to the
     /// `aozora::lex::*` faults that report malformed input. The single
     /// authority for the lint-vs-lex split, so callers never string-match the
@@ -1490,7 +1492,7 @@ impl Diagnostic {
     ];
 
     /// Introspect the diagnostic identified by `code` — one of
-    /// [`Self::ALL_CODES`] (equivalently a [`codes`] constant or an
+    /// [`Self::ALL_CODES`] (equivalently a canonical code string or an
     /// [`InternalCheckCode::as_code`]). `None` for an unknown code.
     ///
     /// `severity` / `source` come from the inherent accessors; `help` /

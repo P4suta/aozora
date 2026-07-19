@@ -18,7 +18,7 @@ fn main() {
     // (［＃「青空」に傍点］), separated by plain text.
     let source = "｜青梅《おうめ》の下、［＃「青空」に傍点］を見る。";
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     // `source_nodes()` yields one `SourceNode` per classified Aozora /
     // container span, sorted by `source_span.start`. Plain-text runs

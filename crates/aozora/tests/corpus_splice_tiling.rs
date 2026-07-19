@@ -1,13 +1,13 @@
 //! Walks `AOZORA_CORPUS_ROOT` and verifies the source-region ownership
 //! tiling and minimal-diff splice (#202) hold for every real document:
 //!
-//! * [`aozora::Tree::regions`] is a complete, gap-free, ordered,
+//! * [`aozora::Snapshot::regions`] is a complete, gap-free, ordered,
 //!   non-overlapping cover of the verbatim (sanitized) source — the
 //!   region byte-slices concatenate back to it exactly.
 //! * No region is unclassified (`Opaque`) — every real construct is editable.
 //! * The **identity splice** reproduces the verbatim source. `check_tiling`
 //!   already proves the byte-level tiling for *every* region; this additionally
-//!   runs the real `Tree::splice` machinery (a `Direct` byte replacement, or a
+//!   runs the real `Snapshot::splice` machinery (a `Direct` byte replacement, or a
 //!   `Coupled` partner-derivation + scoped verification) on a representative
 //!   sample — one region per safety class per document. The splice itself is
 //!   already `O(marker)` (it verifies in a scoped context, never re-parsing the
@@ -44,7 +44,7 @@ fn corpus_regions_tile_the_source() {
         };
 
         let doc = Document::new(utf8);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let verbatim = tree.to_source_verbatim();
         let regions = tree.regions();
 
@@ -140,11 +140,11 @@ fn sample_of(r: &Region) -> Option<Sample> {
 
 /// No region is `Opaque` (checked for *every* region), and the identity splice
 /// of one representative region per safety class reproduces the verbatim source
-/// through the real `Tree::splice` machinery. `check_tiling` already proves the
+/// through the real `Snapshot::splice` machinery. `check_tiling` already proves the
 /// byte-level tiling for all regions; this proves the *machinery* is sound on
 /// real constructs while bounding the number of `splice` calls (≤ 6 per doc).
 fn check_splice_sampled(
-    tree: &aozora::Tree<'_>,
+    tree: &aozora::Snapshot,
     verbatim: &str,
     regions: &[Region],
 ) -> Result<(), String> {

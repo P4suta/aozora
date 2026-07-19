@@ -8,9 +8,19 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
+include = [
+  "src/**",
+  "tests/**/*.rs",
+  "build.rs",
+  "locales/*.ftl",
+  "README.md",
+  "NOTICE",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+]
 
 [lints]
 workspace = true
@@ -25,15 +35,10 @@ path = "src/main.rs"
 #   fmt     → `aozora::fmt::format_source*` (the pure canonicalising core the
 #             `fmt`/`lint`/`repl`/`tui`/`timing` plumbing in `src/fmt/` wraps)
 #   pandoc  → `aozora::pandoc::to_pandoc` for `aozora pandoc`
-#   unstable-internals → the in-process LSP reaches `aozora::unstable::*`
-#             (sanitize / Sentinel / SLUGS / LexOutput / InternalCheckCode) and
-#             the diagnostics-only incremental engine (DiagBaseRef / PieceSeq /
-#             reparse_incremental_diagnostics_only_in) — a no-contract surface.
 aozora = { workspace = true, features = [
   "schema",
   "fmt",
   "pandoc",
-  "unstable-internals",
 ] }
 # The tree-sitter grammar the in-process LSP drives (semantic tokens, gaiji
 # spans, folding, …) — a published crate, so the CLI's public dep set stays
@@ -83,10 +88,6 @@ parking_lot = { workspace = true }
 arc-swap = { workspace = true }
 ropey = { workspace = true }
 hdrhistogram = { workspace = true }
-# Optional: enabled via `--features shuttle-tests` to run the randomized-schedule
-# model check in `src/lsp/shuttle_doc_state.rs`. Off by default so routine
-# `cargo test` doesn't pull the shuttle model checker into the dependency graph.
-shuttle = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -102,8 +103,6 @@ mutants = { workspace = true }
 # versioned dev-dep would make crates.io require aozora-conformance to
 # exist on the registry and would fail the `aozora-cli` publish.
 aozora-conformance = { path = "../aozora-conformance" }
-# Property tests cross-checking the rope-backed sanitized source against the
-# `&str` reference through the incremental engine (`src/lsp/rope_src_parity.rs`).
 proptest = { workspace = true }
 # In-process LSP end-to-end harness (`src/lsp/backend.rs` `mod e2e`): drives the
 # `LspService` as a `tower::Service` and drains the loopback `ClientSocket`.
@@ -112,17 +111,6 @@ futures = "0.3"
 # Fluent's AST, so the i18n catalog-parity test (`src/i18n.rs`) reads each
 # locale's message ids from the resource Fluent itself parsed.
 fluent-syntax = { workspace = true }
-# Corpus loader for the AOZORA_CORPUS_ROOT-gated incremental parse-cache sweep
-# (`src/lsp/incremental_parse_cache_corpus.rs`): vacuous pass when unset.
-aozora-corpus = { workspace = true }
-
-[features]
-# Opt-in: enables the `shuttle_doc_state` randomized-schedule model check (the
-# only test that depends on the shuttle crate). Gating it behind a feature keeps
-# the default `cargo test` fast and avoids pulling shuttle into the dependency
-# graph for routine builds. Run it with `cargo test --features shuttle-tests`.
-shuttle-tests = ["dep:shuttle"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

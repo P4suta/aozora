@@ -9,9 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# The pipeline + syntax crates folded into `aozora`; `lex` and the stage
-# surface (`classify`/`pair`/`tokenize`, `Allocator`) are reachable through
-# `aozora::unstable`.
+# Parser fuzz targets drive the public document API.
 aozora = { path = "../.." }
 # `ffi_no_abort` drives the real C-ABI surface (the `lib`/rlib target of
 # aozora-ffi). aozora-ffi re-states the workspace lint discipline but is
@@ -32,13 +30,6 @@ debug = 1
 [[bin]]
 name = "lex"
 path = "fuzz_targets/lex.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "classify"
-path = "fuzz_targets/classify.rs"
 test = false
 doc = false
 bench = false

@@ -44,7 +44,7 @@
 )]
 
 use crate::i18n::{self as i18n, LanguageIdentifier};
-use aozora::unstable::{SLUGS, SlugFamily};
+use aozora::{Catalogue, CatalogueFamily as SlugFamily};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position, Range, TextEdit,
@@ -131,7 +131,7 @@ fn hash_wrap_completions(
     });
 
     // Each catalogue entry as a pre-wrapped option.
-    for entry in SLUGS {
+    for entry in Catalogue::directives() {
         let (body, format) = if entry.accepts_param {
             (
                 canonical_to_snippet(entry.canonical),
@@ -543,7 +543,7 @@ mod tests {
         // takes no parameter, so its `insert_text_format` is PLAIN_TEXT.
         let src = "#";
         let items = snippet_completions(src, pos_at(src, src.len()));
-        let entry = SLUGS
+        let entry = Catalogue::directives()
             .iter()
             .find(|e| e.canonical == "改ページ")
             .expect("改ページ in SLUGS");

@@ -173,7 +173,7 @@ pub(crate) fn walk<S: WalkSink>(out: &LexOutput, sink: &mut S) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::ast::{InternStats, Node, NodeStore, Registry};
+    use crate::syntax::ast::{Node, NodeStore, Registry};
 
     /// A [`WalkSink`] that records exactly what the scan emits: the concatenated
     /// plain-text runs and a per-hook event log. Pins the *bytes* the walk
@@ -216,11 +216,9 @@ mod tests {
             String::new(),
             registry,
             Vec::new(),
-            0,
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            InternStats::default(),
             NodeStore::new(),
         )
     }

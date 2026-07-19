@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 // Strict Content-Security-Policy for the production bundle. This is
 // defense-in-depth layered *on top of* the renderer's escaping: every
 // preview is mounted via `innerHTML` (HtmlPreview.tsx), but
-// `aozora-render` already entity-escapes all text and never emits
+// the aozora renderer already entity-escapes all text and never emits
 // `<script>` / `on*=` / external `href`, so the CSP is a belt to the
 // renderer's braces — a second wall if a future renderer regression ever
 // let active markup through.

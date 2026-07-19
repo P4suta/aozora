@@ -1,7 +1,7 @@
 //! Corpus-free small-document parse + render latency percentiles.
 //!
 //! The quick latency probe that pairs with the criterion throughput
-//! benches: it times `Document::new().parse().to_html()` on a synthetic
+//! benches: it times `Document::new().snapshot().to_html()` on a synthetic
 //! buffer and prints p50/p90/p99/max in integer microseconds. Mirrors
 //! afm's `examples/latency_hist.rs` so both repos expose the same
 //! corpus-free `just latency` shape; the deep per-phase, corpus-driven
@@ -25,14 +25,14 @@ fn main() {
 
     for _ in 0..WARMUP {
         let doc = Document::new(black_box(source.as_str()));
-        black_box(doc.parse().to_html());
+        black_box(doc.snapshot().to_html());
     }
 
     let mut samples_ns: Vec<u128> = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let start = Instant::now();
         let doc = Document::new(black_box(source.as_str()));
-        let html = doc.parse().to_html();
+        let html = doc.snapshot().to_html();
         let elapsed = start.elapsed().as_nanos();
         black_box(html);
         samples_ns.push(elapsed);

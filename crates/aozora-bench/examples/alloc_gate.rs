@@ -47,7 +47,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use aozora::encoding::decode_auto;
-use aozora::unstable::lex;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use dhat::{HeapStats, Profiler};
 use serde_json::{Value, from_str, json, to_string_pretty};
@@ -178,7 +177,7 @@ fn main() {
         // Measured window: only the owned producer's allocations (transient
         // scratch + owned storage) land in the delta.
         let before = HeapStats::get();
-        let owned = lex(&text);
+        let owned = aozora::parse(text.as_ref()).snapshot();
         let after = HeapStats::get();
         totals.alloc_blocks += after.total_blocks - before.total_blocks;
         totals.alloc_bytes += after.total_bytes - before.total_bytes;
@@ -187,10 +186,10 @@ fn main() {
 
         // Read the side-table lengths so the optimiser cannot elide the parse.
         black_box((
-            owned.registry.len(),
-            owned.source_nodes.len(),
-            owned.pairs.len(),
-            owned.container_pairs.len(),
+            owned.source_nodes().len(),
+            owned.pairs().len(),
+            owned.container_pairs().len(),
+            owned.diagnostics().len(),
         ));
     }
 

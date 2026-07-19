@@ -1,12 +1,9 @@
-//! Fuzz target — `aozora::unstable::lex` on arbitrary UTF-8.
+//! Fuzz target — `aozora::parse` on arbitrary UTF-8.
 //!
 //! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
-//! iteration). The resulting source text is pushed through
-//! `lex` and the produced `LexOutput` is sanity-
-//! checked: the lexer must terminate without panicking, the
-//! normalized text must remain valid UTF-8, and every reported
-//! diagnostic span must be in-bounds. Targets parser-side panics in
-//! the trigger / pair / classify stages.
+//! iteration). The resulting source text is parsed through the public
+//! document API. Parsing must terminate without panicking and every
+//! reported diagnostic span must be non-inverted.
 //!
 //! Run with the standard `just fuzz-{quick,deep,marathon,triage,
 //! promote}` family from the workspace root, e.g.
@@ -14,31 +11,14 @@
 
 #![no_main]
 
-use aozora::unstable::lex;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(src) = core::str::from_utf8(data) else {
         return;
     };
-    let out = lex(src);
-    // Invariants:
-    //
-    // 1. The normalized text must remain valid UTF-8 (the lexer never
-    //    re-encodes; if this trips, a stage corrupted the buffer).
-    assert!(
-        std::str::from_utf8(out.normalized.as_bytes()).is_ok(),
-        "lex returned invalid UTF-8 in normalized text",
-    );
-    // 2. Every diagnostic must report a non-inverted span. We
-    //    deliberately do not bound `span.end` against the normalized
-    //    length: sanitize-stage normalization (CRLF → LF, leading BOM strip)
-    //    shrinks the buffer, but diagnostics are emitted in source
-    //    coordinates so they can point past the normalized end.
-    //    Bounding against the source length isn't useful either —
-    //    the diagnostic carries no source reference and the caller
-    //    is responsible for picking the right text frame.
-    for diag in &out.diagnostics {
+    let out = aozora::parse(src).snapshot();
+    for diag in out.diagnostics() {
         let span = diag.span();
         assert!(
             span.start <= span.end,

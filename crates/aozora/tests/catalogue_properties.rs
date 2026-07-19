@@ -27,7 +27,7 @@ use proptest::prelude::*;
 fn is_recognised(body: &str) -> bool {
     let source = referent_context(body);
     !Document::new(source)
-        .parse()
+        .snapshot()
         .to_html()
         .contains("aozora-directive")
 }

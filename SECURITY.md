@@ -36,11 +36,11 @@ In scope:
 
 - Crashes, panics, or non-termination on any UTF-8 or Shift_JIS input
   within 10 MiB.
-- HTML-escape bypass in the renderer (`crates/aozora-render`), since
+- HTML-escape bypass in the renderer (`crates/aozora`), since
   rendered output is embedded in web pages.
 - Out-of-bounds reads, integer overflow, use-after-free, or other
   memory-safety violations. The Rust crates use
-  `#![forbid(unsafe_code)]`; `aozora-ffi` and `aozora-scan` carry
+  `#![forbid(unsafe_code)]`; `aozora-ffi` and the scan implementation carry
   documented carve-outs and are explicitly in scope.
 - WASM / Python / C ABI driver issues that are reachable from a
   well-formed host call.

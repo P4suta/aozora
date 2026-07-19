@@ -719,10 +719,9 @@ impl OpenDocument {
     /// `edit_version` that text reflects.
     ///
     /// The accumulated edits are forwarded to
-    /// `ParseCache::reparse_incremental`, which splices its maintained
-    /// `PieceSeq` incrementally on a single edit — LF or CRLF alike, via the
-    /// sanitized-rope Mechanism B (#237 Tier 2) — and full-parses otherwise. The
-    /// result is always identical to a from-scratch parse.
+    /// `ParseCache::reparse_incremental`, which applies a single edit
+    /// incrementally and full-parses otherwise. The result is always identical
+    /// to a from-scratch parse.
     ///
     /// The returned [`Rope`] is assembled by structural-share `append` of the
     /// cloned paragraph ropes (no byte copy), so the publish path can map

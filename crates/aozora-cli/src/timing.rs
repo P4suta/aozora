@@ -59,7 +59,7 @@ impl Timer {
     /// envelope when it is piped — so an agent capturing stderr gets a
     /// parseable stream without a flag.
     pub(crate) fn report(&self) -> io::Result<()> {
-        if !self.enabled || self.phases.is_empty() {
+        if !self.should_report() {
             return Ok(());
         }
         let human = io::stderr().is_terminal();
@@ -69,6 +69,10 @@ impl Timer {
         } else {
             self.report_json(&mut stderr)
         }
+    }
+
+    fn should_report(&self) -> bool {
+        self.enabled && !self.phases.is_empty()
     }
 
     fn report_human(&self, w: &mut impl Write) -> io::Result<()> {
@@ -162,6 +166,18 @@ mod tests {
                 ("parse", Duration::from_nanos(7)),
             ],
         }
+    }
+
+    #[test]
+    fn report_requires_both_enablement_and_a_measured_phase() {
+        let mut timer = Timer::new(false);
+        assert!(!timer.should_report());
+        timer.phases.push(("read", Duration::ZERO));
+        assert!(!timer.should_report());
+        timer.enabled = true;
+        assert!(timer.should_report());
+        timer.phases.clear();
+        assert!(!timer.should_report());
     }
 
     #[test]

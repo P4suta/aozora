@@ -240,7 +240,6 @@ ropey = { version = "1.6", default-features = false, features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 hdrhistogram = { version = "7.5", default-features = false } # constant-memory percentile metrics
-shuttle = "0.9" # randomized concurrency model checker (aozora-cli LSP shuttle tests)
 
 # Lossless syntax tree backbone for `aozora`'s `cst` feature (Phase N1).
 # rowan over cstree: 86 reverse deps vs ~3, maintained by the
@@ -402,15 +401,6 @@ pretty_assertions = "1.4.1"
 # in-source justification. Used only under `#[cfg_attr(test, …)]`, so it is a
 # dev-dependency at each use site. See https://mutants.rs/attrs.html.
 mutants = "0.0.4"
-
-# Instruction-count (Valgrind/Callgrind) micro-benchmarks — the G6 perf
-# gate (`aozora-bench/benches/perf_gate`). Wall-clock timing on shared GHA
-# runners is too noisy to gate on (the `just throughput` recipe says as
-# much); callgrind counts *instructions*, which are deterministic across
-# runs and machines. Pinned: the Dockerfile installs a matching
-# `iai-callgrind-runner` (SAME version) plus valgrind — the runner binary
-# and this library must be the same version or the harness refuses to run.
-iai-callgrind = "0.16.1"
 
 [profile.release]
 # `lto = "fat"` (vs the prior "thin") so cross-crate function calls

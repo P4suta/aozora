@@ -1,4 +1,4 @@
-//! CST build path: project `aozora::Tree` into a rowan
+//! CST build path: project `aozora::Snapshot` into a rowan
 //! `SyntaxNode` tree using the public source-node + container-pair
 //! surface only.
 
@@ -23,7 +23,7 @@ use crate::syntax::ast::{NodeRef, SourceNode};
 /// source; the meta crate's `aozora::cst::from_tree` runs the
 /// sanitize pass internally and exposes the same property.)
 #[must_use]
-pub fn build_cst(sanitized_source: &str, source_nodes: &[SourceNode]) -> SyntaxNode {
+pub(crate) fn build_cst(sanitized_source: &str, source_nodes: &[SourceNode]) -> SyntaxNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(rowan::SyntaxKind(SyntaxKind::Document as u16));
 
@@ -134,7 +134,7 @@ mod tests {
     fn lossless(src: &str) {
         let sanitized = sanitize(src);
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let cst = build_cst(&sanitized.text, tree.source_nodes());
         let mut reconstructed = String::new();
         for step in cst.preorder_with_tokens() {
@@ -200,7 +200,7 @@ mod tests {
     fn build(src: &str) -> SyntaxNode {
         let sanitized = sanitize(src);
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         build_cst(&sanitized.text, tree.source_nodes())
     }
 
@@ -265,7 +265,7 @@ mod tests {
     fn document_root_is_document_kind() {
         let sanitized = sanitize("hi");
         let doc = Document::new("hi");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let cst = build_cst(&sanitized.text, tree.source_nodes());
         assert_eq!(cst.kind(), SyntaxKind::Document);
     }

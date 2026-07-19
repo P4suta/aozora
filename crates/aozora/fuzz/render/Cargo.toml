@@ -9,8 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# The render + pipeline crates folded into `aozora`; `render_html` / `serialize`
-# live at the `aozora::render` facade and `lex` at `aozora::unstable`.
+# Rendering fuzz targets drive the public document snapshot.
 aozora = { path = "../.." }
 
 [workspace]

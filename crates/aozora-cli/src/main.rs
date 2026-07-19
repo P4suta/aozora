@@ -497,12 +497,12 @@ impl TreeKind {
     /// Render this projection of `tree` to its JSON string. Every arm
     /// delegates to `aozora::json`, the single authority shared with the
     /// Python / WASM / C bindings, so the bytes match every surface.
-    fn render(self, tree: &aozora::Tree<'_>) -> String {
+    fn render(self, snapshot: &aozora::Snapshot) -> String {
         match self {
-            Self::Diagnostics => json::diagnostics(tree.diagnostics()),
-            Self::Nodes => json::nodes(tree),
-            Self::Pairs => json::pairs(tree),
-            Self::ContainerPairs => json::container_pairs(tree),
+            Self::Diagnostics => json::diagnostics(snapshot.diagnostics()),
+            Self::Nodes => json::nodes(snapshot),
+            Self::Pairs => json::pairs(snapshot),
+            Self::ContainerPairs => json::container_pairs(snapshot),
         }
     }
 }
@@ -793,7 +793,7 @@ fn run_check_once(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCod
     let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
-    let tree = timer.measure("parse", || doc.parse());
+    let tree = timer.measure("parse", || doc.snapshot());
     let diagnostics = tree.diagnostics();
 
     let code = if diagnostics.is_empty() {
@@ -860,7 +860,7 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(path, encoding))?;
     let doc = Document::new(source);
-    let tree = timer.measure("parse", || doc.parse());
+    let tree = timer.measure("parse", || doc.snapshot());
     let lints = lint_diagnostics(&tree);
     timer.report()?;
 
@@ -910,7 +910,7 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
     // near-miss, so this is normally empty, but reporting the residue keeps
     // `--fix` honest if a body was flagged yet declined a canonical.
     let doc = Document::new(fmt.new);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let residual = lint_diagnostics(&tree);
     if residual.is_empty() {
         return Ok(ExitCode::SUCCESS);
@@ -926,8 +926,9 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
 
 /// The notation-hygiene lints (`aozora::lint::*`) from a parsed tree — the
 /// advisory subset `aozora lint` reports, filtered from every diagnostic.
-fn lint_diagnostics(tree: &aozora::Tree<'_>) -> Vec<aozora::Diagnostic> {
-    tree.diagnostics()
+fn lint_diagnostics(snapshot: &aozora::Snapshot) -> Vec<aozora::Diagnostic> {
+    snapshot
+        .diagnostics()
         .iter()
         .filter(|d| d.is_lint())
         .cloned()
@@ -1019,7 +1020,7 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
-    let tree = timer.measure("parse", || doc.parse());
+    let tree = timer.measure("parse", || doc.snapshot());
     // --degraded implies --normalize and adds Tier2; --normalize alone is
     // Tier1; neither is the byte-identical default.
     let opts = RenderOptions::default().directives(if args.degraded {
@@ -1067,7 +1068,7 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
         InspectKind::Gaiji => timer.measure("serialize", || json::gaiji(&source)),
         InspectKind::Tree(kind) => {
             let doc = Document::new(source);
-            let tree = timer.measure("parse", || doc.parse());
+            let tree = timer.measure("parse", || doc.snapshot());
             timer.measure("serialize", || kind.render(&tree))
         }
     })
@@ -1096,9 +1097,9 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.cross.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
-    let owned = timer.measure("parse", || doc.lex());
+    let snapshot = timer.measure("parse", || doc.snapshot());
     let json = timer
-        .measure("pandoc", || serde_json::to_string(&to_pandoc(&owned)))
+        .measure("pandoc", || serde_json::to_string(&to_pandoc(&snapshot)))
         .context("serialize Pandoc AST")?;
     timer.report()?;
 

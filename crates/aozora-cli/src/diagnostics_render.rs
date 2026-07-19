@@ -20,7 +20,6 @@ use std::io::{self, IsTerminal, Write};
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use aozora::Document;
 use aozora::json;
-use aozora::unstable::sanitize::sanitize;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
 
@@ -91,7 +90,8 @@ fn render_human(
     // attaching the *raw* bytes would slide every caret right by the
     // number of preceding line breaks. Re-derive the sanitized text (the
     // exact bytes the lexer spanned into) and attach that instead.
-    let sanitized = sanitize(doc.source()).text;
+    let snapshot = doc.snapshot();
+    let sanitized = snapshot.sanitized();
     // English keeps the byte-stable `#[error]` Display as the report headline
     // (unchanged); any other language substitutes the localized title through
     // the `LocalizedHeadline` adapter. The machine views (`json` / `short`)
@@ -99,7 +99,7 @@ fn render_human(
     let localize_headline = !i18n::is_english(lang);
     let mut stderr = io::stderr().lock();
     for diag in diagnostics {
-        let source = NamedSource::new(path, sanitized.to_string());
+        let source = NamedSource::new(path, sanitized.to_owned());
         // With miette's `fancy` feature, `{:?}` renders the graphical report.
         if localize_headline {
             let headline = LocalizedHeadline {
@@ -334,7 +334,7 @@ mod tests {
     /// A representative inner diagnostic built through the public `aozora` API.
     fn pua_diagnostic() -> aozora::Diagnostic {
         Document::new("a\u{E001}b")
-            .parse()
+            .snapshot()
             .diagnostics()
             .first()
             .cloned()

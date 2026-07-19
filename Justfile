@@ -116,9 +116,7 @@ doctor:
 #
 # `aozora-bench` is out because it's a bench-only harness whose dep tree
 # pulls in `zstd-sys`, `criterion`, `addr2line`, `gimli`, `object`, and
-# `ruzstd` — ~100 s of cold-cache compile time no other crate needs — and
-# because its iai-callgrind `perf_gate` bench answers `--list` with a
-# summary line `cargo nextest` refuses to parse. Bench runs go through
+# `ruzstd` — ~100 s of cold-cache compile time no other crate needs. Bench runs go through
 # `just bench`, which invokes `cargo bench --workspace` and gets the full
 # tree on demand.
 _ws := "--workspace --exclude aozora-bench"
@@ -709,41 +707,30 @@ throughput:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run --release -p aozora-bench --example throughput
 
-# Instruction-count perf gate (G6). Runs the iai-callgrind micro-benchmarks
-# (aozora-bench/benches/perf_gate) under Valgrind's Callgrind, which counts
+# Instruction-count perf gate (G6). Runs fixed micro-benchmarks under
+# Valgrind's Callgrind, which counts
 # CPU *instructions* — deterministic across runs and machines, unlike
 # wall-clock (too noisy on shared runners to gate on; see `throughput`).
 #
-# The FIRST run records a baseline named `perf_gate` and is always green.
-# Every later run compares against that baseline and exits non-zero on a
-# >10% `Ir` (instructions read) regression on any case (the soft limit is
-# baked into the bench's `main!` config). Corpus-free — the bench embeds a
+# Every run compares against the committed baseline and exits non-zero on a
+# >10% instruction regression on any case. Corpus-free — the runner embeds a
 # few vendored 青空文庫 works plus a synthetic annotation-dense buffer — so
-# it needs no AOZORA_CORPUS_ROOT. Requires valgrind + iai-callgrind-runner,
-# both baked into the dev image.
+# it needs no AOZORA_CORPUS_ROOT. Requires valgrind from the dev image.
 #
-# Runs nightly via .github/workflows/perf.yml (collecting stability data);
-# deliberately NOT in ci-parallel / pre-push yet — a per-PR promotion waits
-# on that stability data (see the workflow header).
+# Runs in the local pre-push gate and required CI.
 #
-# `--allow-aslr`: iai-callgrind otherwise disables ASLR via `setarch -R`,
-# whose `personality(2)` call the container's default seccomp profile blocks
-# ("Operation not permitted"). Instruction counts are ASLR-independent, so
-# leaving ASLR on is harmless here and keeps the recipe container-native (no
-# --privileged / seccomp=unconfined).
 perf-gate:
-    {{_dev}} cargo bench -p aozora-bench --bench perf_gate -- --save-baseline=perf_gate --allow-aslr=true
+    {{_dev}} bash scripts/perf-gate.sh
 
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/aozora/fuzz/<CRATE>/` (CRATE ∈
 # {pipeline, render, encoding}) as nightly-only sub-crates outside the main
 # workspace (so the workspace build doesn't pull libfuzzer-sys). They target the
-# collapsed `aozora` surface: `aozora::unstable::lex`, `aozora::render::*`,
+# collapsed `aozora` surface through the public document and render APIs,
 # `aozora::encoding::*`. Targets currently registered:
 #
 #   pipeline / lex
-#   pipeline / classify
 #   pipeline / ffi_no_abort
 #   render   / render_html
 #   render   / serialize_round_trip
@@ -776,26 +763,25 @@ _fuzz_target := "x86_64-unknown-linux-gnu"
 # supplies TARGET, the `--target` triple (see `_fuzz_target` above), and any
 # libFuzzer args). The gated recipes below inject `--target` for you.
 fuzz CRATE *ARGS:
-    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run {{ARGS}}'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --fuzz-dir . {{ARGS}}'
 
 # 60-second smoke fuzz — fits inside a development inner loop.
 fuzz-quick CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
 
 # 5-minute deep fuzz — the gate to clear before tagging a release.
 fuzz-deep CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
 
 # 15-minute marathon fuzz — the strongest single-target soak we run by
 # hand. Reach for this after a clean fuzz-deep cycle when you want to
 # push the corpus another order of magnitude.
 fuzz-marathon CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
+    {{_dev}} bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +nightly fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
 
 # Run every registered fuzz target in turn for 60 s each.
 fuzz-all-quick:
     just fuzz-quick pipeline lex
-    just fuzz-quick pipeline classify
     just fuzz-quick pipeline ffi_no_abort
     just fuzz-quick render render_html
     just fuzz-quick render serialize_round_trip
@@ -806,7 +792,6 @@ fuzz-all-quick:
 # release pre-flight gate.
 fuzz-all-deep:
     just fuzz-deep pipeline lex
-    just fuzz-deep pipeline classify
     just fuzz-deep pipeline ffi_no_abort
     just fuzz-deep render render_html
     just fuzz-deep render serialize_round_trip
@@ -834,7 +819,7 @@ fuzz-triage CRATE TARGET:
         # invoking it), so strip the prefix accordingly.
         rel="${art#crates/aozora/fuzz/${crate}/}"
         echo "==> ${art}"
-        out=$({{_dev}} bash -c "cd crates/aozora/fuzz/${crate} && cargo +nightly fuzz run --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
+        out=$({{_dev}} bash -c "cd crates/aozora/fuzz/${crate} && cargo +nightly fuzz run --fuzz-dir . --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
         # Slice out the panic block: from `thread … panicked at`
         # through the line just before the stack trace begins. That's
         # exactly where the fuzz target's panic message prints its
@@ -887,7 +872,6 @@ fuzz-status:
     set -euo pipefail
     targets=(
         "pipeline lex"
-        "pipeline classify"
         "pipeline ffi_no_abort"
         "render render_html"
         "render serialize_round_trip"
@@ -1043,7 +1027,7 @@ coverage-branch:
 #
 # Runs in a DEDICATED target dir on the persistent cargo-target volume
 # with CARGO_INCREMENTAL=1: the compose file pins it to 0 so sccache can
-# cache, but mutation rebuilds every mutant serially in one scratch tree,
+# cache, but mutation repeatedly rebuilds isolated mutant scratch trees,
 # so incremental reuse is the win and sccache (which cannot cache
 # incremental builds) is dropped via RUSTC_WRAPPER=. The `/mutants`
 # subdir keeps these incremental artefacts isolated from the main
@@ -1061,27 +1045,7 @@ mutants *ARGS:
         -e CARGO_TARGET_DIR=/cargo/target/mutants \
         -e CARGO_INCREMENTAL=1 \
         -e RUSTC_WRAPPER= \
-        dev cargo mutants --config mutants.toml {{ARGS}}
-
-# Host-native mutation sweep — the FAST inner loop for reinforcing a crate.
-# Same cargo-mutants (pinned 27.1.0 via mise) + nextest + rust channel as the
-# Docker `just mutants` above, so it enumerates the identical mutant set and
-# the baseline it produces holds in CI (see ADR-0031 "host lane"). Docker
-# `just mutants` stays the authoritative CI/parity mirror; this trades the
-# container's locale-pinned reproducibility for wall-clock — it skips the
-# compose spin-up and drives cargo-mutants' own `-j` parallelism natively.
-#
-#   just mutants-host -p aozora-ffi              # one crate, 4-way parallel
-#   MUTANTS_JOBS=6 just mutants-host -p aozora   # override the fan-out
-#   just mutants-host --in-diff <(git diff origin/main)  # only changed lines
-#
-# A dedicated `target/mutants-host` keeps these serial-rebuild artefacts out
-# of the normal host `target/` (and never touches the Docker volume). The
-# machine-readable report still lands in the git-ignored repo-root
-# `mutants.out/`, identical in shape to the Docker lane's.
-mutants-host *ARGS:
-    CARGO_TARGET_DIR=target/mutants-host \
-        cargo mutants --config mutants.toml -j "${MUTANTS_JOBS:-4}" {{ARGS}}
+        dev cargo mutants --config mutants.toml -j 1 {{ARGS}}
 
 # --- lint / static analysis ---------------------------------------------------
 
@@ -1363,6 +1327,10 @@ fmt:
     {{_dev}} cargo fmt --all
     {{_dev}} taplo fmt
 
+# License and copyright coverage for every repository file.
+reuse:
+    docker compose run --rm --no-TTY reuse lint
+
 # Clippy — lint groups (pedantic/nursery/cargo) and carve-outs are owned
 # entirely by `[workspace.lints]` in Cargo.toml. Passing `-W clippy::<group>`
 # here would re-enable the whole group at CLI priority and silently undo
@@ -1435,9 +1403,9 @@ shear:
 # 18→3 collapse the only checked crate is `aozora` (the 0.4.1 baseline);
 # `aozora-cli` is bin-only (auto-skipped) and `tree-sitter-aozora` is a first
 # publish with no baseline yet.
-semver:
+semver *ARGS:
     {{_dev}} cargo semver-checks check-release --workspace \
-        --exclude tree-sitter-aozora
+        --exclude tree-sitter-aozora {{ARGS}}
 
 # --- dependency follow-up (local-only, no remote CI) -------------------------
 # Policy: workspace deps track @latest. The mechanism is purely local —
@@ -1647,7 +1615,7 @@ ci-act *ARGS:
 
 # Cross-compile `aozora` (the folded scanner lives in `aozora::scan`) to
 # aarch64 + run its proptest suite under qemu-user via cross-rs. Verifies the
-# NEON Teddy inner kernel matches `aozora::unstable::NaiveScanner`
+# NEON Teddy inner kernel matches the crate-internal reference scanner
 # byte-identically. Requires `cross` and Docker on the host (`cargo install
 # cross` once); mirrors the `cross-aarch64` job in ci.yml.
 test-aarch64:
@@ -1874,7 +1842,7 @@ ci-parallel:
         [prop]="code" [prop-deep]="code" [shear]="code"
         [test-doc]="code" [test-doc-all]="code" [extism-build]="code"
         [parity-wasm]="code" [smoke-go]="code" [doc]="code"
-        [corpus-sweep]="code"
+        [corpus-sweep]="code" [perf-gate]="code"
     )
 
     # want <category>… — 0 = run this gate, 1 = skip. True when ANY of the
@@ -1905,7 +1873,7 @@ ci-parallel:
     # fmt-check / typos / strict-code / readme-gate are
     # cheap and apply to any file — always run. ci-fast-selftest guards the
     # change-aware classifier itself (instant host bash).
-    for g in fmt-check typos strict-code readme-gate ci-fast-selftest; do launch "$g" just "$g"; done
+    for g in fmt-check typos strict-code readme-gate reuse ci-fast-selftest; do launch "$g" just "$g"; done
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
     # Lint runs the AUTHORITATIVE surface, not the lighter per-commit
@@ -1933,7 +1901,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
-        for gate in shear test-doc test-doc-all extism-build parity-wasm smoke-go doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all extism-build parity-wasm smoke-go doc corpus-sweep perf-gate; do
             want ${GATE_CATS[$gate]} || { skip "$gate"; continue; }
             if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
         done

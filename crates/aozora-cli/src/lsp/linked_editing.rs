@@ -7,7 +7,7 @@
 //!
 //! ## Why source-scan instead of tree-sitter or the Rust parser
 //!
-//! The original implementation walked `aozora::Tree::pairs()`
+//! The original implementation walked the semantic parser's pair table
 //! — accurate but cost a full re-parse per cursor move (~414 ms on
 //! 40 KB docs). Tree-sitter would let us walk pairs cheaply, but
 //! the bracket scan we need is genuinely *local*: from the cursor

@@ -7,8 +7,8 @@
 //! second pass.
 //!
 //! This module is the pure algorithm only. Its output byte-identity is
-//! inherited from [`Document::parse`](crate::Document::parse) +
-//! [`Tree::to_source_with`](crate::Tree::to_source_with); it adds no new
+//! inherited from [`Document::snapshot`](crate::Document::snapshot) +
+//! [`Snapshot::to_source_with`](crate::Snapshot::to_source_with); it adds no new
 //! dependency. The batch-driver CLI plumbing (file discovery, diff/check
 //! reporting, progress UI, encoding selection) lives in `aozora-cli`.
 
@@ -39,7 +39,7 @@ pub fn format_source(source: &str) -> String {
 /// recognized node and is not rewritten again).
 #[must_use]
 pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
-    Document::new(source).parse().to_source_with(opts)
+    Document::new(source).snapshot().to_source_with(opts)
 }
 
 #[cfg(test)]
@@ -105,5 +105,15 @@ mod tests {
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
             "fix must not touch genuine editorial Unknowns"
         );
+    }
+
+    #[test]
+    fn fix_reflows_a_canonicalized_block_directive_in_one_pass() {
+        let fix = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
+        let input = "［＃中中見出し］\0\0";
+        let once = format_source_with(input, fix);
+        let twice = format_source_with(&once, fix);
+        assert_eq!(once, "\n\n［＃中見出し］\n\n\0\0");
+        assert_eq!(once, twice);
     }
 }

@@ -12,12 +12,12 @@
 
 use crate::syntax::Span;
 
-pub use crate::spec::TriggerKind;
+pub(crate) use crate::spec::TriggerKind;
 
 /// A single lexer event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Token {
+pub(crate) enum Token {
     /// Text between triggers. `range` is a byte-offset span in the
     /// sanitized source (sanitize-stage output). May be empty if two
     /// triggers are adjacent.

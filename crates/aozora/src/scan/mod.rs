@@ -37,7 +37,7 @@
 //!
 //! ## Naive reference
 //!
-//! [`NaiveScanner`] is the brute-force `O(n × classify)` walker — the
+//! `NaiveScanner` is the brute-force `O(n × classify)` walker — the
 //! independent oracle the production scanner is differentially tested
 //! against (`tests/property_backend_equiv.rs`), and the safe scanner
 //! used directly on `no_std` builds (where `aho-corasick`'s packed
@@ -45,13 +45,14 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
 mod naive;
 mod trait_def;
 
 pub(crate) use trait_def::OffsetSink;
 
-#[doc(hidden)]
-pub use naive::NaiveScanner;
+#[cfg(test)]
+pub(crate) use naive::NaiveScanner;
 
 /// The process-wide trigger automaton, built once.
 ///
@@ -79,7 +80,7 @@ fn automaton() -> &'static aho_corasick::AhoCorasick {
 /// detection) now, off the hot path. The first [`scan_offsets`] then
 /// reuses the cached automaton. Idempotent and sub-microsecond.
 ///
-/// `no_std` builds scan with [`NaiveScanner`] and have nothing to warm,
+/// `no_std` builds scan with `NaiveScanner` and have nothing to warm,
 /// so this is a documented no-op there.
 // mutants::skip — deleting the body only defers the idempotent one-time
 // automaton build to the first `scan_into`; it produces no observable

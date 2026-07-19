@@ -62,20 +62,17 @@ pub(crate) use crate::spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
 
-pub mod classify;
-#[cfg(feature = "classify-instrument")]
-pub mod instrumentation;
-pub mod pair;
-#[doc(hidden)]
-pub mod sanitize;
-pub mod token;
+pub(crate) mod classify;
+pub(crate) mod pair;
+pub(crate) mod sanitize;
+pub(crate) mod token;
 mod tokenize;
 
 pub(crate) use classify::{ClassifiedSpan, SpanKind, classify};
 pub(crate) use pair::{PairEvent, pair};
 pub(crate) use sanitize::sanitize;
 pub(crate) use token::Token;
-pub use tokenize::tokenize;
+pub(crate) use tokenize::tokenize;
 
 #[cfg(test)]
 mod tests {

@@ -17,16 +17,12 @@ use aozora::{Document, Node, NodeRef};
 fn main() {
     let source = "｜青梅《おうめ》街道を｜逢《お》う";
     let doc = Document::new(source);
-    let tree = doc.parse();
-    let store = &tree.lex_output().store;
-
-    for sn in tree.source_nodes() {
+    let snapshot = doc.snapshot();
+    for sn in snapshot.source_nodes() {
         // Ruby is always inline.
         if let NodeRef::Inline(Node::Ruby(ruby)) = sn.node {
-            let base = store.content_range_as_plain(ruby.base).unwrap_or("<mixed>");
-            let reading = store
-                .content_range_as_plain(ruby.reading)
-                .unwrap_or("<mixed>");
+            let base = snapshot.plain_content(ruby.base).unwrap_or("<mixed>");
+            let reading = snapshot.plain_content(ruby.reading).unwrap_or("<mixed>");
             println!("{base}\t{reading}");
         }
     }

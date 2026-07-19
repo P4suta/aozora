@@ -24,9 +24,6 @@ export type DiagnosticSource = "source" | "internal";
 /** Stable namespaced ID for an Internal sanity-check failure. */
 export type InternalCheckCode = "aozora::lex::residual_annotation_marker" | "aozora::lex::unregistered_sentinel" | "aozora::lex::registry_out_of_order" | "aozora::lex::registry_position_mismatch";
 
-/** PUA sentinel codepoint kind (4 reserved markers in `U+E001..U+E004`). */
-export type SentinelKind = "inline" | "blockLeaf" | "blockOpen" | "blockClose";
-
 // ─────────────────────────────────────────────────────────
 // Wire envelope payload types
 // ─────────────────────────────────────────────────────────

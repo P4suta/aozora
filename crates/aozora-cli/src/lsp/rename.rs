@@ -5,7 +5,8 @@
 //! coherently: a container open marker and its matching close, or a
 //! forward-reference / heading-hint / margin-note directive and the
 //! upstream literal it points at. This module is a thin surface over the
-//! existing splice engine ([`aozora::Tree::splice`] / [`aozora::Tree::coupling`]),
+//! existing splice engine ([`aozora::Snapshot::splice`] /
+//! [`aozora::Snapshot::coupling`]),
 //! which is the single source of truth for "what couples to what". No
 //! partner-derivation is reimplemented here — we *call* the splice and
 //! *recover* its two-region edit from its own output.
@@ -31,7 +32,7 @@
 
 use std::collections::HashMap;
 
-use aozora::{Coupling, Region, SourceOffset, Span, SpliceError, SpliceSafety, Tree};
+use aozora::{Coupling, Region, Snapshot, SourceOffset, Span, SpliceError, SpliceSafety};
 use tower_lsp::lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
 
 use crate::lsp::line_index::LineIndex;
@@ -44,7 +45,7 @@ use crate::lsp::line_index::LineIndex;
 /// (`tree.sanitized() == text`) does not hold.
 #[must_use]
 pub(super) fn prepare_rename_at(
-    tree: &Tree<'_>,
+    tree: &Snapshot,
     text: &str,
     line_index: &LineIndex,
     position: Position,
@@ -75,14 +76,14 @@ pub(super) fn prepare_rename_at(
 /// - `Err(e)` — the splice engine *declined* the edit (an ambiguous referent,
 ///   a ruby-base target literal, a 、-joined multi-target, or an opaque node).
 ///
-/// `new_name` is passed **verbatim** to [`Tree::splice`] as the full new region
+/// `new_name` is passed **verbatim** to [`Snapshot::splice`] as the full new region
 /// text; splice is the authority and derives the partner change itself. The
 /// emitted [`WorkspaceEdit`] is then *recovered* from splice's own output — we
 /// never re-derive the partner.
 ///
 /// # Errors
 ///
-/// Propagates [`SpliceError`] when the underlying [`Tree::splice`] declines the
+/// Propagates [`SpliceError`] when the underlying [`Snapshot::splice`] declines the
 /// coupled edit.
 #[expect(
     clippy::too_many_arguments,
@@ -90,7 +91,7 @@ pub(super) fn prepare_rename_at(
               over the cached tree + line index; bundling would obscure the surface"
 )]
 pub(super) fn rename_edit(
-    tree: &Tree<'_>,
+    tree: &Snapshot,
     text: &str,
     line_index: &LineIndex,
     uri: &Url,
@@ -141,7 +142,7 @@ pub(super) fn rename_edit(
               struct would add a type without reducing the data threaded"
 )]
 fn edits_for_splice(
-    tree: &Tree<'_>,
+    tree: &Snapshot,
     line_index: &LineIndex,
     text: &str,
     new_source: &str,
@@ -280,7 +281,6 @@ mod tests {
     use std::cmp::Reverse;
 
     use super::*;
-    use aozora::Document;
 
     fn fake_uri() -> Url {
         Url::parse("file:///fake.aozora").expect("valid URL")
@@ -317,8 +317,7 @@ mod tests {
 
     /// Convenience: parse `src`, run `prepare_rename_at` at byte offset `off`.
     fn prepare_at(src: &str, off: usize) -> Option<PrepareRenameResponse> {
-        let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = aozora::parse(src).snapshot();
         prepare_rename_at(&tree, src, &LineIndex::new(src), pos(src, off))
     }
 
@@ -328,8 +327,7 @@ mod tests {
         off: usize,
         new_name: &str,
     ) -> Result<Option<WorkspaceEdit>, SpliceError> {
-        let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = aozora::parse(src).snapshot();
         rename_edit(
             &tree,
             src,
@@ -392,8 +390,7 @@ mod tests {
     fn prepare_past_eof_is_none() {
         let src = "本文";
         // A position on a line past the buffer maps to no byte offset.
-        let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = aozora::parse(src).snapshot();
         assert!(prepare_rename_at(&tree, src, &LineIndex::new(src), Position::new(9, 0)).is_none());
     }
 
@@ -501,8 +498,7 @@ mod tests {
     /// `tree.splice(region, new_name)` byte-for-byte. This guards the
     /// two-region arithmetic recovery against `new_source`.
     fn assert_round_trip(src: &str, off: usize, new_name: &str) {
-        let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = aozora::parse(src).snapshot();
         let line_index = LineIndex::new(src);
         let region = tree
             .region_at(SourceOffset::new(u32::try_from(off).unwrap()))

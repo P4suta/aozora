@@ -78,7 +78,7 @@ impl From<u32> for SourceOffset {
 ///
 /// The normalized text replaces every recognised Aozora construct
 /// with one of the four PUA sentinel codepoints
-/// ([`crate::spec::Sentinel`]); the placeholder registry maps each sentinel
+/// (internal sentinels); the placeholder registry maps each sentinel
 /// position back to its originating construct. Renderers that walk
 /// the normalized text and dispatch on sentinel hits operate in this
 /// coordinate space.

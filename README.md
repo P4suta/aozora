@@ -40,10 +40,10 @@ detected; `-E sjis` forces it. `aozora --help` lists the rest.
 use aozora::Document;
 
 let doc = Document::new("｜青梅《おうめ》".to_owned());
-let tree = doc.parse();
+let snapshot = doc.snapshot();
 
-let html = tree.to_html();
-let diagnostics = tree.diagnostics();
+let html = snapshot.to_html();
+let diagnostics = snapshot.diagnostics();
 ```
 
 ## Documentation

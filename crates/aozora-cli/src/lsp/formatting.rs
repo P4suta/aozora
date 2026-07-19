@@ -19,7 +19,7 @@ use crate::lsp::position::byte_offset_to_position;
 /// pulling in the formatter frontend's CLI-only dependencies.
 #[must_use]
 pub(super) fn format_edits(source: &str) -> Vec<TextEdit> {
-    let formatted = Document::new(source).parse().to_source();
+    let formatted = Document::new(source).snapshot().to_source();
     if formatted == source {
         return Vec::new();
     }

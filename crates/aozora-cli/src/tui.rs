@@ -9,7 +9,7 @@
 //!
 //! Like [`crate::repl`], it owns **no** parsing, rendering, or diagnostic
 //! logic. The preview is the exact engine surface the document subcommands
-//! emit — [`aozora::Tree::to_html`] (as `aozora render`), [`json::nodes`] (as
+//! emit — [`aozora::Snapshot::to_html`] (as `aozora render`), [`json::nodes`] (as
 //! `aozora inspect nodes`), and [`aozora::pandoc::to_pandoc`] (as `aozora
 //! pandoc`) — and the diagnostics pane is [`aozora::diagnostics_text`], the
 //! portable plain-text report. So the panes can never disagree with the rest
@@ -159,17 +159,18 @@ struct Derived {
 /// and the report matches `aozora`'s portable diagnostic text exactly.
 fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived {
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let preview_text = match preview {
         Preview::Html => tree.to_html(),
         Preview::Nodes => json::nodes(&tree),
         Preview::Pandoc => {
-            let owned = doc.lex();
+            let snapshot = doc.snapshot();
             // Pretty-printed for the pane (the compact `aozora pandoc` bytes
             // would wrap into an unreadable blob); serializing cannot fail in
             // practice, so surface the error text rather than panicking.
-            serde_json::to_string_pretty(&to_pandoc(&owned)).unwrap_or_else(|err| err.to_string())
+            serde_json::to_string_pretty(&to_pandoc(&snapshot))
+                .unwrap_or_else(|err| err.to_string())
         }
     };
 
@@ -642,7 +643,7 @@ mod tests {
     fn derive_html_matches_the_render_engine() {
         let source = "｜青空《あおぞら》";
         let d = derive(source, Preview::Html, &lang("en"));
-        let expected = Document::new(source).parse().to_html();
+        let expected = Document::new(source).snapshot().to_html();
         assert!(!expected.is_empty(), "fixture renders to non-empty HTML");
         assert_eq!(d.preview, expected, "preview is the render bytes");
         assert_eq!(d.diag_count, 0, "clean fixture");
@@ -652,7 +653,7 @@ mod tests {
     fn derive_nodes_matches_the_inspect_engine() {
         let source = "青空《あおぞら》";
         let d = derive(source, Preview::Nodes, &lang("en"));
-        let expected = json::nodes(&Document::new(source).parse());
+        let expected = json::nodes(&Document::new(source).snapshot());
         assert_eq!(d.preview, expected, "preview is the inspect-nodes bytes");
     }
 
@@ -772,7 +773,7 @@ mod tests {
         assert_ne!(a.derived.preview, html, "panes recomputed for the new view");
         assert_eq!(
             a.derived.preview,
-            json::nodes(&Document::new("青空《あおぞら》").parse()),
+            json::nodes(&Document::new("青空《あおぞら》").snapshot()),
             "now showing the nodes bytes"
         );
     }

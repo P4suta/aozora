@@ -18,10 +18,7 @@ publish = false
 workspace = true
 
 [dependencies]
-# The parse/render chain is now folded into `aozora`; the bench probes reach
-# the internal stage surface through its `aozora::unstable` / `aozora::encoding`
-# / `aozora::render` modules (and `aozora::instrumentation` under the
-# `classify-instrument` feature, activated by this crate's `instrument`).
+# Benchmarks drive the stable document, encoding, and render APIs.
 aozora = { workspace = true }
 aozora-corpus = { workspace = true }
 rayon = { workspace = true }
@@ -29,17 +26,7 @@ rayon = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 dhat = { workspace = true }
-iai-callgrind = { workspace = true }
-memchr = { workspace = true }
 serde_json = { workspace = true }
-
-[features]
-default = []
-# Activate `aozora/classify-instrument` so examples (notably
-# `pathological_probe`) can dump per-subsystem timings.
-# Use: `cargo run --release --example pathological_probe -p aozora-bench
-#       --features instrument`
-instrument = ["aozora/classify-instrument"]
 
 [[bench]]
 name = "crime_and_punishment"
@@ -48,18 +35,3 @@ harness = false
 [[bench]]
 name = "synthetic_corpus"
 harness = false
-
-# Instruction-count perf gate (G6). Uses the iai-callgrind harness (not
-# criterion), so `harness = false`. Corpus-free: it embeds a few vendored
-# 青空文庫 works plus a synthetic annotation-dense buffer, so it runs
-# without AOZORA_CORPUS_ROOT. Driven by `just perf-gate`.
-[[bench]]
-name = "perf_gate"
-harness = false
-
-# `classify_subsystems` requires the opt-in classify instrumentation. Run with:
-# `cargo run --release --example classify_subsystems -p aozora-bench \
-#    --features 'aozora/classify-instrument'`
-[[example]]
-name = "classify_subsystems"
-required-features = ["aozora/classify-instrument"]

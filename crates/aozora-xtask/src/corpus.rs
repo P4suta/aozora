@@ -54,10 +54,7 @@ use rayon::prelude::*;
 
 use aozora::encoding::decode_auto;
 use aozora::render::AOZORA_CLASSES;
-use aozora::unstable::degraded::degraded_directive;
-use aozora::unstable::lint::canonical_directive;
-use aozora::unstable::sanitize::sanitize;
-use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
+use aozora::{Catalogue, CatalogueMatch, DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -1456,9 +1453,12 @@ fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
         Ok(t) => t.into_owned(),
         Err(_) => return VerbatimOutcome::DecodeSkipped,
     };
-    let expected = sanitize(&text).text.into_owned();
+    let expected = aozora::parse(text.as_str())
+        .snapshot()
+        .sanitized()
+        .to_owned();
     let Ok(got) = panic::catch_unwind(AssertUnwindSafe(|| {
-        Document::new(text).parse().to_source_verbatim()
+        Document::new(text).snapshot().to_source_verbatim()
     })) else {
         return VerbatimOutcome::Mismatch(label);
     };
@@ -1644,8 +1644,9 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     // Render only the literary body — the standard header legend
     // documents the notation glyphs verbatim and would swamp the signal.
     let text = aozora_body(&decoded);
-    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| Document::new(text).parse().to_html()))
-    else {
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| {
+        Document::new(text).snapshot().to_html()
+    })) else {
         return DocRenderOutcome::Panicked(label);
     };
     let hits = visible_leak_markers(&html);
@@ -1799,8 +1800,9 @@ fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
         Err(_) => return DocCorrOutcome::DecodeSkipped,
     };
     let text = aozora_body(&decoded);
-    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| Document::new(text).parse().to_html()))
-    else {
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| {
+        Document::new(text).snapshot().to_html()
+    })) else {
         return DocCorrOutcome::Panicked;
     };
     let hits = scan_correctness(&html);
@@ -2592,10 +2594,10 @@ fn audit_one(item: CorpusItem) -> FileStat {
 /// strings.
 fn analyze(text: &str) -> FileStat {
     let doc = Document::new(text);
-    let out = doc.lex();
+    let snapshot = doc.snapshot();
     let mut s = FileStat::default();
 
-    for sn in &out.source_nodes {
+    for sn in snapshot.source_nodes() {
         if let Some(i) = NodeKind::ALL.iter().position(|k| *k == sn.node.kind()) {
             s.node_kinds[i] += 1;
         }
@@ -2606,7 +2608,7 @@ fn analyze(text: &str) -> FileStat {
                         s.annotation_kinds[0] += 1;
                         let line = line_of(text, sn.source_span.start);
                         s.unknown
-                            .push((out.store.resolve_str(a.raw).to_owned(), line));
+                            .push((snapshot.directive_source(a).to_owned(), line));
                     }
                     DirectiveKind::Sic => s.annotation_kinds[1] += 1,
                     DirectiveKind::BaseTextVariant => s.annotation_kinds[2] += 1,
@@ -2627,25 +2629,17 @@ fn analyze(text: &str) -> FileStat {
             }
             NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
-                if g.resolve(&out.store).is_none() {
+                if snapshot.resolve_gaiji(&g).is_none() {
                     s.gaiji_unresolved += 1;
                 }
-                // Reconstruct the mencode tail from the canonical value so the
-                // shape buckets stay keyed on the same source token.
-                let mencode = g.canonical.has_mencode().then(|| {
-                    let mut m = String::new();
-                    g.canonical
-                        .write_mencode(&out.store, &mut m)
-                        .expect("write_mencode into String is infallible");
-                    m
-                });
+                let mencode = snapshot.gaiji_mencode(&g);
                 s.gaiji_forms[gaiji_bucket(mencode.as_deref())] += 1;
             }
             _ => {}
         }
     }
 
-    for d in &out.diagnostics {
+    for d in snapshot.diagnostics() {
         s.diags.push(d.code());
     }
     s
@@ -3026,9 +3020,9 @@ fn family_ids(stat: &FileStat) -> Vec<usize> {
 /// The notation-hygiene catalogue bucket a raw `［＃…］` Unknown body falls into.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Bucket {
-    /// Tier1 ([`canonical_directive`]) resolves it — a zero-FP near-miss.
+    /// Tier1 catalogue normalization resolves it — a zero-FP near-miss.
     Tier1,
-    /// Tier1 declines but Tier2 ([`degraded_directive`]) reduces it (render-only).
+    /// Tier1 declines but Tier2 catalogue normalization reduces it (render-only).
     Tier2,
     /// Neither catalogue matches — the discovery residue.
     Residue,
@@ -3042,12 +3036,10 @@ fn classify_body(raw: &str) -> Bucket {
         .and_then(|s| s.strip_suffix('］'))
         .unwrap_or(raw)
         .trim();
-    if canonical_directive(body).is_some() {
-        Bucket::Tier1
-    } else if degraded_directive(body).is_some() {
-        Bucket::Tier2
-    } else {
-        Bucket::Residue
+    match Catalogue::normalization(body) {
+        Some(CatalogueMatch::Canonical) => Bucket::Tier1,
+        Some(CatalogueMatch::Degraded) => Bucket::Tier2,
+        None => Bucket::Residue,
     }
 }
 
@@ -3176,9 +3168,9 @@ struct CatalogueCoverage {
     note: String,
     files_analyzed: usize,
     unknown_total: u64,
-    /// Occurrences Tier1 ([`canonical_directive`]) resolves.
+    /// Occurrences Tier1 catalogue normalization resolves.
     tier1_occurrences: u64,
-    /// Occurrences Tier2 ([`degraded_directive`]) reduces (render-only).
+    /// Occurrences Tier2 catalogue normalization reduces (render-only).
     tier2_occurrences: u64,
     /// Occurrences neither catalogue matches — the discovery residue.
     residue_occurrences: u64,
@@ -3532,7 +3524,7 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
     );
     let clean = stat.is_some()
         && panic::catch_unwind(AssertUnwindSafe(|| {
-            let html = Document::new(text.clone()).parse().to_html();
+            let html = Document::new(text.clone()).snapshot().to_html();
             scan_correctness(&html).is_empty() && visible_leak_markers(&html).is_empty()
         }))
         .unwrap_or(false);

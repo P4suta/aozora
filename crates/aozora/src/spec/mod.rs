@@ -25,17 +25,19 @@ pub(crate) mod slugs;
 pub(crate) mod span;
 pub(crate) mod trigger;
 
-pub use diagnostic::{
-    Diagnostic, DiagnosticInfo, DiagnosticSource, InternalCheckCode, Severity, codes,
-};
+#[cfg(test)]
+pub(crate) use diagnostic::codes;
+pub use diagnostic::{Diagnostic, DiagnosticInfo, DiagnosticSource, InternalCheckCode, Severity};
 pub use offset::{NormalizedOffset, SourceOffset};
 pub use pair::{PairKind, PairLink};
-pub use sentinels::{
-    ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
-    Sentinel,
+#[cfg(test)]
+pub(crate) use sentinels::Sentinel;
+pub(crate) use sentinels::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
-pub use slugs::{
-    RENDER_SLUGS, RenderSlug, SLUGS, SlugEntry, SlugFamily, canonicalise_slug, roman_slug,
-};
+pub(crate) use slugs::canonicalise_slug;
+pub use slugs::{RENDER_SLUGS, RenderSlug};
+pub(crate) use slugs::{SLUGS, roman_slug};
+pub use slugs::{SlugEntry, SlugFamily};
 pub use span::Span;
-pub use trigger::{TriggerKind, classify_trigger_bytes};
+pub(crate) use trigger::{TriggerKind, classify_trigger_bytes};

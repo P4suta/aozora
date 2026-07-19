@@ -16,7 +16,7 @@
 //! 2. The classify stage is invoked with an
 //!    [`Allocator`](crate::syntax::alloc::Allocator); owned AST
 //!    nodes land in its `NodeStore`, strings
-//!    interned through the store's [`StrInterner`](crate::syntax::ast::StrInterner)
+//!    interned through the store's string interner
 //!    so byte-equal content shares a single id.
 //! 3. A single fused walk emits the PUA-rewritten text and builds the
 //!    position-keyed registry + source-keyed side table, recording each
@@ -38,10 +38,10 @@ use crate::syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 /// The native owned producer: the classify stage builds the owned tree in one
 /// pass (the way the retired borrowed `lex` built the borrowed one), so the
 /// returned output owns all its payloads (interned strings, content / segment
-/// runs, side tables). This is what `Document::parse` / `Document::lex`
+/// runs, side tables). This is what `Document::snapshot` / `Document::lex`
 /// call.
 #[must_use]
-pub fn lex(source: &str) -> LexOutput {
+pub(crate) fn lex(source: &str) -> LexOutput {
     crate::pipeline::state_machine::Pipeline::run_to_completion(source)
 }
 
@@ -403,7 +403,7 @@ mod tests {
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
-        assert_eq!(out.sanitized_len, 0);
+        assert!(out.sanitized.is_empty());
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
     fn sanitized_len_equals_input_for_plain_text() {
         let input = "plain text\nwith newline";
         let out = lex(input);
-        assert_eq!(usize::try_from(out.sanitized_len), Ok(input.len()));
+        assert_eq!(out.sanitized.len(), input.len());
     }
 
     #[test]

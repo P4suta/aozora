@@ -38,6 +38,7 @@ pub(crate) fn tracked_rs_files(root: &Path) -> Result<Vec<PathBuf>, String> {
         .lines()
         .filter(|l| !l.is_empty())
         .map(PathBuf::from)
+        .filter(|path| root.join(path).is_file())
         .collect();
     if files.is_empty() {
         return Err("`git ls-files '*.rs'` returned nothing — scope is empty, \

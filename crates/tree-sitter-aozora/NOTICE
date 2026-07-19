@@ -1,0 +1,5 @@
+tree-sitter-aozora — Tree-sitter grammar for 青空文庫記法
+Copyright (c) the aozora contributors
+
+This crate is original aozora code and is dual-licensed under Apache-2.0 OR
+MIT. See LICENSE-APACHE and LICENSE-MIT for the full license texts.

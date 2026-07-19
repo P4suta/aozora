@@ -44,24 +44,24 @@ pub(crate) fn fx_hash(bytes: &[u8]) -> u64 {
 /// (`calls`, `cache_hits`, `table_hits`, `allocs`, `long_bypass`, `resizes`,
 /// `probe_steps`).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct InternStats {
+pub(crate) struct InternStats {
     /// Total `intern` calls (every entry into the API).
-    pub calls: u64,
+    pub(crate) calls: u64,
     /// Calls served from the inline cache.
-    pub cache_hits: u64,
+    pub(crate) cache_hits: u64,
     /// Calls that landed on an existing table entry (no allocation).
-    pub table_hits: u64,
+    pub(crate) table_hits: u64,
     /// Calls that allocated a new entry.
-    pub allocs: u64,
+    pub(crate) allocs: u64,
     /// Calls that bypassed the table because the string exceeded
     /// `INTERN_LENGTH_LIMIT` — counted as an alloc as well.
-    pub long_bypass: u64,
+    pub(crate) long_bypass: u64,
     /// Total resize events the table performed.
-    pub resizes: u64,
+    pub(crate) resizes: u64,
     /// Total probe steps walked across all `intern` calls. Divided by
     /// `calls - cache_hits` gives the average probe length, the canonical
     /// hash-table health metric.
-    pub probe_steps: u64,
+    pub(crate) probe_steps: u64,
 }
 
 /// Byte length beyond which the interner bypasses its probe table: long
@@ -74,15 +74,12 @@ const INTERN_LENGTH_LIMIT: usize = 64;
 /// Power of two so probe-index is `hash & mask`.
 const INITIAL_CAPACITY: usize = 256;
 
-/// Stable handle to an interned string inside a [`StrInterner`].
-///
-/// A `u32` index into the interner's `spans`, resolvable via
-/// [`StrInterner::resolve`]. Mapping rule `&'src str (interned) -> StrId(u32)`.
+/// Opaque handle to text owned by a [`crate::Snapshot`].
 ///
 /// `Hash`/`Ord` are derived so a `StrId` can key the owned node store's
 /// auxiliary maps and sort deterministically; both are zero-cost on a `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct StrId(pub u32);
+pub struct StrId(pub(crate) u32);
 
 /// Owned, lifetime-free string interner.
 ///
@@ -99,7 +96,7 @@ pub struct StrId(pub u32);
 /// trivially-empty interner (empty probe table; the first short intern sizes
 /// it to `INITIAL_CAPACITY`).
 #[derive(Debug, Clone, Default)]
-pub struct StrInterner {
+pub(crate) struct StrInterner {
     /// Every unique string's bytes, concatenated in intern order.
     buf: String,
     /// `(start, len)` byte span into `buf` for each id; `spans[id.0 as usize]`
@@ -121,13 +118,14 @@ pub struct StrInterner {
     /// identical runs count as `cache_hits`.
     last: Option<StrId>,
     /// Diagnostic counters feeding the dedup-ratio reporting.
-    pub stats: InternStats,
+    pub(crate) stats: InternStats,
 }
 
 impl StrInterner {
     /// Empty interner.
+    #[cfg(test)]
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -139,7 +137,7 @@ impl StrInterner {
     /// Panics if the interner's backing buffer would exceed `u32::MAX` bytes,
     /// a single interned string exceeds `u32::MAX` bytes, or the unique-string
     /// count exceeds `u32::MAX` — none reachable for any realistic document.
-    pub fn intern(&mut self, s: &str) -> StrId {
+    pub(crate) fn intern(&mut self, s: &str) -> StrId {
         self.stats.calls += 1;
 
         // Inline cache: identical consecutive interns short-circuit on a
@@ -249,7 +247,7 @@ impl StrInterner {
     ///
     /// Panics if `id` was not produced by this interner.
     #[must_use]
-    pub fn resolve(&self, id: StrId) -> &str {
+    pub(crate) fn resolve(&self, id: StrId) -> &str {
         let (start, len) = self.spans[id.0 as usize];
         &self.buf[start as usize..start as usize + len as usize]
     }
@@ -258,28 +256,32 @@ impl StrInterner {
     /// (`StrId(0)..StrId(len)`). Counts every interned string, short and long,
     /// including table-bypassed long strings, which the owned tree must still
     /// address by id.
+    #[cfg(test)]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.spans.len()
     }
 
     /// Whether the interner holds no strings.
+    #[cfg(test)]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.spans.is_empty()
     }
 
     /// Current probe-table capacity (`0` before the first short intern).
+    #[cfg(test)]
     #[must_use]
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.table.len()
     }
 
     /// Average probe length per non-cache-hit lookup. Returns `0.0` when no
     /// probed lookups have occurred. Meaningful because the probe table is a
     /// real open-addressing algorithm, so `probe_steps` carries real signal.
+    #[cfg(test)]
     #[must_use]
-    pub fn avg_probe_length(&self) -> f64 {
+    pub(crate) fn avg_probe_length(&self) -> f64 {
         let probed = self.stats.calls.saturating_sub(self.stats.cache_hits);
         if probed == 0 {
             0.0

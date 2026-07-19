@@ -11,8 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "lint:css": "stylelint --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora-render/assets/*.css'",
-    "lint:css:fix": "stylelint --fix --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora-render/assets/*.css'"
+    "lint:css": "stylelint --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora/assets/*.css'",
+    "lint:css:fix": "stylelint --fix --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora/assets/*.css'"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.2",

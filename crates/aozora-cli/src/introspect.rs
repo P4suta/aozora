@@ -27,7 +27,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
-use aozora::unstable::{InternalCheckCode, Sentinel};
+use aozora::InternalCheckCode;
 use aozora::{
     Diagnostic, DiagnosticSource, NodeKind, PairKind, Severity,
     json::{self, schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
@@ -166,15 +166,6 @@ fn kind_tables() -> Vec<KindTable> {
             rows: DiagnosticSource::ALL
                 .iter()
                 .map(|s| (s.as_json_str(), describe_source(*s)))
-                .collect(),
-        },
-        KindTable {
-            title: "Sentinel",
-            json_key: "sentinels",
-            blurb: "PUA sentinel kind (U+E001..U+E004 markers)",
-            rows: Sentinel::ALL
-                .iter()
-                .map(|s| (sentinel_label(*s), describe_sentinel(*s)))
                 .collect(),
         },
         KindTable {
@@ -383,24 +374,6 @@ fn describe_source(s: DiagnosticSource) -> &'static str {
         _ => {
             "(unrecognised DiagnosticSource variant — this build is missing a summary; please report it)."
         }
-    }
-}
-
-fn describe_sentinel(s: Sentinel) -> &'static str {
-    match s {
-        Sentinel::Inline => "U+E001 — inline registry entry.",
-        Sentinel::BlockLeaf => "U+E002 — single-line block leaf.",
-        Sentinel::BlockOpen => "U+E003 — paired container open boundary.",
-        Sentinel::BlockClose => "U+E004 — paired container close boundary.",
-    }
-}
-
-fn sentinel_label(s: Sentinel) -> &'static str {
-    match s {
-        Sentinel::Inline => "inline",
-        Sentinel::BlockLeaf => "blockLeaf",
-        Sentinel::BlockOpen => "blockOpen",
-        Sentinel::BlockClose => "blockClose",
     }
 }
 
@@ -901,34 +874,6 @@ mod tests {
         for s in DiagnosticSource::ALL {
             assert_ne!(describe_source(s), fallback, "{s:?} hit the fallback arm");
         }
-    }
-
-    #[test]
-    fn describe_sentinel_labels_are_exact() {
-        assert_eq!(
-            describe_sentinel(Sentinel::Inline),
-            "U+E001 — inline registry entry."
-        );
-        assert_eq!(
-            describe_sentinel(Sentinel::BlockLeaf),
-            "U+E002 — single-line block leaf."
-        );
-        assert_eq!(
-            describe_sentinel(Sentinel::BlockOpen),
-            "U+E003 — paired container open boundary."
-        );
-        assert_eq!(
-            describe_sentinel(Sentinel::BlockClose),
-            "U+E004 — paired container close boundary."
-        );
-    }
-
-    #[test]
-    fn sentinel_label_values_are_exact() {
-        assert_eq!(sentinel_label(Sentinel::Inline), "inline");
-        assert_eq!(sentinel_label(Sentinel::BlockLeaf), "blockLeaf");
-        assert_eq!(sentinel_label(Sentinel::BlockOpen), "blockOpen");
-        assert_eq!(sentinel_label(Sentinel::BlockClose), "blockClose");
     }
 
     #[test]

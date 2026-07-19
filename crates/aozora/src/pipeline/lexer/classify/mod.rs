@@ -84,12 +84,6 @@ use core::mem;
 use core::ops::Range;
 use std::collections::VecDeque;
 
-#[cfg(feature = "classify-instrument")]
-use super::instrumentation::{
-    Subsystem, SubsystemGuard, YieldKind, record_pending_size, record_replay_body_size,
-    record_yield,
-};
-
 // The classify stage builds the owned AST directly via `Allocator`'s
 // inherent methods (single intern, no arena); the produced `Node`s thread
 // straight into the lex output's `NodeStore`.
@@ -105,14 +99,13 @@ mod directive;
 mod forward;
 mod gaiji;
 mod kaeriten;
-pub use directive::build_body_dispatcher;
 pub(crate) use directive::prewarm;
 use forward::install_forward_target_index_from_source;
 use kaeriten::{KaeritenObs, classify_kaeriten_mark, family_index, looks_like_kana_prose};
 
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassifiedSpan {
+pub(crate) struct ClassifiedSpan {
     /// What the slice is (plain run, newline, or a concrete Aozora
     /// construct / container marker). Drives which sentinel, if any,
     /// the normalizer emits.
@@ -151,7 +144,7 @@ pub struct ClassifiedSpan {
 /// avoiding the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SpanKind {
+pub(crate) enum SpanKind {
     /// Source bytes that carry no Aozora construct. Emitted verbatim
     /// by the normalizer.
     Plain,
@@ -191,7 +184,7 @@ pub enum SpanKind {
 /// Pure function; no I/O. The yielded spans byte-contiguously cover
 /// `source` — see the module-level span-coverage invariant.
 #[must_use]
-pub fn classify<'src, 'al, I>(
+pub(crate) fn classify<'src, 'al, I>(
     events: I,
     source: &'src str,
     alloc: &'al mut Allocator,
@@ -242,11 +235,7 @@ where
 ///   following event is anything else the refmark is folded into the
 ///   pending Plain run.
 /// * `diagnostics`: non-fatal observations accumulated during the pass.
-#[expect(
-    missing_debug_implementations,
-    reason = "the &mut Allocator field cannot derive Debug; the iterator is opaque to consumers"
-)]
-pub struct ClassifyStream<'src, 'al, I>
+pub(crate) struct ClassifyStream<'src, 'al, I>
 where
     I: Iterator<Item = PairEvent>,
 {
@@ -597,7 +586,7 @@ where
     /// Drain accumulated diagnostics. Should be called after the
     /// iterator is exhausted (otherwise the trailing Plain flush has
     /// not yet recorded any final-span observations).
-    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+    pub(crate) fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
         self.finalize_kaeriten();
         mem::take(&mut self.diagnostics)
     }
@@ -645,14 +634,6 @@ where
     }
 
     fn push_output(&mut self, span: ClassifiedSpan) {
-        #[cfg(feature = "classify-instrument")]
-        record_yield(match &span.kind {
-            SpanKind::Plain => YieldKind::Plain,
-            SpanKind::Newline => YieldKind::Newline,
-            SpanKind::Aozora(_) => YieldKind::Aozora,
-            SpanKind::BlockOpen(_) => YieldKind::BlockOpen,
-            SpanKind::BlockClose(_) => YieldKind::BlockClose,
-        });
         self.pending_outputs.push_back(span);
     }
 
@@ -660,8 +641,6 @@ where
     /// pending refmark, if any, is folded into the plain run's coverage
     /// (its span is contiguous with the surrounding text).
     fn flush_plain_up_to(&mut self, end: u32) {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::FlushPlain);
         // A pending refmark contributes its bytes to the plain run.
         if let Some(rm) = self.pending_refmark.take()
             && self.pending_plain_start.is_none()
@@ -701,8 +680,6 @@ where
     /// the outer open was preceded by a `Solo(RefMark)` waiting to be
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::OpenFrame);
         let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
         let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
         // Inner stack tracks NESTED opens; the outer open lives at
@@ -732,8 +709,6 @@ where
     /// buffering, run recognition on the now-complete buffer, or
     /// abandon the frame as a stray open (fold its fragment to plain).
     fn append_to_frame(&mut self, event: PairEvent) -> FrameOutcome {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::FrameAppend);
         let frame = self
             .frame
             .as_mut()
@@ -812,8 +787,6 @@ where
     /// Run recognition on the current frame's body buffer and emit the
     /// resulting span. Called when the OUTERMOST pair has just closed.
     fn recognize_and_emit(&mut self) {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
         let frame = self
             .frame
             .take()
@@ -964,10 +937,6 @@ where
         body: smallvec::SmallVec<[PairEvent; 16]>,
         refmark: Option<Span>,
     ) {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::ReplayBody);
-        #[cfg(feature = "classify-instrument")]
-        record_replay_body_size(body.len() as u64);
         if let Some(rm) = refmark
             && self.pending_plain_start.is_none()
         {
@@ -1331,8 +1300,6 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
         // Ruby recognition uses the PRECEDING text (if any) as the
         // base — but in the streaming model we don't have that text in
         // the body buffer. We walk back through `pending_outputs` and
@@ -1501,8 +1468,6 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
@@ -1669,8 +1634,6 @@ where
     type Item = ClassifiedSpan;
 
     fn next(&mut self) -> Option<ClassifiedSpan> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::IterDispatch);
         loop {
             if let Some(span) = self.pending_outputs_pop_front() {
                 return Some(span);
@@ -1678,14 +1641,8 @@ where
             if self.finished {
                 return None;
             }
-            #[cfg(feature = "classify-instrument")]
-            let events_next_guard = SubsystemGuard::new(Subsystem::EventsNext);
             let next_event = self.events.next();
-            #[cfg(feature = "classify-instrument")]
-            drop(events_next_guard);
             if let Some(event) = next_event {
-                #[cfg(feature = "classify-instrument")]
-                let _classify_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
                 self.process_event(event);
             } else {
                 // Upstream exhausted. A deferred gaiji with no following
@@ -1713,15 +1670,6 @@ where
     I: Iterator<Item = PairEvent>,
 {
     fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan> {
-        #[cfg(feature = "classify-instrument")]
-        {
-            // Record pending_outputs.len() BEFORE the pop so the
-            // distribution histogram tracks pre-pop sizes.
-            let len = self.pending_outputs.len() as u64;
-            if len > 0 {
-                record_pending_size(len);
-            }
-        }
         self.pending_outputs.pop_front()
     }
 
@@ -1861,8 +1809,6 @@ impl<'s> RecogniseCtx<'_, 's> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<RubyMatch<'s>> {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::Ruby);
         let events = view.events;
         let PairEvent::PairOpen {
             span: open_span, ..
@@ -2028,8 +1974,6 @@ impl RecogniseCtx<'_, '_> {
     /// helpers and falls through (advancing `i`) when neither claims
     /// the slot.
     fn build_content_from_body(&mut self, view: BodyView<'_>, window: &BodyWindow) -> Content {
-        #[cfg(feature = "classify-instrument")]
-        let _classify_guard = SubsystemGuard::new(Subsystem::BuildContent);
         debug_assert!(
             window.events.start <= window.events.end,
             "body window event range must be non-inverted",

@@ -19,14 +19,8 @@ use crate::spec::classify_trigger_bytes;
 use crate::scan::trait_def::OffsetSink;
 
 /// Test-only brute-force reference scanner.
-///
-/// `pub` so the in-crate proptests and the cross-validation tests
-/// in `tests/` can reach it without a `bench-baselines` feature
-/// flag, but `#[doc(hidden)]` because external callers should go
-/// through the production [`crate::scan::scan_offsets`] entry points.
-#[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NaiveScanner;
+pub(crate) struct NaiveScanner;
 
 impl NaiveScanner {
     /// Scan `source` and return every trigger byte offset.
@@ -34,9 +28,8 @@ impl NaiveScanner {
     /// Convenience wrapper around [`Self::scan`] that allocates a
     /// fresh `Vec<u32>`. Test paths use this; production paths go
     /// through [`crate::scan::scan_offsets`].
-    #[doc(hidden)]
     #[must_use]
-    pub fn scan_offsets(self, source: &str) -> Vec<u32> {
+    pub(crate) fn scan_offsets(self, source: &str) -> Vec<u32> {
         let mut sink = Vec::new();
         self.scan(source, &mut sink);
         sink
@@ -44,13 +37,12 @@ impl NaiveScanner {
 
     /// Sink-based variant: write every trigger byte offset into
     /// `sink` in source order.
-    #[doc(hidden)]
     #[expect(
         clippy::unused_self,
         reason = "value-method shape keeps this symmetric with scan_offsets so both are \
                   called as NaiveScanner.method(), the zero-sized-handle convention callers use"
     )]
-    pub fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
+    pub(crate) fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
         let bytes = source.as_bytes();
         if bytes.len() < 3 {
             return;

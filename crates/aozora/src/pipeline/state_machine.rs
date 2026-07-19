@@ -9,7 +9,7 @@
 //! # Two entry shapes
 //!
 //! - [`Pipeline::run_to_completion`] — one-shot, equivalent to [`crate::pipeline::lex`].
-//!   Used by `Document::parse` and the FFI / WASM / Python drivers.
+//!   Used by `Document::snapshot` and the FFI / WASM / Python drivers.
 //! - [`Pipeline::new`] → `.sanitize()` → `.tokenize()` → `.pair()` →
 //!   `.build()` — explicit chain. Use for inspection / instrumentation: each
 //!   intermediate state exposes accessors (`.sanitized_text()`, `.tokens()`,
@@ -58,17 +58,17 @@ use crate::pipeline::fold::Normalizer;
 
 /// Initial state — no stage has run yet.
 #[derive(Debug, Clone, Copy)]
-pub struct Source;
+pub(crate) struct Source;
 
 /// The sanitize stage has run; the sanitized text is owned.
 #[derive(Debug, Clone)]
-pub struct Sanitized {
+pub(crate) struct Sanitized {
     sanitized_text: String,
 }
 
 /// The tokenize stage has run; the token list is materialised.
 #[derive(Debug)]
-pub struct Tokenized {
+pub(crate) struct Tokenized {
     sanitized_text: String,
     tokens: Vec<Token>,
 }
@@ -76,7 +76,7 @@ pub struct Tokenized {
 /// The pair stage has run; the event list and the resolved (open, close) link
 /// side-table are materialised.
 #[derive(Debug)]
-pub struct Paired {
+pub(crate) struct Paired {
     sanitized_text: String,
     events: Vec<PairEvent>,
     links: Vec<PairLink>,
@@ -90,7 +90,7 @@ pub struct Paired {
 /// materialises its stage output into the next state struct, and returns a new
 /// pipeline in the next state.
 #[derive(Debug)]
-pub struct Pipeline<'src, S> {
+pub(crate) struct Pipeline<'src, S> {
     source: &'src str,
     diagnostics: Vec<Diagnostic>,
     state: S,
@@ -104,7 +104,7 @@ impl<'src> Pipeline<'src, Source> {
     /// Wrap a source string for type-state-driven lex. The sanitize stage has
     /// not yet run; only `source` is set.
     #[must_use]
-    pub fn new(source: &'src str) -> Self {
+    pub(crate) fn new(source: &'src str) -> Self {
         Self {
             source,
             diagnostics: Vec::new(),
@@ -115,20 +115,21 @@ impl<'src> Pipeline<'src, Source> {
     /// One-shot driver: run every stage and return the final [`LexOutput`].
     /// Equivalent to [`crate::pipeline::lex`].
     #[must_use]
-    pub fn run_to_completion(source: &'src str) -> LexOutput {
+    pub(crate) fn run_to_completion(source: &'src str) -> LexOutput {
         Self::new(source).sanitize().tokenize().pair().build()
     }
 
     /// Borrow the original source text.
+    #[cfg(test)]
     #[must_use]
-    pub fn source(&self) -> &'src str {
+    pub(crate) fn source(&self) -> &'src str {
         self.source
     }
 
     /// Run the sanitize stage, materialising the sanitized text as an owned
     /// `String`.
     #[must_use]
-    pub fn sanitize(mut self) -> Pipeline<'src, Sanitized> {
+    pub(crate) fn sanitize(mut self) -> Pipeline<'src, Sanitized> {
         let out = sanitize(self.source);
         self.diagnostics.extend(out.diagnostics);
         Pipeline {
@@ -147,20 +148,22 @@ impl<'src> Pipeline<'src, Source> {
 
 impl<'src> Pipeline<'src, Sanitized> {
     /// Sanitized text.
+    #[cfg(test)]
     #[must_use]
-    pub fn sanitized_text(&self) -> &str {
+    pub(crate) fn sanitized_text(&self) -> &str {
         &self.state.sanitized_text
     }
 
     /// Diagnostics accumulated through the sanitize stage.
+    #[cfg(test)]
     #[must_use]
-    pub fn diagnostics(&self) -> &[Diagnostic] {
+    pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
     /// Run the tokenize stage, materialising the token list.
     #[must_use]
-    pub fn tokenize(self) -> Pipeline<'src, Tokenized> {
+    pub(crate) fn tokenize(self) -> Pipeline<'src, Tokenized> {
         let tokens: Vec<Token> = tokenize(&self.state.sanitized_text).collect();
         Pipeline {
             source: self.source,
@@ -179,8 +182,9 @@ impl<'src> Pipeline<'src, Sanitized> {
 
 impl<'src> Pipeline<'src, Tokenized> {
     /// Borrow the materialised token list. Useful for instrumentation.
+    #[cfg(test)]
     #[must_use]
-    pub fn tokens(&self) -> &[Token] {
+    pub(crate) fn tokens(&self) -> &[Token] {
         &self.state.tokens
     }
 
@@ -188,7 +192,7 @@ impl<'src> Pipeline<'src, Tokenized> {
     /// link side-table. The pair stage's diagnostics are drained into the
     /// pipeline's diagnostic accumulator immediately.
     #[must_use]
-    pub fn pair(mut self) -> Pipeline<'src, Paired> {
+    pub(crate) fn pair(mut self) -> Pipeline<'src, Paired> {
         let Tokenized {
             sanitized_text,
             tokens,
@@ -216,14 +220,16 @@ impl<'src> Pipeline<'src, Tokenized> {
 impl Pipeline<'_, Paired> {
     /// Borrow the materialised pair-event list. Useful for inspection before
     /// `.build()`.
+    #[cfg(test)]
     #[must_use]
-    pub fn events(&self) -> &[PairEvent] {
+    pub(crate) fn events(&self) -> &[PairEvent] {
         &self.state.events
     }
 
     /// Borrow the resolved (open, close) pair side-table.
+    #[cfg(test)]
     #[must_use]
-    pub fn links(&self) -> &[PairLink] {
+    pub(crate) fn links(&self) -> &[PairLink] {
         &self.state.links
     }
 
@@ -240,15 +246,12 @@ impl Pipeline<'_, Paired> {
     /// Panics if the sanitized source exceeds `u32::MAX` bytes (the lexer's
     /// `Span` width contract). In practice unreachable.
     #[must_use]
-    pub fn build(mut self) -> LexOutput {
+    pub(crate) fn build(mut self) -> LexOutput {
         let Paired {
             sanitized_text,
             events,
             links,
         } = self.state;
-        let sanitized_len =
-            u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
-
         let mut alloc = Allocator::new();
 
         let (normalized, recorder, container_pairs, classify_diagnostics, norm_diagnostics, store) = {
@@ -302,8 +305,6 @@ impl Pipeline<'_, Paired> {
         // set, so the final vector stays in pipeline-stage order.
         self.diagnostics.extend(classify_diagnostics);
         self.diagnostics.extend(norm_diagnostics);
-        let intern_stats = store.interner.stats;
-
         // Classifier emits in source order, so the recorder's entries are already
         // sorted by position; `from_sorted_slice` skips the redundant sort.
         let registry = Registry::from_sorted_slice(&recorder.entries);
@@ -313,11 +314,9 @@ impl Pipeline<'_, Paired> {
             sanitized_text,
             registry,
             self.diagnostics,
-            sanitized_len,
             links,
             recorder.source_nodes,
             container_pairs,
-            intern_stats,
             store,
         )
     }
@@ -664,7 +663,7 @@ mod tests {
             .build();
         let oneshot = Pipeline::run_to_completion("｜青梅《おうめ》");
         assert_eq!(chain.normalized, oneshot.normalized);
-        assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
+        assert_eq!(chain.sanitized.len(), oneshot.sanitized.len());
         assert_eq!(
             chain.registry.count_kind(Sentinel::Inline),
             oneshot.registry.count_kind(Sentinel::Inline)
@@ -710,7 +709,7 @@ mod tests {
         let out = Pipeline::run_to_completion("");
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
-        assert_eq!(out.sanitized_len, 0);
+        assert!(out.sanitized.is_empty());
     }
 
     #[test]

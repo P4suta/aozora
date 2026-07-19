@@ -65,7 +65,6 @@ use std::process;
 use std::time::Instant;
 
 use aozora::encoding::decode_auto;
-use aozora::unstable::lex;
 use aozora_bench::{
     SizeBand, SizeBandedCorpus, archive_size_bands, corpus_size_bands_from_decoded,
     parallel_size_bands,
@@ -409,7 +408,7 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     let measure = |text: &str| -> (u64, u64) {
         WORKER_ARENA.with(|_cell| {
             let t = Instant::now();
-            let _out = lex(text);
+            let _out = aozora::parse(text).snapshot();
             let ns = t.elapsed().as_nanos() as u64;
             (text.len() as u64, ns)
         })

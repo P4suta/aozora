@@ -6,7 +6,7 @@
 //! lean, hand-picked set of *whole* public-domain works — the CRLF is
 //! normalised to LF and the source is vendored verbatim under
 //! `fixtures/works/<slug>/source.txt` — and byte-compares
-//! `Document::new(src).parse().to_html()` to the committed
+//! `Document::new(src).snapshot().to_html()` to the committed
 //! `expected.html`. Its job is to catch rendering drift on the
 //! notation *combinations* real works exhibit (ruby beside 傍点 beside
 //! 縦中横 beside 字下げ …) that the single-construct fixtures cannot see.
@@ -42,7 +42,7 @@ fn works_gate_html_matches_golden() {
     let fixtures = load_works_fixtures();
     for fixture in &fixtures {
         let doc = Document::new(fixture.source.clone());
-        let actual = doc.parse().to_html();
+        let actual = doc.snapshot().to_html();
         let expected = fixture.html_golden(&actual);
         assert_eq!(
             actual, expected,
@@ -67,7 +67,7 @@ fn load_works_fixtures() -> Vec<RenderFixture> {
 fn works_family_coverage_holds() {
     let mut classes: BTreeSet<String> = BTreeSet::new();
     for fixture in &load_works_fixtures() {
-        let html = Document::new(fixture.source.clone()).parse().to_html();
+        let html = Document::new(fixture.source.clone()).snapshot().to_html();
         collect_aozora_classes(&html, &mut classes);
     }
     let mut rendered = String::new();

@@ -40,7 +40,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
     g.bench_function("parse", |b| {
         b.iter(|| {
             let doc = Document::new(black_box(utf8.as_ref()));
-            let tree = doc.parse();
+            let tree = doc.snapshot();
             black_box(tree);
         });
     });
@@ -48,7 +48,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
     g.bench_function("parse_then_html", |b| {
         b.iter(|| {
             let doc = Document::new(black_box(utf8.as_ref()));
-            let tree = doc.parse();
+            let tree = doc.snapshot();
             let html = tree.to_html();
             black_box(html);
         });
@@ -57,7 +57,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
     g.bench_function("parse_then_serialize", |b| {
         b.iter(|| {
             let doc = Document::new(black_box(utf8.as_ref()));
-            let tree = doc.parse();
+            let tree = doc.snapshot();
             let out = tree.to_source();
             black_box(out);
         });

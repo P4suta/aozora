@@ -9,23 +9,22 @@
 use super::intern::{StrId, StrInterner};
 use super::payload::{Content, Segment};
 
-/// Half-open run of [`Content`] in [`NodeStore::resolve_content_range`];
-/// `len >= 1` (a content run is never empty).
+/// Opaque non-empty run of [`Content`] owned by a [`crate::Snapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContentRange {
     /// Index of the first [`Content`] in the store's content `Vec`.
-    pub start: u32,
+    pub(crate) start: u32,
     /// Number of [`Content`] entries in the run.
-    pub len: u32,
+    pub(crate) len: u32,
 }
 
-/// Half-open run of [`Segment`] in [`NodeStore::resolve_seg_range`].
+/// Opaque run of [`Segment`] owned by a [`crate::Snapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegRange {
     /// Index of the first [`Segment`] in the store's segment `Vec`.
-    pub start: u32,
+    pub(crate) start: u32,
     /// Number of [`Segment`] entries in the run.
-    pub len: u32,
+    pub(crate) len: u32,
 }
 
 /// Owned backing store: the string interner plus the flat content / segment
@@ -34,9 +33,9 @@ pub struct SegRange {
 /// Not `Copy` (owns heap storage); not `PartialEq` (the interner's
 /// `InternStats` field is not `PartialEq`).
 #[derive(Debug, Clone, Default)]
-pub struct NodeStore {
+pub(crate) struct NodeStore {
     /// String interner backing every [`StrId`] in the tree.
-    pub interner: StrInterner,
+    pub(crate) interner: StrInterner,
     /// Flat pool of [`Content`] entries; [`ContentRange`]s index here.
     contents: Vec<Content>,
     /// Flat pool of [`Segment`] entries; [`SegRange`]s index here.
@@ -45,13 +44,14 @@ pub struct NodeStore {
 
 impl NodeStore {
     /// Empty store.
+    #[cfg(test)]
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Intern `s` into the store's interner, returning a stable [`StrId`].
-    pub fn intern(&mut self, s: &str) -> StrId {
+    pub(crate) fn intern(&mut self, s: &str) -> StrId {
         self.interner.intern(s)
     }
 
@@ -61,7 +61,7 @@ impl NodeStore {
     ///
     /// Panics if `id` was not produced by this store's interner.
     #[must_use]
-    pub fn resolve_str(&self, id: StrId) -> &str {
+    pub(crate) fn resolve_str(&self, id: StrId) -> &str {
         self.interner.resolve(id)
     }
 
@@ -71,7 +71,7 @@ impl NodeStore {
     ///
     /// Panics if the content pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
-    pub fn push_contents(&mut self, items: &[Content]) -> ContentRange {
+    pub(crate) fn push_contents(&mut self, items: &[Content]) -> ContentRange {
         let start =
             u32::try_from(self.contents.len()).expect("content pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("content run exceeds u32 length");
@@ -85,7 +85,7 @@ impl NodeStore {
     ///
     /// Panics if the segment pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
-    pub fn push_segments(&mut self, items: &[Segment]) -> SegRange {
+    pub(crate) fn push_segments(&mut self, items: &[Segment]) -> SegRange {
         let start =
             u32::try_from(self.segments.len()).expect("segment pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("segment run exceeds u32 length");
@@ -99,7 +99,7 @@ impl NodeStore {
     ///
     /// Panics if the range falls outside the content pool.
     #[must_use]
-    pub fn resolve_content_range(&self, range: ContentRange) -> &[Content] {
+    pub(crate) fn resolve_content_range(&self, range: ContentRange) -> &[Content] {
         let start = range.start as usize;
         &self.contents[start..start + range.len as usize]
     }
@@ -110,7 +110,7 @@ impl NodeStore {
     ///
     /// Panics if the range falls outside the segment pool.
     #[must_use]
-    pub fn resolve_seg_range(&self, range: SegRange) -> &[Segment] {
+    pub(crate) fn resolve_seg_range(&self, range: SegRange) -> &[Segment] {
         let start = range.start as usize;
         &self.segments[start..start + range.len as usize]
     }
@@ -127,7 +127,7 @@ impl NodeStore {
     /// Panics if `range` falls outside the content pool (via
     /// [`Self::resolve_content_range`]).
     #[must_use]
-    pub fn content_range_as_plain(&self, range: ContentRange) -> Option<&str> {
+    pub(crate) fn content_range_as_plain(&self, range: ContentRange) -> Option<&str> {
         match self.resolve_content_range(range) {
             [Content::Plain(id)] => Some(self.resolve_str(*id)),
             _ => None,

@@ -30,7 +30,8 @@ back to fetching against the live site.
 2. Aozora Bunko sample works (public domain)
 ================================================================================
 
-Sample works under spec/aozora/fixtures/ are sourced from Aozora Bunko
+Sample works under spec/aozora/fixtures/ and
+crates/aozora-conformance/fixtures/works/ are sourced from Aozora Bunko
 (https://www.aozora.gr.jp/). Aozora Bunko distributes works whose
 copyrights have expired under Japanese law, making them public domain in
 Japan. Each fixture directory carries its own README naming the author,

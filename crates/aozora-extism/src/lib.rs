@@ -107,7 +107,7 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_html(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(Document::new(source).parse().to_html())
+        Ok(Document::new(source).snapshot().to_html())
     }
 
     /// Parse `source` and re-emit it as Aozora source text (round-trip
@@ -119,7 +119,7 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_source(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(Document::new(source).parse().to_source())
+        Ok(Document::new(source).snapshot().to_source())
     }
 
     /// Parse `source` and serialize its diagnostics through the shared
@@ -133,7 +133,7 @@ mod logic {
     pub(crate) fn render_diagnostics_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         Ok(json::diagnostics(
-            Document::new(source).parse().diagnostics(),
+            Document::new(source).snapshot().diagnostics(),
         ))
     }
 
@@ -147,7 +147,7 @@ mod logic {
     pub(crate) fn render_nodes_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(json::nodes(&doc.parse()))
+        Ok(json::nodes(&doc.snapshot()))
     }
 
     /// Parse `source` and serialize its matched open/close pairs through
@@ -160,7 +160,7 @@ mod logic {
     pub(crate) fn render_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(json::pairs(&doc.parse()))
+        Ok(json::pairs(&doc.snapshot()))
     }
 
     /// Parse `source` and serialize its container open/close pairs
@@ -173,7 +173,7 @@ mod logic {
     pub(crate) fn render_container_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(json::container_pairs(&doc.parse()))
+        Ok(json::container_pairs(&doc.snapshot()))
     }
 
     /// Parse `source` and serialize its resolved `※［＃…］` gaiji
@@ -248,7 +248,7 @@ mod tests {
     fn every_serializer_is_byte_identical_to_the_shared_authority() {
         for src in CORPUS {
             let doc = Document::new(src.to_owned());
-            let tree = doc.parse();
+            let tree = doc.snapshot();
             assert_eq!(
                 render_html(src.to_owned()).expect("within span limit"),
                 tree.to_html(),

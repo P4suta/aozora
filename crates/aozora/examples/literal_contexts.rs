@@ -16,7 +16,7 @@ use aozora::Document;
 fn main() {
     let source = "冒頭｜青梅《おうめ》。［＃改ページ］次の章。";
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     for sn in tree.source_nodes() {
         println!("{}", sn.source_span.slice(source));

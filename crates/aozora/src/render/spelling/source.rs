@@ -30,7 +30,8 @@ use crate::syntax::{
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn container_open_source(open: RegionFormat) -> String {
+#[cfg(test)]
+pub(crate) fn container_open_source(open: RegionFormat) -> String {
     let mut s = String::new();
     emit_container_open(open, &mut s).expect("String write is infallible");
     s
@@ -50,7 +51,7 @@ pub fn container_open_source(open: RegionFormat) -> String {
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn container_close_source(open: RegionFormat) -> String {
+pub(crate) fn container_close_source(open: RegionFormat) -> String {
     let mut s = String::new();
     emit_container_close(RegionClose::of(open), &mut s).expect("String write is infallible");
     s
