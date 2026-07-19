@@ -391,7 +391,7 @@ prop-deep:
     {{_dev}} bash -c 'AOZORA_PROPTEST_CASES=4096 cargo nextest run --workspace --all-features --test "property_*" --run-ignored default'
 
 # Walk every document under `AOZORA_CORPUS_ROOT` and check parse +
-# round-trip + source-region tiling (#202) + incremental-merge (#237)
+# round-trip + source-region tiling + document edit differential
 # invariants on the public `aozora::Document` surface.
 # Bind-mounts the corpus directory into the container at a stable
 # path so the test binary reads it from the same location regardless
@@ -419,7 +419,7 @@ corpus-sweep:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo nextest run --package aozora --test corpus_sweep --test corpus_splice_tiling --test corpus_incremental_merge --no-capture
+        dev cargo nextest run --package aozora --test corpus_sweep --test corpus_splice_tiling --test corpus_document_edits --no-capture
 
 # Conformance regression gate: fail when the corpus per-file Unknown-
 # degradation rate rises above `corpus/baseline.json` — i.e. when a

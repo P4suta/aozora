@@ -490,8 +490,8 @@ jobs:
         run: cargo test -p aozora --release --test corpus_sweep -- --nocapture
       - name: Source-region tiling gate (#202)
         run: cargo test -p aozora --release --test corpus_splice_tiling -- --nocapture
-      - name: Incremental-merge gate (#237)
-        run: cargo test -p aozora --release --test corpus_incremental_merge -- --nocapture
+      - name: Document edit differential gate
+        run: cargo test -p aozora --release --test corpus_document_edits -- --nocapture
       - name: Owned-allocation-pressure ratchet (#237 P0.2-real)
         run: cargo run --release -p aozora-bench --example alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/alloc-baseline.json
       - name: Render-leak ratchet gate (#399)
