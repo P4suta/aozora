@@ -19,10 +19,10 @@ fn main() {
     let source = "青梅《おうめ》街道を行く。";
 
     // First pass: parse the original, serialize back to Aozora source.
-    let first = Document::new(source).parse().to_source();
+    let first = Document::new(source).snapshot().to_source();
 
     // Second pass: parse THAT output and serialize again.
-    let second = Document::new(first.clone()).parse().to_source();
+    let second = Document::new(first.clone()).snapshot().to_source();
 
     println!("source : {source}");
     println!("first  : {first}");

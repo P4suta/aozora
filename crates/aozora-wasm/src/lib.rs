@@ -2,7 +2,7 @@
 //!
 //! Compiles to a `wasm32-unknown-unknown` artifact suitable for
 //! `wasm-pack build --target web`, exposing `aozora::Document` /
-//! `aozora::Tree` equivalents that JS / TypeScript consumers
+//! `aozora::Snapshot` equivalents that JS / TypeScript consumers
 //! can `import { Document } from "aozora-wasm"`.
 //!
 //! ## Build targeting
@@ -185,14 +185,14 @@ pub mod bindings {
         #[wasm_bindgen(js_name = toHtml)]
         #[must_use]
         pub fn to_html(&self) -> String {
-            self.inner.parse().to_html()
+            self.inner.snapshot().to_html()
         }
 
         /// Re-emit Aozora source text from the parse tree.
         #[wasm_bindgen(js_name = toSource)]
         #[must_use]
         pub fn to_source(&self) -> String {
-            self.inner.parse().to_source()
+            self.inner.snapshot().to_source()
         }
 
         /// Diagnostics as JSON. Empty parse →
@@ -201,7 +201,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = diagnosticsJson)]
         #[must_use]
         pub fn diagnostics_json(&self) -> String {
-            json::diagnostics(self.inner.parse().diagnostics())
+            json::diagnostics(self.inner.snapshot().diagnostics())
         }
 
         /// Diagnostics as a plain-text report (`miette`-free): one block
@@ -211,7 +211,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = diagnosticsText)]
         #[must_use]
         pub fn diagnostics_text(&self) -> String {
-            aozora::diagnostics_text(self.inner.source(), self.inner.parse().diagnostics())
+            aozora::diagnostics_text(self.inner.source(), self.inner.snapshot().diagnostics())
         }
 
         /// Source-keyed Aozora-node spans as JSON. Each entry is
@@ -228,7 +228,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = nodesJson)]
         #[must_use]
         pub fn nodes_json(&self) -> String {
-            json::nodes(&self.inner.parse())
+            json::nodes(&self.inner.snapshot())
         }
 
         /// Matched open/close pair links as JSON. Each entry is
@@ -243,7 +243,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = pairsJson)]
         #[must_use]
         pub fn pairs_json(&self) -> String {
-            json::pairs(&self.inner.parse())
+            json::pairs(&self.inner.snapshot())
         }
 
         /// Source byte length. Useful for JS-side progress UI.
@@ -259,7 +259,7 @@ pub mod bindings {
         /// Timings are taken via `performance.now()` on the host
         /// (`Instant::now()` panics on `wasm32-unknown-unknown`).
         ///
-        /// `parse` is the cost of `Document::parse()` alone
+        /// `parse` is the cost of `Document::snapshot()` alone
         /// (constructing the owned AST). The render entries
         /// (`to_html`, `serialize`, `*_json`) are wall-clock for
         /// that single method call against the already-built tree —
@@ -270,7 +270,7 @@ pub mod bindings {
         #[must_use]
         pub fn profile_json(&self) -> String {
             let p0 = now_ms();
-            let tree = self.inner.parse();
+            let tree = self.inner.snapshot();
             let p1 = now_ms();
 
             let h0 = now_ms();
@@ -356,7 +356,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = containerPairsJson)]
         #[must_use]
         pub fn container_pairs_json(&self) -> String {
-            json::container_pairs(&self.inner.parse())
+            json::container_pairs(&self.inner.snapshot())
         }
 
         // ── Structured accessors ──────────────────────────────────
@@ -371,7 +371,7 @@ pub mod bindings {
         /// node records to a JS value — not expected for a well-formed parse.
         #[wasm_bindgen(js_name = nodes)]
         pub fn nodes(&self) -> Result<JsValue, JsValue> {
-            serde_wasm_bindgen::to_value(&json::node_entries(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::node_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
@@ -383,7 +383,7 @@ pub mod bindings {
         /// pair records to a JS value — not expected for a well-formed parse.
         #[wasm_bindgen(js_name = pairs)]
         pub fn pairs(&self) -> Result<JsValue, JsValue> {
-            serde_wasm_bindgen::to_value(&json::pair_entries(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::pair_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
@@ -396,7 +396,7 @@ pub mod bindings {
         /// well-formed parse.
         #[wasm_bindgen(js_name = containerPairs)]
         pub fn container_pairs(&self) -> Result<JsValue, JsValue> {
-            serde_wasm_bindgen::to_value(&json::container_pair_entries(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::container_pair_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
@@ -410,7 +410,7 @@ pub mod bindings {
         #[wasm_bindgen(js_name = diagnostics)]
         pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
             serde_wasm_bindgen::to_value(&json::diagnostic_entries(
-                self.inner.parse().diagnostics(),
+                self.inner.snapshot().diagnostics(),
             ))
             .map_err(|e| JsValue::from_str(&e.to_string()))
         }
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn diagnostics_json_is_empty_envelope_for_clean_input() {
         let doc = Document::new("plain".to_owned());
-        let json = json::diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.snapshot().diagnostics());
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn diagnostics_json_emits_pua_diagnostic() {
         let doc = Document::new("abc\u{E001}def".to_owned());
-        let json = json::diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.snapshot().diagnostics());
         assert!(
             json.contains(r#""kind":"source_contains_pua""#),
             "json missing diag kind: {json}"
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn diagnostics_json_round_trips_envelope() {
         let doc = Document::new("abc\u{E001}def".to_owned());
-        let json = json::diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.snapshot().diagnostics());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert!(parsed.is_object(), "wire root must be object");
         assert_eq!(
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn nodes_json_is_empty_envelope_for_plain_text() {
         let doc = Document::new("hello, world".to_owned());
-        let json = json::nodes(&doc.parse());
+        let json = json::nodes(&doc.snapshot());
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn nodes_json_classifies_ruby() {
         let doc = Document::new("｜青梅《おうめ》".to_owned());
-        let json = json::nodes(&doc.parse());
+        let json = json::nodes(&doc.snapshot());
         assert!(
             json.contains(r#""kind":"ruby""#),
             "json should mark ruby: {json}"
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn nodes_json_round_trips_as_envelope() {
         let doc = Document::new("｜山《やま》や［＃改ページ］\n≪秘密≫".to_owned());
-        let json = json::nodes(&doc.parse());
+        let json = json::nodes(&doc.snapshot());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
             .get("data")
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn nodes_json_spans_are_in_source_order() {
         let doc = Document::new("｜山《やま》。｜川《かわ》。｜空《そら》。".to_owned());
-        let json = json::nodes(&doc.parse());
+        let json = json::nodes(&doc.snapshot());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
             .get("data")
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn pairs_json_emits_ruby_pair() {
         let doc = Document::new("｜青梅《おうめ》".to_owned());
-        let json = json::pairs(&doc.parse());
+        let json = json::pairs(&doc.snapshot());
         assert!(json.contains(r#""kind":"ruby""#), "pairs json: {json}");
         assert!(json.contains(r#""open":"#), "pairs json: {json}");
         assert!(json.contains(r#""close":"#), "pairs json: {json}");

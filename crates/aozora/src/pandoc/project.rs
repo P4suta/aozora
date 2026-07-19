@@ -1,4 +1,4 @@
-//! Source-driven projection from an [`LexOutput`] to a
+//! Source-driven projection from a [`Snapshot`] to a
 //! [`pandoc_ast::Pandoc`] document.
 //!
 //! Walks the source linearly, slicing it into spans by the owned
@@ -14,21 +14,22 @@ use crate::pandoc::AOZORA_CLASS_PREFIX;
 use crate::spec::roman_slug;
 use crate::syntax::ast::{
     AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, Heading, HeadingHint,
-    Illustration, Kaeriten, LexOutput, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment,
-    SourceNode, Warichu,
+    Illustration, Kaeriten, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment, SourceNode,
+    Warichu,
 };
 use crate::syntax::{AbsoluteSize, AccentMark};
 use crate::{
     BoutenPosition, DirectiveKind, EnclosureKind, FontShift, Format, ForwardAttr, ForwardOrigin,
     HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat, RegionFormat, SectionKind,
-    Span,
+    Snapshot, Span,
 };
 
-/// Lift a parsed [`LexOutput`] to a [`pandoc_ast::Pandoc`] document.
+/// Lift a parsed [`Snapshot`] to a [`pandoc_ast::Pandoc`] document.
 ///
 /// See the crate-level docs for the projection rules.
 #[must_use]
-pub fn to_pandoc(out: &LexOutput) -> Pandoc {
+pub fn to_pandoc(snapshot: &Snapshot) -> Pandoc {
+    let out = snapshot.output();
     // `source_nodes` index into the sanitize-stage buffer, not the raw
     // user-supplied source. The owned lex output carries exactly that buffer
     // in `sanitized`, so the slice base already matches the source-node
@@ -771,7 +772,7 @@ mod tests {
     #[test]
     fn plain_text_becomes_para() {
         let doc = Document::new("Hello, world.");
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         assert_eq!(pandoc.blocks.len(), 1, "{:?}", pandoc.blocks);
         match &pandoc.blocks[0] {
             Block::Para(inlines) => match inlines.as_slice() {
@@ -786,7 +787,7 @@ mod tests {
     #[test]
     fn double_newline_splits_paragraphs() {
         let doc = Document::new("One\nstill one.\n\nTwo.");
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         let para_count = pandoc
             .blocks
             .iter()
@@ -806,7 +807,7 @@ mod tests {
     #[test]
     fn ruby_projects_to_span() {
         let doc = Document::new("｜青梅《おうめ》");
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         let para = match &pandoc.blocks[0] {
             Block::Para(inlines) => inlines,
             other => panic!("expected Para, got {other:?}"),
@@ -831,7 +832,7 @@ mod tests {
     #[test]
     fn page_break_emits_horizontal_rule() {
         let doc = Document::new("before\n［＃改ページ］\nafter");
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         assert!(
             pandoc
                 .blocks
@@ -852,7 +853,7 @@ mod tests {
              ［＃ここで字下げ終わり］\n\n\
              after",
         );
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         let has_indent_div = pandoc.blocks.iter().any(|b| {
             matches!(
                 b,
@@ -870,7 +871,7 @@ mod tests {
     /// Project `src` through the full pipeline and return the doc blocks.
     fn project(src: &str) -> Vec<Block> {
         let doc = Document::new(src);
-        to_pandoc(&doc.lex()).blocks
+        to_pandoc(&doc.snapshot()).blocks
     }
 
     /// Whether any class in `attr` ends with `suffix` (the `aozora-`
@@ -1651,7 +1652,7 @@ mod tests {
     #[test]
     fn pandoc_api_version_is_pinned() {
         let doc = Document::new("x");
-        let pandoc = to_pandoc(&doc.lex());
+        let pandoc = to_pandoc(&doc.snapshot());
         assert_eq!(
             pandoc.pandoc_api_version,
             vec![1, 23],

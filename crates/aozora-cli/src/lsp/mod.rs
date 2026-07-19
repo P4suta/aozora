@@ -24,10 +24,6 @@ mod capabilities;
 mod code_actions;
 mod commands;
 mod completion;
-#[cfg(test)]
-mod concurrency_regressions;
-#[cfg(test)]
-mod concurrent_lsp;
 mod diagnostics;
 #[cfg(test)]
 mod differential;
@@ -42,10 +38,6 @@ mod gaiji_spans;
 mod guardian;
 mod half_width_emmet;
 mod hover;
-#[cfg(test)]
-mod incremental_parse_cache_corpus;
-#[cfg(test)]
-mod incremental_rope_e2e;
 mod line_index;
 mod linked_editing;
 mod metrics;
@@ -56,13 +48,8 @@ mod position;
 #[cfg(test)]
 mod property_invariants;
 mod rename;
-mod rope_src;
-#[cfg(test)]
-mod rope_src_parity;
 mod semantic_tokens;
 mod server_locale;
-#[cfg(all(test, feature = "shuttle-tests"))]
-mod shuttle_doc_state;
 #[cfg(test)]
 mod smoke;
 #[cfg(test)]

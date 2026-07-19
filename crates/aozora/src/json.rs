@@ -35,7 +35,7 @@ use serde::Serialize;
 
 use crate::encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
 use crate::spec::SLUGS;
-use crate::{DiagnosticSource, Severity, Tree};
+use crate::{DiagnosticSource, Severity, Snapshot};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -64,22 +64,23 @@ pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> 
     diagnostics.iter().map(Diagnostic::from).collect()
 }
 
-/// Project an [`Tree`]'s source-keyed node side-table into a
+/// Project an [`Snapshot`]'s source-keyed node side-table into a
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Every entry has the shape `{ kind, span: { start, end } }`,
 /// source-coordinate, sorted by `span.start`. Empty parse →
 /// `{"schemaVersion":2,"data":[]}`.
 #[must_use]
-pub fn nodes(tree: &Tree<'_>) -> String {
-    serialize_envelope(&node_entries(tree))
+pub fn nodes(snapshot: &Snapshot) -> String {
+    serialize_envelope(&node_entries(snapshot))
 }
 
 /// The structured `Node` records that back `nodes()` — prefer this to
 /// re-parsing the JSON when a caller needs the values directly.
 #[must_use]
-pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
-    tree.source_nodes()
+pub fn node_entries(snapshot: &Snapshot) -> Vec<Node> {
+    snapshot
+        .source_nodes()
         .iter()
         .map(|sn| Node {
             kind: sn.node.kind().as_json_tag(),
@@ -88,7 +89,7 @@ pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
         .collect()
 }
 
-/// Project an [`Tree`]'s pair table into a
+/// Project an [`Snapshot`]'s pair table into a
 /// `{ schemaVersion, data }` JSON envelope. Every entry has the shape
 /// `{ kind, open: { start, end }, close: { start, end } }`.
 ///
@@ -100,15 +101,16 @@ pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
 ///
 /// Empty parse → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
-pub fn pairs(tree: &Tree<'_>) -> String {
-    serialize_envelope(&pair_entries(tree))
+pub fn pairs(snapshot: &Snapshot) -> String {
+    serialize_envelope(&pair_entries(snapshot))
 }
 
 /// The structured `Pair` records that back `pairs()` — prefer this to
 /// re-parsing the JSON when a caller needs the values directly.
 #[must_use]
-pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
-    tree.pairs()
+pub fn pair_entries(snapshot: &Snapshot) -> Vec<Pair> {
+    snapshot
+        .pairs()
         .iter()
         .map(|link| Pair {
             kind: link.kind.as_json_tag(),
@@ -118,7 +120,7 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
         .collect()
 }
 
-/// Project an [`Tree`]'s container open/close pair table into a
+/// Project an [`Snapshot`]'s container open/close pair table into a
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape
@@ -130,20 +132,21 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
 ///
 /// Coordinate-system distinction matters: editor surfaces that want
 /// source-coordinate container pairs must translate through
-/// [`Tree::source_nodes`].
+/// [`Snapshot::source_nodes`].
 ///
 /// Empty parse → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
-pub fn container_pairs(tree: &Tree<'_>) -> String {
-    serialize_envelope(&container_pair_entries(tree))
+pub fn container_pairs(snapshot: &Snapshot) -> String {
+    serialize_envelope(&container_pair_entries(snapshot))
 }
 
 /// The structured `ContainerPair` records that back
 /// `container_pairs()` — prefer this to re-parsing the JSON when a caller
 /// needs the values directly.
 #[must_use]
-pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPair> {
-    tree.container_pairs()
+pub fn container_pair_entries(snapshot: &Snapshot) -> Vec<ContainerPair> {
+    snapshot
+        .container_pairs()
         .iter()
         .map(|pair| ContainerPair {
             kind: pair.kind.as_json_tag(),
@@ -157,12 +160,12 @@ pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPair> {
         .collect()
 }
 
-/// Project the canonical slug catalogue ([`crate::unstable::SLUGS`]) into a
+/// Project the canonical [`crate::Catalogue`] into a
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape `{ canonical, family, accepts_param, doc,
 /// partner }`: `family` is the camelCase form of the
-/// [`crate::unstable::SlugFamily`] variant, `partner` is `null` for non-paired
+/// [`crate::CatalogueFamily`] variant, `partner` is `null` for non-paired
 /// families. A static catalogue, independent of any parse — it powers
 /// editor completion menus for `［＃…］` annotations without
 /// re-implementing the table per driver (`aozora-wasm` / `aozora-py`
@@ -591,7 +594,7 @@ mod tests {
     #[test]
     fn empty_nodes_round_trip_envelope() {
         let doc = Document::new("plain");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let json = nodes(&tree);
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
@@ -599,7 +602,7 @@ mod tests {
     #[test]
     fn empty_pairs_round_trip_envelope() {
         let doc = Document::new("plain");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let json = pairs(&tree);
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
@@ -607,7 +610,7 @@ mod tests {
     #[test]
     fn pua_collision_serialises_as_warning_kind() {
         let doc = Document::new("abc\u{E001}def");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let json = diagnostics(tree.diagnostics());
         assert!(json.contains(r#""schemaVersion":2"#));
         assert!(json.contains(r#""kind":"source_contains_pua""#));
@@ -617,7 +620,7 @@ mod tests {
     #[test]
     fn ruby_serialises_with_kind_ruby_in_nodes() {
         let doc = Document::new("｜青梅《おうめ》");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let json = nodes(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
         assert!(json.contains(r#""schemaVersion":2"#));
@@ -626,7 +629,7 @@ mod tests {
     #[test]
     fn ruby_serialises_in_pairs() {
         let doc = Document::new("｜青梅《おうめ》");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let json = pairs(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
         assert!(json.contains(r#""open":"#));
@@ -649,7 +652,7 @@ mod tests {
         // indent container — `container_pair_entries` must project it, not
         // return an empty vec.
         let doc = Document::new("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let entries = container_pair_entries(&tree);
         assert_eq!(
             entries.len(),

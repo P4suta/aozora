@@ -208,7 +208,7 @@ pub unsafe extern "C" fn aozora_document_to_html(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let html = doc_ref.inner.parse().to_html();
+    let html = doc_ref.inner.snapshot().to_html();
     let bytes = into_owned_bytes(html.into_bytes());
     // SAFETY: caller guarantees out_html is writable.
     unsafe { out_html.write(bytes) };
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let tree = doc_ref.inner.parse();
+    let tree = doc_ref.inner.snapshot();
     let json = aozora::json::diagnostics(tree.diagnostics());
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn aozora_document_diagnostics_text(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let tree = doc_ref.inner.parse();
+    let tree = doc_ref.inner.snapshot();
     let text = aozora::diagnostics_text(doc_ref.inner.source(), tree.diagnostics());
     let owned = into_owned_bytes(text.into_bytes());
     // SAFETY: caller guarantees out_text is writable.
@@ -315,7 +315,7 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let tree = doc_ref.inner.parse();
+    let tree = doc_ref.inner.snapshot();
     let json = aozora::json::nodes(&tree);
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
@@ -356,7 +356,7 @@ pub unsafe extern "C" fn aozora_document_pairs_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let tree = doc_ref.inner.parse();
+    let tree = doc_ref.inner.snapshot();
     let json = aozora::json::pairs(&tree);
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
@@ -391,7 +391,7 @@ pub unsafe extern "C" fn aozora_document_to_source(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let source = doc_ref.inner.parse().to_source();
+    let source = doc_ref.inner.snapshot().to_source();
     let bytes = into_owned_bytes(source.into_bytes());
     // SAFETY: caller guarantees out_source is writable.
     unsafe { out_source.write(bytes) };
@@ -431,7 +431,7 @@ pub unsafe extern "C" fn aozora_document_container_pairs_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let tree = doc_ref.inner.parse();
+    let tree = doc_ref.inner.snapshot();
     let json = aozora::json::container_pairs(&tree);
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
@@ -717,7 +717,7 @@ mod tests {
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("source is utf8");
         // Byte-identical to the library's own round-trip authority.
-        let want = aozora::Document::new(src.to_owned()).parse().to_source();
+        let want = aozora::Document::new(src.to_owned()).snapshot().to_source();
         assert_eq!(got, want, "to_source drift");
         unsafe { aozora_bytes_free(out) };
         unsafe { aozora_document_free(doc) };
@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("json is utf8");
-        let want = aozora::json::container_pairs(&aozora::Document::new(src.to_owned()).parse());
+        let want = aozora::json::container_pairs(&aozora::Document::new(src.to_owned()).snapshot());
         assert_eq!(got, want, "container_pairs_json drift");
         unsafe { aozora_bytes_free(out) };
         unsafe { aozora_document_free(doc) };

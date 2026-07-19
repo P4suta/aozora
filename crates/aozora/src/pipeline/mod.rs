@@ -3,7 +3,7 @@
 //! Both the orchestrator and the per-stage pipeline impl live in
 //! this single crate:
 //!
-//! - The orchestrator (the [`Pipeline`] state machine plus the [`lex`]
+//! - The orchestrator (the `Pipeline` state machine plus the [`lex`]
 //!   entry in `fold`) drives the pipeline through its stages
 //!   (sanitize → tokenize → pair → classify). The single public entry
 //!   [`lex`] runs the whole thing and returns the result as an owned,
@@ -14,7 +14,7 @@
 //!   arena.
 //! - The stage implementations live under [`lexer`] (`lexer::sanitize`
 //!   through `lexer::classify`). External consumers should reach for
-//!   [`lex`] or the [`Pipeline`] state machine; the
+//!   [`lex`] or the `Pipeline` state machine; the
 //!   per-stage functions are exposed for benchmarks and the
 //!   instrumentation feature.
 //!
@@ -35,14 +35,9 @@ mod fold;
 pub(crate) mod lexer;
 pub(crate) mod state_machine;
 
-// Re-export the owned lex output + its source-node surface so `lex`'s return
-// type is nameable at `crate::pipeline` for the same-crate `document` /
-// `incremental` consumers (and, via the `unstable` facade, the in-workspace
-// stage consumers).
 use crate::scan;
 pub(crate) use crate::syntax::ast::{LexOutput, SourceNode};
-pub use fold::lex;
-pub use state_machine::{Paired, Pipeline, Sanitized, Source, Tokenized};
+pub(crate) use fold::lex;
 
 /// Eagerly initialise every lazily-built parser table.
 ///
@@ -127,6 +122,6 @@ mod tests {
     #[test]
     fn lex_preserves_sanitized_len_for_segment_merge() {
         let out = lex("plain text");
-        assert_eq!(usize::try_from(out.sanitized_len), Ok("plain text".len()));
+        assert_eq!(out.sanitized.len(), "plain text".len());
     }
 }

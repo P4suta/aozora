@@ -256,6 +256,7 @@ fn load(root: &Path) -> Result<Ledger, String> {
 /// wrong.
 fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
     let mut violations = Vec::new();
+    check_public_packages(ledger, &mut violations);
     // The identity is resolved first because `changelog_include` hangs
     // off it: without knowing which crate is the umbrella, "everyone
     // else must be folded in" has no subject.
@@ -267,6 +268,22 @@ fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
         Ok(())
     } else {
         Err(violations)
+    }
+}
+
+fn check_public_packages(ledger: &Ledger, violations: &mut Vec<String>) {
+    let mut actual = ledger.publishable.clone();
+    actual.sort_unstable();
+    let expected = [
+        "aozora".to_owned(),
+        "aozora-cli".to_owned(),
+        "tree-sitter-aozora".to_owned(),
+    ];
+    if actual != expected {
+        violations.push(format!(
+            "publishable workspace members differ from the supported public packages:\n    {}",
+            actual.join("\n    ")
+        ));
     }
 }
 
@@ -441,12 +458,12 @@ mod tests {
         Ledger {
             publishable: vec![
                 "aozora".to_owned(),
-                "aozora-fmt".to_owned(),
-                "aozora-i18n".to_owned(),
+                "aozora-cli".to_owned(),
+                "tree-sitter-aozora".to_owned(),
             ],
             unpublishable: vec!["aozora-xtask".to_owned()],
             release_identities: vec!["aozora".to_owned()],
-            changelog_include: vec!["aozora-fmt".to_owned(), "aozora-i18n".to_owned()],
+            changelog_include: vec!["aozora-cli".to_owned(), "tree-sitter-aozora".to_owned()],
             versioned_internal_dev_deps: Vec::new(),
             versioned_unpublishable_workspace_deps: Vec::new(),
         }
@@ -459,15 +476,14 @@ mod tests {
 
     #[test]
     fn verify_flags_a_publishable_crate_missing_from_changelog_include() {
-        // The `aozora-i18n` omission this gate was written for.
         let mut ledger = healthy();
         ledger
             .changelog_include
-            .retain(|name| name != "aozora-i18n");
+            .retain(|name| name != "tree-sitter-aozora");
         let err = verify(&ledger).expect_err("missing crate must be flagged");
         assert!(
             err.iter()
-                .any(|v| v.contains("aozora-i18n") && v.contains("missing")),
+                .any(|v| v.contains("tree-sitter-aozora") && v.contains("missing")),
             "must name the missing crate: {err:?}"
         );
     }
@@ -584,7 +600,7 @@ mod tests {
         let mut ledger = healthy();
         ledger
             .changelog_include
-            .retain(|name| name != "aozora-i18n");
+            .retain(|name| name != "tree-sitter-aozora");
         ledger
             .versioned_internal_dev_deps
             .push(("aozora-lsp".to_owned(), "aozora-fmt".to_owned()));

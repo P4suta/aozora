@@ -15,7 +15,7 @@
 //! 1. Reads the `range` slice of the document text (the LSP backend
 //!    looks up the document by `uri` and passes the slice in).
 //! 2. Strips an optional surrounding `［＃` / `］`.
-//! 3. Calls [`aozora::unstable::canonicalise_slug`] to snap the body to its
+//! 3. Calls [`aozora::Catalogue::canonical`] to snap the body to its
 //!    canonical form.
 //! 4. Returns a [`WorkspaceEdit`] that replaces `range` with the
 //!    canonical text (or `None` when no canonicalisation applies).
@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 
-use aozora::unstable::canonicalise_slug;
+use aozora::Catalogue;
 use tower_lsp::lsp_types::{Range, TextEdit, Url, WorkspaceEdit};
 
 /// Canonical slug-canonicalize command identifier exchanged with the
@@ -50,7 +50,7 @@ pub(super) fn canonicalize_slug_edit(
     body_text: &str,
 ) -> Option<WorkspaceEdit> {
     let trimmed = strip_brackets(body_text.trim());
-    let canonical = canonicalise_slug(trimmed)?;
+    let canonical = Catalogue::canonical(trimmed)?;
     if canonical == trimmed {
         // Already canonical → no edit.
         return None;

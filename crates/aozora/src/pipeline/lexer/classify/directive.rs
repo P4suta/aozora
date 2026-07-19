@@ -7,9 +7,6 @@
 //! live in the parent module. Extracted verbatim from the classify-stage
 //! classifier.
 
-#[cfg(feature = "classify-instrument")]
-use super::super::instrumentation::{Subsystem, SubsystemGuard};
-
 use std::sync::OnceLock;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
@@ -801,16 +798,8 @@ static BODY_PATTERNS: &[BodyPattern] = &[
 ];
 
 /// Build the annotation-body Aho-Corasick automaton from `BODY_PATTERNS`.
-///
-/// This DFA build is the bulk of parser boot cost (~150 microseconds, as
-/// the `boot` bench measures). It is exposed under `#[doc(hidden)]` so
-/// that bench can build it in isolation without making `BODY_PATTERNS`
-/// public — the same pattern as the scan module's hidden `NaiveScanner`
-/// export. The process-lifetime cache lives in `body_dispatcher`;
-/// `prewarm` warms it.
-#[doc(hidden)]
 #[must_use]
-pub fn build_body_dispatcher() -> AhoCorasick {
+pub(crate) fn build_body_dispatcher() -> AhoCorasick {
     AhoCorasickBuilder::new()
         .match_kind(MatchKind::LeftmostLongest)
         .start_kind(StartKind::Anchored)
@@ -941,8 +930,6 @@ pub(super) fn classify_annotation_body(
     body: &str,
     alloc: &mut Allocator,
 ) -> Option<(EmitKind, Option<Directive>)> {
-    #[cfg(feature = "classify-instrument")]
-    let _classify_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
         return None;
     }

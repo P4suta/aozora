@@ -7,14 +7,14 @@ UTF-8; emits HTML, JSON, or canonical source.
 use aozora::Document;
 
 let doc = Document::new("｜青梅《おうめ》".to_owned());
-let tree = doc.parse();
+let snapshot = doc.snapshot();
 
-let html = tree.to_html();
-let diagnostics = tree.diagnostics();
+let html = snapshot.to_html();
+let diagnostics = snapshot.diagnostics();
 ```
 
-Depend on this crate alone. The build-block crates it sits over carry no
-stability contract of their own.
+Depend on this crate alone for parsing, diagnostics, rendering, and incremental
+editing.
 
 ## Documentation
 

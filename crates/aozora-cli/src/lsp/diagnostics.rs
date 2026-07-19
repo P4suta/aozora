@@ -22,7 +22,7 @@
 //! the `WorkspaceEdit` the quick-fix builds. `code_action` imports them from
 //! `crate::lsp::diagnostics`.
 
-use aozora::unstable::InternalCheckCode;
+use aozora::InternalCheckCode;
 // `Document` is reached only by the `#[cfg(test)]` `diagnostics_for_source`.
 #[cfg(test)]
 use aozora::Document;
@@ -137,7 +137,7 @@ impl SerializablePairKind {
 #[must_use]
 pub(crate) fn diagnostics_for_source(source: &str, lang: &LanguageIdentifier) -> Vec<Diagnostic> {
     let document = Document::new(source);
-    let tree = document.parse();
+    let tree = document.snapshot();
     let view = DocLineView::from_source(source);
     diagnostics_from_aozora(&view, tree.diagnostics(), lang)
 }

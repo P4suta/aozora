@@ -18,8 +18,7 @@
 
 #![no_main]
 
-use aozora::unstable::lex;
-use aozora::render::{DirectiveNormalization, SerializeOptions, serialize, serialize_with};
+use aozora::render::{DirectiveNormalization, SerializeOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -34,18 +33,15 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let lex0 = lex(src);
+    let snapshot = aozora::parse(src).snapshot();
 
     // `Off` is byte-identical to the default serialize — the opt-in catalogues
     // never alter the default path.
-    let off = serialize_with(
-        &lex0,
-        SerializeOptions {
-            directives: DirectiveNormalization::Off,
-        },
+    let off = snapshot.to_source_with(
+        SerializeOptions::default().directives(DirectiveNormalization::Off),
     );
     assert!(
-        off == serialize(&lex0),
+        off == snapshot.to_source(),
         "Off normalization must equal default serialize for src bytes = {data:?}",
     );
 
@@ -54,9 +50,9 @@ fuzz_target!(|data: &[u8]| {
         DirectiveNormalization::Canonical,
         DirectiveNormalization::Degraded,
     ] {
-        let opts = SerializeOptions { directives };
-        let once = serialize_with(&lex0, opts);
-        let twice = serialize_with(&lex(&once), opts);
+        let opts = SerializeOptions::default().directives(directives);
+        let once = snapshot.to_source_with(opts);
+        let twice = aozora::parse(once.as_str()).snapshot().to_source_with(opts);
         assert!(
             once == twice,
             "normalization {directives:?} not idempotent for src bytes = {data:?}\n  \

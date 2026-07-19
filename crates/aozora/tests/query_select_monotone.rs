@@ -16,7 +16,7 @@
 #![cfg(feature = "query")]
 
 use aozora::Document;
-use aozora::cst::{SyntaxNode, from_tree};
+use aozora::cst::{SyntaxNode, from_snapshot};
 use aozora::query::compile;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
@@ -24,8 +24,8 @@ use proptest::prelude::*;
 
 fn cst_for(source: &str) -> SyntaxNode {
     let doc = Document::new(source);
-    let tree = doc.parse();
-    from_tree(&tree)
+    let tree = doc.snapshot();
+    from_snapshot(&tree)
 }
 
 fn assert_any_captures_superset_of_specific(source: &str) {

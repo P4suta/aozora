@@ -15,7 +15,7 @@ fn main() {
     // that source and so lives only as long as `doc` (its owned AST
     // data carries no arena lifetime).
     let doc = Document::new("｜青梅《おうめ》");
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     // Semantic HTML5 — a <ruby> element with the reading in <rt>.
     println!("--- to_html ---");

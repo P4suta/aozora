@@ -1,13 +1,12 @@
 //! Per-size-class **render** throughput report.
 //!
-//! Mirror of `throughput_by_class.rs` but for `aozora_render::html`.
+//! Mirror of `throughput_by_class.rs` for snapshot HTML rendering.
 //! For each corpus document the probe:
 //!
-//! 1. Pre-parses the doc once via `lex` (untimed — the
+//! 1. Pre-parses the document once (untimed — the
 //!    parse perf story lives in the other probes; we want a clean
 //!    render-bound number here)
-//! 2. Renders the parsed `LexOutput` to HTML via
-//!    `render_to_string`, repeating `AOZORA_RENDER_REPEAT` times so
+//! 2. Renders its `Snapshot` to HTML, repeating `AOZORA_RENDER_REPEAT` times so
 //!    the per-doc latency is stable and so a `samply` trace gets
 //!    enough render-bound wall time to attach to (without the repeat,
 //!    the smallest docs spend more time in parse than render and the
@@ -44,8 +43,6 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
-use aozora::render::render_html;
-use aozora::unstable::lex;
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -149,7 +146,7 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             // Parse once (timed for the parse-vs-render ratio summary
             // line below; not on the render hot path itself).
             let t = Instant::now();
-            let out = lex(text);
+            let out = aozora::parse(text.as_str()).snapshot();
             parse_ns.push(t.elapsed().as_nanos() as u64);
 
             // Render `repeat` times, keep the median ns.
@@ -157,7 +154,7 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             let mut last_html_len: u64 = 0;
             for _ in 0..repeat {
                 let t = Instant::now();
-                let html = render_html(&out);
+                let html = out.to_html();
                 samples.push(t.elapsed().as_nanos() as u64);
                 last_html_len = html.len() as u64;
                 drop(html);

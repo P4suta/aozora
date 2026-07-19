@@ -7,7 +7,7 @@
 //! `u32` handles into a flat `NodeStore` (a string interner plus
 //! content / segment pools), deduplicated through the store's interner.
 //! Public consumers (`aozora` meta crate, FFI / WASM / Python drivers,
-//! CLI) parse via `aozora::Document::parse()` and walk the owned
+//! CLI) parse via `aozora::Document::snapshot()` and walk the owned
 //! `ast::Node` values.
 //!
 //! # Top-level surface
@@ -19,7 +19,7 @@
 //! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
 //! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
 //! under [`mod@format`]. The owned AST node types live under
-//! [`mod@ast`]; the builder under [`mod@alloc`].
+//! [`mod@ast`]; the builder remains internal.
 
 #![forbid(unsafe_code)]
 
@@ -27,7 +27,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 pub mod accent;
-pub mod alloc;
+pub(crate) mod alloc;
 pub mod ast;
 pub mod degraded;
 pub mod format;

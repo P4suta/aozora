@@ -1,7 +1,7 @@
 //! Heap-allocation profile of a parse + HTML render, via dhat.
 //!
 //! Reports total allocations + bytes and peak (`At t-gmax`) resident
-//! bytes for one 2 MiB synthetic-corpus `Document::new().parse().to_html()`
+//! bytes for one 2 MiB synthetic-corpus `Document::new().snapshot().to_html()`
 //! — the memory metric that pairs with the criterion throughput
 //! (`synthetic_corpus`) and the `latency_histogram` percentiles. Most of
 //! the parser's working set lives in the bumpalo arena, so dhat shows the
@@ -26,7 +26,7 @@ fn main() {
 
     let source = build_synthetic_aozora(2 * 1024 * 1024);
     let doc = Document::new(black_box(source.as_str()));
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let html = tree.to_html();
     black_box(html);
 

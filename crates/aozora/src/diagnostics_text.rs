@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn empty_when_no_diagnostics() {
         let doc = Document::new("｜青空《あおぞら》");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let text = super::diagnostics_text(doc.source(), tree.diagnostics());
         assert!(text.is_empty(), "clean parse renders nothing: {text:?}");
     }
@@ -80,7 +80,7 @@ mod tests {
     fn renders_code_and_offending_slice() {
         // Nested ruby is a diagnostic-bearing construct.
         let doc = Document::new("｜《おうめ》");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let diagnostics = tree.diagnostics();
         if diagnostics.is_empty() {
             return; // grammar may not flag this exact input; skip if so.
@@ -99,7 +99,7 @@ mod tests {
         // the report body MUST run and produce header output. A no-op
         // `write_report` would leave the string empty.
         let doc = Document::new("contains \u{E001} sentinel");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let diagnostics = tree.diagnostics();
         assert!(
             !diagnostics.is_empty(),
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn one_block_per_diagnostic() {
         let doc = Document::new("｜《おうめ》");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let diagnostics = tree.diagnostics();
         let text = super::diagnostics_text(doc.source(), diagnostics);
         // Header lines (start with a severity word) number one per diag.

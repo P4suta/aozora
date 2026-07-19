@@ -503,7 +503,7 @@ mod tests {
     fn build_synthetic_parses_without_panic() {
         let s = build_synthetic_aozora(4096);
         let doc = Document::new(s);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         black_box(tree);
     }
 
@@ -514,7 +514,7 @@ mod tests {
         // The pathological buffer must still parse without panicking — it
         // is a perf stressor, not a fuzz input.
         let doc = Document::new(s);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         black_box(tree);
     }
 
@@ -592,7 +592,7 @@ mod tests {
     fn build_synthetic_emits_no_diagnostics_for_well_formed_input() {
         let s = build_synthetic_aozora(2048);
         let doc = Document::new(s);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         assert!(
             tree.diagnostics().is_empty(),
             "synthetic corpus should be diagnostic-free, got {:?}",

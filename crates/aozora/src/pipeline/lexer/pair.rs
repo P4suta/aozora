@@ -79,7 +79,7 @@ use crate::spec::Diagnostic;
 // `PairKind` lives in `crate::spec`; re-exported here so the pair pass and
 // its consumers can name it locally. `PairLink` is the resolved
 // (open, close) view zipped during the pair pass.
-pub use crate::spec::{PairKind, PairLink};
+pub(crate) use crate::spec::{PairKind, PairLink};
 
 /// One event in the pair-stage stream.
 ///
@@ -92,7 +92,7 @@ pub use crate::spec::{PairKind, PairLink};
 /// internal patching).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum PairEvent {
+pub(crate) enum PairEvent {
     /// Unchanged from [`Token::Text`] — a byte run between triggers.
     Text {
         /// Sanitized-source byte span of the run; may be empty.
@@ -163,7 +163,7 @@ impl PairEvent {
     /// [`PairEvent::Newline`] (which has only a single position, not a
     /// range).
     #[must_use]
-    pub const fn span(&self) -> Option<Span> {
+    pub(crate) const fn span(&self) -> Option<Span> {
         Some(match *self {
             Self::Text { range } => range,
             Self::Solo { span, .. }
@@ -184,7 +184,7 @@ impl PairEvent {
 /// non-fatal observations that accumulated during the pass
 /// (unclosed opens, unmatched closes).
 #[must_use]
-pub fn pair<I>(tokens: I) -> PairStream<I>
+pub(crate) fn pair<I>(tokens: I) -> PairStream<I>
 where
     I: Iterator<Item = Token>,
 {
@@ -213,7 +213,7 @@ where
 ///   so subsequent `next()` calls return `None` without re-walking
 ///   the stack.
 #[derive(Debug)]
-pub struct PairStream<I>
+pub(crate) struct PairStream<I>
 where
     I: Iterator<Item = Token>,
 {
@@ -250,27 +250,29 @@ where
     /// Drain accumulated diagnostics. Should be called after the
     /// iterator is exhausted (otherwise EOF unclosed-bracket
     /// diagnostics will not yet have been emitted).
-    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+    pub(crate) fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
         mem::take(&mut self.diagnostics)
     }
 
     /// Borrow accumulated diagnostics in place. Same caveat as
     /// [`Self::take_diagnostics`]: only complete after exhaustion.
+    #[cfg(test)]
     #[must_use]
-    pub fn diagnostics(&self) -> &[Diagnostic] {
+    pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
     /// Drain the resolved [`PairLink`] side-table. Same exhaustion
     /// caveat as [`Self::take_diagnostics`].
-    pub fn take_links(&mut self) -> Vec<PairLink> {
+    pub(crate) fn take_links(&mut self) -> Vec<PairLink> {
         mem::take(&mut self.links)
     }
 
     /// Borrow the resolved [`PairLink`] list in place. Same caveat
     /// applies — only complete after exhaustion.
+    #[cfg(test)]
     #[must_use]
-    pub fn links(&self) -> &[PairLink] {
+    pub(crate) fn links(&self) -> &[PairLink] {
         &self.links
     }
 

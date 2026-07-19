@@ -28,8 +28,7 @@ use serde_json::{Map, Value};
 use std::fmt::Write as _;
 
 use aozora::json::SCHEMA_VERSION;
-use aozora::unstable::{InternalCheckCode, Sentinel};
-use aozora::{DiagnosticSource, NodeKind, NodeRef, PairKind, RegionFormat, Severity};
+use aozora::{DiagnosticSource, InternalCheckCode, NodeKind, PairKind, RegionFormat, Severity};
 
 use crate::TypesArgs;
 use crate::TypesOp;
@@ -138,20 +137,12 @@ fn render_enums(out: &mut String) {
         "InternalCheckCode",
         &ts_string_union(&InternalCheckCode::ALL, InternalCheckCode::as_code),
     );
-    out.push_str("/** PUA sentinel codepoint kind (4 reserved markers in `U+E001..U+E004`). */\n");
-    push_export_type(
-        out,
-        "SentinelKind",
-        &ts_string_union(&Sentinel::ALL, sentinel_to_wire),
-    );
 }
 
 /// Module-level static assertion that pins the `Sentinel`→`NodeRef`
 /// linkage at compile time. If `NodeRef::sentinel_kind` is ever removed
 /// or has its signature changed, this `const` fails to type-check —
 /// catching the drift before the TS artefact silently goes stale.
-const _ASSERT_SENTINEL_KIND_EXISTS: fn(NodeRef) -> Sentinel = NodeRef::sentinel_kind;
-
 fn render_wire_payloads(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");
     out.push_str("// Wire envelope payload types\n");
@@ -199,20 +190,6 @@ fn render_envelopes(out: &mut String) {
     out.push_str("export type NodesEnvelope          = JsonEnvelope<Node>;\n");
     out.push_str("export type PairsEnvelope          = JsonEnvelope<Pair>;\n");
     out.push_str("export type ContainerPairsEnvelope = JsonEnvelope<ContainerPair>;\n");
-}
-
-fn sentinel_to_wire(s: Sentinel) -> &'static str {
-    // Sentinels don't have a public wire string of their own (the
-    // wire Node kind already covers ContainerOpen/Close); we
-    // emit lowercase variant names here so the `SentinelKind` TS
-    // type stays useful for reading raw NormalizedOffset coordinate
-    // metadata.
-    match s {
-        Sentinel::Inline => "inline",
-        Sentinel::BlockLeaf => "blockLeaf",
-        Sentinel::BlockOpen => "blockOpen",
-        Sentinel::BlockClose => "blockClose",
-    }
 }
 
 fn dump() -> Result<(), String> {
@@ -568,7 +545,6 @@ mod tests {
             "Severity",
             "DiagnosticSource",
             "InternalCheckCode",
-            "SentinelKind",
         ] {
             assert!(
                 out.contains(&format!("export type {name} =")),
@@ -642,14 +618,6 @@ mod tests {
         assert!(dts.contains("export type NodeKind ="), "enums section");
         assert!(dts.contains("interface Span"), "payload section");
         assert!(dts.contains("JsonEnvelope<Diagnostic>"), "envelope section");
-    }
-
-    #[test]
-    fn sentinel_to_wire_maps_each_variant() {
-        assert_eq!(sentinel_to_wire(Sentinel::Inline), "inline");
-        assert_eq!(sentinel_to_wire(Sentinel::BlockLeaf), "blockLeaf");
-        assert_eq!(sentinel_to_wire(Sentinel::BlockOpen), "blockOpen");
-        assert_eq!(sentinel_to_wire(Sentinel::BlockClose), "blockClose");
     }
 
     #[test]

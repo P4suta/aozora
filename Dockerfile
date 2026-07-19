@@ -166,11 +166,8 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
 # image's own glibc yields a compatible binary (the standard fallback when
 # no compatible prebuilt exists).
 #
-# PINNED to an exact version, not floating `--locked` latest: the host
-# `just mutants-host` lane installs cargo-mutants via mise
-# (.config/mise/config.toml) and the ratchet baseline (mutants-baseline.json)
-# only holds across both lanes while they enumerate the identical mutant
-# set. Bump this and the mise pin together.
+# PINNED to an exact version because the committed survivor ratchet is tied
+# to the mutant set this version enumerates.
 RUN cargo install --locked --version 27.1.0 --root /usr/local cargo-mutants
 
 # bacon and taplo-cli have no binstall-resolvable prebuilt for the pinned
@@ -191,21 +188,6 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         --root /usr/local \
         bacon \
         taplo-cli
-
-# iai-callgrind-runner drives the instruction-count perf gate
-# (`just perf-gate`, aozora-bench/benches/perf_gate). It runs the bench
-# binary under `valgrind` (installed in the toolchain stage above) and
-# parses the callgrind output. The runner binary MUST match the
-# `iai-callgrind` LIBRARY version pinned in the workspace Cargo.toml — a
-# mismatch makes the harness refuse to run. Bump BOTH together. Kept out of
-# the fail-fast batch (no prebuilt is guaranteed) so it can fall through to
-# a source `compile` without turning the whole batch slow.
-ARG IAI_CALLGRIND_VERSION=0.16.1
-RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
-    cargo binstall --no-confirm --no-symlinks --locked \
-        --strategies crate-meta-data,quick-install,compile \
-        --root /usr/local \
-        "iai-callgrind-runner@${IAI_CALLGRIND_VERSION}"
 
 # tree-sitter CLI — regenerates crates/tree-sitter-aozora/src/{parser.c,
 # grammar.json,node-types.json} from grammar.js. Pinned to the SAME version
@@ -246,9 +228,8 @@ FROM toolchain AS dev
 COPY --from=cargo-tools /usr/local/cargo/bin/ /usr/local/cargo/bin/
 COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 
-# valgrind drives the instruction-count perf gate (`just perf-gate`): the
-# iai-callgrind-runner copied in above runs the bench binary under
-# Valgrind's Callgrind. It is a dev/runtime profiling tool, so it lives in
+# valgrind drives the instruction-count perf gate (`just perf-gate`).
+# It is a dev/runtime profiling tool, so it lives in
 # THIS stage rather than the toolchain base — keeping it here avoids
 # invalidating the base and re-triggering the heavy cargo-tools binstall
 # layer on a valgrind bump.

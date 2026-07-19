@@ -51,14 +51,11 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 use crate::i18n::{FluentArgs, LanguageIdentifier, tf};
-use aozora::encoding::gaiji;
-#[cfg(test)]
-use aozora::unstable::Sentinel;
-
 use crate::lsp::document_symbol::document_symbols;
 use crate::lsp::folding_range::folding_ranges;
 use crate::lsp::position::position_to_byte_offset;
 use crate::lsp::semantic_tokens::semantic_tokens_full;
+use aozora::encoding::gaiji;
 
 /// LSP backend for aozora documents.
 ///
@@ -270,7 +267,7 @@ impl AozoraLanguageServer {
         }
         let html = spawn_blocking(move || {
             let document = aozora::Document::new(text);
-            document.parse().to_html()
+            document.snapshot().to_html()
         })
         .await
         .map_err(|join_err| {
@@ -640,7 +637,7 @@ impl LanguageServer for AozoraLanguageServer {
         let snap = state.snapshot();
         Ok(state
             .with_parse_cache(|c| {
-                c.with_tree(|t| {
+                c.with_snapshot(|t| {
                     prepare_rename_at(t, snap.doc_text(), snap.doc_line_index(), position)
                 })
             })
@@ -668,7 +665,7 @@ impl LanguageServer for AozoraLanguageServer {
         // `Err(SpliceError)` when the splice is honestly declined (an
         // ambiguous referent, a ruby-base literal, a 、-joined multi-target).
         let outcome = state.with_parse_cache(|c| {
-            c.with_tree(|t| {
+            c.with_snapshot(|t| {
                 rename_edit(
                     t,
                     snap.doc_text(),
@@ -1070,7 +1067,7 @@ mod tests {
         state.run_parse_cache_reparse();
         state.with_parse_cache(|cache| {
             let inline = cache
-                .with_tree(|t| t.lex_output().registry.count_kind(Sentinel::Inline))
+                .with_snapshot(|snapshot| snapshot.source_nodes().len())
                 .expect("populated");
             assert_eq!(inline, 1);
             assert!(cache.diagnostics().is_empty());

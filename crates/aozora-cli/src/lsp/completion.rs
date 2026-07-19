@@ -5,7 +5,7 @@
 //! - `［＃` — the canonical full-width slug-open digraph, or
 //! - `[#`  — the half-width ASCII alternative typists reach for first,
 //!
-//! suggest every entry from the canonical [`aozora::unstable::SLUGS`] table.
+//! suggest every entry from the canonical [`aozora::Catalogue`] table.
 //! Each suggestion carries:
 //!
 //! - `label`: the canonical body text the editor displays.
@@ -23,7 +23,7 @@
 //!   line so the editor can land both in one accept.
 
 use crate::i18n::{self as i18n, LanguageIdentifier};
-use aozora::unstable::{SLUGS, SlugEntry, SlugFamily};
+use aozora::{Catalogue, CatalogueEntry as SlugEntry, CatalogueFamily as SlugFamily};
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position, Range, TextEdit,
@@ -111,7 +111,7 @@ pub(super) fn completion_at(
     // providers (rust-analyzer, gopls, …) and avoids accidentally
     // hiding entries when the user types in latin transliteration
     // (`[#bouten` should still show 傍点).
-    SLUGS
+    Catalogue::directives()
         .iter()
         .map(|entry| build_completion_item(source, entry, &ctx, lang))
         .collect()

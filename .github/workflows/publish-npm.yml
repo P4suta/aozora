@@ -77,7 +77,12 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm-pack package
-        run: wasm-pack build --target web --release crates/aozora-wasm
+        run: |
+          wasm-pack build --target web --release crates/aozora-wasm
+          cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
+
+      - name: Verify npm legal files
+        run: test -s crates/aozora-wasm/pkg/LICENSE-APACHE && test -s crates/aozora-wasm/pkg/LICENSE-MIT && test -s crates/aozora-wasm/pkg/NOTICE
 
       - name: Dry-run npm publish (smoke test)
         working-directory: crates/aozora-wasm/pkg

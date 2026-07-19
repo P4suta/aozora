@@ -29,12 +29,14 @@ impl<T> EytzingerArray<T> {
     }
 
     /// Number of elements.
+    #[cfg(test)]
     #[must_use]
     pub(super) fn len(&self) -> usize {
         self.data.len()
     }
 
     /// True iff zero elements.
+    #[cfg(test)]
     #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.data.is_empty()
@@ -43,9 +45,8 @@ impl<T> EytzingerArray<T> {
     /// Element at the given Eytzinger index, or `None` if out-of-range.
     ///
     /// The index is **the Eytzinger index** (i.e., the index returned
-    /// by [`EytzingerArray::search`]), not a sorted-order index. Most
-    /// callers want [`EytzingerMap::iter_sorted`](crate::collections::EytzingerMap::iter_sorted)
-    /// instead for ordered traversal.
+    /// by [`EytzingerArray::search`]), not a sorted-order index.
+    #[cfg(test)]
     #[must_use]
     pub(super) fn get(&self, eytz_index: usize) -> Option<&T> {
         self.data.get(eytz_index)
@@ -62,9 +63,8 @@ impl<T: Ord> EytzingerArray<T> {
     /// Locate `target` in the array.
     ///
     /// Returns `Some(eytz_index)` if found, else `None`. The index is
-    /// in **Eytzinger order**, not sorted order — pair it with
-    /// [`EytzingerArray::get`] for value retrieval, or compose with an
-    /// [`super::EytzingerMap`] which stores values in matching layout.
+    /// in **Eytzinger order**, not sorted order. The map wrapper stores values
+    /// in the matching layout.
     #[must_use]
     pub(super) fn search(&self, target: &T) -> Option<usize> {
         let n = self.data.len();

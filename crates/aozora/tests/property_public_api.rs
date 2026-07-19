@@ -1,15 +1,15 @@
-//! Public-API totality + idempotence for [`Document::parse`].
+//! Public-API totality + idempotence for [`Document::snapshot`].
 //!
 //! Two complementary properties on the top-facade entry point:
 //!
-//! 1. **Totality**: [`Document::parse`] must not panic on any input.
+//! 1. **Totality**: [`Document::snapshot`] must not panic on any input.
 //!    The lex pipeline emits diagnostics rather than failing, and the
 //!    facade is the sole entry point for FFI / WASM / Python drivers
 //!    that hand user input straight to the parser. A panic here is a
 //!    denial-of-service surface for every downstream binding.
 //!
 //! 2. **Parse → serialise → parse converges**: the second
-//!    `Document::parse` over the serialised output of the first
+//!    `Document::snapshot` over the serialised output of the first
 //!    yields a tree whose own `serialize()` matches. Equivalent to
 //!    "the renderer's `serialize` is a parser fixed point" — a
 //!    quieter way to surface bugs that mutate documents on round-trip
@@ -26,10 +26,10 @@ use proptest::prelude::*;
 
 fn parse_serialise_parse(source: &str) -> (String, String) {
     let doc = Document::new(source.to_owned());
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let first = tree.to_source();
     let doc2 = Document::new(first.clone());
-    let tree2 = doc2.parse();
+    let tree2 = doc2.snapshot();
     let second = tree2.to_source();
     (first, second)
 }
@@ -73,13 +73,13 @@ fn paired_container_round_trips() {
 proptest! {
     #![proptest_config(default_config())]
 
-    /// `Document::parse` is total over the workhorse Aozora fragment
+    /// `Document::snapshot` is total over the workhorse Aozora fragment
     /// distribution. A panic here is a DoS surface for every public
     /// caller — proptest is the decisive way to catch one.
     #[test]
     fn aozora_fragment_parse_is_total(s in aozora_fragment(120)) {
         let doc = Document::new(s);
-        let _tree = doc.parse();
+        let _tree = doc.snapshot();
     }
 
     /// Parse → serialise → parse converges on the second pass. The
@@ -94,7 +94,7 @@ proptest! {
     #[test]
     fn pathological_input_parse_is_total(s in pathological_aozora(120)) {
         let doc = Document::new(s);
-        let _tree = doc.parse();
+        let _tree = doc.snapshot();
     }
 
     /// Unicode adversarial — combining marks, RTL overrides, PUA
@@ -104,6 +104,6 @@ proptest! {
     #[test]
     fn unicode_adversarial_parse_is_total(s in unicode_adversarial()) {
         let doc = Document::new(s);
-        let _tree = doc.parse();
+        let _tree = doc.snapshot();
     }
 }

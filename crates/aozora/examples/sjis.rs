@@ -28,7 +28,7 @@ fn main() {
     // From here it is the ordinary UTF-8 path: hand the decoded string
     // to `Document` and parse as usual.
     let doc = Document::new(utf8);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     println!("--- to_html ---");
     println!("{}", tree.to_html());

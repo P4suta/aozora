@@ -24,7 +24,7 @@ use pretty_assertions::assert_eq;
 fn render_gate_html_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let actual = doc.parse().to_html();
+        let actual = doc.snapshot().to_html();
         let expected = fixture.html_golden(&actual);
         assert_eq!(actual, expected, "html drift for fixture {}", fixture.name);
     }
@@ -34,7 +34,7 @@ fn render_gate_html_matches_golden() {
 fn render_gate_serialize_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let actual = doc.parse().to_source();
+        let actual = doc.snapshot().to_source();
         let expected = fixture.serialize_golden(&actual);
         assert_eq!(
             actual, expected,
@@ -47,7 +47,7 @@ fn render_gate_serialize_matches_golden() {
         // canonical-idempotence invariant: a golden is legal only when it is
         // the canonical fixed point of its source, so an "idempotent but ≠
         // golden" middle state cannot exist.
-        let reserialised = Document::new(expected.clone()).parse().to_source();
+        let reserialised = Document::new(expected.clone()).snapshot().to_source();
         assert_eq!(
             reserialised, expected,
             "golden is not a serialize fixed point for fixture {}",
@@ -60,7 +60,7 @@ fn render_gate_serialize_matches_golden() {
 fn render_gate_diagnostics_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let actual = diagnostics(tree.diagnostics());
         let expected = fixture.diagnostics_golden(&actual);
         assert_eq!(
@@ -75,7 +75,7 @@ fn render_gate_diagnostics_matches_golden() {
 fn render_gate_nodes_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let actual = nodes(&tree);
         let expected = fixture.nodes_golden(&actual);
         assert_eq!(
@@ -90,7 +90,7 @@ fn render_gate_nodes_matches_golden() {
 fn render_gate_pairs_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let actual = pairs(&tree);
         let expected = fixture.pairs_golden(&actual);
         assert_eq!(
@@ -105,7 +105,7 @@ fn render_gate_pairs_matches_golden() {
 fn render_gate_container_pairs_matches_golden() {
     for fixture in load_render_fixtures() {
         let doc = Document::new(fixture.source.clone());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let actual = container_pairs(&tree);
         let expected = fixture.container_pairs_golden(&actual);
         assert_eq!(

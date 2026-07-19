@@ -180,6 +180,12 @@ jobs:
           head='${{ github.event.pull_request.head.sha }}'
           git rev-list --no-merges "$base..$head" | xargs -rn1 committed
 
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6.0.0
+
   # Block merging a release-plz Release PR until a maintainer flips the
   # label. release-plz labels its PR `autorelease: pending`
   # (release-plz.toml `pr_labels`); a release happens only once a
@@ -265,6 +271,16 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: ./.github/actions/setup-dev-image
       - run: just coverage
+
+  perf-gate:
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: ./.github/actions/setup-dev-image
+      - run: just perf-gate
 
   # Playground (Solid + Vite + WASM frontend) typecheck + vitest. Closes the
   # CI hole where a `playground/**`-only PR skipped the whole matrix (the
@@ -474,8 +490,8 @@ jobs:
         run: cargo test -p aozora --release --test corpus_sweep -- --nocapture
       - name: Source-region tiling gate (#202)
         run: cargo test -p aozora --release --test corpus_splice_tiling -- --nocapture
-      - name: Incremental-merge gate (#237)
-        run: cargo test -p aozora --release --test corpus_incremental_merge -- --nocapture
+      - name: Document edit differential gate
+        run: cargo test -p aozora --release --test corpus_document_edits -- --nocapture
       - name: Owned-allocation-pressure ratchet (#237 P0.2-real)
         run: cargo run --release -p aozora-bench --example alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/alloc-baseline.json
       - name: Render-leak ratchet gate (#399)
@@ -803,10 +819,12 @@ jobs:
       - changes
       - msrv
       - commitlint
+      - reuse
       - release-gate
       - dev-image
       - lint
       - coverage
+      - perf-gate
       - test-internals
       - doc
       - doctest

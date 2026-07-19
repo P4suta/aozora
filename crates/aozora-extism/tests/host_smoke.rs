@@ -47,7 +47,7 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
     let mut plugin = load_plugin();
     for src in CORPUS {
         let doc = Document::new(src.to_owned());
-        let tree = doc.parse();
+        let tree = doc.snapshot();
 
         let html: &str = plugin.call("to_html", src).expect("to_html");
         assert_eq!(html, tree.to_html(), "to_html src: {src}");

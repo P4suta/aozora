@@ -30,7 +30,6 @@ use std::process;
 use std::time::Instant;
 
 use aozora::encoding::decode_auto;
-use aozora::unstable::lex;
 /// Size bands in bytes: `[lo, hi)`.
 const BANDS: &[(&str, u64, u64)] = &[
     ("< 50 KiB", 0, 50 * 1024),
@@ -67,8 +66,8 @@ fn main() {
 
     // Warmup pass (discarded) to page in code and warm caches.
     for doc in &docs {
-        black_box(lex(doc));
-        black_box(lex(doc));
+        black_box(aozora::parse(doc.as_str()).snapshot());
+        black_box(aozora::parse(doc.as_str()).snapshot());
     }
 
     // Measured pass. Per-band accumulators: (bytes, borrowed_ns, owned_ns, count).
@@ -77,11 +76,11 @@ fn main() {
         let b = band_of(doc.len() as u64);
 
         let t0 = Instant::now();
-        black_box(lex(doc));
+        black_box(aozora::parse(doc.as_str()).snapshot());
         let borrowed_ns = t0.elapsed().as_nanos();
 
         let t1 = Instant::now();
-        black_box(lex(doc));
+        black_box(aozora::parse(doc.as_str()).snapshot());
         let owned_ns = t1.elapsed().as_nanos();
 
         bands[b].0 += doc.len() as u64;

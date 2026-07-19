@@ -66,7 +66,7 @@ use super::token::{Token, TriggerKind};
 /// [`crate::syntax::Span`] contract; inputs that large are rejected
 /// loudly rather than silently truncated.
 #[must_use]
-pub fn tokenize(source: &str) -> Tokenizer<'_> {
+pub(crate) fn tokenize(source: &str) -> Tokenizer<'_> {
     Tokenizer::new(source)
 }
 
@@ -80,7 +80,7 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
 /// the buffered event on the following call, preserving the legacy
 /// emission order without paying for a `Vec` accumulator.
 #[derive(Debug)]
-pub struct Tokenizer<'s> {
+pub(crate) struct Tokenizer<'s> {
     source: &'s str,
     /// Sorted ascending byte offsets where a trigger trigram begins.
     /// Materialised eagerly because the SIMD scanner is much faster

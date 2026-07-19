@@ -1,0 +1,10 @@
+Aozora Bunko specification quotation notice
+
+The files covered by this notice are verbatim snapshots of short portions of
+the Aozora Bunko annotation specification. Copyright remains with the Aozora
+Bunko volunteers and other respective rights holders.
+
+The snapshots are reproduced for technical reference, interoperability,
+testing, and criticism under applicable quotation and fair-use limitations.
+No broader permission or warranty is granted. A rights holder may request
+removal through the contact method in SECURITY.md.

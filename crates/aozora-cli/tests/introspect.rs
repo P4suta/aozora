@@ -47,7 +47,6 @@ fn kinds_lists_every_enum_section() {
         "PairKind",
         "Severity",
         "DiagnosticSource",
-        "Sentinel",
         "InternalCheckCode",
     ] {
         assert!(
@@ -100,7 +99,6 @@ fn kinds_format_json_emits_valid_envelope() {
         "pairKinds",
         "severities",
         "diagnosticSources",
-        "sentinels",
         "internalCheckCodes",
     ] {
         assert!(

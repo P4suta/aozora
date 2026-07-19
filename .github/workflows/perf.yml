@@ -1,23 +1,15 @@
 # Instruction-count perf gate (G6).
 #
-# Runs `just perf-gate`, which drives the iai-callgrind micro-benchmarks
-# (aozora-bench/benches/perf_gate) under Valgrind's Callgrind. Callgrind
+# Runs `just perf-gate`, which drives fixed micro-benchmarks under
+# Valgrind's Callgrind. Callgrind
 # counts CPU *instructions* — deterministic across runs and machines —
 # instead of wall-clock, which is far too noisy on shared GitHub runners to
 # gate on.
 #
-# Why nightly (and not per-PR yet): each ephemeral runner starts with no
-# saved baseline, so a single run only RECORDS the instruction counts (it
-# cannot regress against a baseline it just created). This lane exists to
-# collect that stability data — how much the counts vary run-to-run in the
-# GHA environment — before promoting the gate to a per-PR blocker with a
-# persisted/committed baseline. Until then, the authoritative fail signal is
-# the LOCAL `just perf-gate` (self-baselining) run a developer does before
-# pushing. The >10% Ir soft limit is already baked into the bench, so the
-# gate fires automatically once a baseline is present.
+# The committed instruction baseline makes every ephemeral runner a real
+# regression check; a case exceeding its baseline by more than 10% fails.
 #
-# Runs inside the in-tree dev image (valgrind + a version-matched
-# iai-callgrind-runner live there), mirroring ci.yml's container jobs.
+# Runs inside the in-tree dev image, mirroring ci.yml's container jobs.
 # Action SHAs are pinned; Dependabot bumps weekly.
 name: perf
 

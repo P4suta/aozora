@@ -9,7 +9,7 @@ use aozora::{CoupledKind, Document, RegionRole, SpliceError, SpliceSafety};
 fn regions_cover_the_whole_source() {
     let src = "序章\n｜青梅《おうめ》の実、青空［＃「青空」に傍点］。";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let verbatim = tree.to_source_verbatim();
 
     let regions = tree.regions();
@@ -35,7 +35,7 @@ fn regions_cover_the_whole_source() {
 fn reclaimed_forward_is_direct_minimal_diff() {
     let src = "青空［＃「青空」に傍点］の下を歩く";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let region = tree
         .regions()
@@ -56,7 +56,7 @@ fn reclaimed_forward_is_direct_minimal_diff() {
 fn referenced_forward_is_coupled() {
     let src = "青空がひろがる、その［＃「青空」に傍点］";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let region = tree
         .regions()
@@ -89,7 +89,7 @@ fn ruby_base_forward_target_change_is_irreducible() {
     // target change cannot be carved out — declined as unverifiable.
     let src = "｜我《われ》は［＃「我」に傍点］";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let Some(region) = tree
         .regions()
         .into_iter()
@@ -111,7 +111,7 @@ fn ruby_base_forward_attribute_change_is_coherent() {
     // never touching the ruby base. It must be accepted.
     let src = "｜我《われ》は［＃「我」に傍点］";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let Some(region) = tree
         .regions()
         .into_iter()
@@ -137,7 +137,7 @@ fn multi_target_forward_is_coupled_and_identity_safe() {
     // "AとB"), so it is honestly declined.
     let src = "AとB［＃「A」「B」に傍点］";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let verbatim = tree.to_source_verbatim();
     let region = tree
         .regions()
@@ -168,7 +168,7 @@ fn heading_hint_target_change_syncs() {
     // the directive and the upstream run so the hint stays resolvable.
     let src = "第一篇［＃「第一篇」は大見出し］";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let verbatim = tree.to_source_verbatim();
     let region = tree
         .regions()
@@ -202,7 +202,7 @@ fn margin_note_base_change_is_coherent() {
     // surrounding text. Bytes outside the region stay identical.
     let src = "未来［＃「未来」の左に「みらい」の注記］を見る。";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let verbatim = tree.to_source_verbatim();
     let region = tree
         .regions()
@@ -228,7 +228,7 @@ fn margin_note_base_change_is_coherent() {
 fn container_open_couples_to_its_close() {
     let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
     let doc = Document::new(src);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let open = tree
         .regions()

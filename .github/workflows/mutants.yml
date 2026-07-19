@@ -72,8 +72,7 @@ jobs:
         # Each entry is a crate to sweep, optionally with the `--features` its
         # ratcheted surface needs. Crates without `features` sweep on default
         # features (`${{ matrix.features }}` expands to empty). The committed
-        # baseline is computed with the SAME features, so `just mutants-host`
-        # (dev) == this weekly sweep for every crate.
+        # The committed baseline is computed with these same features.
         include:
           # After the 18→3 collapse the former building-block crates
           # (spec / syntax / scan / encoding / veb / pipeline / render / fmt /
@@ -84,10 +83,9 @@ jobs:
           # (see its `_doc`); a scheduled sweep never goes red on them meanwhile.
           - crate: aozora
             # The wire projection (json.rs) + schema introspection + the
-            # feature-gated editor surfaces (fmt / pandoc / cst / query) and the
-            # unstable stage surface must all compile so the sweep sees the real
-            # product, not cfg-dead vacuous survivors.
-            features: --features schema,query,fmt,pandoc,unstable-internals
+            # feature-gated editor surfaces (fmt / pandoc / cst / query) must all
+            # compile so the sweep sees the real product.
+            features: --features schema,query,fmt,pandoc
           - crate: aozora-ffi       # ratcheted at mutants-baseline.json (0 survivors)
           - crate: aozora-extism    # ratcheted at mutants-baseline.json (0 survivors; wasm-only plugin.rs excluded in mutants.toml)
           - crate: aozora-cli       # report-only post-collapse (absorbed the LSP; awaiting a fresh baseline)

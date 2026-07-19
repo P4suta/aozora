@@ -91,6 +91,7 @@ crates/*/fuzz/Cargo.lock
 # docs/adr/0031-mutation-testing-for-assertion-strength.md.
 /mutants.out/
 /mutants.out.old/
+/mutants-*/
 
 # dhat heap-profile output (written to the workspace root by `just dhat`)
 dhat-heap.json

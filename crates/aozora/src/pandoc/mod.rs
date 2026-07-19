@@ -33,8 +33,8 @@
 //! use aozora::Document;
 //!
 //! let doc = Document::new("｜青梅《おうめ》");
-//! let owned = doc.lex();
-//! let pandoc = aozora::pandoc::to_pandoc(&owned);
+//! let snapshot = doc.snapshot();
+//! let pandoc = aozora::pandoc::to_pandoc(&snapshot);
 //! // The ruby base lands in the Pandoc AST.
 //! assert!(format!("{:?}", pandoc.blocks).contains("青梅"));
 //! ```

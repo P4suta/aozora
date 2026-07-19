@@ -1,6 +1,6 @@
 [package]
 name = "aozora"
-description = "Aozora Bunko notation parser — single front door (Document + Tree)"
+description = "Aozora Bunko notation parser with incremental document snapshots"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 # Absorbed from aozora-encoding: the gaiji / JIS X 0213 PHF table codegen.
@@ -20,7 +20,11 @@ include = [
   "build.rs",
   "data/*.tsv",
   "assets/aozora-notation.css",
+  "examples/**/*.rs",
+  "tests/**/*.rs",
+  "tests/*.proptest-regressions",
   "README.md",
+  "NOTICE",
   "LICENSE-APACHE",
   "LICENSE-MIT",
 ]
@@ -93,7 +97,7 @@ json = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]
 schema = ["json", "dep:schemars"]
 # Source-formatter algorithm (`aozora::fmt::format_source`). The
 # canonicalising `parse ∘ to_source` round trip; adds no dependency (its
-# byte-identity is inherited from `Document::parse` + `Tree::to_source`).
+# byte-identity is inherited from `Document::snapshot` + `Snapshot::to_source`).
 # The CLI plumbing that wraps it lives in `aozora-cli`.
 fmt = []
 # Pandoc AST projection (`aozora::pandoc::to_pandoc`). Emits a
@@ -106,14 +110,6 @@ cst = ["dep:rowan"]
 # Tree-sitter-flavoured query DSL (`aozora::query::*`) over the CST. Implies
 # `cst`; names rowan directly, so it enables `dep:rowan` too.
 query = ["cst", "dep:rowan"]
-# UNSTABLE, #[doc(hidden)] — the folded pipeline stage surface plus
-# sentinels / slugs / Sentinel / NaiveScanner / Allocator / InternStats,
-# exposed for the in-workspace aozora-cli / aozora-lsp / aozora-bench /
-# aozora-xtask consumers. No semver contract.
-unstable-internals = []
-# Carried from aozora-pipeline: classify-stage timing instrumentation
-# (dead code when off).
-classify-instrument = []
 
 [build-dependencies]
 # Codegen-time PHF builder — runs in `build.rs` to emit the gaiji /

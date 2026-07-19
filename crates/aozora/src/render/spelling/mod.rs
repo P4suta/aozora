@@ -11,4 +11,4 @@
 //!   / heading markers reused by the serializer and the splice layer.
 
 pub(crate) mod html;
-pub mod source;
+pub(crate) mod source;

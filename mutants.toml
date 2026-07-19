@@ -34,12 +34,6 @@ minimum_test_timeout = 30.0
 # What remains to exclude is non-product source:
 #   - aozora-bench: performance benchmarks, not correctness assertions
 #   - **/fuzz:      libFuzzer harnesses (separate crates; belt-and-suspenders)
-#   - pipeline classify instrumentation: the whole module is
-#     `#![cfg(feature = "classify-instrument")]` — opt-in profiling
-#     scaffolding (per-subsystem timing tables) compiled out of every
-#     default build and read only by the aozora-bench profiler, not a
-#     correctness surface. Under the default-feature sweep its ~80 mutants
-#     are all cfg-dead vacuous survivors, so it is excluded like the bench.
 #   - aozora-extism plugin exports: `plugin.rs` is the whole
 #     `#[cfg(target_arch = "wasm32")]` plugin module — seven thin
 #     `#[plugin_fn]` wrappers that delegate to the host-testable `logic`
@@ -67,7 +61,6 @@ minimum_test_timeout = 30.0
 exclude_globs = [
   "crates/aozora-bench/**",
   "**/fuzz/**",
-  "crates/aozora/src/pipeline/lexer/instrumentation.rs",
   "crates/aozora-extism/src/plugin.rs",
   "crates/aozora-wasm/**",
   "crates/aozora-py/**",

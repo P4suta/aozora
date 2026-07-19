@@ -19,7 +19,7 @@ fn main() {
     // stack and emits `aozora::lex::unclosed_bracket`.
     let source = "正しい段落。\n［＃ここから2字下げ";
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let diagnostics = tree.diagnostics();
     println!("{} diagnostic(s)", diagnostics.len());

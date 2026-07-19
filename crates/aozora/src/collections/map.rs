@@ -35,12 +35,14 @@ impl<K, V> EytzingerMap<K, V> {
     }
 
     /// Number of (key, value) pairs.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.keys.len()
     }
 
     /// True iff zero pairs.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.keys.is_empty()
@@ -105,6 +107,7 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     }
 
     /// Iterate `(key, value)` pairs in ascending key order. O(n).
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn iter_sorted(&self) -> SortedIter<'_, K, V> {
         SortedIter::new(self)
@@ -132,12 +135,14 @@ fn place_values<K, V: Clone>(
 /// In-order iterator over an [`EytzingerMap`]. Yields `(key, value)`
 /// pairs in ascending key order.
 #[derive(Debug)]
+#[cfg(test)]
 pub(crate) struct SortedIter<'a, K, V> {
     map: &'a EytzingerMap<K, V>,
     stack: Vec<usize>,
     descend: Option<usize>,
 }
 
+#[cfg(test)]
 impl<'a, K, V> SortedIter<'a, K, V> {
     fn new(map: &'a EytzingerMap<K, V>) -> Self {
         let descend = if map.is_empty() { None } else { Some(0) };
@@ -149,6 +154,7 @@ impl<'a, K, V> SortedIter<'a, K, V> {
     }
 }
 
+#[cfg(test)]
 impl<'a, K, V> Iterator for SortedIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 

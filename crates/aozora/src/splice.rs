@@ -4,16 +4,16 @@
 //! coremodel-purification epic (#189). An editor surface that "adds ruby to
 //! this word" or "changes this heading level" wants the resulting source to
 //! differ from the original by the smallest possible diff; it must *not*
-//! reflow the whole document to canonical form ([`Tree::to_source`]), which
+//! reflow the whole document to canonical form ([`Snapshot::to_source`]), which
 //! would rewrite the author's verbatim formatting everywhere.
 //!
 //! This layer answers, for every byte of the sanitized source, two questions:
 //!
-//! 1. **Who owns each source byte?** [`Tree::regions`] projects the
+//! 1. **Who owns each source byte?** [`Snapshot::regions`] projects the
 //!    source-node table into a *total, non-overlapping, ordered* tiling: one
 //!    [`Region`] per classified node plus the interstitial plain runs
 //!    between them. Concatenating every region's bytes reproduces
-//!    [`Tree::to_source_verbatim`] exactly.
+//!    [`Snapshot::to_source_verbatim`] exactly.
 //!
 //! 2. **How is this region edited coherently?** Each region carries a
 //!    terminal [`SpliceSafety`]:
@@ -24,14 +24,14 @@
 //!      partner*: the upstream literal of a non-adjacent forward reference
 //!      ([`ForwardOrigin::Referenced`]), a heading hint, a margin note, or the
 //!      paired marker of a container. The partner is recovered on demand
-//!      ([`Tree::coupling`]) and the edit is checked by re-parse.
+//!      ([`Snapshot::coupling`]) and the edit is checked by re-parse.
 //!    - [`Opaque`](SpliceSafety::Opaque) — a future node variant this build of
 //!      the parser does not classify (forward-compat only; never produced by
 //!      any construct this version understands).
 //!
-//! [`Tree::splice`] performs the edit and returns the minimal-diff source —
+//! [`Snapshot::splice`] performs the edit and returns the minimal-diff source —
 //! every byte outside the affected region(s) stays identical, unlike the
-//! whole-document reflow of [`Tree::to_source`]. A coupled edit *derives* the
+//! whole-document reflow of [`Snapshot::to_source`]. A coupled edit *derives* the
 //! partner change, re-parses the candidate, and **verifies** the construct
 //! re-formed; it returns [`SpliceError`] rather than emit a byte-valid but
 //! semantically desynced edit. The parser is the single source of truth for
@@ -42,7 +42,7 @@
 //! Nothing is stored on the AST to support the splice. The coupling of a
 //! forward reference is exactly the irreducible [`ForwardOrigin`] provenance
 //! the epic already materialized; a container's pairing is the structural
-//! nesting already present in [`Tree::source_nodes`]. The splice model is the
+//! nesting already present in [`Snapshot::source_nodes`]. The splice model is the
 //! dual of the parser's classification, derived entirely on demand from data
 //! that already exists. See ADR-0018 (foundation) and ADR-0019 (coupled /
 //! container splice).
@@ -59,7 +59,7 @@ use crate::render::spelling::source::container_close_source;
 use crate::spec::{SourceOffset, Span};
 use crate::syntax::{ForwardOrigin, RegionClose, RegionFormat};
 
-use crate::{Document, Node, NodeRef, Tree};
+use crate::{Document, Node, NodeRef, Snapshot};
 
 /// What a single source region represents.
 ///
@@ -181,12 +181,12 @@ pub enum SpliceSafety {
     /// neighbouring regions stay byte-identical.
     Direct,
     /// A coherent edit spans a *derived partner* region (an upstream literal,
-    /// or a paired container marker). [`Tree::splice`] derives the partner
-    /// change and verifies it by re-parse; [`Tree::coupling`] exposes the
+    /// or a paired container marker). [`Snapshot::splice`] derives the partner
+    /// change and verifies it by re-parse; [`Snapshot::coupling`] exposes the
     /// partner span.
     Coupled(CoupledKind),
     /// A future node variant this build of the parser does not classify.
-    /// [`Tree::splice`] declines it rather than guess. In practice
+    /// [`Snapshot::splice`] declines it rather than guess. In practice
     /// unreachable: every construct this version understands is `Direct` or
     /// `Coupled`.
     Opaque,
@@ -194,10 +194,10 @@ pub enum SpliceSafety {
 
 /// A contiguous run of source bytes and what it owns.
 ///
-/// Yielded by [`Tree::regions`] / [`Tree::region_at`]. The
+/// Yielded by [`Snapshot::regions`] / [`Snapshot::region_at`]. The
 /// [`span`](Self::span) indexes the **sanitized** source — the same coordinate
-/// space as [`Tree::to_source_verbatim`] and every `source_span` on
-/// [`Tree::source_nodes`].
+/// space as [`Snapshot::to_source_verbatim`] and every `source_span` on
+/// [`Snapshot::source_nodes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Region {
@@ -211,7 +211,7 @@ pub struct Region {
 
 /// The two source regions a coupled edit touches.
 ///
-/// Recovered on demand by [`Tree::coupling`] from the source-node table — no
+/// Recovered on demand by [`Snapshot::coupling`] from the source-node table — no
 /// link is stored on the AST. Both spans are in sanitized-source coordinates;
 /// `primary` and `partner` are *not* ordered relative to each other (a forward
 /// reference's literal precedes its bracket; a container's open precedes its
@@ -229,7 +229,7 @@ pub struct Coupling {
     pub partner: Span,
 }
 
-/// Error returned by [`Tree::splice`].
+/// Error returned by [`Snapshot::splice`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SpliceError {
@@ -297,7 +297,7 @@ impl Error for SpliceError {}
 /// [`NodeRef`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
 ///
 /// `pub(crate)` so the incremental splice
-/// ([`crate::incremental`]) shares this single source of truth for the
+/// Incremental document editing shares this single source of truth for the
 /// text-coupling check (a forward reference / heading hint / margin note
 /// resolves by whole-document text search, so a region re-lex cannot localise
 /// it).
@@ -391,7 +391,7 @@ fn reparsed_in_family(node: NodeRef, kind: CoupledKind) -> bool {
     }
 }
 
-impl Tree<'_> {
+impl Snapshot {
     /// Project the source-node table into a complete tiling of the sanitized
     /// source: one [`Region`] per classified node plus the interstitial
     /// plain runs between (and around) them.
@@ -399,7 +399,7 @@ impl Tree<'_> {
     /// The regions are contiguous, non-overlapping, and ordered by start
     /// offset; the first starts at `0`, the last ends at the sanitized length,
     /// and concatenating each region's bytes reproduces
-    /// [`Tree::to_source_verbatim`] exactly. A truly empty source yields no
+    /// [`Snapshot::to_source_verbatim`] exactly. A truly empty source yields no
     /// regions.
     #[must_use]
     pub fn regions(&self) -> Vec<Region> {
@@ -439,7 +439,7 @@ impl Tree<'_> {
     /// The [`Region`] covering `off`, a sanitized-source byte offset.
     ///
     /// Returns the classified node region when `off` lands on a construct
-    /// ([`O(log n)`](Tree::node_at_source)), or the surrounding interstitial
+    /// ([`O(log n)`](Snapshot::node_at_source)), or the surrounding interstitial
     /// run otherwise. Returns `None` only when `off` is past the end of the
     /// sanitized source.
     #[must_use]
@@ -480,12 +480,12 @@ impl Tree<'_> {
     ///
     /// For a container marker the partner is its matching open/close, paired
     /// directly in source coordinates by a depth-stack walk over
-    /// [`Tree::source_nodes`] — no normalized-coordinate detour. For a forward
+    /// [`Snapshot::source_nodes`] — no normalized-coordinate detour. For a forward
     /// reference / heading hint / margin note the partner is the upstream
     /// target literal.
     ///
     /// This is read-only introspection (e.g. for an editor to highlight both
-    /// sites). [`Tree::splice`] performs the actual coherent edit.
+    /// sites). [`Snapshot::splice`] performs the actual coherent edit.
     #[must_use]
     pub fn coupling(&self, region: Region) -> Option<Coupling> {
         match region.safety {
@@ -513,7 +513,7 @@ impl Tree<'_> {
     /// directive bracket, the new container open marker, the new self-contained
     /// node text, or `""` to delete). The result preserves every byte outside
     /// the affected region(s) exactly, unlike the whole-document
-    /// canonicalisation of [`Tree::to_source`].
+    /// canonicalisation of [`Snapshot::to_source`].
     ///
     /// - A [`Direct`](SpliceSafety::Direct) region is a single-region byte
     ///   replacement.
@@ -536,8 +536,8 @@ impl Tree<'_> {
     ///
     /// Panics if `region` did not come from this tree (its span is out of
     /// bounds for the sanitized source, or not on a UTF-8 codepoint boundary).
-    /// Regions from this tree's [`Tree::regions`] /
-    /// [`Tree::region_at`] always satisfy the precondition.
+    /// Regions from this tree's [`Snapshot::regions`] /
+    /// [`Snapshot::region_at`] always satisfy the precondition.
     pub fn splice(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
         match region.safety {
             SpliceSafety::Direct => Ok(splice_one(self.sanitized(), region.span, replacement)),
@@ -729,7 +729,7 @@ impl Tree<'_> {
     /// `None` when the node is not a split-ownership leaf, or its target is not
     /// a single plain run (a 、-joined multi-target).
     fn coupled_target_text(&self, span: Span) -> Option<String> {
-        let store = &self.lex_output().store;
+        let store = &self.node_store();
         let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) =
             self.node_at_source(SourceOffset::new(span.start))?.node
         else {
@@ -775,7 +775,7 @@ impl Tree<'_> {
 
 /// The `RegionFormat` of a `BlockOpen` node starting at sanitized offset
 /// `start`, if any.
-fn block_open_format_at(tree: &Tree<'_>, start: u32) -> Option<RegionFormat> {
+fn block_open_format_at(tree: &Snapshot, start: u32) -> Option<RegionFormat> {
     tree.node_at_source(SourceOffset::new(start))
         .and_then(|sn| match sn.node {
             NodeRef::BlockOpen(f) if sn.source_span.start == start => Some(f),
@@ -790,7 +790,7 @@ fn block_open_format_at(tree: &Tree<'_>, start: u32) -> Option<RegionFormat> {
 /// marker.
 fn lone_open_format(marker: &str) -> Option<RegionFormat> {
     let doc = Document::new(marker);
-    match doc.parse().source_nodes().first() {
+    match doc.snapshot().source_nodes().first() {
         Some(sn) if sn.source_span.start == 0 => match sn.node {
             NodeRef::BlockOpen(f) => Some(f),
             _ => None,
@@ -804,7 +804,7 @@ fn lone_open_format(marker: &str) -> Option<RegionFormat> {
 /// single-region container-marker edit without re-parsing the document.
 fn marker_in_family(marker: &str, kind: CoupledKind) -> bool {
     let doc = Document::new(marker);
-    doc.parse()
+    doc.snapshot()
         .source_nodes()
         .first()
         .is_some_and(|sn| sn.source_span.start == 0 && reparsed_in_family(sn.node, kind))
@@ -815,7 +815,7 @@ fn marker_in_family(marker: &str, kind: CoupledKind) -> bool {
 /// minimal `<target><replacement>` context.
 fn reparsed_family_at(ctx: &str, off: u32, kind: CoupledKind) -> bool {
     let doc = Document::new(ctx);
-    doc.parse()
+    doc.snapshot()
         .node_at_source(SourceOffset::new(off))
         .is_some_and(|sn| reparsed_in_family(sn.node, kind))
 }
@@ -832,8 +832,8 @@ fn first_quoted(directive: &str) -> Option<&str> {
 /// window bounded by the reference distance rather than the whole document.
 fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> bool {
     let doc = Document::new(window);
-    let tree = doc.parse();
-    let store = &tree.lex_output().store;
+    let tree = doc.snapshot();
+    let store = &tree.node_store();
     tree.source_nodes().iter().any(|sn| {
         let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) = sn.node else {
             return false;
@@ -909,7 +909,7 @@ mod tests {
     /// non-overlapping cover.
     fn assert_tiling(src: &str) {
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let verbatim = tree.to_source_verbatim();
         let regions = tree.regions();
 
@@ -958,7 +958,7 @@ mod tests {
     /// Find the first region with the given role.
     fn role_of(src: &str, role: RegionRole) -> Region {
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         tree.regions()
             .into_iter()
             .find(|r| r.role == role)
@@ -974,7 +974,7 @@ mod tests {
     fn plain_text_is_one_direct_interstitial() {
         assert_tiling("ただの本文です。");
         let doc = Document::new("ただの本文です。");
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let regions = tree.regions();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].role, RegionRole::Interstitial);
@@ -1058,7 +1058,7 @@ mod tests {
         // A real non-identity minimal-diff edit on a Direct (Reclaimed) node.
         let src = "青空［＃「青空」に傍点］の下を歩く";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let region = role_of(src, RegionRole::ForwardReclaimed);
         let spliced = tree
             .splice(region, "海［＃「海」に傍点］")
@@ -1070,7 +1070,7 @@ mod tests {
     fn coupling_pairs_container_markers() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let open = role_of(src, RegionRole::ContainerOpen);
         let c = tree.coupling(open).expect("container open is coupled");
         assert_eq!(c.kind, CoupledKind::Container);
@@ -1085,7 +1085,7 @@ mod tests {
     fn container_kind_change_rewrites_both_markers() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let open = role_of(src, RegionRole::ContainerOpen);
         let spliced = tree
             .splice(open, "［＃ここから罫囲み］")
@@ -1097,7 +1097,7 @@ mod tests {
         assert!(spliced.contains("本文"));
         // And it re-parses to a balanced 罫囲み container.
         let rt = Document::new(spliced.as_str());
-        let rtree = rt.parse();
+        let rtree = rt.snapshot();
         assert!(
             rtree
                 .regions()
@@ -1110,7 +1110,7 @@ mod tests {
     fn container_amount_change_touches_only_the_open() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let open = role_of(src, RegionRole::ContainerOpen);
         let spliced = tree
             .splice(open, "［＃ここから4字下げ］")
@@ -1132,7 +1132,7 @@ mod tests {
     fn container_delete_drops_both_markers() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let open = role_of(src, RegionRole::ContainerOpen);
         let spliced = tree.splice(open, "").expect("delete is coherent");
         assert!(!spliced.contains("字下げ"));
@@ -1146,7 +1146,7 @@ mod tests {
         // Changing 傍点 → 傍線 keeps the same target, so the forward re-forms.
         let src = "青空がひろがる、その［＃「青空」に傍点］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let spliced = tree
             .splice(r, "［＃「青空」に傍線］")
@@ -1161,7 +1161,7 @@ mod tests {
         // literal so the reference stays in sync.
         let src = "青空がひろがる、その［＃「青空」に傍点］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let spliced = tree
             .splice(r, "［＃「海」に傍点］")
@@ -1170,7 +1170,7 @@ mod tests {
         // It re-parses to a forward reference again (now to 海).
         let rt = Document::new(spliced.as_str());
         assert!(
-            rt.parse()
+            rt.snapshot()
                 .regions()
                 .iter()
                 .any(|r| r.role == RegionRole::ForwardReferenced)
@@ -1187,7 +1187,7 @@ mod tests {
         // re-formation, or the upstream rewrite is silently skipped.
         let src = "青空がひろがる、その［＃「青空」は太字］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let spliced = tree
             .splice(r, "［＃「海」は太字］")
@@ -1205,7 +1205,7 @@ mod tests {
         // re-formation, or the upstream rewrite is silently skipped.
         let src = "序章、その［＃「序章」は中見出し］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::HeadingHint);
         assert_eq!(r.safety, SpliceSafety::Coupled(CoupledKind::HeadingHint));
         let spliced = tree
@@ -1220,7 +1220,7 @@ mod tests {
         // is honestly declined rather than guessing which copy to rewrite.
         let src = "青空と青空、その［＃「青空」に傍点］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let err = tree
             .splice(r, "［＃「海」に傍点］")
@@ -1246,7 +1246,7 @@ mod tests {
         // and the edit is honestly declined rather than guessed.
         let src = "AとB［＃「A」「B」に傍点］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         assert_eq!(
             r.safety,
@@ -1262,7 +1262,7 @@ mod tests {
     fn region_at_finds_node_and_gap() {
         let src = "あ｜青梅《おうめ》い";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let head = tree.region_at(SourceOffset::new(0)).unwrap();
         assert_eq!(head.role, RegionRole::Interstitial);
         assert_eq!(head.span.start, 0);
@@ -1404,7 +1404,7 @@ mod tests {
     fn region_at_gap_start_is_previous_node_end() {
         let src = "あ｜青梅《おうめ》い｜里芋《さといも》う｜大豆《だいず》え";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let regions = tree.regions();
         // Layout: [あ] [ruby] [い] [ruby] [う] [ruby] [え]; the gap between the
         // first two rubies is regions[2].
@@ -1426,7 +1426,7 @@ mod tests {
     fn coupling_of_forward_reference_returns_upstream_partner() {
         let src = "まず青空がひろがる、その［＃「青空」に傍点］";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let c = tree.coupling(r).expect("forward reference is coupled");
         assert_eq!(c.kind, CoupledKind::ForwardReference);
@@ -1443,7 +1443,7 @@ mod tests {
     fn coupling_of_container_close_returns_open_partner() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let close = role_of(src, RegionRole::ContainerClose);
         let c = tree.coupling(close).expect("close couples to its open");
         assert_eq!(c.kind, CoupledKind::Container);
@@ -1460,7 +1460,7 @@ mod tests {
     fn block_open_format_at_requires_offset_at_node_start() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
         let doc = Document::new(src);
-        let tree = doc.parse();
+        let tree = doc.snapshot();
         let open = role_of(src, RegionRole::ContainerOpen);
         assert!(block_open_format_at(&tree, open.span.start).is_some());
         // Interior offset (past the leading `［`): node_at_source still returns

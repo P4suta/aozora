@@ -10,8 +10,6 @@
 
 #![no_main]
 
-use aozora::unstable::lex;
-use aozora::render::serialize;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -34,11 +32,8 @@ fuzz_target!(|data: &[u8]| {
     {
         return;
     }
-    let lex1 = lex(src);
-    let first = serialize(&lex1);
-
-    let lex2 = lex(&first);
-    let second = serialize(&lex2);
+    let first = aozora::parse(src).snapshot().to_source();
+    let second = aozora::parse(first.as_str()).snapshot().to_source();
 
     assert!(
         first == second,

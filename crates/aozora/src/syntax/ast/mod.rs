@@ -1,29 +1,25 @@
 //! Owned, no-lifetime semantic AST — the parser's sole AST.
 //!
-//! Every payload is `Copy`, and the variable-length pieces are `u32`
-//! handles into a flat [`NodeStore`] rather than `&'src str` borrows, so
-//! the whole tree carries no lifetime and **is** `Send + Sync`. The #237
-//! incremental (`PieceSeq`) cache and an out-of-process LSP consumer need
-//! exactly that: a representation they can own, cache, and move between
-//! threads.
+//! Every payload is `Copy`, and variable-length pieces use opaque handles
+//! rather than source borrows. A [`crate::Snapshot`] owns their backing data
+//! and resolves them through its semantic accessors.
 //!
 //! One variant per node. Three payload kinds use `u32` handles instead of
 //! inline variable-length data:
 //!
-//! - interned `&str` → [`StrId`] into a [`StrInterner`];
-//! - `NonEmpty<Content>` → [`ContentRange`] into [`NodeStore`]'s content pool;
-//! - `[Segment]` → [`SegRange`] into [`NodeStore`]'s segment pool.
+//! - interned text → [`StrId`];
+//! - non-empty content runs → [`ContentRange`];
+//! - segment runs → [`SegRange`].
 //!
 //! Lifetime-free `Copy` payloads (`LineFormat`, `RegionFormat`, `Container`,
 //! the scalar enums, `Span`, `Diagnostic`, …) are used directly, without an
-//! owned wrapper. [`LexOutput`] is the lexer's output, carrying a
-//! [`NodeStore`] that owns the variable-length payloads.
+//! owned wrapper.
 //!
 //! # Status
 //!
 //! This is the **sole** AST representation: the lex pipeline's classify stage
-//! builds it directly via [`Allocator`](crate::syntax::alloc::Allocator)
-//! and the fold records it into an [`LexOutput`] that every consumer reads.
+//! builds it directly via an internal allocator
+//! and stores it in the immutable [`crate::Snapshot`] exposed to consumers.
 
 mod intern;
 mod output;
@@ -31,14 +27,17 @@ mod payload;
 mod registry;
 mod store;
 
-pub use intern::{InternStats, StrId, StrInterner};
-pub use output::{LexOutput, SourceNode};
+pub use intern::StrId;
+pub(crate) use output::LexOutput;
+pub use output::SourceNode;
 pub use payload::{
     AngleQuote, Content, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned, Heading,
     HeadingHint, Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
 };
-pub use registry::{ContainerPair, NodeRef, Registry};
-pub use store::{ContentRange, NodeStore, SegRange};
+pub(crate) use registry::Registry;
+pub use registry::{ContainerPair, NodeRef};
+pub(crate) use store::NodeStore;
+pub use store::{ContentRange, SegRange};
 
 #[cfg(test)]
 mod tests {
@@ -89,11 +88,9 @@ mod tests {
             sanitized: String::from("日本"),
             registry,
             diagnostics: Vec::new(),
-            sanitized_len: 6,
             pairs: Vec::new(),
             source_nodes,
             container_pairs: Vec::new(),
-            intern_stats: store.interner.stats,
             store,
         };
 

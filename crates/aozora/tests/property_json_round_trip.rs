@@ -82,7 +82,7 @@ fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
 
 fn assert_json_round_trip(source: &str) {
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     // (1) and (2) for each of the four envelope flavours.
     let diags = json::diagnostics(tree.diagnostics());

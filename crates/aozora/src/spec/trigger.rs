@@ -33,7 +33,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum TriggerKind {
+pub(crate) enum TriggerKind {
     /// `｜` (U+FF5C). Explicit ruby-base delimiter.
     Bar,
 
@@ -75,7 +75,7 @@ impl TriggerKind {
     /// Byte length of the canonical source form of this trigger in UTF-8.
     /// Every trigger is a BMP codepoint encoded as 3 UTF-8 bytes.
     #[must_use]
-    pub const fn source_byte_len(self) -> u32 {
+    pub(crate) const fn source_byte_len(self) -> u32 {
         match self {
             Self::Bar
             | Self::RubyOpen
@@ -124,7 +124,7 @@ impl TriggerKind {
 /// reference clippy's `trivially_copy_pass_by_ref` lint flags.
 #[inline]
 #[must_use]
-pub fn classify_trigger_bytes(window: [u8; 3]) -> Option<TriggerKind> {
+pub(crate) fn classify_trigger_bytes(window: [u8; 3]) -> Option<TriggerKind> {
     Some(match window {
         [0xE2, 0x80, 0xBB] => TriggerKind::RefMark,         // ※
         [0xE2, 0x89, 0xAA] => TriggerKind::AngleQuoteOpen,  // ≪

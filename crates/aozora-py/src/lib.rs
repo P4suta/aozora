@@ -123,12 +123,12 @@ mod bindings {
 
         /// Render the document to HTML and return as a Python `str`.
         fn to_html(&self) -> String {
-            self.inner.parse().to_html()
+            self.inner.snapshot().to_html()
         }
 
         /// Re-emit Aozora source text.
         fn to_source(&self) -> String {
-            self.inner.parse().to_source()
+            self.inner.snapshot().to_source()
         }
 
         /// Diagnostics as a JSON envelope string. Empty parse →
@@ -137,7 +137,7 @@ mod bindings {
         /// returns the parsed `data` list; this is the raw,
         /// byte-identical accessor.
         fn diagnostics_json(&self) -> String {
-            json::diagnostics(self.inner.parse().diagnostics())
+            json::diagnostics(self.inner.snapshot().diagnostics())
         }
 
         /// Diagnostics as a plain-text report (`miette`-free): one block
@@ -145,19 +145,19 @@ mod bindings {
         /// offending source slice. A clean parse → empty string. For the
         /// machine-readable view use `diagnostics_json`.
         fn diagnostics_text(&self) -> String {
-            aozora::diagnostics_text(self.inner.source(), self.inner.parse().diagnostics())
+            aozora::diagnostics_text(self.inner.source(), self.inner.snapshot().diagnostics())
         }
 
         /// Source-keyed Aozora-node spans as a JSON envelope string.
         /// See [`aozora::json::nodes`] for the schema.
         fn nodes_json(&self) -> String {
-            json::nodes(&self.inner.parse())
+            json::nodes(&self.inner.snapshot())
         }
 
         /// Matched open/close pair links as a JSON envelope string.
         /// See [`aozora::json::pairs`] for the schema.
         fn pairs_json(&self) -> String {
-            json::pairs(&self.inner.parse())
+            json::pairs(&self.inner.snapshot())
         }
 
         /// Container open/close pairs (indent / warichu / keigakomi /
@@ -166,7 +166,7 @@ mod bindings {
         /// Brings the Python surface to parity with the Go / Extism
         /// drivers.
         fn container_pairs_json(&self) -> String {
-            json::container_pairs(&self.inner.parse())
+            json::container_pairs(&self.inner.snapshot())
         }
 
         /// Resolved gaiji references (`※［＃…］`) as a JSON envelope
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn diagnostics_through_wire_emits_pua_kind() {
         let doc = AozoraDoc::new("abc\u{E001}def".to_owned());
-        let json = json::diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.snapshot().diagnostics());
         assert!(json.contains("source_contains_pua"), "json: {json}");
     }
 
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn diagnostics_through_wire_is_empty_envelope_for_clean_input() {
         let doc = AozoraDoc::new("plain text".to_owned());
-        let json = json::diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.snapshot().diagnostics());
         assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 

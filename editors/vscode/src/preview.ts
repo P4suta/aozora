@@ -159,7 +159,7 @@ async function openPreview(
       // `acquireVsCodeApi`, no `postMessage`). Keeping scripts OFF means
       // that even if the renderer ever emitted an unescaped tag, an
       // injected `<script>` could not execute — defense-in-depth over
-      // aozora-render's HTML escaping, and consistent with the
+      // aozora's HTML escaping, and consistent with the
       // `enableScripts: false` notation guide. Mirrors the strict CSP
       // the upstream aozora playground adopted (aozora#67).
       enableScripts: false,

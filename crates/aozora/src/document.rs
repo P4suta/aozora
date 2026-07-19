@@ -1,8 +1,8 @@
 //! `Document` — single owning handle to a parsed Aozora source
-//! buffer, and `Tree<'a>` — a view a caller walks for output rendering.
+//! buffer, and `Snapshot` — a view a caller walks for output rendering.
 //!
-//! `Document` owns the source buffer; [`Document::parse`] returns a
-//! [`Tree<'_>`] whose `'a` lifetime tracks only that `&self` source borrow —
+//! `Document` owns the source buffer; [`Document::snapshot`] returns a
+//! [`Snapshot`] whose `'a` lifetime tracks only that `&self` source borrow —
 //! the AST data itself is owned, lifetime-free, and `Send + Sync`
 //! (an `LexOutput`). Owning source removes the self-referential-struct
 //! problem that would otherwise plague driver wrappers (FFI/WASM/Py): callers
@@ -13,6 +13,8 @@
 //! dropping the tree frees them in one step, with no per-node `Drop`.
 
 use core::fmt;
+use core::ops::Range;
+use std::sync::Arc;
 
 use crate::pipeline::{LexOutput, SourceNode, lex};
 use crate::render::{
@@ -20,13 +22,96 @@ use crate::render::{
     serialize, serialize_with,
 };
 use crate::spec::{Diagnostic, DiagnosticSource, PairLink, SourceOffset, Span};
-use crate::syntax::ast::ContainerPair;
+use crate::syntax::Resolved;
+use crate::syntax::ast::{ContainerPair, ContentRange, Directive, Gaiji, NodeStore};
+
+/// Configurable parser for Aozora source.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Parser {
+    diagnostic_policy: DiagnosticPolicy,
+}
+
+impl Parser {
+    /// Create a parser with the default diagnostic policy.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the diagnostic policy used by subsequent parses.
+    #[must_use]
+    pub fn diagnostic_policy(mut self, policy: DiagnosticPolicy) -> Self {
+        self.diagnostic_policy = policy;
+        self
+    }
+
+    /// Parse source into an editable document.
+    #[must_use]
+    pub fn parse(self, source: impl Into<Box<str>>) -> Document {
+        Document::from_parts(source.into(), self.diagnostic_policy)
+    }
+}
+
+/// A byte-range replacement against a document's current UTF-8 source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEdit {
+    range: Range<usize>,
+    replacement: Box<str>,
+}
+
+impl TextEdit {
+    /// Create an edit in old-source byte coordinates.
+    #[must_use]
+    pub fn new(range: Range<usize>, replacement: impl Into<Box<str>>) -> Self {
+        Self {
+            range,
+            replacement: replacement.into(),
+        }
+    }
+
+    /// The old-source byte range replaced by this edit.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    /// Replacement text.
+    #[must_use]
+    pub fn replacement(&self) -> &str {
+        &self.replacement
+    }
+}
+
+/// Failure to apply one or more text edits.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum EditError {
+    /// The range starts after it ends.
+    #[error("edit range starts after it ends")]
+    InvertedRange,
+    /// The range extends beyond the current source.
+    #[error("edit range is outside the source")]
+    OutOfBounds,
+    /// A range endpoint is not a UTF-8 character boundary.
+    #[error("edit range endpoint is not a UTF-8 character boundary")]
+    NotCharBoundary,
+    /// A batch is not sorted by start offset or contains overlapping ranges.
+    #[error("edit batch is not sorted and disjoint")]
+    UnsortedOrOverlapping,
+}
+
+/// Immutable, cheaply cloneable parsed view.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    source: Arc<str>,
+    output: Arc<LexOutput>,
+}
 
 /// Diagnostic policy applied at parse time.
 ///
 /// Diagnostics are always collected best-effort — the lexer never
 /// aborts mid-stream — but the policy controls whether the
-/// returned [`Tree::diagnostics`] slice retains every entry,
+/// returned [`Snapshot::diagnostics`] slice retains every entry,
 /// drops library-internal sanity-check failures, or short-circuits
 /// after the first source-side error.
 ///
@@ -48,7 +133,7 @@ pub enum DiagnosticPolicy {
     DropInternal,
 }
 
-/// Builder for the [`Document::parse`] entry point.
+/// Builder for the [`Document::snapshot`] entry point.
 ///
 /// [`ParseOptions`] is the single tunable surface for the diagnostic policy.
 /// [`Document::new`] is equivalent to `ParseOptions::new().build(source)`.
@@ -76,26 +161,39 @@ impl ParseOptions {
 
     /// Build a [`Document`] from `source`, applying the configured diagnostic
     /// policy. The policy is recorded on the document and applied during
-    /// [`Document::parse`].
+    /// [`Document::snapshot`].
     pub fn build(self, source: impl Into<Box<str>>) -> Document {
-        Document {
-            source: source.into(),
-            diagnostic_policy: self.diagnostic_policy,
-        }
+        Document::from_parts(source.into(), self.diagnostic_policy)
     }
 }
 
 /// Single owning handle to a parsed Aozora source.
 ///
-/// Owns the source buffer. [`Document::parse`] runs the owned, arena-free lex
-/// pipeline and returns a [`Tree`] that owns all its AST data and borrows only
+/// Owns the source buffer. [`Document::snapshot`] runs the owned, arena-free lex
+/// pipeline and returns a [`Snapshot`] that owns all its AST data and borrows only
 /// `&self`'s source.
 pub struct Document {
-    source: Box<str>,
+    source: Arc<str>,
     diagnostic_policy: DiagnosticPolicy,
+    output: Arc<LexOutput>,
 }
 
 impl Document {
+    fn from_parts(source: Box<str>, diagnostic_policy: DiagnosticPolicy) -> Self {
+        let mut output = lex(&source);
+        match diagnostic_policy {
+            DiagnosticPolicy::CollectAll => {}
+            DiagnosticPolicy::DropInternal => output
+                .diagnostics
+                .retain(|diagnostic| diagnostic.source() != DiagnosticSource::Internal),
+        }
+        Self {
+            source: Arc::from(source),
+            diagnostic_policy,
+            output: Arc::new(output),
+        }
+    }
+
     /// Wrap a source string in a `Document` with default options.
     /// Equivalent to `ParseOptions::new().build(source)`.
     #[must_use]
@@ -116,6 +214,67 @@ impl Document {
         &self.source
     }
 
+    /// Return an immutable parsed view of the current document state.
+    #[must_use]
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            source: Arc::clone(&self.source),
+            output: Arc::clone(&self.output),
+        }
+    }
+
+    /// Apply one edit atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EditError`] when the range is inverted, outside the source,
+    /// or not aligned to UTF-8 character boundaries.
+    pub fn apply_edit(&mut self, edit: TextEdit) -> Result<(), EditError> {
+        self.apply_edits([edit])
+    }
+
+    /// Apply a sorted, disjoint batch atomically in old-source coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EditError`] when any range is invalid or the batch is not
+    /// sorted and disjoint. The document remains unchanged.
+    pub fn apply_edits(
+        &mut self,
+        edits: impl IntoIterator<Item = TextEdit>,
+    ) -> Result<(), EditError> {
+        let edits: Vec<TextEdit> = edits.into_iter().collect();
+        let mut previous_end = 0;
+        for (index, edit) in edits.iter().enumerate() {
+            if edit.range.start > edit.range.end {
+                return Err(EditError::InvertedRange);
+            }
+            if edit.range.end > self.source.len() {
+                return Err(EditError::OutOfBounds);
+            }
+            if !self.source.is_char_boundary(edit.range.start)
+                || !self.source.is_char_boundary(edit.range.end)
+            {
+                return Err(EditError::NotCharBoundary);
+            }
+            if index != 0 && edit.range.start < previous_end {
+                return Err(EditError::UnsortedOrOverlapping);
+            }
+            previous_end = edit.range.end;
+        }
+
+        let mut source = String::with_capacity(replacement_capacity(self.source.len(), &edits));
+        let mut cursor = 0;
+        for edit in &edits {
+            source.push_str(&self.source[cursor..edit.range.start]);
+            source.push_str(&edit.replacement);
+            cursor = edit.range.end;
+        }
+        source.push_str(&self.source[cursor..]);
+        *self = Self::from_parts(source.into_boxed_str(), self.diagnostic_policy);
+        Ok(())
+    }
+
     /// Apply an in-place text edit and return a fresh [`Document`].
     ///
     /// `span` is a byte range in the *current* source (`self.source`);
@@ -126,7 +285,7 @@ impl Document {
     /// untrusted byte range, so the arena is reparsed from the spliced
     /// source. Callers that want subtree reuse over the unchanged region
     /// take a [`Region`](crate::Region) through
-    /// [`Self::edit_region`] / [`Tree::splice`](crate::Tree::splice).
+    /// [`Self::edit_region`] / [`Snapshot::splice`](crate::Snapshot::splice).
     ///
     /// The signature is the supported entry point for editor surfaces
     /// implementing `textDocument/didChange`. Even with a full reparse
@@ -175,11 +334,11 @@ impl Document {
     /// Apply a node-aware minimal-diff edit and return a fresh [`Document`].
     ///
     /// `region` must come from this document's
-    /// [`Tree::regions`](crate::Tree::regions) /
-    /// [`Tree::region_at`](crate::Tree::region_at); `replacement`
+    /// [`Snapshot::regions`](crate::Snapshot::regions) /
+    /// [`Snapshot::region_at`](crate::Snapshot::region_at); `replacement`
     /// is the new source for the region's own bytes. Unlike [`Self::try_edit`] —
     /// which takes a raw byte span and trusts the caller — this routes through
-    /// [`Tree::splice`](crate::Tree::splice): a
+    /// [`Snapshot::splice`](crate::Snapshot::splice): a
     /// [`Coupled`](crate::SpliceSafety::Coupled) region's partner (a forward
     /// reference's upstream literal, a container's matching close) is derived
     /// and the edit is verified by re-parse, so the result cannot silently
@@ -193,7 +352,7 @@ impl Document {
     /// # Errors
     ///
     /// Propagates [`SpliceError`](crate::SpliceError) from
-    /// [`Tree::splice`](crate::Tree::splice): an unverifiable coupled edit or
+    /// [`Snapshot::splice`](crate::Snapshot::splice): an unverifiable coupled edit or
     /// an opaque node kind. On error the original document is unchanged (the
     /// caller still owns `self`).
     pub fn edit_region(
@@ -201,44 +360,10 @@ impl Document {
         region: crate::Region,
         replacement: &str,
     ) -> Result<Self, crate::SpliceError> {
-        let spliced = self.parse().splice(region, replacement)?;
+        let spliced = self.snapshot().splice(region, replacement)?;
         Ok(ParseOptions::new()
             .diagnostic_policy(self.diagnostic_policy)
             .build(spliced))
-    }
-
-    /// Parse the document, returning a [`Tree<'_>`] view bound to `&self`'s
-    /// lifetime (only its `source` borrow; the AST data is owned).
-    ///
-    /// Delegates to [`Self::lex`] — the default parse now produces the
-    /// owned, lifetime-free representation — and wraps it with the source
-    /// borrow so the editor-facing [`Tree`] surface keeps the same shape.
-    #[must_use]
-    pub fn parse(&self) -> Tree<'_> {
-        Tree {
-            source: &self.source,
-            inner: TreeInner::Owned(self.lex()),
-        }
-    }
-
-    /// Parse the document into the owned, lifetime-free [`LexOutput`].
-    ///
-    /// The lower-level entry: [`Self::parse`] wraps this in a [`Tree`]. It runs
-    /// the lex pipeline through the native owned fold ([`lex`]), so the result owns all its payloads and
-    /// is `Send + Sync`. Applies the same [`DiagnosticPolicy`] filtering as
-    /// [`Self::parse`].
-    ///
-    /// This is the entry point the #237 incremental-reparse LSP consumer holds
-    /// across edits; renderers reach it through `crate::render`'s owned paths
-    /// (`serialize` / `render_html`).
-    #[must_use]
-    pub fn lex(&self) -> LexOutput {
-        let mut out = lex(&self.source);
-        if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
-            out.diagnostics
-                .retain(|d| d.source() != DiagnosticSource::Internal);
-        }
-        out
     }
 }
 
@@ -247,254 +372,152 @@ impl fmt::Debug for Document {
         f.debug_struct("Document")
             .field("source_len", &self.source.len())
             .field("diagnostic_policy", &self.diagnostic_policy)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
-/// View into a parsed Aozora document.
-///
-/// Wraps an owned, lifetime-free [`LexOutput`] (the `'a` lifetime now
-/// tracks only the `source` borrow). The output may be **owned** by this tree
-/// (the usual [`Document::parse`] case) or **borrowed** from a longer-lived
-/// holder (via [`Tree::view`], used by caches such as the LSP `ParseCache`
-/// that retain the owned output and want tree access without re-parsing).
-/// Renderer methods dispatch to `crate::render`'s owned-AST implementations;
-/// the side-table accessors return owned types (`SourceNode` /
-/// `NodeRef`) whose payload text resolves through the output's
-/// `NodeStore`.
-#[derive(Debug)]
-pub struct Tree<'a> {
-    source: &'a str,
-    inner: TreeInner<'a>,
-}
+impl Snapshot {
+    pub(crate) fn node_store(&self) -> &NodeStore {
+        &self.output.store
+    }
 
-/// Storage for a [`Tree`]'s parsed output: either owned outright or borrowed
-/// from a longer-lived holder. Both forms expose the same `&LexOutput`
-/// through [`Tree::inner`].
-#[derive(Debug)]
-enum TreeInner<'a> {
-    /// The tree owns its output (the [`Document::parse`] case).
-    Owned(LexOutput),
-    /// The tree borrows an output owned elsewhere (the [`Tree::view`] case).
-    Borrowed(&'a LexOutput),
-}
+    #[cfg(feature = "pandoc")]
+    // mutants::skip — pandoc owns the only consumer and is excluded from the
+    // diff mutation command.
+    #[cfg_attr(test, mutants::skip)]
+    pub(crate) fn output(&self) -> &LexOutput {
+        &self.output
+    }
 
-impl<'a> Tree<'a> {
-    /// Build a [`Tree`] view that borrows an already-parsed [`LexOutput`].
-    /// Used by long-lived caches (e.g. the LSP `ParseCache`) that retain the
-    /// owned output and want tree access without re-parsing.
+    /// Source text for this immutable view.
     #[must_use]
-    pub fn view(source: &'a str, output: &'a LexOutput) -> Self {
-        Self {
-            source,
-            inner: TreeInner::Borrowed(output),
-        }
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
-    /// Borrow the underlying output regardless of owned/borrowed storage.
-    fn inner(&self) -> &LexOutput {
-        match &self.inner {
-            TreeInner::Owned(o) => o,
-            TreeInner::Borrowed(o) => o,
-        }
-    }
-
-    /// The source text this tree was parsed from.
-    #[must_use]
-    pub fn source(&self) -> &'a str {
-        self.source
-    }
-
-    /// Diagnostics emitted during parsing.
+    /// Diagnostics emitted while parsing.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.inner().diagnostics
+        &self.output.diagnostics
     }
 
-    /// Resolved (open, close) delimiter pairs as observed by the pair stage.
-    /// One entry per matched pair, in close order. Unmatched closes
-    /// and unclosed opens are excluded — they have no partner span and
-    /// would only confuse editor surfaces.
-    ///
-    /// Spans use the same coordinate system as
-    /// [`Self::diagnostics`]: byte offsets in the *sanitized* source
-    /// (which equals the original source on every input that did not
-    /// trigger BOM/CRLF/accent rewriting in the sanitize stage). Editor-facing
-    /// LSP requests like `textDocument/linkedEditingRange` and
-    /// `textDocument/documentHighlight` consume this directly.
+    /// Resolved delimiter pairs in source byte coordinates.
     #[must_use]
     pub fn pairs(&self) -> &[PairLink] {
-        &self.inner().pairs
+        &self.output.pairs
     }
 
-    /// Borrow the underlying [`LexOutput`].
-    #[must_use]
-    pub fn lex_output(&self) -> &LexOutput {
-        self.inner()
-    }
-
-    /// Find the node whose source span covers `src_off` — a
-    /// sanitized-source byte offset, typed as
-    /// [`crate::spec::SourceOffset`] so callers cannot
-    /// accidentally mix up source and normalized coordinates.
-    /// Returns `None` if the offset falls inside a `SpanKind::Plain`
-    /// run between Aozora constructs.
-    ///
-    /// This is the canonical offset→node lookup: editor and LSP surfaces
-    /// work in source coordinates, so this is the position query to reach
-    /// for (the normalized-coordinate registry is a low-level internal).
-    ///
-    /// `O(log n)` over the source-keyed side-table.
-    #[must_use]
-    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode> {
-        self.inner().node_at_source(src_off)
-    }
-
-    /// Borrow the source-keyed side table directly. Sorted by
-    /// `source_span.start`; useful for editor surfaces that want to
-    /// iterate every classified node (semantic tokens, document
-    /// symbols, …).
-    ///
-    /// **Host literal contexts.** A host that embeds aozora into a larger
-    /// grammar (e.g. CommonMark via comrak) collapses each notation into a
-    /// PUA sentinel before its own parse. When the host routes a sentinel
-    /// into a *literal* field — a code span `` `…` `` or a link/image
-    /// destination — the notation must appear as its **original source**, not
-    /// be interpreted. Such a host must resolve *every* sentinel it emits
-    /// (including ones in literal regions) and recover the original text from
-    /// `SourceNode::source_span` + [`Span::slice`](crate::Span::slice);
-    /// resolving only "normal"-text sentinels leaks the raw sentinel and
-    /// desyncs the registry cursor.
+    /// Classified nodes ordered by source span.
     #[must_use]
     pub fn source_nodes(&self) -> &[SourceNode] {
-        &self.inner().source_nodes
+        &self.output.source_nodes
     }
 
-    /// The sanitized source buffer — the exact bytes the lexer
-    /// classified, after the sanitize stage (BOM-strip, CRLF→LF,
-    /// `〔...〕` accent decomposition, decorative-rule isolation, PUA
-    /// neutralization).
-    ///
-    /// This is the coordinate space every `source_span` on
-    /// [`Self::source_nodes`] / [`Self::pairs`] / [`Self::diagnostics`]
-    /// indexes — equal to [`Self::source`] byte-for-byte on inputs that
-    /// triggered no sanitize rewrite. It carries no PUA sentinels and no
-    /// synthesized block padding, so it is the verbatim round-trip basis
-    /// returned by [`Self::to_source_verbatim`].
+    /// Resolve a directive's original source spelling.
     #[must_use]
-    pub fn sanitized(&self) -> &str {
-        &self.inner().sanitized
+    pub fn directive_source(&self, directive: Directive) -> &str {
+        self.output.store.resolve_str(directive.raw)
     }
 
-    /// Resolved container open/close pairs in normalized coordinates.
+    /// Resolve a plain content range, returning `None` for nested content.
+    #[must_use]
+    pub fn plain_content(&self, range: ContentRange) -> Option<&str> {
+        self.output.store.content_range_as_plain(range)
+    }
+
+    /// Resolve a gaiji node to its concrete glyph.
+    #[must_use]
+    pub fn resolve_gaiji(&self, gaiji: &Gaiji) -> Option<Resolved> {
+        gaiji.resolve(&self.output.store)
+    }
+
+    /// Return the canonical mencode tail carried by a gaiji.
     ///
-    /// One entry per balanced
-    /// `［＃ここから…］`/`［＃ここで…終わり］` pair, in close order.
-    /// Editor surfaces can ask "where is the close for this open?"
-    /// directly off this slice; renderers that want to recurse
-    /// through container bodies use the open/close offsets to slice
-    /// the normalized text.
+    /// # Panics
     ///
-    /// Coordinates are [`crate::spec::NormalizedOffset`] — they index the
-    /// PUA-rewritten text, not the original source.
+    /// Panics only if formatting into an owned `String` fails.
+    #[must_use]
+    pub fn gaiji_mencode(&self, gaiji: &Gaiji) -> Option<String> {
+        gaiji.canonical.has_mencode().then(|| {
+            let mut mencode = String::new();
+            gaiji
+                .canonical
+                .write_mencode(&self.output.store, &mut mencode)
+                .expect("writing to String cannot fail");
+            mencode
+        })
+    }
+
+    /// Find the classified node covering a source byte offset.
+    #[must_use]
+    pub fn node_at_source(&self, offset: SourceOffset) -> Option<&SourceNode> {
+        self.output.node_at_source(offset)
+    }
+
+    /// Resolved container pairs.
     #[must_use]
     pub fn container_pairs(&self) -> &[ContainerPair] {
-        &self.inner().container_pairs
+        &self.output.container_pairs
     }
 
-    /// Render the tree to a semantic-HTML5 string.
+    /// Sanitized text retained by the parser.
+    #[must_use]
+    pub fn sanitized(&self) -> &str {
+        &self.output.sanitized
+    }
+
+    /// Render semantic HTML.
     #[must_use]
     pub fn to_html(&self) -> String {
-        render_html(self.inner())
+        render_html(&self.output)
     }
 
-    /// Render the tree to a semantic-HTML5 string with explicit
-    /// [`RenderOptions`].
-    ///
-    /// With the default options (`directives: Off`) this is byte-identical to
-    /// [`Self::to_html`]: an `Unknown` directive the parser did not recognise
-    /// renders as an inert `<span class="aozora-directive" hidden>`, so the
-    /// default render never depends on the notation-hygiene catalogue.
-    ///
-    /// With `directives` not `Off`, verified near-misses (per the single
-    /// `crate::syntax::lint::canonical_directive` authority — plus, at the
-    /// `Degraded` level, the lossy / judgment `crate::syntax::degraded`
-    /// reductions — reached transitively through the formatter rewrite) render
-    /// as if they were their canonical spelling. This is the opt-in, read-only
-    /// "render as if canonical" role of ADR-0022 / ADR-0026: it reuses the
-    /// formatter rewrite as an internal, throwaway step feeding a reparse, and
-    /// never mutates this document's source or the default parse/render.
+    /// Render semantic HTML with explicit options.
     #[must_use]
-    pub fn to_html_with(&self, opts: RenderOptions) -> String {
-        match opts.directives {
+    pub fn to_html_with(&self, options: RenderOptions) -> String {
+        match options.directives {
             DirectiveNormalization::Off => self.to_html(),
-            level => render_html_normalized(self.inner(), level),
+            level => render_html_normalized(&self.output, level),
         }
     }
 
-    /// Re-emit Aozora source text from the parsed tree.
+    /// Serialize the parsed document to Aozora source.
     #[must_use]
     pub fn to_source(&self) -> String {
-        serialize(self.inner())
+        serialize(&self.output)
     }
 
-    /// Re-emit Aozora source text with explicit [`SerializeOptions`].
-    ///
-    /// With the default options this equals [`Self::to_source`]. With
-    /// `directives` not `Off` it additionally rewrites the notation-hygiene
-    /// lint's `DirectiveKind::Unknown` near-misses to canonical form — the
-    /// `aozora fmt --fix` autofix (which constructs `Canonical`).
-    ///
-    /// The rewrite is a second-pass fixed point. The emit-time substitution
-    /// can change a directive's block/inline nature — an inline
-    /// `［＃字下げ終わり］` becomes the block close `［＃ここで字下げ終わり］` —
-    /// so a normalizing re-parse re-flows the surrounding block structure.
-    /// After it, every directive is canonical, so a further `--fix`
-    /// pass is a no-op: the serializer's `∘ parse` fixed-point contract holds
-    /// and `--write` stays idempotent.
+    /// Serialize with explicit options.
     #[must_use]
-    pub fn to_source_with(&self, opts: SerializeOptions) -> String {
-        let first = serialize_with(self.inner(), opts);
-        match opts.directives {
-            DirectiveNormalization::Off => first,
-            DirectiveNormalization::Canonical | DirectiveNormalization::Degraded => {
-                Document::new(first).parse().to_source()
-            }
-        }
+    pub fn to_source_with(&self, options: SerializeOptions) -> String {
+        serialize_with(&self.output, options)
     }
 
-    /// Recover the source text **verbatim** — byte-for-byte equal to
-    /// `sanitize(source)`, the input the lexer actually classified.
-    ///
-    /// Distinct from [`Self::to_source`], which *re-serializes* the
-    /// parsed tree (walking the normalized stream and synthesizing block
-    /// padding around sentinels — a canonical, not byte-preserving,
-    /// form). `to_source_verbatim` instead returns the retained
-    /// sanitized buffer unchanged, so the contract is the strongest
-    /// fixed point the pipeline can offer:
-    ///
-    /// ```text
-    /// to_source_verbatim(parse(doc)) == sanitize(doc)
-    /// ```
-    ///
-    /// It is **not** equal to the original `doc` whenever sanitation
-    /// fired (BOM-strip and PUA neutralization are lossy/irreversible),
-    /// which is why the basis is `sanitize(doc)` rather than `doc`.
-    ///
-    /// The buffer is returned directly from the side table populated at
-    /// parse time; no tree walk and no re-sanitation runs. Allocates one
-    /// owned `String` (matching [`Self::to_source`]'s signature); callers
-    /// that want a borrow can use [`Self::sanitized`] instead.
+    /// Recover the sanitized parser input without canonical reserialization.
     #[must_use]
     pub fn to_source_verbatim(&self) -> String {
-        self.inner().sanitized.clone()
+        self.output.sanitized.clone()
     }
+}
+
+// mutants::skip — capacity arithmetic changes allocation pressure but not
+// observable output.
+#[cfg_attr(test, mutants::skip)]
+fn replacement_capacity(source_len: usize, edits: &[TextEdit]) -> usize {
+    let added = edits.iter().fold(0usize, |total, edit| {
+        total.saturating_add(edit.replacement.len())
+    });
+    let removed = edits.iter().fold(0usize, |total, edit| {
+        total.saturating_add(edit.range.end - edit.range.start)
+    });
+    source_len.saturating_sub(removed).saturating_add(added)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::spec::PairKind;
+    use crate::syntax::ast::Node;
     use crate::syntax::ast::NodeRef;
 
     #[test]
@@ -508,21 +531,149 @@ mod tests {
     fn parse_returns_borrowed_tree_with_same_source() {
         let s = "world";
         let d = Document::new(s);
-        let t = d.parse();
+        let t = d.snapshot();
         assert_eq!(t.source(), s);
     }
 
     #[test]
     fn diagnostics_empty_for_clean_input() {
         let d = Document::new("plain");
-        let t = d.parse();
+        let t = d.snapshot();
         assert!(t.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn edit_batch_is_atomic() {
+        let mut document = Parser::new().parse("aあz");
+        let before = document.source().to_owned();
+        let result =
+            document.apply_edits([TextEdit::new(0..1, "A"), TextEdit::new(2..3, "invalid")]);
+        assert_eq!(result, Err(EditError::NotCharBoundary));
+        assert_eq!(document.source(), before);
+    }
+
+    #[test]
+    fn edit_batch_uses_old_source_coordinates() {
+        let mut document = crate::parse("alpha beta gamma");
+        document
+            .apply_edits([TextEdit::new(0..5, "A"), TextEdit::new(11..16, "G")])
+            .expect("sorted disjoint edits");
+        assert_eq!(document.source(), "A beta G");
+    }
+
+    #[test]
+    fn text_edit_accessors_preserve_constructor_values() {
+        let edit = TextEdit::new(1..3, "replacement");
+        assert_eq!(edit.range(), 1..3);
+        assert_eq!(edit.replacement(), "replacement");
+    }
+
+    #[test]
+    fn edit_validation_covers_every_batch_boundary() {
+        let mut document = crate::parse("abcd");
+        let inverted_start = 2;
+        let inverted_end = 1;
+        assert_eq!(
+            document.apply_edit(TextEdit::new(inverted_start..inverted_end, "")),
+            Err(EditError::InvertedRange)
+        );
+        assert_eq!(
+            document.apply_edit(TextEdit::new(0..5, "")),
+            Err(EditError::OutOfBounds)
+        );
+        document
+            .apply_edit(TextEdit::new(1..1, "X"))
+            .expect("empty ranges are valid insertions");
+        assert_eq!(document.source(), "aXbcd");
+
+        let mut document = crate::parse("abcd");
+        document
+            .apply_edits([TextEdit::new(0..1, "A"), TextEdit::new(1..2, "B")])
+            .expect("adjacent edits are disjoint");
+        assert_eq!(document.source(), "ABcd");
+
+        let mut document = crate::parse("abcd");
+        assert_eq!(
+            document.apply_edits([TextEdit::new(1..3, ""), TextEdit::new(2..4, "")]),
+            Err(EditError::UnsortedOrOverlapping)
+        );
+    }
+
+    #[test]
+    fn edit_rejects_each_non_character_boundary() {
+        let mut document = crate::parse("あ");
+        assert_eq!(
+            document.apply_edit(TextEdit::new(1..3, "")),
+            Err(EditError::NotCharBoundary)
+        );
+        assert_eq!(
+            document.apply_edit(TextEdit::new(0..1, "")),
+            Err(EditError::NotCharBoundary)
+        );
+    }
+
+    #[test]
+    fn parser_builder_records_the_selected_policy() {
+        let document = Parser::new()
+            .diagnostic_policy(DiagnosticPolicy::DropInternal)
+            .parse("plain");
+        assert!(format!("{document:?}").contains("DropInternal"));
+    }
+
+    #[test]
+    fn snapshot_resolves_public_payloads() {
+        let snapshot =
+            crate::parse("｜青梅《おうめ》※［＃「木＋吶のつくり」、第3水準1-85-54］［＃未知］")
+                .snapshot();
+        let mut saw_ruby = false;
+        let mut saw_gaiji = false;
+        let mut saw_directive = false;
+        for source_node in snapshot.source_nodes() {
+            let node = match source_node.node {
+                NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => node,
+                NodeRef::BlockOpen(_) | NodeRef::BlockClose(_) => continue,
+            };
+            match node {
+                Node::Ruby(ruby) => {
+                    assert_eq!(snapshot.plain_content(ruby.base), Some("青梅"));
+                    assert_eq!(snapshot.plain_content(ruby.reading), Some("おうめ"));
+                    saw_ruby = true;
+                }
+                Node::Gaiji(gaiji) => {
+                    assert!(snapshot.resolve_gaiji(&gaiji).is_some());
+                    saw_gaiji = true;
+                }
+                Node::Directive(directive) => {
+                    assert_eq!(snapshot.directive_source(directive), "［＃未知］");
+                    saw_directive = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_ruby && saw_gaiji && saw_directive);
+    }
+
+    #[test]
+    fn snapshot_is_immutable_across_edits() {
+        let mut document = crate::parse("plain");
+        let snapshot = document.snapshot();
+        document
+            .apply_edit(TextEdit::new(0..5, "changed"))
+            .expect("valid edit");
+        assert_eq!(snapshot.source(), "plain");
+        assert_eq!(document.snapshot().source(), "changed");
+    }
+
+    #[test]
+    fn snapshot_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Snapshot>();
     }
 
     #[test]
     fn diagnostics_populated_for_pua_collision() {
         let d = Document::new("contains \u{E001} sentinel");
-        let t = d.parse();
+        let t = d.snapshot();
         assert!(!t.diagnostics().is_empty());
     }
 
@@ -582,8 +733,8 @@ mod tests {
         assert_eq!(edited.source(), from_scratch.source());
         // Same to_source output → AST shape is equivalent.
         assert_eq!(
-            edited.parse().to_source(),
-            from_scratch.parse().to_source(),
+            edited.snapshot().to_source(),
+            from_scratch.snapshot().to_source(),
             "edit() must be equivalent to splice + reparse"
         );
     }
@@ -629,8 +780,8 @@ mod tests {
     #[test]
     fn round_trip_through_serialize_is_a_fixed_point() {
         let s = "｜青梅《おうめ》";
-        let first = Document::new(s).parse().to_source();
-        let second = Document::new(first.clone()).parse().to_source();
+        let first = Document::new(s).snapshot().to_source();
+        let second = Document::new(first.clone()).snapshot().to_source();
         assert_eq!(first, second, "round-trip must be a fixed point");
     }
 
@@ -638,7 +789,7 @@ mod tests {
     fn pairs_records_simple_ruby() {
         // 《 … 》 produces one Ruby pair.
         let d = Document::new("｜青梅《おうめ》");
-        let t = d.parse();
+        let t = d.snapshot();
         let pairs = t.pairs();
         assert_eq!(pairs.len(), 1);
         let link = pairs[0];
@@ -655,7 +806,7 @@ mod tests {
     fn pairs_records_multiple_brackets_in_close_order() {
         // Nested brackets — inner closes first.
         let d = Document::new("［＃外［＃内］終］");
-        let t = d.parse();
+        let t = d.snapshot();
         let pairs = t.pairs();
         assert_eq!(pairs.len(), 2);
         // Inner pair closes first; its open must come AFTER the outer's open.
@@ -667,7 +818,7 @@ mod tests {
     fn pairs_excludes_unclosed_open() {
         // No matching `］`. Diagnostic fires; pairs stays empty.
         let d = Document::new("［＃orphan");
-        let t = d.parse();
+        let t = d.snapshot();
         assert!(t.pairs().is_empty());
         assert!(!t.diagnostics().is_empty());
     }
@@ -676,7 +827,7 @@ mod tests {
     fn pairs_excludes_unmatched_close() {
         // Stray close on an empty stack.
         let d = Document::new("orphan］");
-        let t = d.parse();
+        let t = d.snapshot();
         assert!(t.pairs().is_empty());
     }
 
@@ -684,7 +835,7 @@ mod tests {
     fn node_at_source_finds_inline_ruby() {
         let src = "前｜青梅《おうめ》後";
         let d = Document::new(src);
-        let t = d.parse();
+        let t = d.snapshot();
         // Find the byte offset of `｜` — that's where the ruby span starts.
         let bar_off =
             u32::try_from(src.find('｜').expect("source contains ｜")).expect("offset fits in u32");
@@ -701,7 +852,7 @@ mod tests {
     fn node_at_source_returns_none_for_plain_run() {
         let src = "前｜青梅《おうめ》後";
         let d = Document::new(src);
-        let t = d.parse();
+        let t = d.snapshot();
         // Offset 0 is inside the leading "前" plain run — no node.
         assert!(t.node_at_source(SourceOffset::new(0)).is_none());
     }
@@ -710,7 +861,7 @@ mod tests {
     fn source_nodes_are_sorted_by_source_start() {
         let src = "｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］";
         let d = Document::new(src);
-        let t = d.parse();
+        let t = d.snapshot();
         let nodes = t.source_nodes();
         for window in nodes.windows(2) {
             assert!(window[0].source_span.start <= window[1].source_span.start);
@@ -724,7 +875,10 @@ mod tests {
         let src = "｜青梅《おうめ》";
         let via_new = Document::new(src);
         let via_options = ParseOptions::new().build(src);
-        assert_eq!(via_new.parse().to_source(), via_options.parse().to_source());
+        assert_eq!(
+            via_new.snapshot().to_source(),
+            via_options.snapshot().to_source()
+        );
     }
 
     #[test]
@@ -740,8 +894,8 @@ mod tests {
             .diagnostic_policy(DiagnosticPolicy::DropInternal)
             .build("plain text");
         assert_eq!(
-            doc_collect.parse().diagnostics().len(),
-            doc_drop.parse().diagnostics().len(),
+            doc_collect.snapshot().diagnostics().len(),
+            doc_drop.snapshot().diagnostics().len(),
             "policy is a no-op when no Internal diagnostics exist"
         );
     }
@@ -760,7 +914,7 @@ mod tests {
         use crate::pipeline::lexer::sanitize::sanitize;
         let expected = sanitize(doc).text;
         let d = Document::new(doc);
-        let t = d.parse();
+        let t = d.snapshot();
         assert_eq!(
             t.to_source_verbatim(),
             *expected,
@@ -828,12 +982,15 @@ mod tests {
         assert_verbatim_equals_sanitize(doc);
         let t_doc = Document::new(doc);
         assert_ne!(
-            t_doc.parse().to_source_verbatim(),
+            t_doc.snapshot().to_source_verbatim(),
             doc,
             "verbatim must NOT equal the raw doc once a BOM was stripped"
         );
         assert!(
-            !t_doc.parse().to_source_verbatim().starts_with('\u{FEFF}'),
+            !t_doc
+                .snapshot()
+                .to_source_verbatim()
+                .starts_with('\u{FEFF}'),
             "stacked BOMs must be gone from the verbatim text"
         );
     }
@@ -845,7 +1002,7 @@ mod tests {
         assert_verbatim_equals_sanitize(doc);
         assert!(
             !Document::new(doc)
-                .parse()
+                .snapshot()
                 .to_source_verbatim()
                 .contains('\r'),
             "CR must be normalized out of the verbatim text"
@@ -873,7 +1030,7 @@ mod tests {
         // NOT equal the raw doc (the rewrite is lossy).
         let doc = "before\u{E001}mid\u{E004}after";
         assert_verbatim_equals_sanitize(doc);
-        let recovered = Document::new(doc).parse().to_source_verbatim();
+        let recovered = Document::new(doc).snapshot().to_source_verbatim();
         assert!(
             recovered.contains('\u{FFFD}') && !recovered.contains('\u{E001}'),
             "raw PUA sentinels must come back as U+FFFD"
@@ -891,14 +1048,14 @@ mod tests {
         let collect = Document::new("hello");
         assert_eq!(
             format!("{collect:?}"),
-            "Document { source_len: 5, diagnostic_policy: CollectAll }",
+            "Document { source_len: 5, diagnostic_policy: CollectAll, .. }",
         );
         let dropped = Document::options()
             .diagnostic_policy(DiagnosticPolicy::DropInternal)
             .build("hi");
         assert_eq!(
             format!("{dropped:?}"),
-            "Document { source_len: 2, diagnostic_policy: DropInternal }",
+            "Document { source_len: 2, diagnostic_policy: DropInternal, .. }",
         );
     }
 
@@ -913,7 +1070,7 @@ mod tests {
         let doc = Document::options()
             .diagnostic_policy(DiagnosticPolicy::DropInternal)
             .build("contains \u{E001} sentinel");
-        let t = doc.parse();
+        let t = doc.snapshot();
         let diags = t.diagnostics();
         assert_eq!(
             diags.len(),
@@ -936,7 +1093,7 @@ mod tests {
         let d = Document::new(
             "序\n［＃ここから２字下げ］\n本文の段落。\n［＃ここで字下げ終わり］\n了\n",
         );
-        let t = d.parse();
+        let t = d.snapshot();
         let pairs = t.container_pairs();
         assert_eq!(pairs.len(), 1, "one balanced container pair");
         assert!(

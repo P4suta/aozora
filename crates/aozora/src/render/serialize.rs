@@ -18,7 +18,7 @@
 
 use core::fmt::{self, Write};
 
-use crate::pipeline::{has_long_rule_line, isolate_decorative_rules};
+use crate::pipeline::{has_long_rule_line, isolate_decorative_rules, lex};
 use crate::render::spelling::source::{
     NewlineCappedWriter, TrackingWriter, emit_container_close, emit_container_open, emit_line,
     emit_section_break, heading_level_word, heading_style_keyword,
@@ -57,7 +57,7 @@ pub enum DirectiveNormalization {
     Canonical,
     /// Tier1 + Tier2: additionally reduce the lossy / judgment degraded forms
     /// (per [`degraded_directive`]) Tier1 refuses. Constructed **only** by the
-    /// opt-in renderer ([`crate::render::render_html_normalized`] via `render --degraded`),
+    /// opt-in renderer via `render --degraded`,
     /// never by a persistent-write path, so a Tier2 reduction applied in
     /// error can reach only `--degraded` render output — never source. See
     /// ADR-0026.
@@ -105,7 +105,7 @@ impl SerializeOptions {
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn serialize(out: &LexOutput) -> String {
+pub(crate) fn serialize(out: &LexOutput) -> String {
     serialize_with(out, SerializeOptions::default())
 }
 
@@ -122,9 +122,19 @@ pub fn serialize(out: &LexOutput) -> String {
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn serialize_with(out: &LexOutput, opts: SerializeOptions) -> String {
+pub(crate) fn serialize_with(out: &LexOutput, opts: SerializeOptions) -> String {
+    let first = serialize_pass(out, opts);
+    match opts.directives {
+        DirectiveNormalization::Off => first,
+        DirectiveNormalization::Canonical | DirectiveNormalization::Degraded => {
+            serialize_pass(&lex(&first), SerializeOptions::default())
+        }
+    }
+}
+
+fn serialize_pass(out: &LexOutput, opts: SerializeOptions) -> String {
     let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
-    serialize_into_with(out, &mut s, opts).expect("writing to NewlineCappedWriter never fails");
+    serialize_into_pass(out, &mut s, opts).expect("writing to NewlineCappedWriter never fails");
     let raw = s.into_string();
     if has_long_rule_line(&raw) {
         isolate_decorative_rules(&raw)
@@ -143,12 +153,17 @@ pub fn serialize_with(out: &LexOutput, opts: SerializeOptions) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
 /// lexer's `Span` width contract; in practice unreachable.
-pub fn serialize_into<W: Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
+#[cfg(test)]
+pub(crate) fn serialize_into<W: Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
     serialize_into_with(out, writer, SerializeOptions::default())
 }
 
 /// Serialize an [`LexOutput`] into the given writer with explicit
 /// [`SerializeOptions`].
+///
+/// Directive normalization can change block structure, so non-`Off` modes
+/// buffer the normalized fixed point before writing it. The default `Off`
+/// path remains streaming.
 ///
 /// # Errors
 ///
@@ -158,7 +173,19 @@ pub fn serialize_into<W: Write>(out: &LexOutput, writer: &mut W) -> fmt::Result 
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
 /// lexer's `Span` width contract; in practice unreachable.
-pub fn serialize_into_with<W: Write>(
+#[cfg(test)]
+pub(crate) fn serialize_into_with<W: Write>(
+    out: &LexOutput,
+    writer: &mut W,
+    opts: SerializeOptions,
+) -> fmt::Result {
+    if opts.directives != DirectiveNormalization::Off {
+        return writer.write_str(&serialize_with(out, opts));
+    }
+    serialize_into_pass(out, writer, opts)
+}
+
+fn serialize_into_pass<W: Write>(
     out: &LexOutput,
     writer: &mut W,
     opts: SerializeOptions,
@@ -695,6 +722,19 @@ mod tests {
         ] {
             assert_parity(src);
         }
+    }
+
+    #[test]
+    fn normalized_serializer_reflows_block_directives_before_returning() {
+        let opts = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
+        let out = lex("［＃中中見出し］\0\0");
+        let expected = "\n\n［＃中見出し］\n\n\0\0";
+        assert_eq!(serialize_with(&out, opts), expected);
+
+        let mut streamed = String::new();
+        serialize_into_with(&out, &mut streamed, opts)
+            .expect("serialize into String is infallible");
+        assert_eq!(streamed, expected);
     }
 
     /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) is not

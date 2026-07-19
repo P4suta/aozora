@@ -7,7 +7,7 @@
 //!
 //! It owns **no** parsing, rendering, or diagnostic logic. Every view is the
 //! exact engine surface the other subcommands emit — [`json::nodes`] (as
-//! `aozora inspect nodes`), [`aozora::Tree::to_html`] (as `aozora render`),
+//! `aozora inspect nodes`), [`aozora::Snapshot::to_html`] (as `aozora render`),
 //! [`aozora::pandoc::to_pandoc`] (as `aozora pandoc`), and
 //! [`aozora::diagnostics_text`] (the portable plain-text report) — so the REPL
 //! can never disagree with the rest of the CLI. It defines no machine surface
@@ -263,7 +263,7 @@ impl Repl {
 /// so the bytes match `inspect nodes` / `render` / `pandoc` exactly.
 fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = doc.snapshot();
 
     let mut sections: Vec<String> = Vec::new();
     if mode.shows_nodes() {
@@ -276,11 +276,11 @@ fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
         sections.push(section(&i18n::t(lang, "repl-label-html"), &tree.to_html()));
     }
     if mode.shows_pandoc() {
-        let owned = doc.lex();
+        let snapshot = doc.snapshot();
         // Serializing the Pandoc AST cannot fail in practice; surface the error
         // text rather than panicking if that assumption ever breaks.
         let pandoc =
-            serde_json::to_string(&to_pandoc(&owned)).unwrap_or_else(|err| err.to_string());
+            serde_json::to_string(&to_pandoc(&snapshot)).unwrap_or_else(|err| err.to_string());
         sections.push(section(&i18n::t(lang, "repl-label-pandoc"), &pandoc));
     }
 
@@ -458,7 +458,7 @@ mod tests {
         let source = "｜青空《あおぞら》";
         let out = eval(source, Mode::Html, &lang("en"));
         // The HTML view is byte-for-byte the `aozora render` output.
-        let expected = Document::new(source).parse().to_html();
+        let expected = Document::new(source).snapshot().to_html();
         assert!(
             !expected.is_empty(),
             "fixture must render to non-empty HTML"
@@ -478,7 +478,7 @@ mod tests {
     fn eval_nodes_matches_the_inspect_engine() {
         let source = "青空《あおぞら》";
         let out = eval(source, Mode::Nodes, &lang("en"));
-        let expected = json::nodes(&Document::new(source).parse());
+        let expected = json::nodes(&Document::new(source).snapshot());
         assert!(
             out.contains(expected.trim_end()),
             "nodes view is inspect bytes: {out}"

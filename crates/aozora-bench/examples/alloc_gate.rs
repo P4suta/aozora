@@ -1,5 +1,5 @@
-//! Deterministic allocation-pressure ratchet for the owned lex producer
-//! (`lex` / `Document::lex`), the #237 P0.2-real perf gate.
+//! Deterministic allocation-pressure ratchet for the public document parser,
+//! the #237 P0.2-real perf gate.
 //!
 //! The lex producer stores the AST in owned `Vec` / `String` storage
 //! (`NodeStore`, `StrInterner`). The worry
@@ -9,8 +9,8 @@
 //! on a laptop and a noisy CI runner — so they make a stable ratchet.
 //!
 //! For every corpus document this measures, via dhat's [`dhat::HeapStats`]
-//! around `lex` only, the owned-path allocation delta (transient arena
-//! chunks + owned storage). Two normalized metrics are gated against a
+//! around `parse` and `snapshot`, the owned-path allocation delta (source,
+//! transient scratch, and owned storage). Two normalized metrics are gated against a
 //! committed baseline at `corpus/alloc-baseline.json`, mirroring
 //! `xtask corpus audit-gate`:
 //!
@@ -47,7 +47,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use aozora::encoding::decode_auto;
-use aozora::unstable::lex;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use dhat::{HeapStats, Profiler};
 use serde_json::{Value, from_str, json, to_string_pretty};
@@ -178,7 +177,7 @@ fn main() {
         // Measured window: only the owned producer's allocations (transient
         // scratch + owned storage) land in the delta.
         let before = HeapStats::get();
-        let owned = lex(&text);
+        let owned = aozora::parse(text.as_ref()).snapshot();
         let after = HeapStats::get();
         totals.alloc_blocks += after.total_blocks - before.total_blocks;
         totals.alloc_bytes += after.total_bytes - before.total_bytes;
@@ -187,10 +186,10 @@ fn main() {
 
         // Read the side-table lengths so the optimiser cannot elide the parse.
         black_box((
-            owned.registry.len(),
-            owned.source_nodes.len(),
-            owned.pairs.len(),
-            owned.container_pairs.len(),
+            owned.source_nodes().len(),
+            owned.pairs().len(),
+            owned.container_pairs().len(),
+            owned.diagnostics().len(),
         ));
     }
 
@@ -303,7 +302,7 @@ fn write_baseline(args: &Args, totals: &Totals, blocks_per_file: f64, bytes_per_
         "alloc_bytes_total": totals.alloc_bytes,
         "alloc_blocks_per_file": round4(blocks_per_file),
         "alloc_bytes_per_source_byte": round4(bytes_per_source_byte),
-        "note": "owned lex producer (#237 P0.2-real) allocation-pressure ratchet; \
+        "note": "public Document parse/snapshot (#237 P0.2-real) allocation-pressure ratchet; \
                  regenerate with `just alloc-gate-update`. Metrics normalized \
                  per-file / per-source-byte so corpus drift does not trip the gate.",
     });

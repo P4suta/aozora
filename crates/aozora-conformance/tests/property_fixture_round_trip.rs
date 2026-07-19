@@ -39,10 +39,10 @@ fn all_fixture_sources() -> &'static Vec<String> {
 
 fn parse_serialise_parse(source: &str) {
     let doc = Document::new(source.to_owned());
-    let tree = doc.parse();
+    let tree = doc.snapshot();
     let serialised = tree.to_source();
     let doc2 = Document::new(serialised);
-    let _tree2 = doc2.parse();
+    let _tree2 = doc2.snapshot();
 }
 
 #[test]

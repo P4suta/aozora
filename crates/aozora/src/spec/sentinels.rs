@@ -19,7 +19,7 @@
 //!
 //! [`Sentinel`] is the primary type: a `#[repr(u32)]` enum with one
 //! variant per sentinel kind. The four legacy `pub const` `char`
-//! values ([`INLINE_SENTINEL`] etc.) and the [`ALL_SENTINELS`] array
+//! values ([`INLINE_SENTINEL`] etc.) and the complete sentinel array
 //! are now thin shims derived from the enum via
 //! [`Sentinel::as_char`], so a new sentinel kind only needs adding to
 //! the enum.
@@ -38,7 +38,7 @@
 /// directly without a lookup table.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Sentinel {
+pub(crate) enum Sentinel {
     /// Inline Aozora span (ruby / bouten / annotation / gaiji / TCY / kaeriten).
     Inline = 0xE001,
     /// Block-leaf Aozora line (page break, section break, leaf indent, sashie).
@@ -52,7 +52,8 @@ pub enum Sentinel {
 impl Sentinel {
     /// All sentinel kinds in declaration order. Useful for collision
     /// scans, exhaustive iteration, and round-trip property tests.
-    pub const ALL: [Self; 4] = [
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 4] = [
         Self::Inline,
         Self::BlockLeaf,
         Self::BlockOpen,
@@ -77,7 +78,7 @@ impl Sentinel {
     /// arm exists to keep `#[repr(u32)]` discriminants honest at
     /// const-eval time.
     #[must_use]
-    pub const fn as_char(self) -> char {
+    pub(crate) const fn as_char(self) -> char {
         // SAFETY-equivalent reasoning: each discriminant is a valid
         // scalar value (PUA codepoint), so `char::from_u32` returns
         // `Some` for every variant. We unwrap with a const-friendly
@@ -92,7 +93,8 @@ impl Sentinel {
     /// Reverse of [`Sentinel::as_char`]. Returns `None` for any
     /// codepoint outside the four reserved sentinels.
     #[must_use]
-    pub const fn from_char(c: char) -> Option<Self> {
+    #[cfg(test)]
+    pub(crate) const fn from_char(c: char) -> Option<Self> {
         match c as u32 {
             0xE001 => Some(Self::Inline),
             0xE002 => Some(Self::BlockLeaf),
@@ -107,31 +109,32 @@ impl Sentinel {
 ///
 /// Convenience shim — equivalent to [`Sentinel::Inline`]'s
 /// [`as_char`](Sentinel::as_char).
-pub const INLINE_SENTINEL: char = Sentinel::Inline.as_char();
+pub(crate) const INLINE_SENTINEL: char = Sentinel::Inline.as_char();
 
 /// Block-leaf Aozora line (page break, section break, leaf indent, sashie).
 ///
 /// Convenience shim — equivalent to [`Sentinel::BlockLeaf`]'s
 /// [`as_char`](Sentinel::as_char).
-pub const BLOCK_LEAF_SENTINEL: char = Sentinel::BlockLeaf.as_char();
+pub(crate) const BLOCK_LEAF_SENTINEL: char = Sentinel::BlockLeaf.as_char();
 
 /// Paired-container open line (e.g. `［＃ここから字下げ］`).
 ///
 /// Convenience shim — equivalent to [`Sentinel::BlockOpen`]'s
 /// [`as_char`](Sentinel::as_char).
-pub const BLOCK_OPEN_SENTINEL: char = Sentinel::BlockOpen.as_char();
+pub(crate) const BLOCK_OPEN_SENTINEL: char = Sentinel::BlockOpen.as_char();
 
 /// Paired-container close line (e.g. `［＃ここで字下げ終わり］`).
 ///
 /// Convenience shim — equivalent to [`Sentinel::BlockClose`]'s
 /// [`as_char`](Sentinel::as_char).
-pub const BLOCK_CLOSE_SENTINEL: char = Sentinel::BlockClose.as_char();
+pub(crate) const BLOCK_CLOSE_SENTINEL: char = Sentinel::BlockClose.as_char();
 
 /// All four sentinels in declaration order.
 ///
 /// Convenience shim — equivalent to mapping [`Sentinel::ALL`] through
 /// [`Sentinel::as_char`].
-pub const ALL_SENTINELS: [char; 4] = [
+#[cfg(test)]
+pub(crate) const ALL_SENTINELS: [char; 4] = [
     Sentinel::Inline.as_char(),
     Sentinel::BlockLeaf.as_char(),
     Sentinel::BlockOpen.as_char(),
