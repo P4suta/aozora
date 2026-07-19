@@ -92,8 +92,12 @@ impl ParseCache {
     }
 }
 
+// mutants::skip — wall-clock values are intentionally nondeterministic.
+#[cfg_attr(test, mutants::skip)]
 fn elapsed_us(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+    u64::try_from(started.elapsed().as_micros())
+        .unwrap_or(u64::MAX)
+        .max(1)
 }
 
 #[cfg(test)]
@@ -130,6 +134,56 @@ mod tests {
             cache.with_snapshot(|snapshot| snapshot.source().to_owned()),
             Some("fresh".to_owned())
         );
+    }
+
+    #[test]
+    fn valid_edit_with_mismatched_authoritative_source_is_a_miss() {
+        let mut cache = ParseCache::default();
+        cache.reparse("plain");
+        let edit = ByteEdit {
+            range: 0..5,
+            new_text: "changed".to_owned(),
+        };
+        let (_, stats) = cache.reparse_incremental(&Rope::from("different"), &[edit]);
+        assert_eq!(stats.cache_hits, 0);
+        assert_eq!(stats.cache_misses, 1);
+        assert_eq!(
+            cache.with_snapshot(|snapshot| snapshot.source().to_owned()),
+            Some("different".to_owned())
+        );
+    }
+
+    #[test]
+    fn empty_and_oversize_inputs_clear_the_cache_and_report_size() {
+        let mut cache = ParseCache::default();
+        cache.reparse("plain");
+        let (_, empty) = cache.reparse_incremental(&Rope::new(), &[]);
+        assert_eq!(empty.cache_bytes_estimate, 0);
+        assert!(empty.latency_us > 0);
+        assert!(cache.with_snapshot(|_| ()).is_none());
+
+        let oversized = "x".repeat(MAX_DOCUMENT_BYTES + 1);
+        let (_, stats) = cache.reparse_incremental(&Rope::from(oversized.as_str()), &[]);
+        assert_eq!(stats.cache_bytes_estimate, (MAX_DOCUMENT_BYTES + 1) as u64);
+        assert!(cache.with_snapshot(|_| ()).is_none());
+    }
+
+    #[test]
+    fn successful_reparse_reports_all_cache_statistics() {
+        let mut cache = ParseCache::default();
+        let (_, stats) = cache.reparse("plain");
+        assert_eq!(
+            stats,
+            ReparseStats {
+                parse_count: 1,
+                cache_hits: 0,
+                cache_misses: 1,
+                cache_entries_after: 1,
+                cache_bytes_estimate: 5,
+                latency_us: stats.latency_us,
+            }
+        );
+        assert!(stats.latency_us > 0);
     }
 
     #[test]

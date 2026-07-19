@@ -51,3 +51,29 @@ impl Catalogue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_resolves_only_exact_canonical_entries() {
+        let entry = Catalogue::directives()
+            .first()
+            .expect("catalogue is non-empty");
+        assert_eq!(
+            Catalogue::find(entry.canonical).map(|found| found.canonical),
+            Some(entry.canonical)
+        );
+        assert!(Catalogue::find("not-a-canonical-directive").is_none());
+    }
+
+    #[test]
+    fn normalization_distinguishes_supported_and_unknown_spellings() {
+        assert_eq!(
+            Catalogue::normalization("斜体字"),
+            Some(CatalogueMatch::Canonical)
+        );
+        assert!(Catalogue::normalization("not-a-directive").is_none());
+    }
+}

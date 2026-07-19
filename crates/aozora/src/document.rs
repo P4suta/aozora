@@ -181,10 +181,11 @@ pub struct Document {
 impl Document {
     fn from_parts(source: Box<str>, diagnostic_policy: DiagnosticPolicy) -> Self {
         let mut output = lex(&source);
-        if diagnostic_policy == DiagnosticPolicy::DropInternal {
-            output
+        match diagnostic_policy {
+            DiagnosticPolicy::CollectAll => {}
+            DiagnosticPolicy::DropInternal => output
                 .diagnostics
-                .retain(|diagnostic| diagnostic.source() != DiagnosticSource::Internal);
+                .retain(|diagnostic| diagnostic.source() != DiagnosticSource::Internal),
         }
         Self {
             source: Arc::from(source),
@@ -262,18 +263,7 @@ impl Document {
             previous_end = edit.range.end;
         }
 
-        let added = edits.iter().fold(0usize, |total, edit| {
-            total.saturating_add(edit.replacement.len())
-        });
-        let removed = edits.iter().fold(0usize, |total, edit| {
-            total.saturating_add(edit.range.end - edit.range.start)
-        });
-        let mut source = String::with_capacity(
-            self.source
-                .len()
-                .saturating_sub(removed)
-                .saturating_add(added),
-        );
+        let mut source = String::with_capacity(replacement_capacity(self.source.len(), &edits));
         let mut cursor = 0;
         for edit in &edits {
             source.push_str(&self.source[cursor..edit.range.start]);
@@ -392,6 +382,9 @@ impl Snapshot {
     }
 
     #[cfg(feature = "pandoc")]
+    // mutants::skip — pandoc owns the only consumer and is excluded from the
+    // diff mutation command.
+    #[cfg_attr(test, mutants::skip)]
     pub(crate) fn output(&self) -> &LexOutput {
         &self.output
     }
@@ -507,10 +500,24 @@ impl Snapshot {
     }
 }
 
+// mutants::skip — capacity arithmetic changes allocation pressure but not
+// observable output.
+#[cfg_attr(test, mutants::skip)]
+fn replacement_capacity(source_len: usize, edits: &[TextEdit]) -> usize {
+    let added = edits.iter().fold(0usize, |total, edit| {
+        total.saturating_add(edit.replacement.len())
+    });
+    let removed = edits.iter().fold(0usize, |total, edit| {
+        total.saturating_add(edit.range.end - edit.range.start)
+    });
+    source_len.saturating_sub(removed).saturating_add(added)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::spec::PairKind;
+    use crate::syntax::ast::Node;
     use crate::syntax::ast::NodeRef;
 
     #[test]
@@ -552,6 +559,98 @@ mod tests {
             .apply_edits([TextEdit::new(0..5, "A"), TextEdit::new(11..16, "G")])
             .expect("sorted disjoint edits");
         assert_eq!(document.source(), "A beta G");
+    }
+
+    #[test]
+    fn text_edit_accessors_preserve_constructor_values() {
+        let edit = TextEdit::new(1..3, "replacement");
+        assert_eq!(edit.range(), 1..3);
+        assert_eq!(edit.replacement(), "replacement");
+    }
+
+    #[test]
+    fn edit_validation_covers_every_batch_boundary() {
+        let mut document = crate::parse("abcd");
+        let inverted_start = 2;
+        let inverted_end = 1;
+        assert_eq!(
+            document.apply_edit(TextEdit::new(inverted_start..inverted_end, "")),
+            Err(EditError::InvertedRange)
+        );
+        assert_eq!(
+            document.apply_edit(TextEdit::new(0..5, "")),
+            Err(EditError::OutOfBounds)
+        );
+        document
+            .apply_edit(TextEdit::new(1..1, "X"))
+            .expect("empty ranges are valid insertions");
+        assert_eq!(document.source(), "aXbcd");
+
+        let mut document = crate::parse("abcd");
+        document
+            .apply_edits([TextEdit::new(0..1, "A"), TextEdit::new(1..2, "B")])
+            .expect("adjacent edits are disjoint");
+        assert_eq!(document.source(), "ABcd");
+
+        let mut document = crate::parse("abcd");
+        assert_eq!(
+            document.apply_edits([TextEdit::new(1..3, ""), TextEdit::new(2..4, "")]),
+            Err(EditError::UnsortedOrOverlapping)
+        );
+    }
+
+    #[test]
+    fn edit_rejects_each_non_character_boundary() {
+        let mut document = crate::parse("あ");
+        assert_eq!(
+            document.apply_edit(TextEdit::new(1..3, "")),
+            Err(EditError::NotCharBoundary)
+        );
+        assert_eq!(
+            document.apply_edit(TextEdit::new(0..1, "")),
+            Err(EditError::NotCharBoundary)
+        );
+    }
+
+    #[test]
+    fn parser_builder_records_the_selected_policy() {
+        let document = Parser::new()
+            .diagnostic_policy(DiagnosticPolicy::DropInternal)
+            .parse("plain");
+        assert!(format!("{document:?}").contains("DropInternal"));
+    }
+
+    #[test]
+    fn snapshot_resolves_public_payloads() {
+        let snapshot =
+            crate::parse("｜青梅《おうめ》※［＃「木＋吶のつくり」、第3水準1-85-54］［＃未知］")
+                .snapshot();
+        let mut saw_ruby = false;
+        let mut saw_gaiji = false;
+        let mut saw_directive = false;
+        for source_node in snapshot.source_nodes() {
+            let node = match source_node.node {
+                NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => node,
+                NodeRef::BlockOpen(_) | NodeRef::BlockClose(_) => continue,
+            };
+            match node {
+                Node::Ruby(ruby) => {
+                    assert_eq!(snapshot.plain_content(ruby.base), Some("青梅"));
+                    assert_eq!(snapshot.plain_content(ruby.reading), Some("おうめ"));
+                    saw_ruby = true;
+                }
+                Node::Gaiji(gaiji) => {
+                    assert!(snapshot.resolve_gaiji(&gaiji).is_some());
+                    saw_gaiji = true;
+                }
+                Node::Directive(directive) => {
+                    assert_eq!(snapshot.directive_source(directive), "［＃未知］");
+                    saw_directive = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_ruby && saw_gaiji && saw_directive);
     }
 
     #[test]
