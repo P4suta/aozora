@@ -406,6 +406,18 @@ jobs:
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - "0/8"
+          - "1/8"
+          - "2/8"
+          - "3/8"
+          - "4/8"
+          - "5/8"
+          - "6/8"
+          - "7/8"
     steps:
       # fetch-depth 0 so the PR base commit is in history for the diff.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -440,6 +452,8 @@ jobs:
           --exclude 'crates/aozora/src/pandoc/**'
           --exclude 'crates/aozora/src/fmt.rs'
           --exclude 'crates/aozora/src/json.rs'
+          --shard '${{ matrix.shard }}'
+          --sharding round-robin
 
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
