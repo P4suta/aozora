@@ -38,7 +38,7 @@ jobs:
     steps:
       # The parser repo at the workspace root (provides the Dockerfile /
       # compose / xtask and the vendored spec-vectors/ we are checking).
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # Build / load the dev image and set COMPOSE_FILE + AOZORA_UID so the
       # `docker compose run dev` steps below reuse it (no rebuild).
@@ -48,7 +48,7 @@ jobs:
       # is loaded so it never enters the Docker build context. It lands
       # inside the workspace, hence at /workspace/.spec-repo in the container.
       - name: Check out the sibling specification
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: P4suta/aozora-notation-spec
           path: .spec-repo
