@@ -25,9 +25,6 @@
 //!      ([`ForwardOrigin::Referenced`]), a heading hint, a margin note, or the
 //!      paired marker of a container. The partner is recovered on demand
 //!      ([`Snapshot::coupling`]) and the edit is checked by re-parse.
-//!    - [`Opaque`](SpliceSafety::Opaque) — a future node variant this build of
-//!      the parser does not classify (forward-compat only; never produced by
-//!      any construct this version understands).
 //!
 //! [`Snapshot::splice`] performs the edit and returns the minimal-diff source —
 //! every byte outside the affected region(s) stays identical, unlike the
@@ -59,7 +56,8 @@ use crate::render::spelling::source::container_close_source;
 use crate::spec::{SourceOffset, Span};
 use crate::syntax::{ForwardOrigin, RegionClose, RegionFormat};
 
-use crate::{Document, Node, NodeRef, Snapshot};
+use crate::syntax::ast::{Node, NodeRef};
+use crate::{Document, Snapshot};
 
 /// What a single source region represents.
 ///
@@ -67,7 +65,7 @@ use crate::{Document, Node, NodeRef, Snapshot};
 /// actionable bit is the region's [`SpliceSafety`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum RegionRole {
+pub(crate) enum RegionRole {
     /// Plain text between classified constructs. Not a node; carried so the
     /// tiling is complete. Directly editable as bytes.
     Interstitial,
@@ -102,8 +100,6 @@ pub enum RegionRole {
     Gaiji,
     /// Single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
     Line,
-    /// Warichu (割り注, split annotation) — the inline form owns its body.
-    Warichu,
     /// Page break (`［＃改ページ］`).
     PageBreak,
     /// Section break (`［＃改丁／改段／改見開き］`).
@@ -137,17 +133,12 @@ pub enum RegionRole {
     /// Left-side note (注記 / 傍記) attached to a preceding base run. A
     /// coherent target edit is coupled with that base run.
     MarginNote,
-    /// A leaf container node (rare; containers usually surface as
-    /// [`RegionRole::ContainerOpen`] / [`RegionRole::ContainerClose`]).
-    Container,
     /// A paired-container open marker (`［＃ここから…］`). Coupled with its
     /// matching close.
     ContainerOpen,
     /// A paired-container close marker (`［＃ここで…終わり］`). Coupled with its
     /// matching open.
     ContainerClose,
-    /// A future [`Node`] variant not yet classified by this projection.
-    Other,
 }
 
 /// The kind of two-region coupling a region participates in — the payload of a
@@ -157,7 +148,7 @@ pub enum RegionRole {
 /// *relationship* between the region and its derived partner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum CoupledKind {
+pub(crate) enum CoupledKind {
     /// A non-adjacent forward reference ([`ForwardOrigin::Referenced`]): the
     /// directive bracket plus its upstream target literal.
     ForwardReference,
@@ -175,7 +166,7 @@ pub enum CoupledKind {
 /// later phase" state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SpliceSafety {
+pub(crate) enum SpliceSafety {
     /// The region fully owns its rendered content (a self-contained node, or
     /// plain interstitial text). Replacing its bytes is a complete edit;
     /// neighbouring regions stay byte-identical.
@@ -185,11 +176,6 @@ pub enum SpliceSafety {
     /// change and verifies it by re-parse; [`Snapshot::coupling`] exposes the
     /// partner span.
     Coupled(CoupledKind),
-    /// A future node variant this build of the parser does not classify.
-    /// [`Snapshot::splice`] declines it rather than guess. In practice
-    /// unreachable: every construct this version understands is `Direct` or
-    /// `Coupled`.
-    Opaque,
 }
 
 /// A contiguous run of source bytes and what it owns.
@@ -200,7 +186,7 @@ pub enum SpliceSafety {
 /// [`Snapshot::source_nodes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct Region {
+pub(crate) struct Region {
     /// Half-open byte range in sanitized-source coordinates.
     pub span: Span,
     /// What the region represents.
@@ -218,7 +204,7 @@ pub struct Region {
 /// close).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct Coupling {
+pub(crate) struct Coupling {
     /// The relationship between the two regions.
     pub kind: CoupledKind,
     /// The queried region (the directive bracket, or the queried container
@@ -232,7 +218,7 @@ pub struct Coupling {
 /// Error returned by [`Snapshot::splice`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SpliceError {
+pub(crate) enum SpliceError {
     /// A [`Coupled`](SpliceSafety::Coupled) edit could not be carried out
     /// coherently: the candidate source did not re-parse to the intended
     /// construct, so applying it would silently desync the reference. The
@@ -245,25 +231,6 @@ pub enum SpliceError {
         /// The coupling that could not be completed.
         kind: CoupledKind,
     },
-    /// The region's node kind is [`Opaque`](SpliceSafety::Opaque) — a future
-    /// variant this build does not understand — so it is declined rather than
-    /// edited by a guess.
-    Opaque {
-        /// The region's role, for diagnostics.
-        role: RegionRole,
-    },
-    /// A raw edit span handed to [`Document::try_edit`](crate::Document::try_edit)
-    /// was invalid for the source: `start > end`, `end` past the source length,
-    /// or an endpoint that does not fall on a UTF-8 codepoint boundary.
-    /// Returned rather than panicking so a host running under
-    /// `panic = "abort"` (an FFI or WASM embedding) is not torn down by an
-    /// untrusted span.
-    InvalidEditSpan {
-        /// The rejected byte range, in the pre-edit source's coordinates.
-        span: Span,
-        /// Byte length of the source the span was rejected against.
-        source_len: usize,
-    },
 }
 
 impl fmt::Display for SpliceError {
@@ -273,19 +240,6 @@ impl fmt::Display for SpliceError {
                 f,
                 "coupled {kind:?} edit of region {role:?} could not be verified \
                  (the candidate did not re-parse to the intended construct)"
-            ),
-            Self::Opaque { role } => {
-                write!(
-                    f,
-                    "region {role:?} has an unclassified node kind and cannot be spliced"
-                )
-            }
-            Self::InvalidEditSpan { span, source_len } => write!(
-                f,
-                "edit span {start}..{end} is invalid for a {source_len}-byte source \
-                 (start > end, end past the source, or off a codepoint boundary)",
-                start = span.start,
-                end = span.end,
             ),
         }
     }
@@ -333,11 +287,9 @@ pub(crate) fn classify_node_ref(node: NodeRef) -> (RegionRole, SpliceSafety) {
                 }
             }
             Node::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
-            Node::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
             Node::Ruby(_) => (RegionRole::Ruby, Direct),
             Node::Heading(_) => (RegionRole::Heading, Direct),
             Node::Gaiji(_) => (RegionRole::Gaiji, Direct),
-            Node::Warichu(_) => (RegionRole::Warichu, Direct),
             Node::AngleQuote(_) => (RegionRole::AngleQuote, Direct),
             Node::Kaeriten(_) => (RegionRole::Kaeriten, Direct),
             Node::Illustration(_) => (RegionRole::Illustration, Direct),
@@ -386,7 +338,6 @@ fn reparsed_in_family(node: NodeRef, kind: CoupledKind) -> bool {
         CoupledKind::MarginNote => matches!(leaf, Some(Node::MarginNote(_))),
         CoupledKind::Container => {
             matches!(node, NodeRef::BlockOpen(_) | NodeRef::BlockClose(_))
-                || matches!(leaf, Some(Node::Container(_)))
         }
     }
 }
@@ -402,11 +353,12 @@ impl Snapshot {
     /// [`Snapshot::to_source_verbatim`] exactly. A truly empty source yields no
     /// regions.
     #[must_use]
-    pub fn regions(&self) -> Vec<Region> {
+    #[cfg(test)]
+    pub(crate) fn regions(&self) -> Vec<Region> {
         let nodes = self.source_nodes();
         // The sanitized length fits u32 — every offset in the tree is a u32
         // `Span` — so the saturating fallback is never taken.
-        let src_len = u32::try_from(self.sanitized().len()).unwrap_or(u32::MAX);
+        let src_len = u32::try_from(self.normalized_source().len()).unwrap_or(u32::MAX);
         let mut out: Vec<Region> = Vec::with_capacity(nodes.len() * 2 + 1);
         let mut cursor: u32 = 0;
         for sn in nodes {
@@ -443,8 +395,8 @@ impl Snapshot {
     /// run otherwise. Returns `None` only when `off` is past the end of the
     /// sanitized source.
     #[must_use]
-    pub fn region_at(&self, off: SourceOffset) -> Option<Region> {
-        let src_len = u32::try_from(self.sanitized().len()).unwrap_or(u32::MAX);
+    pub(crate) fn region_at(&self, off: SourceOffset) -> Option<Region> {
+        let src_len = u32::try_from(self.normalized_source().len()).unwrap_or(u32::MAX);
         if off.get() >= src_len {
             return None;
         }
@@ -475,8 +427,8 @@ impl Snapshot {
     }
 
     /// Recover the two regions a [`Coupled`](SpliceSafety::Coupled) edit
-    /// touches, or `None` for a `Direct` / `Opaque` region (no partner) or
-    /// when the partner cannot be located.
+    /// touches, or `None` for a direct region or when the partner cannot be
+    /// located.
     ///
     /// For a container marker the partner is its matching open/close, paired
     /// directly in source coordinates by a depth-stack walk over
@@ -487,9 +439,12 @@ impl Snapshot {
     /// This is read-only introspection (e.g. for an editor to highlight both
     /// sites). [`Snapshot::splice`] performs the actual coherent edit.
     #[must_use]
-    pub fn coupling(&self, region: Region) -> Option<Coupling> {
+    pub(crate) fn coupling(&self, region: Region) -> Option<Coupling> {
         match region.safety {
             SpliceSafety::Coupled(CoupledKind::Container) => self.container_coupling(region.span),
+            SpliceSafety::Coupled(CoupledKind::MarginNote) => {
+                self.margin_note_coupling(region.span)
+            }
             SpliceSafety::Coupled(kind) => {
                 // Forward reference / heading hint / margin note: the partner is
                 // the unique upstream plain occurrence of the node's target.
@@ -507,6 +462,33 @@ impl Snapshot {
         }
     }
 
+    fn margin_note_coupling(&self, span: Span) -> Option<Coupling> {
+        let source = self.normalized_source();
+        let text = source.get(span.start as usize..span.end as usize)?;
+        let marker = text.rfind("［＃")?;
+        let (NodeRef::Inline(Node::MarginNote(note)) | NodeRef::BlockLeaf(Node::MarginNote(note))) =
+            self.node_at_source(SourceOffset::new(span.start))?.node
+        else {
+            return None;
+        };
+        let base = self.node_store().content_range_as_plain(note.base)?;
+        let base_start = marker.checked_sub(base.len())?;
+        if text.get(base_start..marker) != Some(base) {
+            return None;
+        }
+        let span_start = span.start as usize;
+        let partner_start = span_start.checked_add(base_start)?;
+        let marker_start = span_start.checked_add(marker)?;
+        Some(Coupling {
+            kind: CoupledKind::MarginNote,
+            primary: Span::new(u32::try_from(marker_start).ok()?, span.end),
+            partner: Span::new(
+                u32::try_from(partner_start).ok()?,
+                u32::try_from(marker_start).ok()?,
+            ),
+        })
+    }
+
     /// Produce minimal-diff source by editing `region` to `replacement`.
     ///
     /// `replacement` is the new source for the region's own bytes (the new
@@ -522,15 +504,13 @@ impl Snapshot {
     ///   a forward-reference target change) and **verifies** the candidate by
     ///   re-parse before returning it.
     ///
-    /// The caller typically re-parses the result (`Document::new(spliced)`) to
-    /// obtain an updated tree, or uses [`Document::edit_region`] which does so.
+    /// The caller re-parses the result through [`crate::Parser`].
     ///
     /// # Errors
     ///
     /// Returns [`SpliceError::Unverifiable`] when a coupled edit cannot be
-    /// made coherent (the candidate did not re-parse to the intended
-    /// construct), and [`SpliceError::Opaque`] for an unclassified future node
-    /// kind.
+    /// made coherent because the candidate did not re-parse to the intended
+    /// construct.
     ///
     /// # Panics
     ///
@@ -538,15 +518,43 @@ impl Snapshot {
     /// bounds for the sanitized source, or not on a UTF-8 codepoint boundary).
     /// Regions from this tree's [`Snapshot::regions`] /
     /// [`Snapshot::region_at`] always satisfy the precondition.
-    pub fn splice(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
+    pub(crate) fn splice(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
         match region.safety {
-            SpliceSafety::Direct => Ok(splice_one(self.sanitized(), region.span, replacement)),
+            SpliceSafety::Direct => Ok(splice_one(
+                self.normalized_source(),
+                region.span,
+                replacement,
+            )),
             SpliceSafety::Coupled(CoupledKind::Container) => {
                 self.splice_container(region, replacement)
             }
+            SpliceSafety::Coupled(CoupledKind::MarginNote) => {
+                self.splice_margin_note(region, replacement)
+            }
             SpliceSafety::Coupled(kind) => self.splice_split(region, kind, replacement),
-            SpliceSafety::Opaque => Err(SpliceError::Opaque { role: region.role }),
         }
+    }
+
+    fn splice_margin_note(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
+        let src = self.normalized_source();
+        if replacement.is_empty() {
+            return Ok(splice_one(src, region.span, replacement));
+        }
+        let unverifiable = SpliceError::Unverifiable {
+            role: region.role,
+            kind: CoupledKind::MarginNote,
+        };
+        let marker = replacement.rfind("［＃").ok_or(unverifiable)?;
+        let base = replacement.get(..marker).ok_or(unverifiable)?;
+        let directive = replacement.get(marker..).ok_or(unverifiable)?;
+        let target = first_quoted(directive).ok_or(unverifiable)?;
+        if base != target {
+            return Err(unverifiable);
+        }
+        if !window_reforms_coupled(replacement, CoupledKind::MarginNote, target) {
+            return Err(unverifiable);
+        }
+        Ok(splice_one(src, region.span, replacement))
     }
 
     /// Pair a container marker at `span` with its partner, directly in source
@@ -600,7 +608,7 @@ impl Snapshot {
             role: region.role,
             kind: CoupledKind::Container,
         };
-        let src = self.sanitized();
+        let src = self.normalized_source();
         let pair = self.container_pair_for(region.span);
 
         // Delete: drop the marker(s), keeping the body. A structural unwrap is
@@ -672,7 +680,7 @@ impl Snapshot {
         kind: CoupledKind,
         replacement: &str,
     ) -> Result<String, SpliceError> {
-        let src = self.sanitized();
+        let src = self.normalized_source();
         if replacement.is_empty() {
             return Ok(splice_one(src, region.span, replacement));
         }
@@ -724,8 +732,8 @@ impl Snapshot {
         }
     }
 
-    /// The target text of a split-ownership node (a forward reference's target,
-    /// a heading hint's target, or a margin note's base) as a plain string.
+    /// The target text of a split-ownership node (a forward reference's target
+    /// or a heading hint's target) as a plain string.
     /// `None` when the node is not a split-ownership leaf, or its target is not
     /// a single plain run (a 、-joined multi-target).
     fn coupled_target_text(&self, span: Span) -> Option<String> {
@@ -738,7 +746,6 @@ impl Snapshot {
         match leaf {
             Node::Format(f) => store.content_range_as_plain(f.target).map(str::to_owned),
             Node::HeadingHint(h) => Some(store.resolve_str(h.target).to_owned()),
-            Node::MarginNote(m) => store.content_range_as_plain(m.base).map(str::to_owned),
             _ => None,
         }
     }
@@ -751,7 +758,7 @@ impl Snapshot {
     /// occurrence falls inside another classified construct (e.g. a ruby base) —
     /// the irreducible cases a coupled edit must decline rather than guess.
     fn unique_upstream_plain(&self, before: u32, target: &str) -> Option<Span> {
-        let prefix = self.sanitized().get(..before as usize)?;
+        let prefix = self.normalized_source().get(..before as usize)?;
         let mut hit: Option<usize> = None;
         let mut from = 0usize;
         while let Some(rel) = prefix.get(from..)?.find(target) {
@@ -769,7 +776,10 @@ impl Snapshot {
             region.role,
             RegionRole::Interstitial | RegionRole::ForwardDetached
         );
-        (carries_literal && span.end <= region.span.end).then_some(span)
+        if !carries_literal {
+            return None;
+        }
+        (span.end <= region.span.end).then_some(span)
     }
 }
 
@@ -1229,6 +1239,42 @@ mod tests {
     }
 
     #[test]
+    fn unique_upstream_plain_requires_one_literal_region() {
+        let plain_source = "青空、その";
+        let plain = Document::new(plain_source).snapshot();
+        assert_eq!(
+            plain.unique_upstream_plain(
+                u32::try_from(plain_source.len()).expect("test source length fits u32"),
+                "青空"
+            ),
+            Some(Span::new(
+                0,
+                u32::try_from("青空".len()).expect("test target length fits u32")
+            ))
+        );
+
+        let ruby_source = "｜青空《あおぞら》その";
+        let ruby = Document::new(ruby_source).snapshot();
+        assert_eq!(
+            ruby.unique_upstream_plain(
+                u32::try_from(ruby_source.len()).expect("test source length fits u32"),
+                "青空"
+            ),
+            None
+        );
+
+        let crossing_source = "青｜空《そら》後";
+        let crossing = Document::new(crossing_source).snapshot();
+        assert_eq!(
+            crossing.unique_upstream_plain(
+                u32::try_from(crossing_source.len()).expect("test source length fits u32"),
+                "青｜"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn multi_target_forward_identity_is_a_noop() {
         // A 、-joined multi-target forward (`「A」「B」`) is `Referenced`; its
         // canonical target lowers to a single plain run ("A、B"), so its
@@ -1271,7 +1317,7 @@ mod tests {
         assert_eq!(mid.role, RegionRole::Ruby);
         assert!(
             tree.region_at(SourceOffset::new(
-                u32::try_from(tree.sanitized().len()).unwrap()
+                u32::try_from(tree.normalized_source().len()).unwrap()
             ))
             .is_none(),
         );
@@ -1290,32 +1336,18 @@ mod tests {
         assert!(s.contains("ForwardReferenced"), "got {s:?}");
         assert!(s.contains("ForwardReference"), "got {s:?}");
         assert!(s.contains("could not be verified"), "got {s:?}");
-
-        let opaque = SpliceError::Opaque {
-            role: RegionRole::Other,
-        };
-        let o = opaque.to_string();
-        assert!(o.contains("Other"), "got {o:?}");
-        assert!(o.contains("cannot be spliced"), "got {o:?}");
     }
 
     /// Pin the `(RegionRole, SpliceSafety)` `classify_node_ref` assigns to every
-    /// leaf variant. Deleting any arm reroutes that node to the catch-all
-    /// `(Other, Opaque)`, which this table catches. Built directly with the
-    /// allocator (independent of parser reachability) so each arm is isolated.
+    /// leaf variant.
     #[test]
     fn classify_pins_every_leaf_variant() {
         use crate::syntax::alloc::Allocator;
-        use crate::syntax::{
-            Container, DirectiveKind, HeadingKind, HeadingStyle, LineFormat, SectionKind,
-        };
+        use crate::syntax::{DirectiveKind, HeadingKind, HeadingStyle, LineFormat, SectionKind};
 
         let mut a = Allocator::new();
         let heading_text = a.content_plain("章");
         let heading = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, heading_text);
-        let upper = a.content_plain("上");
-        let lower = a.content_plain("下");
-        let warichu = a.warichu(upper, lower);
         let aq = a.content_plain("重要");
         let angle_quote = a.angle_quote(aq);
         let kaeriten = a.kaeriten("（レ）");
@@ -1330,18 +1362,8 @@ mod tests {
         let page_break = a.page_break();
         let body_end = a.body_end();
         let forced_break = a.forced_break();
-        let container = a.container(Container {
-            kind: RegionFormat::Bold { padded: true },
-        });
-
-        let cases: [(Node, RegionRole, SpliceSafety); 12] = [
-            (
-                container,
-                RegionRole::Container,
-                SpliceSafety::Coupled(CoupledKind::Container),
-            ),
+        let cases: [(Node, RegionRole, SpliceSafety); 10] = [
             (heading, RegionRole::Heading, SpliceSafety::Direct),
-            (warichu, RegionRole::Warichu, SpliceSafety::Direct),
             (angle_quote, RegionRole::AngleQuote, SpliceSafety::Direct),
             (kaeriten, RegionRole::Kaeriten, SpliceSafety::Direct),
             (illustration, RegionRole::Illustration, SpliceSafety::Direct),
@@ -1432,7 +1454,8 @@ mod tests {
         assert_eq!(c.kind, CoupledKind::ForwardReference);
         assert_eq!(c.primary, r.span);
         assert_eq!(c.partner.start, 6, "partner starts after まず, not at 0");
-        let partner_text = &tree.sanitized()[c.partner.start as usize..c.partner.end as usize];
+        let partner_text =
+            &tree.normalized_source()[c.partner.start as usize..c.partner.end as usize];
         assert_eq!(partner_text, "青空");
     }
 

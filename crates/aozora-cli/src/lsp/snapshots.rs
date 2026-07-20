@@ -19,7 +19,6 @@ use super::capabilities::{server_capabilities, server_info};
 use super::diagnostics::diagnostics_for_source;
 use super::document_symbol::document_symbols;
 use super::semantic_tokens::semantic_tokens_full;
-use super::state::OpenDocument;
 use crate::i18n::LanguageIdentifier;
 
 /// The projections snapshotted here (codes/ranges, token tuples, outline
@@ -71,9 +70,8 @@ fn diagnostic_view(src: &str) -> Vec<String> {
 
 /// `(delta_line, delta_start, length, token_type, modifiers)` per token.
 fn semantic_token_view(src: &str) -> Vec<(u32, u32, u32, u32, u32)> {
-    let doc = OpenDocument::new(src.to_owned());
-    let snap = doc.snapshot();
-    semantic_tokens_full(&snap.paragraphs)
+    let document = aozora::parse(src).expect("snapshot source fits parser limits");
+    semantic_tokens_full(&document.snapshot())
         .data
         .iter()
         .map(|t| {

@@ -1,1 +1,1 @@
-(document (text) (ERROR) (text) (text) (text) (newline))
+(document (text) (literal_markup) (text) (text) (text) (newline))

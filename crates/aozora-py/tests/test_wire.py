@@ -4,12 +4,15 @@ import json
 
 import aozora
 
-EMPTY_ENVELOPE = '{"schemaVersion":2,"data":[]}'
+EMPTY_ENVELOPE = json.dumps(
+    {"schemaVersion": aozora.schema_version(), "data": []},
+    separators=(",", ":"),
+)
 
 
 def _envelope(s: str) -> list:
     obj = json.loads(s)
-    assert obj["schemaVersion"] == 2
+    assert obj["schemaVersion"] == aozora.schema_version()
     assert isinstance(obj["data"], list)
     return obj["data"]
 

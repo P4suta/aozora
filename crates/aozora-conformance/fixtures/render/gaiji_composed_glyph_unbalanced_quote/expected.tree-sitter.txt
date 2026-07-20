@@ -1,1 +1,1 @@
-(document (text) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (newline) (implicit_ruby base: (ruby_base_implicit) reading: (ruby_reading)) (text) (newline))
+(document (text) (gaiji) (text) (newline) (implicit_ruby) (text) (newline))

@@ -27,23 +27,10 @@ workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
-# `web-sys` is needed only for the `profile_json` helper, which uses
-# `performance.now()` to time per-method work. `std::time::Instant`
-# panics on `wasm32-unknown-unknown`, so we cannot use it for the
-# profile readings. The `Performance` + `Window` features are tiny
-# (each opens up one JS-bound interface) and add ~1 KB gzip.
-web-sys = { version = "0.3", features = ["Performance", "Window"] }
+serde = { workspace = true, features = ["derive"] }
 
 [dependencies]
-# Drivers consume the wire format via `aozora::json::*`; serde +
-# serde_json transitive-only via the `wire` feature.
 aozora = { workspace = true, features = ["json"] }
-# Direct use for the gaiji-resolution helpers: hand-rolling JSON
-# escaping for arbitrary Unicode descriptions would re-implement
-# what serde_json already does well. The `wire` feature above
-# already pulls serde_json into the dependency graph, so this is
-# effectively zero additional cost on the bundle side.
-serde_json = { workspace = true }
 
 [dev-dependencies]
 # Tests parse the wire-format JSON to assert structure; production
@@ -59,10 +46,7 @@ crate-type = ["lib", "cdylib"]
 # downloads (binaryen pre-119) cannot validate the bulk-memory
 # opcodes (memory.copy / memory.fill) that Rust 1.95+ emits for the
 # core::ptr / Vec primitives this crate transitively pulls in. The
-# Dockerfile's `wasm-builder` stage runs a fresh `wasm-opt -O3
-# --enable-bulk-memory --enable-mutable-globals` over the artifact
-# before it lands at /aozora.wasm, so the size optimisation still
-# happens — just with a current binaryen build instead of the stale
-# bundle.
+# Repository build and release gates run a current `wasm-opt -Oz` over
+# the artifact, so size optimisation does not depend on the stale bundle.
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

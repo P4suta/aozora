@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -42,12 +43,26 @@ jobs:
   build:
     name: build site
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 2
+
+      - name: Detect release commit
+        id: release
+        run: |
+          set -euo pipefail
+          release=false
+          if [[ "$GITHUB_EVENT_NAME" == push ]] &&
+              git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+            release=true
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
-          toolchain: stable
+          toolchain: "1.97.0"
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
@@ -55,12 +70,14 @@ jobs:
           key: docs
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        if: steps.release.outputs.release != 'true'
         with:
           # Pinned to the Dockerfile's BUN_VERSION so the Pages deploy and
           # the dev/CI containers resolve the same bun (was `latest`).
           bun-version: '1.3.14'
 
       - name: Install wasm-pack
+        if: steps.release.outputs.release != 'true'
         # Pinned action + version (was an unpinned `curl … | sh`) so the
         # auto-fetched wasm-bindgen-cli is deterministic. Mirrors the
         # sibling afm repo's docs workflow.
@@ -77,12 +94,14 @@ jobs:
         # output (static.files/, trait.impl/, search index), which fails
         # intermittently while documenting the umbrella `aozora` crate's
         # re-export pages. Matches the `just doc` recipe's fix.
-        run: cargo doc --workspace --no-deps --document-private-items --all-features --jobs 1
+        run: cargo doc --workspace --no-deps --all-features --jobs 1
 
       - name: Build aozora-wasm
-        run: wasm-pack build --target web --release crates/aozora-wasm
+        if: steps.release.outputs.release != 'true'
+        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm
 
       - name: Build playground
+        if: steps.release.outputs.release != 'true'
         working-directory: playground
         run: |
           set -euo pipefail
@@ -93,14 +112,47 @@ jobs:
           fi
           bun run build
 
+      - name: Wait for qualified release artifacts
+        if: steps.release.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 330); do
+            state="$(gh run list \
+              --workflow release-ready.yml \
+              --commit "$GITHUB_SHA" \
+              --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] | [.status, (.conclusion // "")] | @tsv')"
+            if [[ "$state" == $'completed\tsuccess' ]]; then
+              scripts/download-release-ready-artifact.sh \
+                "release-ready-$GITHUB_SHA" qualified
+              exit 0
+            fi
+            if [[ "$state" == completed$'\t'* ]]; then
+              echo "::error title=release-ready::release-ready finished with ${state#*$'\t'}"
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "::error title=release-ready::timed out waiting for this commit"
+          exit 1
+
       - name: Assemble site
+        env:
+          RELEASE: ${{ steps.release.outputs.release }}
         run: |
           set -euo pipefail
           mkdir -p site
           mkdir -p site/api
           cp -r target/doc/. site/api/
           mkdir -p site/playground
-          cp -r playground/dist/. site/playground/
+          if [[ "$RELEASE" == true ]]; then
+            cp -r qualified/playground/. site/playground/
+          else
+            cp -r playground/dist/. site/playground/
+          fi
           # /api/ landing redirects to the top-level facade crate's docs.
           cat > site/api/index.html <<'HTML'
           <!doctype html>

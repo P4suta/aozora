@@ -23,13 +23,16 @@
 //!    `Node` (which is `Copy`) directly.
 
 use core::mem::discriminant;
+use core::ops::Range;
+use std::sync::Arc;
 
 use crate::pipeline::lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
+use crate::pipeline::state_machine::Pipeline;
 use crate::spec::{Diagnostic, NormalizedOffset, Span};
-use crate::syntax::ast::{ContainerPair, LexOutput, Node, NodeRef, SourceNode};
+use crate::syntax::ast::{ContainerPair, LexOutput, Node, NodeRef, RegionOutput, SourceNode};
 use crate::syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
 /// Run the lex pipeline and materialise the result as an owned, lifetime-free
@@ -42,7 +45,15 @@ use crate::syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 /// call.
 #[must_use]
 pub(crate) fn lex(source: &str) -> LexOutput {
-    crate::pipeline::state_machine::Pipeline::run_to_completion(source)
+    Pipeline::run_to_completion(source)
+}
+
+pub(crate) fn lex_shared(source: Arc<str>) -> LexOutput {
+    Pipeline::run_to_completion(source)
+}
+
+pub(crate) fn lex_region(source: &str, range: Range<usize>) -> Option<RegionOutput> {
+    Pipeline::run_region(source, range)
 }
 
 /// Output recorder for the [`Normalizer`] fold.
@@ -54,22 +65,20 @@ pub(crate) fn lex(source: &str) -> LexOutput {
 /// into the output separately).
 #[derive(Debug, Default)]
 pub(crate) struct Recorder {
-    pub(crate) entries: Vec<(u32, NodeRef)>,
     pub(crate) source_nodes: Vec<SourceNode>,
 }
 
 impl Recorder {
     fn with_capacity(hint: usize) -> Self {
         Self {
-            entries: Vec::with_capacity(hint),
             source_nodes: Vec::with_capacity(hint),
         }
     }
 
     fn push(&mut self, pos: u32, source_span: Span, nref: NodeRef) {
-        self.entries.push((pos, nref));
         self.source_nodes.push(SourceNode {
             source_span,
+            normalized_offset: NormalizedOffset::new(pos),
             node: nref,
         });
     }
@@ -298,20 +307,12 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use crate::spec::{NormalizedOffset, Sentinel};
-    use crate::syntax::IndentBlock;
     use crate::syntax::ast::{Content, Directive, StrId};
+    use crate::syntax::{BoutenKind, BoutenPosition, IndentBlock};
 
     #[test]
-    fn recorder_with_capacity_preallocates_both_tables() {
-        // Kills the `with_capacity -> Default::default()` mutant: the hinted
-        // constructor must reserve capacity in both side tables, whereas
-        // `Default` yields empty (capacity-0) vecs.
+    fn recorder_with_capacity_preallocates_source_nodes() {
         let r = Recorder::with_capacity(64);
-        assert!(
-            r.entries.capacity() >= 64,
-            "entries should be preallocated to the hint, got {}",
-            r.entries.capacity()
-        );
         assert!(
             r.source_nodes.capacity() >= 64,
             "source_nodes should be preallocated to the hint, got {}",
@@ -368,6 +369,40 @@ mod tests {
             norm.warichu_depth, 0,
             "close should decrement warichu depth back to zero"
         );
+    }
+
+    #[test]
+    fn page_break_reports_and_clears_single_line_state() {
+        let mut norm = Normalizer::new("", 0);
+        norm.pending_single_line = Some("indent");
+        norm.track_single_line_break(Node::PageBreak, Span::new(0, 1));
+
+        assert!(norm.pending_single_line.is_none());
+        assert!(matches!(
+            norm.diagnostics.as_slice(),
+            [Diagnostic::BreakInSingleLineContainer {
+                container: "indent",
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn page_break_reports_open_warichu_only() {
+        let mut open = Normalizer::new("", 0);
+        open.warichu_depth = 1;
+        open.track_single_line_break(Node::PageBreak, Span::new(0, 1));
+        assert!(matches!(
+            open.diagnostics.as_slice(),
+            [Diagnostic::BreakInSingleLineContainer {
+                container: "warichu",
+                ..
+            }]
+        ));
+
+        let mut outside = Normalizer::new("", 0);
+        outside.track_single_line_break(Node::PageBreak, Span::new(0, 1));
+        assert!(outside.diagnostics.is_empty());
     }
 
     #[test]
@@ -457,6 +492,64 @@ mod tests {
         assert!(matches!(
             kind,
             RegionFormat::Indent(IndentBlock { amount: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn container_close_mismatch_requires_different_families() {
+        let span = Span::new(0, 1);
+
+        let mut matching = Normalizer::new("", 0);
+        matching.push_container_mismatch(
+            RegionFormat::Bold { padded: true },
+            RegionClose::Bold { padded: true },
+            span,
+        );
+        assert!(matching.diagnostics.is_empty());
+
+        let mut mismatching = Normalizer::new("", 0);
+        mismatching.push_container_mismatch(
+            RegionFormat::Bold { padded: true },
+            RegionClose::Italic { padded: true },
+            span,
+        );
+        assert!(matches!(
+            mismatching.diagnostics.as_slice(),
+            [Diagnostic::MismatchedContainerClose { .. }]
+        ));
+    }
+
+    #[test]
+    fn bouten_close_mismatch_requires_different_mark_families() {
+        let span = Span::new(0, 1);
+        let open = RegionFormat::Bouten {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        };
+
+        let mut matching = Normalizer::new("", 0);
+        matching.push_container_mismatch(
+            open,
+            RegionClose::Bouten {
+                kind: BoutenKind::WhiteSesame,
+                position: BoutenPosition::Right,
+            },
+            span,
+        );
+        assert!(matching.diagnostics.is_empty());
+
+        let mut mismatching = Normalizer::new("", 0);
+        mismatching.push_container_mismatch(
+            open,
+            RegionClose::Bouten {
+                kind: BoutenKind::UnderLine,
+                position: BoutenPosition::Right,
+            },
+            span,
+        );
+        assert!(matches!(
+            mismatching.diagnostics.as_slice(),
+            [Diagnostic::MismatchedBoutenContainer { .. }]
         ));
     }
 

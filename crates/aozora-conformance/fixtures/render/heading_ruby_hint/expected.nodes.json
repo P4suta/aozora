@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"ruby","span":{"start":6,"end":33}},{"kind":"ruby","span":{"start":36,"end":51}},{"kind":"headingHint","span":{"start":51,"end":99}}]}
+{"schemaVersion":3,"data":[{"kind":"ruby","span":{"start":6,"end":33}},{"kind":"ruby","span":{"start":36,"end":51}},{"kind":"headingHint","span":{"start":51,"end":99}}]}

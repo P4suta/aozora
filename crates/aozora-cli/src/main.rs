@@ -21,10 +21,10 @@
 //!   `container-pairs` / `diagnostics` / `gaiji`). The data
 //!   counterpart to `aozora spec schema <kind>`, byte-identical to
 //!   every binding's `*_json()` output.
-//! - `aozora pandoc FILE [--format FMT]` — project the parsed
-//!   document to a Pandoc AST. Without `--format`, prints Pandoc JSON
+//! - `aozora pandoc FILE [--to FMT]` — project the parsed
+//!   document to a Pandoc AST. Without `--to`, prints Pandoc JSON
 //!   to stdout (consumable by `pandoc -f json -t FMT`); with
-//!   `--format`, spawns `pandoc` and pipes the JSON through it.
+//!   `--to`, spawns `pandoc` and pipes the JSON through it.
 //!
 //! Introspection (no input required, prints typed contracts):
 //! - `aozora explain <target>` — embedded handbook chapter for a
@@ -34,10 +34,10 @@
 //!   `Severity` / `DiagnosticSource` / `Sentinel` /
 //!   `InternalCheckCode` variant with its wire tag and a one-line
 //!   summary.
-//! - `aozora spec schema {diagnostics|nodes|pairs|container-pairs}` —
-//!   pretty-prints the JSON Schema for one of the four
-//!   envelopes. Sourced from `aozora::json::schema_*` (`schema`
-//!   feature on the `aozora` crate).
+//! - `aozora spec schema {config|diagnostics|nodes|pairs|container-pairs}` —
+//!   pretty-prints the JSON Schema for the configuration file or a
+//!   document envelope. Document schemas are sourced from
+//!   `aozora::json::schema_*` (`schema` feature on the `aozora` crate).
 //! - `aozora spec slugs` — the static ［＃…］ slug catalogue (no input).
 //!
 //! Onboarding (set up / inspect a working environment):
@@ -89,6 +89,7 @@ mod timing;
 mod tui;
 mod watch;
 mod which;
+mod wire;
 
 use std::env;
 use std::ffi::OsString;
@@ -97,10 +98,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
 use aozora::pandoc::to_pandoc;
-use aozora::{
-    DiagnosticSource, Document, json,
-    render::{DirectiveNormalization, RenderOptions, SerializeOptions},
-};
+use aozora::{DiagnosticSource, DirectiveNormalization, RenderOptions, SerializeOptions, json};
 // The formatter crate owns both the source-encoding value-enum (so every
 // subcommand shares one decoder) and the colour-policy enum; re-exported
 // crate-wide so `config` can name them.
@@ -262,8 +260,8 @@ enum Command {
     /// static ［＃…］ catalogue).
     Spec(SpecArgs),
     /// Project the parsed document to a Pandoc AST.
-    /// Without `--format`, prints Pandoc JSON to stdout (consumable
-    /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
+    /// Without `--to`, prints Pandoc JSON to stdout (consumable
+    /// by `pandoc -f json -t <FORMAT>`); with `--to`, spawns
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
     /// Run an end-user runtime self-check: the discovered `.aozora.toml` and
@@ -310,27 +308,38 @@ enum Command {
     Man(ManArgs),
 }
 
-/// Where to read a single document and how to decode it — the input source
-/// shared by the FILE-taking document subcommands (check / render / inspect /
-/// pandoc). `fmt` reads many PATHs, so it uses `crate::fmt::FmtArgs` instead.
+/// Where to read a single document.
+///
+/// Shared by the FILE-taking document subcommands. `fmt` reads many paths, so
+/// it owns only the common document settings.
 #[derive(Debug, Parser)]
 struct InputArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
     #[arg(default_value = "-")]
     file: PathBuf,
+}
 
+/// Settings shared by every document subcommand.
+#[derive(Debug, Parser)]
+struct DocumentArgs {
     /// Source encoding. Falls back to `AOZORA_ENCODING`, then the
     /// `encoding` key in `.aozora.toml`, then auto-detection.
     #[arg(long, short = 'E', value_enum, env = "AOZORA_ENCODING")]
     encoding: Option<Encoding>,
-}
 
-/// Cross-cutting document-subcommand behaviour, independent of how input is
-/// read: the `.aozora.toml` source and the timing / watch controls. Flattened
-/// by every document subcommand — including `fmt` — so these flags are declared
-/// once and behave identically across the CLI.
-#[derive(Debug, Parser)]
-struct CrossCutArgs {
+    /// How to render diagnostics: `human`, `json`, or `short`.
+    ///
+    /// Defaults to `human` on a terminal and `json` when piped. Falls back to
+    /// `AOZORA_FORMAT`, then `.aozora.toml`.
+    #[arg(long, value_enum, env = "AOZORA_FORMAT")]
+    format: Option<DiagFormat>,
+
+    /// Exit non-zero when parsing emits a diagnostic.
+    ///
+    /// Also settable via `AOZORA_STRICT` or `.aozora.toml`.
+    #[arg(long, short = 's', env = "AOZORA_STRICT")]
+    strict: bool,
+
     /// Read settings from this `.aozora.toml` instead of searching
     /// upward from the working directory.
     #[arg(long, value_name = "PATH")]
@@ -340,7 +349,7 @@ struct CrossCutArgs {
     /// only to stderr, so stdout stays byte-identical — safe to leave on
     /// inside a `render` / `inspect` pipeline. The report auto-selects its
     /// view like `check`'s diagnostics: aligned `human` lines when stderr is
-    /// a terminal, the `{schemaVersion:1,data:{phases,totalNanos}}` envelope
+    /// a terminal, a versioned `{schemaVersion,data:{phases,totalNanos}}` envelope
     /// when it is piped.
     #[arg(long)]
     timing: bool,
@@ -358,7 +367,7 @@ struct CommonArgs {
     #[command(flatten)]
     input: InputArgs,
     #[command(flatten)]
-    cross: CrossCutArgs,
+    document: DocumentArgs,
 }
 
 impl CommonArgs {
@@ -366,14 +375,89 @@ impl CommonArgs {
     /// upward search from the working directory, else all-default.
     fn load_config(&self) -> Result<config::ConfigFile> {
         let cwd = env::current_dir().context("failed to read the working directory")?;
-        config::ConfigFile::resolve(self.cross.config.as_deref(), &cwd)
+        config::ConfigFile::resolve(self.document.config.as_deref(), &cwd)
     }
 
     /// Effective encoding: `-E/--encoding` (or `AOZORA_ENCODING`, both via
     /// clap), else the config's `encoding`, else auto-detect.
     fn resolved_encoding(&self, cfg: &config::ConfigFile) -> Encoding {
-        self.input.encoding.or(cfg.encoding).unwrap_or_default()
+        self.document.encoding.or(cfg.encoding).unwrap_or_default()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DiagnosticPolicy {
+    format: DiagFormat,
+    strict: bool,
+}
+
+impl DocumentArgs {
+    fn diagnostic_policy(&self, cfg: &config::ConfigFile) -> DiagnosticPolicy {
+        DiagnosticPolicy {
+            format: self.format.or(cfg.format).unwrap_or_default(),
+            strict: config::strict_active(self.strict, cfg.strict),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DocumentOutcome {
+    Success,
+    Strict,
+    Internal,
+}
+
+impl DocumentOutcome {
+    fn exit_code(self) -> ExitCode {
+        match self {
+            Self::Success => ExitCode::SUCCESS,
+            Self::Strict => ExitCode::from(1),
+            Self::Internal => ExitCode::from(3),
+        }
+    }
+}
+
+fn report_diagnostics(
+    policy: DiagnosticPolicy,
+    report: DiagnosticReport<'_>,
+) -> Result<DocumentOutcome> {
+    let DiagnosticReport {
+        path,
+        source,
+        diagnostics,
+        lang,
+    } = report;
+    if diagnostics.is_empty() {
+        return Ok(DocumentOutcome::Success);
+    }
+    diagnostics_render::render(
+        policy.format,
+        &display_path(path),
+        source,
+        diagnostics,
+        lang,
+    )
+    .context("failed to write diagnostics")?;
+    Ok(
+        if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.source() == DiagnosticSource::Internal)
+        {
+            DocumentOutcome::Internal
+        } else if policy.strict {
+            DocumentOutcome::Strict
+        } else {
+            DocumentOutcome::Success
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+struct DiagnosticReport<'a> {
+    path: &'a Path,
+    source: &'a str,
+    diagnostics: &'a [aozora::Diagnostic],
+    lang: &'a LanguageIdentifier,
 }
 
 #[derive(Debug, Parser)]
@@ -386,19 +470,6 @@ impl CommonArgs {
 struct CheckArgs {
     #[command(flatten)]
     common: CommonArgs,
-
-    /// Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT`
-    /// or the `strict` key in `.aozora.toml`.
-    #[arg(long, short = 's', env = "AOZORA_STRICT")]
-    strict: bool,
-
-    /// How to render diagnostics: `human` (graphical snippet, the
-    /// default on a terminal), `json` (the `aozora::json` envelope, the
-    /// default when stderr is piped — the machine / agent path), or
-    /// `short` (one grep-able line per diagnostic). Falls back to
-    /// `AOZORA_FORMAT`, then `.aozora.toml`.
-    #[arg(long, value_enum, env = "AOZORA_FORMAT")]
-    format: Option<DiagFormat>,
 }
 
 #[derive(Debug, Parser)]
@@ -410,16 +481,6 @@ struct CheckArgs {
 struct LintArgs {
     #[command(flatten)]
     common: CommonArgs,
-
-    /// Exit non-zero if any lint fired. Also settable via `AOZORA_STRICT`
-    /// or the `strict` key in `.aozora.toml`. Shared with `check`.
-    #[arg(long, short = 's', env = "AOZORA_STRICT")]
-    strict: bool,
-
-    /// How to render lints: `human` / `json` / `short` — the same views and
-    /// `.aozora.toml` / `AOZORA_FORMAT` fallbacks as `check`.
-    #[arg(long, value_enum, env = "AOZORA_FORMAT")]
-    format: Option<DiagFormat>,
 
     /// Rewrite the flagged directive near-misses to their canonical spelling
     /// in place — the zero-false-positive Tier1 autofix. This is the same
@@ -440,7 +501,7 @@ struct FmtCmd {
     fmt: fmt::FmtArgs,
 
     #[command(flatten)]
-    cross: CrossCutArgs,
+    document: DocumentArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -509,8 +570,7 @@ impl TreeKind {
 
 // Hand-written rather than derived: `ValueEnum` cannot derive through the
 // `Tree(TreeKind)` tuple variant. The `value_variants` order is the order
-// `--help` lists the kinds; the CLI names and the `gaiji-resolutions`
-// alias are preserved exactly.
+// `--help` lists the kinds.
 impl ValueEnum for InspectKind {
     fn value_variants<'a>() -> &'a [Self] {
         &[
@@ -532,9 +592,8 @@ impl ValueEnum for InspectKind {
                 PossibleValue::new("pairs").help("Per-matched-pair `{ kind, open, close }`")
             }
             Self::Tree(TreeKind::ContainerPairs) => PossibleValue::new("container-pairs")
-                .help("Per-container-pair `{ kind, open, close }` (normalized coordinates)"),
+                .help("Per-container-pair `{ kind, open, close }` (source coordinates)"),
             Self::Gaiji => PossibleValue::new("gaiji")
-                .alias("gaiji-resolutions")
                 .help("Per-外字-reference `{ span, description, mencode, codepoint, resolved }`"),
         })
     }
@@ -565,7 +624,7 @@ struct PandocArgs {
     /// pipes the generated JSON through it; otherwise the Pandoc
     /// JSON itself goes to stdout.
     #[arg(long, short = 't')]
-    format: Option<String>,
+    to: Option<String>,
 }
 
 /// `aozora spec <command>` — introspect the parser's own typed contracts.
@@ -590,7 +649,7 @@ enum SpecCommand {
     /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode` variant with its
     /// wire tag. `--format` selects human tables or the JSON envelope.
     Kinds(KindsArgs),
-    /// Pretty-print the JSON Schema for one of the four JSON envelopes.
+    /// Pretty-print the configuration or document-envelope JSON Schema.
     Schema(SchemaArgs),
     /// Print the static ［＃…］ slug catalogue as the shared `aozora::json`
     /// envelope — reads no document input.
@@ -660,16 +719,9 @@ fn main() -> ExitCode {
             // A reader that closed our stdout pipe early (`aozora render … |
             // head`) is a normal, silent success, not an error — see ADR-0029.
             ErrDisposition::SilentSuccess => ExitCode::SUCCESS,
-            // Input past the parser core's u32 span limit is a usage error (2),
-            // not the generic failure (1): the graceful rejection the py/wasm
-            // bindings already give, instead of the lexer assert's SIGABRT.
             ErrDisposition::Usage => {
                 let _drop = writeln!(io::stderr(), "aozora: {err:#}");
                 ExitCode::from(2)
-            }
-            ErrDisposition::Failure => {
-                let _drop = writeln!(io::stderr(), "aozora: {err:#}");
-                ExitCode::FAILURE
             }
         },
     }
@@ -710,16 +762,16 @@ fn early_config(command: &Command) -> config::ConfigFile {
 }
 
 /// The `--config PATH` override carried by `command`, if it takes one. Only the
-/// document subcommands flatten `CrossCutArgs`; the introspection / tooling
+/// document subcommands flatten `DocumentArgs`; the introspection / tooling
 /// subcommands read no config file, so they contribute no config layer.
 fn command_config_path(command: &Command) -> Option<&Path> {
     match command {
-        Command::Check(a) => a.common.cross.config.as_deref(),
-        Command::Lint(a) => a.common.cross.config.as_deref(),
-        Command::Render(a) => a.common.cross.config.as_deref(),
-        Command::Inspect(a) => a.common.cross.config.as_deref(),
-        Command::Pandoc(a) => a.common.cross.config.as_deref(),
-        Command::Fmt(a) => a.cross.config.as_deref(),
+        Command::Check(a) => a.common.document.config.as_deref(),
+        Command::Lint(a) => a.common.document.config.as_deref(),
+        Command::Render(a) => a.common.document.config.as_deref(),
+        Command::Inspect(a) => a.common.document.config.as_deref(),
+        Command::Pandoc(a) => a.common.document.config.as_deref(),
+        Command::Fmt(a) => a.document.config.as_deref(),
         Command::Explain(_)
         | Command::Spec(_)
         | Command::Doctor
@@ -739,21 +791,16 @@ fn command_config_path(command: &Command) -> Option<&Path> {
 enum ErrDisposition {
     /// Broken pipe: exit 0 with nothing on stderr (ADR-0029).
     SilentSuccess,
-    /// Oversize input: usage error, exit 2, message on stderr.
+    /// Bad input, configuration, arguments, or runtime prerequisites.
     Usage,
-    /// Anything else: generic failure, exit 1, message on stderr.
-    Failure,
 }
 
-/// Classify a top-level `err` into its [`ErrDisposition`]. Broken pipe wins over
-/// oversize wins over the generic failure, matching `main`'s arm order.
+/// Classify a top-level `err` into its [`ErrDisposition`].
 fn classify_err(err: &anyhow::Error) -> ErrDisposition {
     if fmt::is_broken_pipe(err) {
         ErrDisposition::SilentSuccess
-    } else if fmt::is_oversize_input(err) {
-        ErrDisposition::Usage
     } else {
-        ErrDisposition::Failure
+        ErrDisposition::Usage
     }
 }
 
@@ -764,7 +811,7 @@ fn run_watched(
     lang: &LanguageIdentifier,
     once: impl Fn() -> Result<ExitCode>,
 ) -> Result<ExitCode> {
-    if !common.cross.watch {
+    if !common.document.watch {
         return once();
     }
     if common.input.file.as_os_str() == "-" {
@@ -787,48 +834,28 @@ fn run_check(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
 fn run_check_once(args: &CheckArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let format = args.format.or(cfg.format).unwrap_or_default();
-    let strict = config::strict_active(args.strict, cfg.strict);
+    let policy = args.common.document.diagnostic_policy(&cfg);
 
-    let mut timer = Timer::new(args.common.cross.timing);
+    let mut timer = Timer::new(args.common.document.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = timer.measure("parse", || doc.snapshot());
     let diagnostics = tree.diagnostics();
 
-    let code = if diagnostics.is_empty() {
-        ExitCode::SUCCESS
-    } else {
-        timer
-            .measure("render", || {
-                diagnostics_render::render(
-                    format,
-                    &display_path(&args.common.input.file),
-                    &doc,
-                    diagnostics,
-                    lang,
-                )
-            })
-            .context("failed to write diagnostics")?;
-
-        // Exit-code contract (documented in `aozora check --help` and
-        // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
-        // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
-        // diagnostics were printed but tolerated.
-        if diagnostics
-            .iter()
-            .any(|d| d.source() == DiagnosticSource::Internal)
-        {
-            ExitCode::from(3)
-        } else if strict {
-            ExitCode::from(1)
-        } else {
-            ExitCode::SUCCESS
-        }
-    };
+    let outcome = timer.measure("render", || {
+        report_diagnostics(
+            policy,
+            DiagnosticReport {
+                path: &args.common.input.file,
+                source: doc.source(),
+                diagnostics,
+                lang,
+            },
+        )
+    })?;
 
     timer.report()?;
-    Ok(code)
+    Ok(outcome.exit_code())
 }
 
 fn run_lint(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
@@ -841,8 +868,7 @@ fn run_lint(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
 fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let format = args.format.or(cfg.format).unwrap_or_default();
-    let strict = config::strict_active(args.strict, cfg.strict);
+    let policy = args.common.document.diagnostic_policy(&cfg);
     let path = &args.common.input.file;
 
     if args.fix {
@@ -850,32 +876,29 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
             path,
             LintFixSettings {
                 encoding,
-                format,
-                strict,
+                policy,
                 lang,
             },
         );
     }
 
-    let mut timer = Timer::new(args.common.cross.timing);
+    let mut timer = Timer::new(args.common.document.timing);
     let source = timer.measure("read", || read_source(path, encoding))?;
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = timer.measure("parse", || doc.snapshot());
     let lints = lint_diagnostics(&tree);
     timer.report()?;
 
-    if lints.is_empty() {
-        return Ok(ExitCode::SUCCESS);
-    }
-    diagnostics_render::render(format, &display_path(path), &doc, &lints, lang)
-        .context("failed to write lints")?;
-    // Lint codes are advisory and never `Internal`, so there is no exit-3 arm
-    // (unlike `check`): tolerated by default, exit 1 under `--strict` for CI.
-    Ok(if strict {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
+    report_diagnostics(
+        policy,
+        DiagnosticReport {
+            path,
+            source: doc.source(),
+            diagnostics: &lints,
+            lang,
+        },
+    )
+    .map(DocumentOutcome::exit_code)
 }
 
 /// The resolved lint settings threaded through `aozora lint --fix` alongside
@@ -884,8 +907,7 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
 #[derive(Clone, Copy)]
 struct LintFixSettings<'a> {
     encoding: Encoding,
-    format: DiagFormat,
-    strict: bool,
+    policy: DiagnosticPolicy,
     lang: &'a LanguageIdentifier,
 }
 
@@ -895,8 +917,7 @@ struct LintFixSettings<'a> {
 fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> {
     let LintFixSettings {
         encoding,
-        format,
-        strict,
+        policy,
         lang,
     } = settings;
     if path.as_os_str() == "-" {
@@ -909,30 +930,37 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
     // Re-lint the written form: the Tier1 autofix resolves every flagged
     // near-miss, so this is normally empty, but reporting the residue keeps
     // `--fix` honest if a body was flagged yet declined a canonical.
-    let doc = Document::new(fmt.new);
+    let doc = aozora::parse(fmt.new).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let residual = lint_diagnostics(&tree);
     if residual.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    diagnostics_render::render(format, &display_path(path), &doc, &residual, lang)
-        .context("failed to write lints")?;
-    Ok(if strict {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
+    report_diagnostics(
+        policy,
+        DiagnosticReport {
+            path,
+            source: doc.source(),
+            diagnostics: &residual,
+            lang,
+        },
+    )
+    .map(DocumentOutcome::exit_code)
 }
 
-/// The notation-hygiene lints (`aozora::lint::*`) from a parsed tree — the
-/// advisory subset `aozora lint` reports, filtered from every diagnostic.
+/// Diagnostics surfaced by `lint`: notation-hygiene findings plus any internal
+/// parser failure that must retain the process-wide exit-3 contract.
 fn lint_diagnostics(snapshot: &aozora::Snapshot) -> Vec<aozora::Diagnostic> {
     snapshot
         .diagnostics()
         .iter()
-        .filter(|d| d.is_lint())
+        .filter(|diagnostic| is_lint_output(diagnostic))
         .cloned()
         .collect()
+}
+
+fn is_lint_output(diagnostic: &aozora::Diagnostic) -> bool {
+    diagnostic.is_lint() || diagnostic.source() == DiagnosticSource::Internal
 }
 
 fn run_fmt(
@@ -965,18 +993,19 @@ fn fmt_watched(
     lang: &LanguageIdentifier,
     once: impl Fn() -> Result<ExitCode>,
 ) -> Result<ExitCode> {
-    if !args.cross.watch {
-        return once();
+    if args.document.watch {
+        let files = watch_target_paths(args.fmt.paths());
+        let [path] = files.as_slice() else {
+            let _drop = writeln!(
+                io::stderr(),
+                "aozora fmt: --watch needs exactly one file path (not stdin or multiple paths)"
+            );
+            return Ok(ExitCode::from(2));
+        };
+        watch::watch(path, lang, once)
+    } else {
+        once()
     }
-    let files = watch_target_paths(args.fmt.paths());
-    let [path] = files.as_slice() else {
-        let _drop = writeln!(
-            io::stderr(),
-            "aozora fmt: --watch needs exactly one file path (not stdin or multiple paths)"
-        );
-        return Ok(ExitCode::from(2));
-    };
-    watch::watch(path, lang, once)
 }
 
 fn run_fmt_once(
@@ -988,8 +1017,9 @@ fn run_fmt_once(
     // Fold `.aozora.toml` into the effective encoding (flag/env > config >
     // auto), then hand off to the shared formatter engine.
     let cwd = env::current_dir().context("failed to read the working directory")?;
-    let cfg = config::ConfigFile::resolve(args.cross.config.as_deref(), &cwd)?;
-    let encoding = args.fmt.encoding().or(cfg.encoding).unwrap_or_default();
+    let cfg = config::ConfigFile::resolve(args.document.config.as_deref(), &cwd)?;
+    let encoding = args.document.encoding.or(cfg.encoding).unwrap_or_default();
+    let policy = args.document.diagnostic_policy(&cfg);
 
     // The presentation policy: `--color` drives the `--diff` hunks, while
     // `--quiet` and the resolved message language govern the TTY-gated
@@ -998,8 +1028,10 @@ fn run_fmt_once(
         color,
         quiet,
         lang: lang.clone(),
+        diagnostic_format: policy.format,
+        strict: policy.strict,
     };
-    let mut timer = Timer::new(args.cross.timing);
+    let mut timer = Timer::new(args.document.timing);
     let code = timer.measure("format", || {
         fmt::run_engine(&args.fmt, encoding, "aozora fmt", &presentation)
     });
@@ -1011,16 +1043,30 @@ fn run_render(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitCode> 
     if let Some(code) = input::guard_stdin(&args.common.input.file, "render", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, lang, || run_render_once(args))
+    run_watched(&args.common, lang, || run_render_once(args, lang))
 }
 
-fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
+fn run_render_once(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.cross.timing);
+    let policy = args.common.document.diagnostic_policy(&cfg);
+    let mut timer = Timer::new(args.common.document.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = timer.measure("parse", || doc.snapshot());
+    let outcome = report_diagnostics(
+        policy,
+        DiagnosticReport {
+            path: &args.common.input.file,
+            source: doc.source(),
+            diagnostics: tree.diagnostics(),
+            lang,
+        },
+    )?;
+    if outcome == DocumentOutcome::Internal {
+        timer.report()?;
+        return Ok(outcome.exit_code());
+    }
     // --degraded implies --normalize and adds Tier2; --normalize alone is
     // Tier1; neither is the byte-identical default.
     let opts = RenderOptions::default().directives(if args.degraded {
@@ -1036,7 +1082,7 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
     timer.report()?;
-    Ok(ExitCode::SUCCESS)
+    Ok(outcome.exit_code())
 }
 
 fn run_inspect(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
@@ -1045,33 +1091,48 @@ fn run_inspect(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode
     if let Some(code) = input::guard_stdin(&args.common.input.file, "inspect", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, lang, || run_inspect_once(args))
+    run_watched(&args.common, lang, || run_inspect_once(args, lang))
 }
 
-fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
-    let mut timer = Timer::new(args.common.cross.timing);
-    let json = inspect_json(args, &mut timer)?;
+fn run_inspect_once(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
+    let mut timer = Timer::new(args.common.document.timing);
+    let (json, outcome) = inspect_json(args, lang, &mut timer)?;
+    if outcome == DocumentOutcome::Internal {
+        timer.report()?;
+        return Ok(outcome.exit_code());
+    }
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
     timer.report()?;
-    Ok(ExitCode::SUCCESS)
+    Ok(outcome.exit_code())
 }
 
-/// Project the requested JSON envelope to its JSON string. `Gaiji` reads
-/// raw source and skips the parse; `Tree` kinds parse first, then delegate
-/// to [`TreeKind::render`].
-fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
+/// Project the requested JSON envelope to its JSON string.
+fn inspect_json(
+    args: &InspectArgs,
+    lang: &LanguageIdentifier,
+    timer: &mut Timer,
+) -> Result<(String, DocumentOutcome)> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
+    let policy = args.common.document.diagnostic_policy(&cfg);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
-    Ok(match args.which {
-        InspectKind::Gaiji => timer.measure("serialize", || json::gaiji(&source)),
-        InspectKind::Tree(kind) => {
-            let doc = Document::new(source);
-            let tree = timer.measure("parse", || doc.snapshot());
-            timer.measure("serialize", || kind.render(&tree))
-        }
-    })
+    let doc = aozora::parse(source).expect("source fits parser span limit");
+    let tree = timer.measure("parse", || doc.snapshot());
+    let outcome = report_diagnostics(
+        policy,
+        DiagnosticReport {
+            path: &args.common.input.file,
+            source: doc.source(),
+            diagnostics: tree.diagnostics(),
+            lang,
+        },
+    )?;
+    let json = match args.which {
+        InspectKind::Gaiji => timer.measure("serialize", || json::gaiji(&tree)),
+        InspectKind::Tree(kind) => timer.measure("serialize", || kind.render(&tree)),
+    };
+    Ok((json, outcome))
 }
 
 /// Dispatch `aozora spec <command>` to the introspection renderers. These read
@@ -1088,33 +1149,47 @@ fn run_pandoc(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitCode> 
     if let Some(code) = input::guard_stdin(&args.common.input.file, "pandoc", lang) {
         return Ok(code);
     }
-    run_watched(&args.common, lang, || run_pandoc_once(args))
+    run_watched(&args.common, lang, || run_pandoc_once(args, lang))
 }
 
-fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
+fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.cross.timing);
+    let policy = args.common.document.diagnostic_policy(&cfg);
+    let mut timer = Timer::new(args.common.document.timing);
     let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let snapshot = timer.measure("parse", || doc.snapshot());
+    let outcome = report_diagnostics(
+        policy,
+        DiagnosticReport {
+            path: &args.common.input.file,
+            source: doc.source(),
+            diagnostics: snapshot.diagnostics(),
+            lang,
+        },
+    )?;
+    if outcome == DocumentOutcome::Internal {
+        timer.report()?;
+        return Ok(outcome.exit_code());
+    }
     let json = timer
         .measure("pandoc", || serde_json::to_string(&to_pandoc(&snapshot)))
         .context("serialize Pandoc AST")?;
     timer.report()?;
 
-    let Some(format) = args.format.as_deref() else {
-        // No --format: emit Pandoc JSON. Downstream invocations
+    let Some(format) = args.to.as_deref() else {
+        // No --to: emit Pandoc JSON. Downstream invocations
         // ( `aozora pandoc input.txt | pandoc -f json -t epub` )
         // pick up the bytes verbatim.
         let mut stdout = io::stdout().lock();
         stdout
             .write_all(json.as_bytes())
             .context("write Pandoc JSON to stdout")?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(outcome.exit_code());
     };
 
-    // --format set: pipe through `pandoc -f json -t <format>`.
+    // --to set: pipe through `pandoc -f json -t <format>`.
     debug!(format, "spawning `pandoc -f json -t <format>` subprocess");
     let mut child = Process::new("pandoc")
         .args(["-f", "json", "-t", format])
@@ -1124,7 +1199,7 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
         .spawn()
         .with_context(|| {
             "failed to spawn `pandoc`; install it from https://pandoc.org or omit \
-             --format to emit Pandoc JSON instead"
+             --to to emit Pandoc JSON instead"
         })?;
     let mut stdin = child.stdin.take().context("piped stdin")?;
     stdin
@@ -1132,11 +1207,15 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
         .context("write Pandoc JSON to pandoc stdin")?;
     drop(stdin);
     let status = child.wait().context("wait for pandoc")?;
-    Ok(if status.success() {
-        ExitCode::SUCCESS
+    Ok(pandoc_exit_code(outcome, status.success()))
+}
+
+fn pandoc_exit_code(outcome: DocumentOutcome, child_succeeded: bool) -> ExitCode {
+    if child_succeeded {
+        outcome.exit_code()
     } else {
-        ExitCode::FAILURE
-    })
+        ExitCode::from(2)
+    }
 }
 
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
@@ -1168,6 +1247,8 @@ fn display_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     // --- classify_err: main's final error disposition ---
@@ -1180,8 +1261,6 @@ mod tests {
 
     #[test]
     fn classify_err_maps_oversize_input_to_usage() {
-        // is_broken_pipe is false, is_oversize_input true -> Usage (exit 2).
-        // Forcing the oversize guard false would route this to Failure instead.
         let err = anyhow::Error::new(fmt::OversizeInput {
             bytes: fmt::MAX_SOURCE_BYTES + 1,
         });
@@ -1189,11 +1268,24 @@ mod tests {
     }
 
     #[test]
-    fn classify_err_maps_other_errors_to_failure() {
-        // Neither guard matches -> Failure (exit 1). Forcing the oversize guard
-        // true would route this to Usage instead.
+    fn classify_err_maps_other_errors_to_usage() {
         let err = anyhow::anyhow!("some unrelated failure");
-        assert_eq!(classify_err(&err), ErrDisposition::Failure);
+        assert_eq!(classify_err(&err), ErrDisposition::Usage);
+    }
+
+    #[test]
+    fn lint_output_keeps_lints_and_internal_failures_only() {
+        let span = aozora::Span::new(0, 1);
+        assert!(is_lint_output(
+            &aozora::Diagnostic::non_canonical_directive(span, "canonical",)
+        ));
+        assert!(is_lint_output(&aozora::Diagnostic::internal(
+            span,
+            aozora::InternalCheckCode::RegistryOutOfOrder,
+        )));
+        assert!(!is_lint_output(&aozora::Diagnostic::source_contains_pua(
+            span, '\u{E001}',
+        )));
     }
 
     // --- watch_target_paths: fmt --watch stdin filter ---
@@ -1223,6 +1315,18 @@ mod tests {
         assert!(watch_target_paths(&paths).is_empty());
     }
 
+    #[test]
+    fn fmt_without_watch_runs_once() {
+        let args = FmtCmd::try_parse_from(["fmt"]).expect("fmt args");
+        let calls = Cell::new(0);
+        fmt_watched(&args, &resolve_lang(None, None), || {
+            calls.set(calls.get() + 1);
+            Ok(ExitCode::SUCCESS)
+        })
+        .expect("fmt dispatch");
+        assert_eq!(calls.get(), 1);
+    }
+
     // --- run_pandoc_once: real return differs from the default ---
 
     #[test]
@@ -1233,7 +1337,38 @@ mod tests {
         let args =
             PandocArgs::try_parse_from(["pandoc", "/nonexistent/aozora-pandoc-missing-9c1f2a.txt"])
                 .expect("pandoc args parse");
-        run_pandoc_once(&args).unwrap_err();
+        run_pandoc_once(&args, &resolve_lang(None, None)).unwrap_err();
+    }
+
+    #[test]
+    fn pandoc_output_and_diagnostic_formats_are_independent() {
+        let args = PandocArgs::try_parse_from([
+            "pandoc",
+            "--format",
+            "short",
+            "--to",
+            "html",
+            "input.txt",
+        ])
+        .expect("pandoc args parse");
+        assert!(matches!(
+            args.common.document.format,
+            Some(DiagFormat::Short)
+        ));
+        assert_eq!(args.to.as_deref(), Some("html"));
+        PandocArgs::try_parse_from(["pandoc", "--format", "html", "input.txt"]).unwrap_err();
+    }
+
+    #[test]
+    fn pandoc_child_failure_is_an_operational_error() {
+        assert_eq!(
+            pandoc_exit_code(DocumentOutcome::Success, false),
+            ExitCode::from(2),
+        );
+        assert_eq!(
+            pandoc_exit_code(DocumentOutcome::Strict, true),
+            ExitCode::from(1),
+        );
     }
 
     // --- command_config_path: threads --config into the early colour /
@@ -1253,7 +1388,7 @@ mod tests {
 
     #[test]
     fn command_config_path_is_none_for_configless_subcommands() {
-        // The introspection subcommands flatten no `CrossCutArgs`, so they carry
+        // The introspection subcommands flatten no `DocumentArgs`, so they carry
         // no config layer — the `None` arm, not the whole-body mutant.
         let cli = Cli::try_parse_from(["aozora", "spec", "kinds"]).expect("cli parses");
         assert_eq!(command_config_path(&cli.command), None);

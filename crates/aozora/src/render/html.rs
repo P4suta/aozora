@@ -21,7 +21,7 @@ use crate::syntax::ast::{LexOutput, Node, NodeRef, NodeStore};
 use crate::render::render_node::render;
 use crate::render::serialize::{DirectiveNormalization, SerializeOptions, serialize_with};
 use crate::render::spelling::html::{RenderState, escape_text_chunk};
-use crate::render::walk::{SentinelKind, WalkSink, walk};
+use crate::render::walk::{NewlineSink, SentinelKind, WalkSink, walk_with_newlines};
 
 /// Options controlling the opt-in HTML render path.
 ///
@@ -39,14 +39,14 @@ use crate::render::walk::{SentinelKind, WalkSink, walk};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RenderOptions {
-    /// Which notation-hygiene tiers to apply to `DirectiveKind::Unknown`
+    /// Which notation-hygiene tiers to apply to `DirectiveKind::Editorial`
     /// near-misses when rendering. Set through [`RenderOptions::directives`];
     /// private so future options can be added without a breaking change.
     pub(crate) directives: DirectiveNormalization,
 }
 
 impl RenderOptions {
-    /// Select which notation-hygiene tiers to apply to `DirectiveKind::Unknown`
+    /// Select which notation-hygiene tiers to apply to `DirectiveKind::Editorial`
     /// near-misses. Builder over [`RenderOptions::default`]:
     /// `RenderOptions::default().directives(DirectiveNormalization::Canonical)`.
     #[must_use]
@@ -102,45 +102,64 @@ pub(crate) fn render_html(out: &LexOutput) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
 /// lexer's `Span` width contract; in practice unreachable.
 pub(crate) fn render_html_into<W: fmt::Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
-    let mut sink = HtmlSink {
+    let mut sink = HtmlSink::<_, false> {
         store: &out.store,
         out: writer,
         state: RenderState::default(),
     };
-    walk(out, &mut sink)
+    walk_with_newlines(out, &mut sink)?;
+    sink.finish()
+}
+
+pub(super) fn render_inline_source<W: fmt::Write>(source: &str, writer: &mut W) -> fmt::Result {
+    let output = lex(source);
+    let mut sink = HtmlSink::<_, true> {
+        store: &output.store,
+        out: writer,
+        state: RenderState::default(),
+    };
+    walk_with_newlines(&output, &mut sink)
 }
 
 /// [`WalkSink`] that emits semantic HTML5 from the AST, threading the
 /// [`NodeStore`] (the resolve authority) into every AST emitter and reusing
 /// `crate::render::spelling::html`'s [`RenderState`] for all block / paragraph / container
 /// structure.
-struct HtmlSink<'a, W: fmt::Write> {
+struct HtmlSink<'a, W: fmt::Write, const INLINE: bool> {
     store: &'a NodeStore,
     out: &'a mut W,
     state: RenderState,
 }
 
-impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
-    // HTML output treats `\n` as structural (paragraph / line break).
-    const WANTS_NEWLINES: bool = true;
+impl<W: fmt::Write, const INLINE: bool> HtmlSink<'_, W, INLINE> {
+    fn finish(&mut self) -> fmt::Result {
+        if INLINE {
+            Ok(())
+        } else {
+            self.state.finish(self.out)
+        }
+    }
+}
 
+impl<W: fmt::Write, const INLINE: bool> WalkSink for HtmlSink<'_, W, INLINE> {
     fn on_text(&mut self, text: &str) -> fmt::Result {
+        if INLINE {
+            return escape_text_chunk(text, self.out);
+        }
         self.state.ensure_in_paragraph(self.out)?;
         escape_text_chunk(text, self.out)
     }
 
-    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
-        match next {
-            // A blank line closes the current paragraph.
-            Some(b'\n') => self.state.close_paragraph(self.out),
-            // A lone newline inside a paragraph is a line break.
-            Some(_) if self.state.in_paragraph => self.out.write_str("<br />\n"),
-            // A newline outside a paragraph (e.g. between blocks) is dropped.
-            Some(_) | None => Ok(()),
-        }
-    }
-
     fn on_node(&mut self, kind: SentinelKind, node: NodeRef) -> fmt::Result {
+        if INLINE {
+            return match (kind, node) {
+                (SentinelKind::Inline, NodeRef::Inline(n))
+                | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
+                    render(n, self.store, self.out)
+                }
+                _ => Ok(()),
+            };
+        }
         match (kind, node) {
             (SentinelKind::Inline, NodeRef::Inline(n)) => {
                 self.state.ensure_in_paragraph(self.out)?;
@@ -180,13 +199,18 @@ impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
             _ => Ok(()),
         }
     }
+}
 
-    fn finish(&mut self) -> fmt::Result {
-        // Close any region a source left open (an unbalanced ［＃ここから…］):
-        // to_html must emit balanced markup even though to_source keeps the
-        // imbalance verbatim. The unclosed region extends to end-of-document.
-        self.state.drain_open_containers(self.out)?;
-        self.state.close_paragraph(self.out)
+impl<W: fmt::Write, const INLINE: bool> NewlineSink for HtmlSink<'_, W, INLINE> {
+    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
+        if INLINE {
+            return next.map_or(Ok(()), |_| self.out.write_str("<br />\n"));
+        }
+        match next {
+            Some(b'\n') => self.state.close_paragraph(self.out),
+            Some(_) if self.state.in_paragraph => self.out.write_str("<br />\n"),
+            Some(_) | None => Ok(()),
+        }
     }
 }
 
@@ -207,6 +231,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn render_options_directives_changes_near_miss_html() {
+        let document = crate::parse("本文［＃ゴチック］続き").expect("source parses");
+        let snapshot = document.snapshot();
+        let default = snapshot.to_html_with(RenderOptions::default());
+        let canonical = snapshot
+            .to_html_with(RenderOptions::default().directives(DirectiveNormalization::Canonical));
+
+        assert_ne!(canonical, default);
+        assert!(default.contains("aozora-directive"));
+        assert!(!canonical.contains("aozora-directive"));
+    }
+
     /// A non-warichu inline directive (`［＃入力者注(5)］`) must fall through to the
     /// per-node emitter: the `WarichuClose` match guard is a genuine equality
     /// test, not an unconditional `true`. Were the guard always true, this
@@ -219,5 +256,14 @@ mod tests {
             render_html(&out),
             "<p>本文<sup class=\"aozora-editor-note\">注5</sup>続き</p>\n",
         );
+    }
+
+    #[test]
+    fn forward_format_preserves_nested_ruby() {
+        let out = lex("二年程｜經《た》つうちに［＃「二年程」～「つうちに」に傍点］");
+        let html = render_html(&out);
+        assert!(html.contains("<em class=\"aozora-bouten"));
+        assert!(html.contains("<ruby>經<rp>(</rp><rt>た</rt>"));
+        assert!(!html.contains("｜經《た》"), "html: {html}");
     }
 }

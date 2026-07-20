@@ -74,8 +74,14 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     /// Panics in debug builds if the keys are not sorted ascending.
     #[must_use]
     pub(crate) fn from_sorted_slice(sorted: &[(K, V)]) -> Self {
+        Self::from_sorted_by(sorted, Clone::clone)
+    }
+
+    pub(crate) fn from_sorted_by<T>(sorted: &[T], project: impl Fn(&T) -> (K, V) + Copy) -> Self {
         debug_assert!(
-            sorted.windows(2).all(|w| w[0].0 <= w[1].0),
+            sorted
+                .windows(2)
+                .all(|window| project(&window[0]).0 <= project(&window[1]).0),
             "input keys must be sorted ascending"
         );
         let n = sorted.len();
@@ -83,26 +89,30 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
             return Self::new();
         }
 
-        // Build keys via the Eytzinger array's existing constructor —
-        // and in parallel place values at the same Eytzinger index by
-        // running the same in-order tree walk.
-        let keys_only: Vec<K> = sorted.iter().map(|(k, _)| k.clone()).collect();
-        let keys = EytzingerArray::from_sorted_slice(&keys_only);
-
-        let mut values: Vec<Option<V>> = (0..n).map(|_| None).collect();
-        let mut sorted_idx = 0usize;
-        place_values(&mut values, sorted, &mut sorted_idx, 0);
+        let mut layout = vec![0; n];
+        let sorted_idx = {
+            let mut placer = IndexPlacer {
+                layout: &mut layout,
+                sorted_idx: 0,
+            };
+            placer.place(0);
+            placer.sorted_idx
+        };
         debug_assert_eq!(
             sorted_idx, n,
-            "value placement must visit every slot exactly once"
+            "pair placement must visit every slot exactly once"
         );
 
+        let mut keys = Vec::with_capacity(n);
+        let mut values = Vec::with_capacity(n);
+        for index in layout {
+            let (key, value) = project(&sorted[index]);
+            keys.push(key);
+            values.push(value);
+        }
         Self {
-            keys,
-            values: values
-                .into_iter()
-                .map(|slot| slot.expect("every value slot was filled"))
-                .collect(),
+            keys: EytzingerArray::from_layout(keys),
+            values,
         }
     }
 
@@ -114,22 +124,21 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     }
 }
 
-/// Mirror of `eytzinger_build` in the array crate, but for the value
-/// side: places `sorted[*idx].1` at each Eytzinger node in lockstep.
-fn place_values<K, V: Clone>(
-    values: &mut [Option<V>],
-    sorted: &[(K, V)],
-    sorted_idx: &mut usize,
-    node: usize,
-) {
-    let n = values.len();
-    if node >= n {
-        return;
+struct IndexPlacer<'a> {
+    layout: &'a mut [usize],
+    sorted_idx: usize,
+}
+
+impl IndexPlacer<'_> {
+    fn place(&mut self, node: usize) {
+        if node >= self.layout.len() {
+            return;
+        }
+        self.place(2 * node + 1);
+        self.layout[node] = self.sorted_idx;
+        self.sorted_idx += 1;
+        self.place(2 * node + 2);
     }
-    place_values(values, sorted, sorted_idx, 2 * node + 1);
-    values[node] = Some(sorted[*sorted_idx].1.clone());
-    *sorted_idx += 1;
-    place_values(values, sorted, sorted_idx, 2 * node + 2);
 }
 
 /// In-order iterator over an [`EytzingerMap`]. Yields `(key, value)`

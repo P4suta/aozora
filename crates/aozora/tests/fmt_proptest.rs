@@ -14,7 +14,7 @@
 #![cfg(feature = "fmt")]
 
 use aozora::fmt::{format_source, format_source_with};
-use aozora::render::{DirectiveNormalization, SerializeOptions};
+use aozora::{DirectiveNormalization, SerializeOptions};
 use proptest::collection::vec as proptest_vec;
 use proptest::prelude::*;
 use proptest::sample::select;

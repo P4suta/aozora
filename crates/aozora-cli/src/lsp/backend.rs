@@ -1,15 +1,13 @@
 //! tower-lsp `LanguageServer` implementation for aozora documents.
 //!
 //! Each open document is an `Arc<OpenDocument>` in a [`DashMap`]: a
-//! writer-side `DocBuffer` behind a `parking_lot::Mutex` and a
-//! reader-side `DocSnapshot` in an `ArcSwap` (see [`crate::lsp::state`] for the
-//! lock graph). Handlers read via `state.snapshot()` — a single atomic
-//! load, wait-free, so the debounced reparse never blocks them.
+//! mutable core `Document` behind a `parking_lot::Mutex` and a reader-side
+//! `DocSnapshot` in an `ArcSwap`. Handlers read via `state.snapshot()` without
+//! contending with edits.
 //!
 //! Text sync is incremental (see [`crate::lsp::capabilities`]): `did_change`
-//! applies byte-range edits via `OpenDocument::apply_changes` and schedules
-//! a debounced semantic re-parse + diagnostic publish on `spawn_blocking`,
-//! so async hover / codeAction requests don't stall.
+//! applies source-byte edits through the core document and debounces diagnostic
+//! publication.
 
 use std::slice;
 use std::sync::Arc;
@@ -26,12 +24,12 @@ use crate::lsp::commands::{COMMAND_CANONICALIZE_SLUG, canonicalize_slug_edit};
 use crate::lsp::completion::completion_at;
 use crate::lsp::diagnostics::diagnostics_from_aozora;
 use crate::lsp::doc_line_view::DocLineView;
+use crate::lsp::document_limit::{MAX_DOCUMENT_BYTES, exceeds_document_cap};
 use crate::lsp::formatting::format_edits;
 use crate::lsp::half_width_emmet::emmet_completions;
 use crate::lsp::hover::hover_at;
 use crate::lsp::linked_editing::linked_editing_at;
 use crate::lsp::on_type_formatting::format_on_type;
-use crate::lsp::parse_cache::{MAX_DOCUMENT_BYTES, exceeds_document_cap};
 use crate::lsp::rename::{prepare_rename_at, rename_edit};
 use crate::lsp::state::OpenDocument;
 use crate::lsp::structured_snippets::snippet_completions;
@@ -43,7 +41,7 @@ use tower_lsp::lsp_types::{
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentOnTypeFormattingParams,
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
     FoldingRange, FoldingRangeParams, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, LinkedEditingRangeParams, LinkedEditingRanges, MessageType, Position,
+    InitializedParams, LinkedEditingRangeParams, LinkedEditingRanges, MessageType,
     PrepareRenameResponse, Range, RenameParams, SemanticTokens, SemanticTokensParams,
     SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentPositionParams, TextEdit,
     Url, WorkspaceEdit,
@@ -55,7 +53,7 @@ use crate::lsp::document_symbol::document_symbols;
 use crate::lsp::folding_range::folding_ranges;
 use crate::lsp::position::position_to_byte_offset;
 use crate::lsp::semantic_tokens::semantic_tokens_full;
-use aozora::encoding::gaiji;
+use aozora::resolve_gaiji;
 
 /// LSP backend for aozora documents.
 ///
@@ -97,10 +95,6 @@ fn oversize_args(byte_len: usize) -> FluentArgs<'static> {
 /// [`MAX_DOCUMENT_BYTES`], anchored at the start of the file.
 fn oversize_notice(byte_len: usize, lang: &LanguageIdentifier) -> Diagnostic {
     Diagnostic {
-        range: Range {
-            start: Position::new(0, 0),
-            end: Position::new(0, 0),
-        },
         severity: Some(DiagnosticSeverity::INFORMATION),
         source: Some("aozora-lsp".to_owned()),
         message: tf(lang, "lsp-oversize-diagnostic", &oversize_args(byte_len)),
@@ -147,15 +141,12 @@ impl AozoraLanguageServer {
             // lookups, byte-identical to a LineIndex over the raw text since
             // ropey counts only `\n`) — no per-publish line-table rebuild.
             let view = DocLineView::Rope(rope);
-            state.with_parse_cache(|cache| {
-                diagnostics_from_aozora(&view, cache.diagnostics(), ui_lang())
-            })
+            diagnostics_from_aozora(&view, snap.core().diagnostics(), ui_lang())
         });
         self.client.publish_diagnostics(uri, diags, None).await;
     }
 
-    /// Schedule a debounced semantic re-parse + diagnostic publish.
-    /// The actual work runs after `PUBLISH_DEBOUNCE_MS` quiet time.
+    /// Schedule a diagnostic publish after `PUBLISH_DEBOUNCE_MS` quiet time.
     /// Multiple rapid edits coalesce — only the task whose recorded
     /// `target_version` matches the doc's current `edit_version`
     /// after the sleep proceeds. Earlier tasks observe a newer
@@ -169,9 +160,7 @@ impl AozoraLanguageServer {
         let backend = self.clone();
         let task = tokio::spawn(async move {
             sleep(Duration::from_millis(PUBLISH_DEBOUNCE_MS)).await;
-            backend
-                .reparse_and_publish_if_current(uri, target_version)
-                .await;
+            backend.publish_if_current(uri, target_version).await;
         });
         // Cap in-flight debounce tasks at one per document: aborting the
         // previous pending task stops an edit flood from piling up
@@ -180,9 +169,7 @@ impl AozoraLanguageServer {
         state.replace_debounce_task(task.abort_handle());
     }
 
-    /// The debounced task body — re-parse semantically through the
-    /// parse cache then publish, but only if no newer edit has come in.
-    async fn reparse_and_publish_if_current(&self, uri: Url, target_version: u64) {
+    async fn publish_if_current(&self, uri: Url, target_version: u64) {
         let Some(state) = self.lookup(&uri) else {
             return;
         };
@@ -191,35 +178,20 @@ impl AozoraLanguageServer {
             return;
         }
 
-        // Incremental reparse off the async runtime so concurrent hover /
-        // codeAction requests do not stall on an executor thread.
-        // `reparse_pending` drains the debounce-window edits under the
-        // buffer lock and returns the exact text it parsed (so the LSP
-        // position mapping is consistent) plus the edit-version that text
-        // reflects.
-        let parse_state = Arc::clone(&state);
+        let publication_state = Arc::clone(&state);
         let Ok((raw, diagnostics, parsed_version)) =
-            spawn_blocking(move || parse_state.reparse_pending()).await
+            spawn_blocking(move || publication_state.publication_snapshot()).await
         else {
             return;
         };
 
-        // Publish guard (no store race — the cache is already updated):
-        // if a newer edit landed during the parse, its task republishes,
-        // so skip this now-superseded result rather than flash it.
         if state.edit_version() != parsed_version {
             return;
         }
 
-        // Oversized documents skip semantic analysis inside
-        // `reparse_pending` (empty diagnostics); surface the notice based
-        // on the text that was actually parsed, not a possibly-stale
-        // snapshot length.
         let publish_diags = if exceeds_document_cap(raw.len_bytes()) {
             vec![oversize_notice(raw.len_bytes(), ui_lang())]
         } else {
-            // Map spans against the parsed rope directly — the per-keystroke
-            // hot path no longer rebuilds an O(doc) line table (Mechanism A).
             diagnostics_from_aozora(&DocLineView::Rope(&raw), &diagnostics, ui_lang())
         };
         self.client
@@ -251,30 +223,28 @@ impl AozoraLanguageServer {
     /// Returns [`JsonRpcError::invalid_params`] if no open document
     /// matches `params.uri`.
     pub(crate) async fn render_html(&self, params: RenderHtmlParams) -> Result<RenderHtmlResult> {
-        // Wait-free snapshot — reads never contend with the writer
-        // hot path. The Arc<str> clone is a single atomic bump.
+        // Wait-free snapshot — reads never contend with the writer hot path.
         let state = self
             .lookup(&params.uri)
             .ok_or_else(|| JsonRpcError::invalid_params("no document at uri"))?;
-        let text = state.snapshot().doc_text().to_string();
+        let snapshot = state.snapshot();
+        let text_len = snapshot.doc_text().len();
         // The preview drives the same O(n) renderer; skip it for
         // oversized documents and return a short inert notice instead.
-        if exceeds_document_cap(text.len()) {
+        if exceeds_document_cap(text_len) {
             return Ok(RenderHtmlResult {
-                html: oversize_html_notice(text.len(), ui_lang()),
+                html: oversize_html_notice(text_len, ui_lang()),
                 paused: true,
             });
         }
-        let html = spawn_blocking(move || {
-            let document = aozora::Document::new(text);
-            document.snapshot().to_html()
-        })
-        .await
-        .map_err(|join_err| {
-            let mut err = JsonRpcError::internal_error();
-            err.message = format!("renderHtml panicked: {join_err}").into();
-            err
-        })?;
+        let core = snapshot.core().clone();
+        let html = spawn_blocking(move || core.to_html())
+            .await
+            .map_err(|join_err| {
+                let mut err = JsonRpcError::internal_error();
+                err.message = format!("renderHtml panicked: {join_err}").into();
+                err
+            })?;
         Ok(RenderHtmlResult {
             html,
             paused: false,
@@ -313,12 +283,9 @@ impl AozoraLanguageServer {
         let snap = state.snapshot();
         let mut views = Vec::with_capacity(snap.doc_gaiji_spans().len());
         for span in snap.doc_gaiji_spans().values() {
-            let Some(resolved) = gaiji::lookup(None, span.mencode.as_deref(), &span.description)
-            else {
+            let Some(resolved) = resolve_gaiji(span.mencode.as_deref(), &span.description) else {
                 continue;
             };
-            let mut buf = String::with_capacity(8);
-            _ = resolved.write_to(&mut buf);
             let start = snap
                 .doc_line_index()
                 .position(snap.doc_text(), span.start_byte as usize);
@@ -327,7 +294,7 @@ impl AozoraLanguageServer {
                 .position(snap.doc_text(), span.end_byte as usize);
             views.push(GaijiSpanView {
                 range: Range::new(start, end),
-                resolved: buf,
+                resolved,
             });
         }
         Ok(GaijiSpansResult { spans: views })
@@ -451,20 +418,8 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return;
         };
-        let multi = p.content_changes.len() > 1;
         for change in &p.content_changes {
-            // Resolve the change against the LATEST snapshot. The LSP
-            // spec applies multi-change batches in array order, with
-            // each change's coordinates referring to the buffer state
-            // *after* every prior change in the same batch — so the
-            // 2nd+ iterations need an up-to-date snapshot. Without
-            // this, a multi-change batch that paste-rewrites two
-            // ranges in one notification would address the second
-            // range against the pre-batch text and corrupt the buffer.
             let snap = state.snapshot();
-            // LSP allows mixing incremental and full-replacement
-            // events in one batch; full replacement is signalled
-            // by `range == None`.
             match lsp_change_to_edit(snap.doc_text(), change) {
                 Some(edit) => {
                     _ = state.apply_changes(slice::from_ref(&edit));
@@ -478,18 +433,6 @@ impl LanguageServer for AozoraLanguageServer {
                         change.range,
                     );
                 }
-            }
-            // After each apply, force a synchronous snapshot rebuild
-            // so the next iteration sees the post-edit text. Single-
-            // change batches (the common case) skip this — the
-            // debounced publish path drives the rebuild later.
-            //
-            // Inside tokio the rebuild blocks the async task briefly
-            // (a few ms even for large docs); we accept that bound
-            // because multi-change batches are rare and skipping the
-            // rebuild produces silent buffer corruption.
-            if multi {
-                state.rebuild_snapshot_now();
             }
         }
         // Schedule the slow semantic parse + publish as a debounced
@@ -528,7 +471,7 @@ impl LanguageServer for AozoraLanguageServer {
         // Wait-free snapshot read; the parse + serialize runs on the
         // blocking pool so concurrent hover/codeAction requests on the
         // async runtime don't stall.
-        let text = state.snapshot().doc_text().to_string();
+        let text = state.snapshot().doc_text().to_owned();
         let edits = spawn_blocking(move || format_edits(&text))
             .await
             .map_err(|join_err| {
@@ -578,10 +521,8 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Wait-free snapshot. `hover_at` only reads the slice, so the
-        // Arc<str> from snapshot is sufficient with no extra clone.
         let snap = state.snapshot();
-        Ok(hover_at(snap.doc_text(), position, ui_lang()))
+        Ok(hover_at(snap.core(), position, ui_lang()))
     }
 
     // `inlay_hint` deliberately *not* implemented — see
@@ -631,17 +572,13 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Tree-aware: lend the cached parse and ask the splice engine whether
-        // this position sits on a coupled region. `with_tree` returns `None`
-        // when there is no stored output, so flatten that into the response.
         let snap = state.snapshot();
-        Ok(state
-            .with_parse_cache(|c| {
-                c.with_snapshot(|t| {
-                    prepare_rename_at(t, snap.doc_text(), snap.doc_line_index(), position)
-                })
-            })
-            .flatten())
+        Ok(prepare_rename_at(
+            snap.core(),
+            snap.doc_text(),
+            snap.doc_line_index(),
+            position,
+        ))
     }
 
     #[tracing::instrument(
@@ -664,25 +601,18 @@ impl LanguageServer for AozoraLanguageServer {
         // `Ok(None)` for a non-coupled / no-op / gate-failed position and
         // `Err(SpliceError)` when the splice is honestly declined (an
         // ambiguous referent, a ruby-base literal, a 、-joined multi-target).
-        let outcome = state.with_parse_cache(|c| {
-            c.with_snapshot(|t| {
-                rename_edit(
-                    t,
-                    snap.doc_text(),
-                    snap.doc_line_index(),
-                    &uri,
-                    position,
-                    &new_name,
-                )
-            })
-        });
+        let outcome = rename_edit(
+            snap.core(),
+            snap.doc_text(),
+            snap.doc_line_index(),
+            &uri,
+            position,
+            &new_name,
+        );
         match outcome {
-            // No stored tree, or position not on a coupled region / no-op.
-            None | Some(Ok(None)) => Ok(None),
-            Some(Ok(Some(edit))) => Ok(Some(edit)),
-            // The splice declined: surface it as an invalid-params error so the
-            // editor shows the reason rather than silently doing nothing.
-            Some(Err(e)) => Err(JsonRpcError::invalid_params(e.to_string())),
+            Ok(None) => Ok(None),
+            Ok(Some(edit)) => Ok(Some(edit)),
+            Err(e) => Err(JsonRpcError::invalid_params(e.to_string())),
         }
     }
 
@@ -793,8 +723,7 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         // Pure text-scan against the snapshot — no parser invoked.
-        // Wait-free: a single ArcSwap load + a linear pass over the
-        // immutable `Arc<str>`.
+        // Wait-free: a single ArcSwap load + a linear pass over the snapshot.
         let snap = state.snapshot();
         let ranges = folding_ranges(snap.doc_text());
         if ranges.is_empty() {
@@ -832,9 +761,7 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        // Per-paragraph walks against each paragraph's tree — see
-        // semantic_tokens module docs.
-        let tokens: SemanticTokens = semantic_tokens_full(&snap.paragraphs);
+        let tokens: SemanticTokens = semantic_tokens_full(snap.core());
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
@@ -900,7 +827,7 @@ mod tests {
                 None => {} // unresolvable range: skip (matches backend behaviour)
             }
         }
-        state.snapshot().doc_text().to_string()
+        state.snapshot().doc_text().to_owned()
     }
 
     // ---------------------------------------------------------------
@@ -967,15 +894,11 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn doc_state_new_populates_cache() {
+    fn doc_state_new_populates_snapshot() {
         let state = OpenDocument::new("hello".to_owned());
-        // Plain text emits zero diagnostics — the cache surfaces an
-        // empty slice but is *populated* (no longer "first reparse"
-        // pending).
-        state.with_parse_cache(|cache| {
-            assert!(cache.diagnostics().is_empty());
-        });
-        assert_eq!(&**state.snapshot().doc_text(), "hello");
+        let snapshot = state.snapshot();
+        assert!(snapshot.core().diagnostics().is_empty());
+        assert_eq!(snapshot.doc_text(), "hello");
     }
 
     #[test]
@@ -983,7 +906,7 @@ mod tests {
         let state = OpenDocument::new("hello world".to_owned());
         let edit = ByteEdit::new(6..11, "rust".to_owned());
         state.apply_changes(&[edit]);
-        assert_eq!(&**state.snapshot().doc_text(), "hello rust");
+        assert_eq!(state.snapshot().doc_text(), "hello rust");
     }
 
     #[test]
@@ -992,7 +915,7 @@ mod tests {
         let edit = ByteEdit::new(0..99, "x".to_owned());
         let result = state.apply_changes(&[edit]);
         assert!(result.is_none(), "out-of-bounds edit must be rejected");
-        assert_eq!(&**state.snapshot().doc_text(), "hi");
+        assert_eq!(state.snapshot().doc_text(), "hi");
     }
 
     #[test]
@@ -1002,7 +925,7 @@ mod tests {
         let result = state.apply_changes(&[edit]);
         assert!(result.is_none(), "cross-boundary edit must be rejected");
         assert_eq!(
-            &**state.snapshot().doc_text(),
+            state.snapshot().doc_text(),
             "あ",
             "non-boundary edit must be rejected",
         );
@@ -1012,7 +935,7 @@ mod tests {
     fn doc_state_replace_text_updates_buffer() {
         let state = OpenDocument::new("hello".to_owned());
         state.replace_text("｜青梅《おうめ》".to_owned());
-        assert_eq!(&**state.snapshot().doc_text(), "｜青梅《おうめ》");
+        assert_eq!(state.snapshot().doc_text(), "｜青梅《おうめ》");
     }
 
     // ---------------------------------------------------------------
@@ -1059,19 +982,9 @@ mod tests {
         let state = OpenDocument::new("plain text".to_owned());
         let edit = ByteEdit::new(5..6, "｜青梅《おうめ》".to_owned());
         state.apply_changes(&[edit]);
-        // `apply_changes` is the fast path — text + TS edit only. The
-        // semantic re-parse runs in a debounced background task in
-        // production. For this unit test (no async runtime) we drive
-        // it synchronously through the same entry point the debounced
-        // task uses.
-        state.run_parse_cache_reparse();
-        state.with_parse_cache(|cache| {
-            let inline = cache
-                .with_snapshot(|snapshot| snapshot.source_nodes().len())
-                .expect("populated");
-            assert_eq!(inline, 1);
-            assert!(cache.diagnostics().is_empty());
-        });
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.core().nodes().len(), 1);
+        assert!(snapshot.core().diagnostics().is_empty());
     }
 
     #[test]
@@ -1079,17 +992,12 @@ mod tests {
         let state = OpenDocument::new("plain".to_owned());
         let edit = ByteEdit::new(0..0, "\u{E001}".to_owned());
         state.apply_changes(&[edit]);
-        // See note in `edit_inserting_aozora_trigger_reparses` — the
-        // semantic re-parse is deferred to the debounced background
-        // task in production.
-        state.run_parse_cache_reparse();
-        state.with_parse_cache(|cache| {
-            assert!(
-                !cache.diagnostics().is_empty(),
-                "PUA injection must produce diagnostics; got {:?}",
-                cache.diagnostics(),
-            );
-        });
+        let snapshot = state.snapshot();
+        assert!(
+            !snapshot.core().diagnostics().is_empty(),
+            "PUA injection must produce diagnostics; got {:?}",
+            snapshot.core().diagnostics(),
+        );
     }
 
     // ---------------------------------------------------------------
@@ -1103,7 +1011,7 @@ mod tests {
             let edit = ByteEdit::new(i..i, ch.to_string());
             state.apply_changes(&[edit]);
         }
-        assert_eq!(&**state.snapshot().doc_text(), "hello world");
+        assert_eq!(state.snapshot().doc_text(), "hello world");
     }
 
     /// Replay-style helper that mirrors the production `did_change`
@@ -1129,7 +1037,7 @@ mod tests {
             }
             state.rebuild_snapshot_now();
         }
-        state.snapshot().doc_text().to_string()
+        state.snapshot().doc_text().to_owned()
     }
 
     /// Regression: `did_change` defers snapshot rebuilds onto a tokio
@@ -1241,12 +1149,6 @@ mod tests {
     /// `message` field defaults it to the empty string — both are
     /// caught here. The `severity` and `range` are pinned for the
     /// contract even though they are not the mutation targets.
-    ///
-    /// (Deleting the `range` field is an *equivalent* mutation:
-    /// `Range::default()` is byte-identical to the explicit
-    /// `Range::new(Position::new(0, 0), Position::new(0, 0))`, so no
-    /// test can observe the difference — this assertion documents the
-    /// anchor but cannot kill that mutant.)
     #[test]
     fn oversize_notice_pins_source_severity_and_message() {
         let diag = oversize_notice(20 * 1024 * 1024, &en());
@@ -2284,15 +2186,8 @@ mod e2e {
         );
     }
 
-    /// A two-change batch whose SECOND change addresses a column that
-    /// only exists after the FIRST change is applied. `multi =
-    /// content_changes.len() > 1` must be TRUE so the in-loop
-    /// `rebuild_snapshot_now()` refreshes the snapshot between the
-    /// changes; mutating `> 1` to `== 1` or `< 1` makes `multi` false
-    /// for a 2-change batch, so change 1 resolves column 4 against the
-    /// pre-batch 3-char text and the buffer is corrupted.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn did_change_multi_dependent_batch_rebuilds_between_changes() {
+    async fn did_change_applies_a_batch_in_order() {
         let mut server = TestServer::new();
         server.handshake().await;
         server.did_open("abc").await;
@@ -2427,7 +2322,7 @@ mod e2e {
     // The `exceeds_document_cap` size gate — behavioural side.
     //
     // The exclusive boundary itself (`len > cap`) is pinned cheaply on the
-    // pure predicate in `parse_cache::tests` (integer lengths, no fixture),
+    // pure predicate in `document_limit::tests` (integer lengths, no fixture),
     // which kills every `>`→`>=`/`==`/`<` mutant at all five call sites. What
     // still needs a real over-limit buffer is the BEHAVIOUR on the oversize
     // side: the debounced reparse must post the notice instead of analysing.

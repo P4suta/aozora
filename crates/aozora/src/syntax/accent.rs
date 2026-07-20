@@ -7,12 +7,8 @@
 //! encoded here as a compile-time slice so the lexer (for pre-parse
 //! rewriting) and downstream tools share the same authoritative lookup.
 //!
-//! ```
-//! use aozora::syntax::accent::decompose_fragment;
-//! assert_eq!(decompose_fragment("fune`bre"), "funèbre");
-//! assert_eq!(decompose_fragment("ae&on"), "æon");
-//! assert_eq!(decompose_fragment("plain"), "plain");
-//! ```
+//! For example, a grave-accent digraph produces “funèbre”, `ae&on` becomes
+//! `æon`, and plain text remains unchanged.
 //!
 //! # Invariants
 //!
@@ -42,7 +38,8 @@ use crate::syntax::format::AccentMark;
 /// perfect-hash split tables (`ACCENT_DIGRAPHS` for the 110 two-byte
 /// entries; a 4-arm match for the four three-byte ligatures) — the
 /// linear `ACCENT_TABLE` scan is no longer on the hot path.
-pub const ACCENT_TABLE: &[(&str, char)] = &[
+#[cfg(test)]
+pub(crate) const ACCENT_TABLE: &[(&str, char)] = &[
     // --- Ligatures (checked first: 3-char patterns beat the 2-char group) ---
     ("ae&", 'æ'),
     ("AE&", 'Æ'),
@@ -202,7 +199,7 @@ pub const ACCENT_TABLE: &[(&str, char)] = &[
 /// enumerate the marker bytes; runtime membership checks go through
 /// the `u128` bitmap `ACCENT_MARKER_MASK` instead, which lowers to a
 /// single shift + AND.
-pub const ACCENT_MARKERS: &[u8] = b"'`^:~&,/_";
+pub(crate) const ACCENT_MARKERS: &[u8] = b"'`^:~&,/_";
 
 /// 128-bit bitmap of [`ACCENT_MARKERS`] for branchless ASCII membership
 /// testing. Bit `n` is 1 iff byte `n` is an accent marker. Computed at
@@ -247,7 +244,7 @@ const _: () = assert_markers_ascii(ACCENT_MARKERS);
 /// `ACCENT_MARKERS.contains(&b)` linear scan over 9 bytes.
 #[inline]
 #[must_use]
-pub const fn is_accent_marker(b: u8) -> bool {
+pub(crate) const fn is_accent_marker(b: u8) -> bool {
     // `b as u32` to avoid `1u128 << 200` overflow if a non-ASCII byte
     // were ever passed; the AND with the high mask is 0 there anyway,
     // but the shift itself UB without the guard.
@@ -394,7 +391,7 @@ const _: () = {
 /// left-to-right, peek `<= 3` bytes at a time, and commit the longest match
 /// that's in the table.
 #[must_use]
-pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
+pub(crate) fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
     let bytes = fragment.as_bytes();
     // Early-out: if no accent marker byte appears at all, the output equals the
     // input bit-for-bit. Borrow to avoid allocation.
@@ -411,10 +408,13 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
 
     let mut out = String::with_capacity(fragment.len());
     let mut i = 0;
-    while i < bytes.len() {
+    while let Some(rest) = fragment.get(i..).filter(|rest| !rest.is_empty()) {
+        let previous = i;
         if let Some((pat_len, ch)) = try_match(bytes, i) {
             out.push(ch);
-            i += pat_len;
+            i = i
+                .checked_add(pat_len)
+                .expect("matched accent stays inside fragment");
         } else {
             // Advance one UTF-8 scalar value. Every index we land on is a
             // valid char boundary because we only stride by `pat_len` (2 or 3
@@ -422,57 +422,43 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
             // `clippy::string_slice` and defends against the stride
             // invariant breaking: an index off a char boundary yields
             // `None`, which breaks the loop cleanly.
-            let Some(ch) = fragment.get(i..).and_then(|s| s.chars().next()) else {
-                break;
-            };
+            let ch = rest.chars().next().expect("rest is non-empty");
             out.push(ch);
-            i += ch.len_utf8();
+            i = i
+                .checked_add(ch.len_utf8())
+                .expect("source scalar stays inside fragment");
         }
+        assert!(i > previous, "accent decomposition must advance");
     }
     Cow::Owned(out)
 }
 
-/// Per-digraph **length-changing** edits made by [`decompose_fragment`],
-/// for callers that back-map offsets across the rewrite (see the module
-/// note on the per-position delta).
-///
-/// Each entry is `(in_off, in_len, out_len)`: the `in_len` input bytes at
-/// byte offset `in_off` (relative to `fragment`) become `out_len` output
-/// bytes. Only digraphs whose UTF-8 output length differs from the ASCII
-/// source are reported — length-preserving substitutions (`s&` = ß, 2→2)
-/// shift no later offset and are omitted, so the common case allocates an
-/// empty `Vec`.
-///
-/// ```
-/// use aozora::syntax::accent::decompose_fragment_edits;
-/// // `ae&` (3 bytes) → æ (2 bytes): a −1 shift at offset 0.
-/// assert_eq!(decompose_fragment_edits("ae&on"), vec![(0, 3, 2)]);
-/// // `m'` (2 bytes) → ḿ (3 bytes): a +1 shift.
-/// assert_eq!(decompose_fragment_edits("m'a"), vec![(0, 2, 3)]);
-/// // `s&` (2 bytes) → ß (2 bytes): length-preserving, omitted.
-/// assert!(decompose_fragment_edits("stras&e").is_empty());
-/// ```
 #[must_use]
-pub fn decompose_fragment_edits(fragment: &str) -> Vec<(usize, usize, usize)> {
+#[cfg(test)]
+pub(crate) fn decompose_fragment_edits(fragment: &str) -> Vec<(usize, usize, usize)> {
     let bytes = fragment.as_bytes();
     let mut edits = Vec::new();
     if !bytes.iter().any(|b| is_accent_marker(*b)) {
         return edits;
     }
     let mut i = 0;
-    while i < bytes.len() {
+    while let Some(rest) = fragment.get(i..).filter(|rest| !rest.is_empty()) {
+        let previous = i;
         if let Some((pat_len, ch)) = try_match(bytes, i) {
             let out_len = ch.len_utf8();
             if pat_len != out_len {
                 edits.push((i, pat_len, out_len));
             }
-            i += pat_len;
+            i = i
+                .checked_add(pat_len)
+                .expect("matched accent stays inside fragment");
         } else {
-            let Some(ch) = fragment.get(i..).and_then(|s| s.chars().next()) else {
-                break;
-            };
-            i += ch.len_utf8();
+            let ch = rest.chars().next().expect("rest is non-empty");
+            i = i
+                .checked_add(ch.len_utf8())
+                .expect("source scalar stays inside fragment");
         }
+        assert!(i > previous);
     }
     edits
 }
@@ -515,7 +501,7 @@ fn try_match(bytes: &[u8], i: usize) -> Option<(usize, char)> {
 /// letter unstyled. This is the single authority shared by the forward-accent
 /// classifier and renderer, mirroring [`compose_dotted`]'s role for `AccentDot`.
 #[must_use]
-pub fn compose_accent(letter: char, mark: AccentMark) -> Option<char> {
+pub(crate) fn compose_accent(letter: char, mark: AccentMark) -> Option<char> {
     let base = u8::try_from(letter).ok().filter(u8::is_ascii_alphabetic)?;
     let marker = match mark {
         AccentMark::Acute => b'\'',
@@ -543,7 +529,7 @@ pub fn compose_accent(letter: char, mark: AccentMark) -> Option<char> {
 /// Position of the combining dot in a #331 dotted-letter directive:
 /// `上ドット付き` (above) or `下ドット付き` (below).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DotPosition {
+pub(crate) enum DotPosition {
     /// 上ドット — combining dot above (NFC-composed, e.g. `m` → ṁ U+1E41).
     Above,
     /// 下ドット — combining dot below (NFC-composed, e.g. `s` → ṣ U+1E63).
@@ -557,7 +543,7 @@ pub enum DotPosition {
 /// has a single precomposed scalar, verified NFD-decomposing to base +
 /// U+0307/U+0323 — so composition never needs a combining-mark fallback.
 /// Case-preserving: `t` → ṭ, `T` → Ṭ.
-pub const ACCENT_DOT_TABLE: &[(char, DotPosition, char)] = &[
+pub(crate) const ACCENT_DOT_TABLE: &[(char, DotPosition, char)] = &[
     ('m', DotPosition::Above, 'ṁ'),
     ('n', DotPosition::Above, 'ṅ'),
     ('m', DotPosition::Below, 'ṃ'),
@@ -586,7 +572,7 @@ const _: () = {
 /// pair not in [`ACCENT_DOT_TABLE`] (e.g. an uppercase `S`-below, which the
 /// corpus never asks for). 11 entries, so a linear scan beats a map.
 #[must_use]
-pub fn compose_dotted(base: char, pos: DotPosition) -> Option<char> {
+pub(crate) fn compose_dotted(base: char, pos: DotPosition) -> Option<char> {
     ACCENT_DOT_TABLE
         .iter()
         .find(|&&(b, p, _)| b == base && p == pos)
@@ -729,7 +715,7 @@ fn parse_accent_dot_body(body: &str) -> Option<Vec<DotOp>> {
 /// absolute byte index first, so an earlier substitution never shifts a later
 /// op's index.
 #[must_use]
-pub fn compose_accent_dots(run: &str, body: &str) -> Option<String> {
+pub(crate) fn compose_accent_dots(run: &str, body: &str) -> Option<String> {
     let ops = parse_accent_dot_body(body)?;
     let mut subs: Vec<(usize, char, usize)> = Vec::with_capacity(ops.len());
     for op in &ops {

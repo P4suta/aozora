@@ -21,6 +21,10 @@
 use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant};
 
+use crate::wire::Envelope;
+#[cfg(test)]
+use aozora::json::SCHEMA_VERSION;
+
 /// Accumulates phase durations and renders them to stderr.
 ///
 /// When disabled (`--timing` absent) every [`Self::measure`] call runs
@@ -90,10 +94,8 @@ impl Timer {
         writeln!(w, "{:<width$}  {:>9.3} ms", "total", ms(total))
     }
 
-    /// The machine view: the two-key `{ schemaVersion, data }` envelope the
-    /// CLI-local JSON outputs share — a CLI-side counter, distinct from the
-    /// `aozora::json` wire `SCHEMA_VERSION`. `data` carries the per-phase
-    /// nanosecond durations and the total.
+    /// The machine view uses the common wire envelope. `data` carries the
+    /// per-phase nanosecond durations and the total.
     fn report_json(&self, w: &mut impl Write) -> io::Result<()> {
         let total: Duration = self.phases.iter().map(|(_, d)| *d).sum();
         let phases: Vec<_> = self
@@ -101,11 +103,12 @@ impl Timer {
             .iter()
             .map(|(name, dur)| serde_json::json!({ "name": name, "nanos": nanos(*dur) }))
             .collect();
-        let envelope = serde_json::json!({
-            "schemaVersion": 1,
-            "data": { "phases": phases, "totalNanos": nanos(total) },
-        });
-        writeln!(w, "{envelope}")
+        let envelope = Envelope::new(serde_json::json!({
+            "phases": phases,
+            "totalNanos": nanos(total),
+        }));
+        serde_json::to_writer(&mut *w, &envelope)?;
+        writeln!(w)
     }
 }
 
@@ -182,13 +185,10 @@ mod tests {
 
     #[test]
     fn report_json_uses_the_two_key_data_envelope() {
-        // The CLI-local shape is `{ schemaVersion, data:{ phases, totalNanos } }`
-        // — the phases/total live UNDER `data`, matching the wire two-key shape,
-        // and `schemaVersion` is the CLI-side counter `1` (not the wire version).
         let mut buf = Vec::new();
         primed().report_json(&mut buf).expect("write json");
         let v: serde_json::Value = serde_json::from_slice(&buf).expect("parse json");
-        assert_eq!(v["schemaVersion"], 1, "cli-local counter: {v}");
+        assert_eq!(v["schemaVersion"], SCHEMA_VERSION, "wire version: {v}");
         assert_eq!(v["data"]["totalNanos"], 12, "5 + 7 nanos under data: {v}");
         assert_eq!(v["data"]["phases"][0]["name"], "read");
         assert_eq!(v["data"]["phases"][0]["nanos"], 5);

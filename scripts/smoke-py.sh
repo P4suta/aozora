@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 #
-# Host-side Python wheel smoke for aozora-py.
+# Python wheel smoke for aozora-py.
 #
-# maturin and a Python interpreter are deliberately NOT in the dev image,
-# so — like `just smoke-ffi` and `just pgo` — this runs on the HOST, not
-# in the container. It provisions a throwaway venv, builds the abi3
-# wheel with maturin, installs it, then runs mypy + the pytest suite.
-#
-# NOT part of `just ci` (the dev image can't run it). The ci.yml
-# `python-wheel` job is its CI mirror.
-#
-# Requirements (host):
-#   - cargo            (maturin compiles the extension)
-#   - uv  OR  python3 with the stdlib venv + pip modules
+# It provisions a throwaway venv, builds the abi3 wheel with maturin,
+# installs it, then runs mypy and pytest.
 #
 # Knobs:
 #   AOZORA_PY_PYTHON   interpreter version for the venv (default 3.11)
@@ -30,7 +21,7 @@ require() {
     fi
 }
 
-require cargo "rustup (https://rustup.rs/)"
+require cargo "the project development image"
 
 CRATE="crates/aozora-py"
 VENV="${AOZORA_PY_VENV:-$ROOT/target/venv-smoke-py}"
@@ -49,8 +40,10 @@ if command -v uv >/dev/null 2>&1; then
     uv pip install --python "$VENV/bin/python" -q "${TOOLS[@]}"
     pip_install() { uv pip install --python "$VENV/bin/python" -q --force-reinstall "$@"; }
 else
-    require python3 "your OS package manager (needs the venv + pip stdlib modules)"
+    require python3 "the project development image"
     [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip --version >/dev/null 2>&1 \
+        || "$VENV/bin/python" -m ensurepip --upgrade
     "$VENV/bin/python" -m pip install -q --upgrade pip
     "$VENV/bin/python" -m pip install -q "${TOOLS[@]}"
     pip_install() { "$VENV/bin/python" -m pip install -q --force-reinstall "$@"; }

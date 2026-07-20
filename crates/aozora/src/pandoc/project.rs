@@ -12,17 +12,19 @@ use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
 use crate::pandoc::AOZORA_CLASS_PREFIX;
 use crate::spec::roman_slug;
+#[cfg(test)]
+use crate::syntax::ast::ForwardPayload;
 use crate::syntax::ast::{
     AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, Heading, HeadingHint,
     Illustration, Kaeriten, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment, SourceNode,
-    Warichu,
 };
-use crate::syntax::{AbsoluteSize, AccentMark};
-use crate::{
-    BoutenPosition, DirectiveKind, EnclosureKind, FontShift, Format, ForwardAttr, ForwardOrigin,
-    HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat, RegionFormat, SectionKind,
-    Snapshot, Span,
+use crate::syntax::format::Format;
+use crate::syntax::{
+    AbsoluteSize, AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
+    ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat, RegionFormat,
+    SectionKind,
 };
+use crate::{Snapshot, Span};
 
 /// Lift a parsed [`Snapshot`] to a [`pandoc_ast::Pandoc`] document.
 ///
@@ -184,45 +186,9 @@ impl<'src> Converter<'src> {
     }
 
     fn dispatch_inline_node(&mut self, node: Node, _span: Span) {
-        use Node as N;
-        // A `Referenced` forward keeps its target literal in the upstream plain
-        // run (or a ruby base); projecting `f.target` here would double it
-        // (#231). Mirror the HTML renderer's origin gate (#228,
-        // `render::render_node::render_format`): emit nothing for `Referenced`
-        // so the literal is rendered once, upstream. Gated before `format_inline`
-        // so its target-resolving projection can't re-emit the run either. The
-        // emphasis markup is dropped rather than duplicated — a value-returning
-        // projection cannot retroactively wrap an already-emitted run, same as
-        // the streaming HTML path. A `Detached` decoration (#333) is *not*
-        // `Referenced`, so it falls through and is projected styled by
-        // `format_inline`: it owns its (once-only) literal, the bracket being a
-        // separate `Referenced` node.
-        if let N::Format(f) = node
-            && matches!(f.origin, ForwardOrigin::Referenced)
-        {
-            return;
+        if let Some(inline) = node_inline(node, self.store) {
+            self.current_frame_mut().paragraph().push(inline);
         }
-        let store = self.store;
-        let inline = match node {
-            N::Ruby(r) => ruby_inline(r, store),
-            N::MarginNote(s) => side_note_inline(s, store),
-            N::Format(f) => format_inline(f, store),
-            N::Gaiji(g) => gaiji_inline(g, store),
-            N::Line(lf) => line_inline(lf),
-            N::Warichu(w) => warichu_inline(w, store),
-            N::Directive(a) => annotation_inline(a, store),
-            N::Kaeriten(k) => kaeriten_inline(k, store),
-            N::AngleQuote(d) => angle_quote_inline(d, store),
-            N::HeadingHint(h) => heading_hint_inline(h, store),
-            // 改行 — an in-paragraph forced break (inline leaf).
-            N::ForcedBreak => Inline::LineBreak,
-            // Block-leaf variants slip through here only if the
-            // pipeline classified them as inline; render as fallback span.
-            // The debug form is the node's `Debug` (a non-canonical
-            // placeholder, not a stable projection).
-            other => Inline::Span(plain_attr(), vec![Inline::Str(format!("{other:?}"))]),
-        };
-        self.current_frame_mut().paragraph().push(inline);
     }
 
     fn dispatch_block_leaf(&mut self, node: Node, _span: Span) {
@@ -249,7 +215,7 @@ impl<'src> Converter<'src> {
             // an inline node as a block leaf; emit them inside a singleton
             // Para so the document stays renderable.
             other => Block::Para(vec![Inline::Span(
-                plain_attr(),
+                Attr::default(),
                 vec![Inline::Str(format!("{other:?}"))],
             )]),
         };
@@ -293,13 +259,6 @@ impl<'src> Converter<'src> {
 // ---------------------------------------------------------------------
 // Per-variant inline / block builders
 // ---------------------------------------------------------------------
-
-/// Empty `Attr` used for plain inline strings that don't need a
-/// class but still need to be wrapped in a `Span` for structural
-/// reasons.
-fn plain_attr() -> Attr {
-    (String::new(), Vec::new(), Vec::new())
-}
 
 fn class_attr(class: &str) -> Attr {
     (
@@ -350,6 +309,28 @@ fn push_content_inlines(content: Content, store: &NodeStore, buf: &mut Vec<Inlin
             }
         }
     }
+}
+
+fn node_inline(node: Node, store: &NodeStore) -> Option<Inline> {
+    use Node as N;
+    if let N::Format(f) = node
+        && matches!(f.origin, ForwardOrigin::Referenced)
+    {
+        return None;
+    }
+    Some(match node {
+        N::Ruby(r) => ruby_inline(r, store),
+        N::MarginNote(s) => side_note_inline(s, store),
+        N::Format(f) => format_inline(f, store),
+        N::Gaiji(g) => gaiji_inline(g, store),
+        N::Line(lf) => line_inline(lf),
+        N::Directive(a) => annotation_inline(a, store),
+        N::Kaeriten(k) => kaeriten_inline(k, store),
+        N::AngleQuote(d) => angle_quote_inline(d, store),
+        N::HeadingHint(h) => heading_hint_inline(h, store),
+        N::ForcedBreak => Inline::LineBreak,
+        other => Inline::Span(Attr::default(), vec![Inline::Str(format!("{other:?}"))]),
+    })
 }
 
 fn ruby_inline(r: Ruby, store: &NodeStore) -> Inline {
@@ -541,21 +522,9 @@ fn line_inline(lf: LineFormat) -> Inline {
             class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
         }
         LineFormat::Center { .. } => class_attr_kv("center", Vec::new()),
-        _ => plain_attr(),
+        _ => Attr::default(),
     };
     Inline::Span(attr, Vec::new())
-}
-
-fn warichu_inline(w: Warichu, store: &NodeStore) -> Inline {
-    let upper = Inline::Span(
-        class_attr("warichu-upper"),
-        content_to_inlines(w.upper, store),
-    );
-    let lower = Inline::Span(
-        class_attr("warichu-lower"),
-        content_to_inlines(w.lower, store),
-    );
-    Inline::Span(class_attr("warichu"), vec![upper, lower])
 }
 
 fn annotation_inline(a: Directive, store: &NodeStore) -> Inline {
@@ -573,7 +542,8 @@ fn annotation_inline(a: Directive, store: &NodeStore) -> Inline {
 
 fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
     match k {
-        DirectiveKind::Unknown => "unknown",
+        DirectiveKind::NonCanonical => "non-canonical",
+        DirectiveKind::Editorial => "editorial",
         DirectiveKind::Sic => "sic",
         DirectiveKind::BaseTextVariant => "base-text-variant",
         DirectiveKind::EditorNote => "editor-note",
@@ -767,6 +737,35 @@ fn container_attr(kind: RegionFormat) -> Attr {
 mod tests {
     use super::*;
     use crate::Document;
+    use crate::syntax::{BlockStyles, BoutenKind};
+
+    #[test]
+    fn wire_slugs_cover_every_projected_variant() {
+        for (kind, expected) in [
+            (EnclosureKind::Rule, "rule"),
+            (EnclosureKind::Box, "box"),
+            (EnclosureKind::Circle, "circle"),
+            (EnclosureKind::CircleDotted, "circle-dotted"),
+            (EnclosureKind::DoubleRule, "double-rule"),
+        ] {
+            assert_eq!(enclosure_kind_slug(kind), expected);
+        }
+        for (size, expected) in [
+            (AbsoluteSize::ExtraLarge, "extra-large"),
+            (AbsoluteSize::Large, "large"),
+            (AbsoluteSize::Medium, "medium"),
+            (AbsoluteSize::Small, "small"),
+        ] {
+            assert_eq!(absolute_size_slug(size), expected);
+        }
+        for (mark, expected) in [
+            (AccentMark::Acute, "acute"),
+            (AccentMark::Umlaut, "umlaut"),
+            (AccentMark::Grave, "grave"),
+        ] {
+            assert_eq!(accent_mark_slug(mark), expected);
+        }
+    }
 
     /// Plain text round-trips into a single Pandoc Para of `Inline::Str`.
     #[test]
@@ -1167,16 +1166,11 @@ mod tests {
         assert_eq!(kv(attr, "target"), Some("萩原朔太郎"), "same-line target");
     }
 
-    // -----------------------------------------------------------------
-    // Directive fallthrough (kind slug arms)
-    // -----------------------------------------------------------------
-
     #[test]
-    fn unknown_annotation_kind_slug() {
-        // `［＃見出し］` is not a dedicated node → generic Unknown annotation.
+    fn editorial_annotation_kind_slug() {
         let blocks = project("［＃見出し］序章［＃見出し終わり］\n");
         let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
-        assert_eq!(kv(attr, "kind"), Some("unknown"), "unknown annotation kind");
+        assert_eq!(kv(attr, "kind"), Some("editorial"), "annotation kind");
         assert!(
             kv(attr, "raw").is_some_and(|r| r.contains("見出し")),
             "annotation carries raw text"
@@ -1355,7 +1349,7 @@ mod tests {
             ForwardAttr::FontSize(nz(-1)),
             ForwardAttr::FontSizeAbsolute(AbsoluteSize::Large),
             ForwardAttr::Bouten {
-                kind: crate::BoutenKind::Goma,
+                kind: BoutenKind::Goma,
                 position: BoutenPosition::Right,
             },
             ForwardAttr::CombineUpright,
@@ -1373,7 +1367,7 @@ mod tests {
                 attr,
                 target,
                 origin: ForwardOrigin::SelfContained,
-                accent_body: None,
+                payload: ForwardPayload::None,
             };
             let inline = format_inline(f, &store);
             // Every attribute resolves its target text; none returns an
@@ -1706,31 +1700,6 @@ mod tests {
     }
 
     #[test]
-    fn warichu_inline_builder_wraps_upper_and_lower() {
-        // Build the owned warichu payload directly via a store (the `／`-split
-        // upper / lower form is not reachable as an inline leaf).
-        let mut store = NodeStore::new();
-        let upper = Content::Plain(store.intern("上"));
-        let lower = Content::Plain(store.intern("下"));
-        let w = Warichu { upper, lower };
-        match warichu_inline(w, &store) {
-            Inline::Span(attr, inner) => {
-                assert!(has_class(&attr, "warichu"), "warichu class");
-                assert_eq!(inner.len(), 2, "warichu wraps upper + lower");
-                assert!(
-                    matches!(&inner[0], Inline::Span(a, _) if has_class(a, "warichu-upper")),
-                    "first child is warichu-upper: {inner:?}"
-                );
-                assert!(
-                    matches!(&inner[1], Inline::Span(a, _) if has_class(a, "warichu-lower")),
-                    "second child is warichu-lower: {inner:?}"
-                );
-            }
-            other => panic!("expected Span, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn bouten_position_slug_covers_left_and_unknown() {
         assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
         assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
@@ -1745,7 +1714,8 @@ mod tests {
         // collapse that variant into the `_ => "other"` fallthrough. Pin each
         // slug so no arm can silently drop out.
         for (kind, slug) in [
-            (DirectiveKind::Unknown, "unknown"),
+            (DirectiveKind::NonCanonical, "non-canonical"),
+            (DirectiveKind::Editorial, "editorial"),
             (DirectiveKind::Sic, "sic"),
             (DirectiveKind::BaseTextVariant, "base-text-variant"),
             (DirectiveKind::EditorNote, "editor-note"),
@@ -1854,6 +1824,7 @@ mod tests {
         let gaiji = Gaiji {
             hint: gaiji_hint,
             canonical: GaijiCanonicalOwned::Unicode('A'),
+            mencode_separator: true,
             standalone: false,
         };
         let directive = Directive {
@@ -1902,7 +1873,7 @@ mod tests {
     #[test]
     fn container_attr_bouten_both_position_kv() {
         let attr = container_attr(RegionFormat::Bouten {
-            kind: crate::BoutenKind::Goma,
+            kind: BoutenKind::Goma,
             position: BoutenPosition::Both,
         });
         assert_eq!(
@@ -1927,7 +1898,7 @@ mod tests {
             wrap: None,
             center: false,
             layout: IndentLayout::None,
-            styles: crate::BlockStyles {
+            styles: BlockStyles {
                 gothic: true,
                 horizontal: true,
                 framed: false,
@@ -1944,7 +1915,7 @@ mod tests {
             wrap: None,
             center: false,
             layout: IndentLayout::None,
-            styles: crate::BlockStyles::EMPTY,
+            styles: BlockStyles::EMPTY,
         }));
         assert!(
             kv(&plain, "modifiers").is_none(),

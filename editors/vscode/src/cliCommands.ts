@@ -6,8 +6,7 @@
 //
 // `aozora.lintWorkspace` runs the `aozora` CLI's terminal linter over the
 // workspace folder for batch diagnostics beyond the open editors (the live LSP
-// only diagnoses documents the editor has opened). It needs the `aozora` CLI on
-// PATH, or `aozora.cli.path` set.
+// only diagnoses documents the editor has opened).
 
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
@@ -18,12 +17,13 @@ import { aozoraNotationStyles } from "./notationStyles";
 export function registerCliCommands(
   context: vscode.ExtensionContext,
   client: LanguageClient,
+  bundledCli: string,
 ): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("aozora.exportHtml", () => exportHtml(client)),
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aozora.lintWorkspace", () => lintWorkspace()),
+    vscode.commands.registerCommand("aozora.lintWorkspace", () => lintWorkspace(bundledCli)),
   );
 }
 
@@ -87,7 +87,7 @@ async function exportHtml(client: LanguageClient): Promise<void> {
   }
 }
 
-function lintWorkspace(): void {
+function lintWorkspace(bundledCli: string): void {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const target = folder ?? vscode.window.activeTextEditor?.document.uri.fsPath;
   if (target === undefined) {
@@ -95,7 +95,7 @@ function lintWorkspace(): void {
     return;
   }
   const bin =
-    vscode.workspace.getConfiguration("aozora").get<string>("cli.path", "").trim() || "aozora";
+    vscode.workspace.getConfiguration("aozora").get<string>("cli.path", "").trim() || bundledCli;
 
   const terminal = vscode.window.createTerminal("aozora lint");
   terminal.show();

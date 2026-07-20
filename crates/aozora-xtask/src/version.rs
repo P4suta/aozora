@@ -4,9 +4,9 @@
 //! `AOZORA_BUILD_VERSION` so the `aozora-buildstamp` build.rs stamps it verbatim.
 //!
 //! ```text
-//!   dev     → 0.4.1-dev+g<sha>
-//!   nightly → 0.4.1-nightly.<date>+g<sha>
-//!   stable  → 0.4.1                          (clean; the release tag itself)
+//!   dev     → 1.2.3-dev+g<sha>
+//!   nightly → 1.2.3-nightly.<date>+g<sha>
+//!   stable  → 1.2.3                          (clean; the release tag itself)
 //! ```
 //!
 //! The base `X.Y.Z` triple is the workspace version: xtask is a workspace member
@@ -90,45 +90,45 @@ mod tests {
     #[test]
     fn stable_is_the_clean_base() {
         assert_eq!(
-            compute("0.4.1", Channel::Stable, None, Some("abc1234")).unwrap(),
-            "0.4.1"
+            compute("1.2.3", Channel::Stable, None, Some("abc1234")).unwrap(),
+            "1.2.3"
         );
     }
 
     #[test]
     fn dev_carries_channel_and_sha() {
         assert_eq!(
-            compute("0.4.1", Channel::Dev, None, Some("abc1234")).unwrap(),
-            "0.4.1-dev+gabc1234"
+            compute("1.2.3", Channel::Dev, None, Some("abc1234")).unwrap(),
+            "1.2.3-dev+gabc1234"
         );
     }
 
     #[test]
     fn dev_without_sha_drops_metadata() {
         assert_eq!(
-            compute("0.4.1", Channel::Dev, None, None).unwrap(),
-            "0.4.1-dev"
+            compute("1.2.3", Channel::Dev, None, None).unwrap(),
+            "1.2.3-dev"
         );
     }
 
     #[test]
     fn nightly_embeds_date_and_sha() {
         assert_eq!(
-            compute("0.4.1", Channel::Nightly, Some("20260629"), Some("abc1234")).unwrap(),
-            "0.4.1-nightly.20260629+gabc1234"
+            compute("1.2.3", Channel::Nightly, Some("20260629"), Some("abc1234")).unwrap(),
+            "1.2.3-nightly.20260629+gabc1234"
         );
     }
 
     #[test]
     fn nightly_requires_a_date() {
-        compute("0.4.1", Channel::Nightly, None, Some("abc1234")).unwrap_err();
+        compute("1.2.3", Channel::Nightly, None, Some("abc1234")).unwrap_err();
     }
 
     #[test]
     fn nightly_rejects_a_malformed_date() {
         for bad in ["2026-06-29", "20260", "2026062x", ""] {
             assert!(
-                compute("0.4.1", Channel::Nightly, Some(bad), None).is_err(),
+                compute("1.2.3", Channel::Nightly, Some(bad), None).is_err(),
                 "{bad} should be rejected"
             );
         }

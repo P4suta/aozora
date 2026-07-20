@@ -37,9 +37,9 @@ Every subcommand reads stdin when given `-` or no path. Encoding is
 detected; `-E sjis` forces it. `aozora --help` lists the rest.
 
 ```rust
-use aozora::Document;
+use aozora::parse;
 
-let doc = Document::new("｜青梅《おうめ》".to_owned());
+let doc = parse("｜青梅《おうめ》").expect("source fits parser limits");
 let snapshot = doc.snapshot();
 
 let html = snapshot.to_html();

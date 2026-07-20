@@ -21,8 +21,8 @@
 #   - TSan requires `RUSTFLAGS=-Zsanitizer=thread` and a panic=abort
 #     profile. The script forces `--target` to the host triple
 #     because sanitisers don't work with cross-compilation.
-#   - These run on-demand; CI has them as a nightly cron, not PR gate.
-#     See `docs/adr/` for the test-strategy ADR.
+#   - Scheduled CI provides early warning; release-ready runs ASan and TSan on
+#     the exact commit whose artifacts it qualifies.
 
 set -euo pipefail
 

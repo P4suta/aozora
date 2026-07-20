@@ -810,9 +810,10 @@ pub(crate) fn build_body_dispatcher() -> AhoCorasick {
 /// One-time DFA build, amortised across the entire process lifetime.
 /// Lookup cost is a few ns per call so the build pays back in under a
 /// thousand annotations.
+static BODY_DISPATCHER: OnceLock<AhoCorasick> = OnceLock::new();
+
 fn body_dispatcher() -> &'static AhoCorasick {
-    static DFA: OnceLock<AhoCorasick> = OnceLock::new();
-    DFA.get_or_init(build_body_dispatcher)
+    BODY_DISPATCHER.get_or_init(build_body_dispatcher)
 }
 
 /// Force the one-time Aho-Corasick DFA build now.
@@ -820,8 +821,8 @@ fn body_dispatcher() -> &'static AhoCorasick {
 /// This is the bulk of parser boot cost. Idempotent — the `OnceLock` is
 /// set at most once per process. `body_dispatcher` stays private; this
 /// only triggers its init.
-pub(crate) fn prewarm() {
-    let _ = body_dispatcher();
+pub(crate) fn prewarm() -> &'static AhoCorasick {
+    body_dispatcher()
 }
 
 /// Classify an input-editor note body into its [`DirectiveKind`], or
@@ -1993,8 +1994,18 @@ mod tests {
     //! `Allocator`. Each recogniser's *actual* classification (variant, offset,
     //! open/close, decision flag) is pinned, not merely that parsing succeeds.
 
+    use core::ptr;
+
     use super::*;
     use crate::syntax::ast::Node;
+
+    #[test]
+    fn prewarm_initializes_the_body_dispatcher() {
+        assert!(
+            ptr::eq(prewarm(), body_dispatcher()),
+            "prewarm must return the initialized dispatcher"
+        );
+    }
 
     // --- helpers over the classify dispatcher (payloads are Copy + 'static) ---
 

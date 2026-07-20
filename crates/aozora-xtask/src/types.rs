@@ -28,13 +28,14 @@ use serde_json::{Map, Value};
 use std::fmt::Write as _;
 
 use aozora::json::SCHEMA_VERSION;
-use aozora::{DiagnosticSource, InternalCheckCode, NodeKind, PairKind, RegionFormat, Severity};
+use aozora::{ContainerKind, DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Severity};
 
 use crate::TypesArgs;
 use crate::TypesOp;
 use crate::schema::SCHEMA_FILES;
 
 const TYPES_REL_PATH: &str = "crates/aozora-wasm/types/aozora_types.d.ts";
+const C_HEADER_REL_PATH: &str = "crates/aozora-ffi/include/aozora.h";
 
 pub(crate) fn dispatch(args: &TypesArgs) -> Result<(), String> {
     match args.op {
@@ -115,7 +116,7 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "ContainerKind",
-        &ts_string_union(&RegionFormat::ALL, RegionFormat::as_json_tag),
+        &ts_string_union(&ContainerKind::ALL, ContainerKind::as_str),
     );
     out.push_str("/** Diagnostic severity tier (wire field `severity`). */\n");
     push_export_type(
@@ -149,17 +150,16 @@ fn render_wire_payloads(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");
     out.push('\n');
     out.push_str(
-        "/** Half-open byte span `[start, end)` in the relevant coordinate system\n\
-         (sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */\n",
+        "/** Half-open UTF-8 byte span `[start, end)` in original source coordinates. */\n",
     );
     out.push_str("export interface Span {\n  start: number;\n  end: number;\n}\n\n");
+    out.push_str("/** One source edit in pre-edit UTF-8 byte coordinates. */\n");
     out.push_str(
-        "/** Single byte offset (used by `ContainerPair` open / close in normalized coords). */\n",
+        "export interface TextEdit {\n  start: number;\n  end: number;\n  replacement: string;\n}\n\n",
     );
-    out.push_str("export interface Offset {\n  offset: number;\n}\n\n");
     out.push_str("/** One entry of `diagnostics` — `Diagnostic` projection. */\n");
     out.push_str(
-        "export interface Diagnostic {\n  /** Variant tag (last segment of `Diagnostic::code()`, e.g. `\"source_contains_pua\"`). */\n  kind: string;\n  severity: Severity;\n  source: DiagnosticSource;\n  span: Span;\n  /** Codepoint payload (only `SourceContainsPua` carries one today). */\n  codepoint?: string;\n}\n\n",
+        "export interface Diagnostic {\n  /** Variant tag (last segment of `Diagnostic::code()`, e.g. `\"source_contains_pua\"`). */\n  kind: string;\n  severity: Severity;\n  source: DiagnosticSource;\n  span: Span;\n  /** Unicode scalar value (only `SourceContainsPua` carries one today). */\n  codepoint?: number;\n}\n\n",
     );
     out.push_str("/** One entry of `nodes` — classified `Node` span in source coords. */\n");
     out.push_str("export interface Node {\n  kind: NodeKind;\n  span: Span;\n}\n\n");
@@ -168,10 +168,18 @@ fn render_wire_payloads(out: &mut String) {
         "export interface Pair {\n  kind: PairKind;\n  open: Span;\n  close: Span;\n}\n\n",
     );
     out.push_str(
-        "/** One entry of `container_pairs` — paired container (open in normalized coords). */\n",
+        "/** One entry of `container_pairs` — paired container in source coordinates. */\n",
     );
     out.push_str(
-        "export interface ContainerPair {\n  kind: ContainerKind;\n  open: Offset;\n  close: Offset;\n}\n\n",
+        "export interface ContainerPair {\n  kind: ContainerKind;\n  open: Span;\n  close: Span;\n}\n\n",
+    );
+    out.push_str("/** One resolved `※［＃…］` reference. */\n");
+    out.push_str(
+        "export interface GaijiResolution {\n  span: Span;\n  description: string;\n  mencode?: string;\n  codepoint?: number;\n  resolved?: string;\n}\n\n",
+    );
+    out.push_str("/** One completion-catalogue entry. */\n");
+    out.push_str(
+        "export interface Slug {\n  canonical: string;\n  family: string;\n  accepts_param: boolean;\n  doc: string;\n  partner?: string;\n}\n\n",
     );
 }
 
@@ -190,6 +198,8 @@ fn render_envelopes(out: &mut String) {
     out.push_str("export type NodesEnvelope          = JsonEnvelope<Node>;\n");
     out.push_str("export type PairsEnvelope          = JsonEnvelope<Pair>;\n");
     out.push_str("export type ContainerPairsEnvelope = JsonEnvelope<ContainerPair>;\n");
+    out.push_str("export type GaijiEnvelope          = JsonEnvelope<GaijiResolution>;\n");
+    out.push_str("export type SlugsEnvelope           = JsonEnvelope<Slug>;\n");
 }
 
 fn dump() -> Result<(), String> {
@@ -255,15 +265,26 @@ struct LangType {
 
 /// The languages we generate wire types for. Adding a host SDK is one
 /// row here plus a `crates/aozora-<lang>/` package that consumes the file.
-const LANG_TYPES: &[LangType] = &[LangType {
-    name: "go",
-    quicktype_lang: "go",
-    out: "crates/aozora-go/json_gen.go",
-    comment: "// ",
-    prelude: "package aozora\n\n",
-    extra: &["--just-types", "--top-level", "AozoraJson"],
-    gofmt: true,
-}];
+const LANG_TYPES: &[LangType] = &[
+    LangType {
+        name: "go",
+        quicktype_lang: "go",
+        out: "crates/aozora-go/json_gen.go",
+        comment: "// ",
+        prelude: "package aozora\n\n",
+        extra: &["--just-types", "--top-level", "AozoraJson"],
+        gofmt: true,
+    },
+    LangType {
+        name: "python",
+        quicktype_lang: "py",
+        out: "crates/aozora-py/python/aozora/wire_types.py",
+        comment: "# ",
+        prelude: "",
+        extra: &["--python-version", "3.7", "--top-level", "AozoraJson"],
+        gofmt: false,
+    },
+];
 
 fn langs_dump() -> Result<(), String> {
     let root = workspace_root()?;
@@ -279,6 +300,14 @@ fn langs_dump() -> Result<(), String> {
             .map_err(|err| format!("write {} types {}: {err}", lt.name, path.display()))?;
         eprintln!("xtask types langs: wrote {}", path.display());
     }
+    let header_path = root.join(C_HEADER_REL_PATH);
+    if let Some(parent) = header_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create_dir_all {}: {err}", parent.display()))?;
+    }
+    fs::write(&header_path, generate_c_header(&root)?)
+        .map_err(|err| format!("write C header {}: {err}", header_path.display()))?;
+    eprintln!("xtask types langs: wrote {}", header_path.display());
     Ok(())
 }
 
@@ -295,12 +324,15 @@ fn langs_check() -> Result<(), String> {
             drift.push(lt.out.to_owned());
         }
     }
+    let header_path = root.join(C_HEADER_REL_PATH);
+    let actual = generate_c_header(&root)?;
+    let stored = fs::read_to_string(&header_path)
+        .map_err(|err| format!("read C header {}: {err}", header_path.display()))?;
+    if actual != stored {
+        drift.push(C_HEADER_REL_PATH.to_owned());
+    }
     if drift.is_empty() {
-        eprintln!(
-            "xtask types langs-check: {}/{} per-language wire types up to date",
-            LANG_TYPES.len(),
-            LANG_TYPES.len()
-        );
+        eprintln!("xtask types langs-check: generated host types and C header up to date");
         Ok(())
     } else {
         Err(format!(
@@ -319,7 +351,7 @@ fn langs_check() -> Result<(), String> {
 /// Why combine: feeding the four schema files to `quicktype` separately
 /// makes it invent distinct names for the structurally-identical inner
 /// types (`PurpleSpan`, `FluffySpan`, …). One document with a shared
-/// `$defs` yields a single `Span` / `Offset`. Two transforms make
+/// `$defs` yields a single `Span`. Two transforms make
 /// it digestible: every `$def` gets a `title` equal to its key (so
 /// `quicktype` names types from the key, not the referencing property),
 /// and `schemaVersion`'s integer `const` is dropped (`quicktype` chokes
@@ -342,7 +374,7 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{}: schema missing root title", path.display()))?
             .to_owned();
-        // Shared sub-types (Span / Offset), hoisted to root in the
+        // Shared span type, hoisted to root in the
         // committed schema — merge, first definition wins (they're identical).
         if let Some(file_defs) = obj.get("$defs").and_then(Value::as_object) {
             for (key, value) in file_defs {
@@ -437,9 +469,67 @@ fn generate_lang(lt: &LangType, combined_schema: &Path) -> Result<String, String
     let assembled = finalize(lt, &body);
     if lt.gofmt {
         gofmt(&assembled)
+    } else if lt.name == "python" {
+        strict_python(&assembled)
     } else {
         Ok(assembled)
     }
+}
+
+fn strict_python(source: &str) -> Result<String, String> {
+    let import = "from typing import Any, List, Optional, TypeVar, Type, cast, Callable";
+    let strict_import =
+        "from typing import Any, Callable, Dict, List, Optional, Protocol, Type, TypeVar, cast";
+    let to_class = "def to_class(c: Type[T], x: Any) -> dict:\n\
+                    \x20   assert isinstance(x, c)\n\
+                    \x20   return cast(Any, x).to_dict()";
+    let strict_to_class = "class ToDict(Protocol):\n\
+                           \x20   def to_dict(self) -> Dict[str, Any]: ...\n\
+                           \n\
+                           \n\
+                           def to_class(c: Type[T], x: Any) -> Dict[str, Any]:\n\
+                           \x20   assert isinstance(x, c)\n\
+                           \x20   return cast(ToDict, x).to_dict()";
+    let from_union = "def from_union(fs, x):\n\
+                      \x20   for f in fs:\n\
+                      \x20       try:\n\
+                      \x20           return f(x)\n\
+                      \x20       except:\n\
+                      \x20           pass\n\
+                      \x20   assert False";
+    let strict_from_union = "def from_union(fs: List[Callable[[Any], Any]], x: Any) -> Any:\n\
+         \x20   for f in fs:\n\
+         \x20       try:\n\
+         \x20           return f(x)\n\
+         \x20       except (AssertionError, TypeError, ValueError):\n\
+         \x20           pass\n\
+         \x20   raise AssertionError";
+
+    if !source.contains(import) || !source.contains(to_class) || !source.contains(from_union) {
+        return Err("quicktype Python support prelude changed".to_owned());
+    }
+    Ok(source
+        .replacen(import, strict_import, 1)
+        .replacen(to_class, strict_to_class, 1)
+        .replacen(from_union, strict_from_union, 1)
+        .replace(" -> dict:", " -> Dict[str, Any]:")
+        .replace("result: dict = {}", "result: Dict[str, Any] = {}"))
+}
+
+fn generate_c_header(root: &Path) -> Result<String, String> {
+    let crate_dir = root.join("crates/aozora-ffi");
+    let config = cbindgen::Config::from_file(crate_dir.join("cbindgen.toml"))
+        .map_err(|err| format!("read cbindgen.toml: {err}"))?;
+    let bindings = cbindgen::Builder::new()
+        .with_crate(crate_dir)
+        .with_config(config)
+        .with_language(cbindgen::Language::C)
+        .with_after_include(format!("#define AOZORA_SCHEMA_VERSION {SCHEMA_VERSION}"))
+        .generate()
+        .map_err(|err| format!("generate C header: {err}"))?;
+    let mut bytes = Vec::new();
+    bindings.write(&mut bytes);
+    String::from_utf8(bytes).map_err(|err| format!("C header is not UTF-8: {err}"))
 }
 
 /// Pipe `src` through `gofmt -` so the committed Go artifact matches the
@@ -487,6 +577,10 @@ fn finalize(lt: &LangType, body: &str) -> String {
     );
     out.push('\n');
     out.push_str(lt.prelude);
+    if lt.name == "go" {
+        writeln!(out, "const SchemaVersion = {SCHEMA_VERSION}\n")
+            .expect("writing to a String is infallible");
+    }
     for line in body.lines() {
         out.push_str(line.trim_end());
         out.push('\n');
@@ -570,7 +664,6 @@ mod tests {
         render_wire_payloads(&mut out);
         for iface in [
             "interface Span",
-            "interface Offset",
             "interface Diagnostic",
             "interface Node",
             "interface Pair",

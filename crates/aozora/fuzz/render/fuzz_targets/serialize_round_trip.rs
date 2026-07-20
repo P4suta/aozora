@@ -32,8 +32,11 @@ fuzz_target!(|data: &[u8]| {
     {
         return;
     }
-    let first = aozora::parse(src).snapshot().to_source();
-    let second = aozora::parse(first.as_str()).snapshot().to_source();
+    let first = aozora::parse(src).expect("fuzz input fits parser spans").snapshot().to_source();
+    let second = aozora::parse(first.as_str())
+        .expect("serialized fuzz input fits parser spans")
+        .snapshot()
+        .to_source();
 
     assert!(
         first == second,

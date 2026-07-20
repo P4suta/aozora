@@ -1,249 +1,98 @@
-# Scheduled mutation sweep (assertion-strength ratchet, ADR-0031 stage 3).
-#
-# Region coverage proves a line RAN; it cannot prove a WRONG result on that
-# line would make a test FAIL. cargo-mutants closes that gap by deliberately
-# breaking the source (swap returns, negate conditions, delete statements),
-# rebuilding, and re-running the suite: a mutant that SURVIVES is a place a
-# real defect could ship green. This workflow is the CONTINUOUS complement to
-# the local `just mutants` recipe — an unattended weekly full sweep of the
-# reinforced crates against the tip of main, so assertion-strength drift that
-# no single PR introduces is still caught. The PR-scoped counterpart is the
-# `mutants-in-diff` job in ci.yml (only the changed lines, advisory).
-#
-#   cargo-mutants book:   https://mutants.rs/
-#   exit codes:           https://mutants.rs/exit-codes.html
-#   config / --in-diff:   https://mutants.rs/config-file.html · https://mutants.rs/in-diff.html
-#   ADR-0031:             docs/adr/0031-mutation-testing-for-assertion-strength.md
-#
-# RATCHET, per crate (mutants-baseline.json is the source of truth):
-#   - A crate WITH a committed `max_survivors` (e.g. aozora-ffi: 0 documented
-#     equivalent mutants) is ratcheted: the job goes red and opens/updates a
-#     deduped tracking issue when the sweep reports MORE survivors than the
-#     baseline — the class of regression where a test silently stopped catching
-#     a mutant. At or below baseline is green.
-#   - A crate WITHOUT an entry (one added to the matrix while its survivors are
-#     still being triaged, or one that genuinely cannot be swept clean) is swept
-#     REPORT-ONLY: never red, count written to the run summary + the full
-#     mutants.out uploaded as an artifact, so the reinforcement work (kill the
-#     survivors, then commit a baseline) has data to start from. This mirrors
-#     ADR-0031's "advisory, then blocking once a crate's baseline is clean",
-#     applied per crate.
-#
-# Each crate soaks in its own matrix job (`fail-fast: false`, so one crate's
-# regression never masks another). The sweep runs INSIDE the dev image via the
-# same `just mutants -p <crate>` recipe a developer runs locally (dedicated
-# incremental target dir off the sccache lane — see the recipe / ADR-0031).
-#
-# CI-ONLY BY NATURE (the ci-parallel exception): a full mutation sweep is
-# inherently slow and scheduled, not a per-push gate, so — like the fuzz soak —
-# it does not join `ci-parallel`. The local mirror is `just mutants -p <crate>`
-# plus the release-checklist line in contrib/release.md.
-#
-# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
 name: mutants
 
 on:
   schedule:
-    - cron: "13 6 * * 5"  # weekly, Friday 06:13 UTC (offset from fuzz Thu 04:29 / spec-freshness Thu 05:31 / cross-os Wed 06:17)
+    - cron: "13 6 * * 5"
   workflow_dispatch:
 
-# A newer sweep supersedes an in-flight one on the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: read # anonymous GHCR read for the dev-image buildcache
-  issues: write  # open / update the mutation-regression tracking issue
+  packages: read
 
 jobs:
   sweep:
-    name: sweep (${{ matrix.crate }})
+    name: sweep (${{ matrix.assignment }})
     runs-on: ubuntu-latest
-    # A full-crate sweep rebuilds once per mutant serially; the collapsed
-    # `aozora` library (all the former building-block crates in one) is the long
-    # pole. Generous ceiling — the job is scheduled, not on any hot path.
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
-      # Sweep every crate every run — one crate's regression must not mask the rest.
       fail-fast: false
       matrix:
-        # Each entry is a crate to sweep, optionally with the `--features` its
-        # ratcheted surface needs. Crates without `features` sweep on default
-        # features (`${{ matrix.features }}` expands to empty). The committed
-        # The committed baseline is computed with these same features.
-        include:
-          # After the 18→3 collapse the former building-block crates
-          # (spec / syntax / scan / encoding / veb / pipeline / render / fmt /
-          # pandoc / cst / query) are one crate, `aozora`, swept with the full
-          # feature surface so no folded module is cfg-dead vacuous. `aozora`
-          # and `aozora-cli` (which absorbed the LSP) are report-only until a
-          # fresh post-collapse baseline is committed to mutants-baseline.json
-          # (see its `_doc`); a scheduled sweep never goes red on them meanwhile.
-          - crate: aozora
-            # The wire projection (json.rs) + schema introspection + the
-            # feature-gated editor surfaces (fmt / pandoc / cst / query) must all
-            # compile so the sweep sees the real product.
-            features: --features schema,query,fmt,pandoc
-          - crate: aozora-ffi       # ratcheted at mutants-baseline.json (0 survivors)
-          - crate: aozora-extism    # ratcheted at mutants-baseline.json (0 survivors; wasm-only plugin.rs excluded in mutants.toml)
-          - crate: aozora-cli       # report-only post-collapse (absorbed the LSP; awaiting a fresh baseline)
+        assignment:
+          - "aozora:0/16"
+          - "aozora:1/16"
+          - "aozora:2/16"
+          - "aozora:3/16"
+          - "aozora:4/16"
+          - "aozora:5/16"
+          - "aozora:6/16"
+          - "aozora:7/16"
+          - "aozora:8/16"
+          - "aozora:9/16"
+          - "aozora:10/16"
+          - "aozora:11/16"
+          - "aozora:12/16"
+          - "aozora:13/16"
+          - "aozora:14/16"
+          - "aozora:15/16"
+          - "aozora-cli:0/12"
+          - "aozora-cli:1/12"
+          - "aozora-cli:2/12"
+          - "aozora-cli:3/12"
+          - "aozora-cli:4/12"
+          - "aozora-cli:5/12"
+          - "aozora-cli:6/12"
+          - "aozora-cli:7/12"
+          - "aozora-cli:8/12"
+          - "aozora-cli:9/12"
+          - "aozora-cli:10/12"
+          - "aozora-cli:11/12"
+          - "aozora-ffi:0/1"
+          - "aozora-extism:0/1"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
       - uses: ./.github/actions/setup-dev-image
 
-      # Full sweep inside the dev image. `just mutants -p <crate>` writes its
-      # machine-readable report to ./mutants.out (bind-mounted to this
-      # checkout). Capture the exit code rather than letting `-e` abort, so the
-      # outcome can be classified before the job's verdict.
-      #   0 = clean · 2 = survivors · 3 = timeout · 4 = baseline broken · else = tooling error
       - name: Mutation sweep
         id: sweep
         env:
-          CRATE: ${{ matrix.crate }}
-          FEATURES: ${{ matrix.features }}
+          ASSIGNMENT: ${{ matrix.assignment }}
         run: |
+          CRATE="${ASSIGNMENT%%:*}"
+          SHARD="${ASSIGNMENT#*:}"
           set +e
-          just mutants -p "$CRATE" $FEATURES
+          just mutants -p "$CRATE" --all-features \
+            --shard "$SHARD" --sharding round-robin
           code=$?
           set -e
           echo "exit=$code" >> "$GITHUB_OUTPUT"
-          echo "cargo-mutants exited ${code} for ${CRATE}"
 
-      # Classify the run and apply the per-crate ratchet from mutants-baseline.json.
-      - name: Evaluate ratchet
-        id: eval
+      - name: Require zero viable survivors and timeouts
         env:
-          CRATE: ${{ matrix.crate }}
+          ASSIGNMENT: ${{ matrix.assignment }}
           SWEEP_EXIT: ${{ steps.sweep.outputs.exit }}
         run: |
           set -euo pipefail
-          OUT=mutants.out/outcomes.json
-
-          # Infrastructure / tooling failures are red regardless of ratchet mode.
-          # (0 clean, 2 survivors, 3 timeout all RAN to completion and produce a report.)
-          case "$SWEEP_EXIT" in
-            0|2|3) : ;;
-            4) echo "::error title=mutation baseline broken::${CRATE}: the suite fails or hangs before any mutation is applied (exit 4) — fix the suite"; exit 1 ;;
-            *) echo "::error title=mutation tooling error::${CRATE}: cargo-mutants exited ${SWEEP_EXIT} (usage / bad-diff / internal) — not a survivor signal"; exit 1 ;;
-          esac
-          if [ ! -f "$OUT" ]; then
-            echo "::error::${CRATE}: no ${OUT} — the sweep did not complete"; exit 1
+          CRATE="${ASSIGNMENT%%:*}"
+          report=mutants.out/outcomes.json
+          test -s "$report"
+          total=$(jq -er '.total_mutants' "$report")
+          missed=$(jq -er '.missed' "$report")
+          timeout=$(jq -er '.timeout' "$report")
+          test "$total" -gt 0
+          if [ "$SWEEP_EXIT" -ne 0 ] || [ "$missed" -ne 0 ] || [ "$timeout" -ne 0 ]; then
+            echo "::error title=mutation sweep::${CRATE}: exit=${SWEEP_EXIT}, missed=${missed}, timeout=${timeout}"
+            exit 1
           fi
 
-          missed=$(jq '.missed' "$OUT")
-          caught=$(jq '.caught' "$OUT")
-          unviable=$(jq '.unviable' "$OUT")
-          timeout=$(jq '.timeout' "$OUT")
-          total=$(jq '.total_mutants' "$OUT")
-          baseline=$(jq -r --arg c "$CRATE" '.[$c].max_survivors // "none"' mutants-baseline.json)
-
-          echo "missed=$missed" >> "$GITHUB_OUTPUT"
-          echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Mutation sweep — \`${CRATE}\`"
-            echo
-            echo "| total | caught | missed | timeout | unviable | baseline |"
-            echo "|------:|-------:|-------:|--------:|---------:|:---------|"
-            echo "| ${total} | ${caught} | ${missed} | ${timeout} | ${unviable} | ${baseline} |"
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$timeout" -gt 0 ]; then
-            echo "::warning title=mutation timeout::${CRATE}: ${timeout} mutant(s) timed out (a mutation may have unbounded a loop)"
-          fi
-
-          if [ "$baseline" = "none" ]; then
-            echo "regression=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${CRATE} is report-only (no committed baseline): ${missed} survivor(s). Reinforce the suite, then add a mutants-baseline.json entry to arm the ratchet."
-            echo "**report-only** (no committed baseline): ${missed} survivor(s). See the \`mutants-${CRATE}\` artifact for \`missed.txt\`; kill them, then commit a baseline to arm the ratchet." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          if [ "$missed" -gt "$baseline" ]; then
-            echo "regression=true" >> "$GITHUB_OUTPUT"
-            echo "::error title=mutation regression::${CRATE}: ${missed} survivor(s) exceed the committed baseline of ${baseline} — a test that used to catch a mutant no longer does"
-            echo "❌ **regression**: ${missed} survivor(s) exceed the baseline of ${baseline}. New survivors are in the \`mutants-${CRATE}\` artifact (\`missed.txt\`)." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "regression=false" >> "$GITHUB_OUTPUT"
-            if [ "$missed" -lt "$baseline" ]; then
-              echo "::notice::${CRATE}: ${missed} survivor(s) is below the baseline of ${baseline} — lower the mutants-baseline.json entry to ${missed} to tighten the ratchet."
-              echo "✅ below baseline (${missed} < ${baseline}): lower the \`${CRATE}\` entry in \`mutants-baseline.json\` to ${missed}." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "✅ at baseline (${missed} = ${baseline})." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          fi
-
-      # Always keep the full machine-readable report — missed.txt / outcomes.json
-      # are how a survivor is triaged off-runner.
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: mutants-${{ matrix.crate }}
+          name: mutants-${{ strategy.job-index }}
           path: mutants.out/
           retention-days: 30
-          if-no-files-found: warn
-
-      # Open, or update-in-place (deduped per crate), a regression tracking
-      # issue. Follows the fuzz.yml / link-audit.yml issue-management pattern.
-      # Only ratcheted crates can regress, so report-only crates never reach here.
-      - name: Open / update regression issue
-        if: steps.eval.outputs.regression == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CRATE: ${{ matrix.crate }}
-          MISSED: ${{ steps.eval.outputs.missed }}
-          BASELINE: ${{ steps.eval.outputs.baseline }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          LABEL="mutation-regression"
-          TITLE="Mutation regression: ${CRATE}"
-
-          gh label create "$LABEL" -c B60205 \
-            -d "The scheduled mutation sweep found more survivors than the committed baseline" 2>/dev/null || true
-
-          existing=$(gh issue list --label "$LABEL" --state open --json number,title \
-            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
-
-          {
-            echo "The weekly mutation sweep of **\`${CRATE}\`** reported **${MISSED}** surviving"
-            echo "mutant(s), above its committed baseline of **${BASELINE}** in"
-            echo "\`mutants-baseline.json\`. A test that used to catch a mutant no longer does."
-            echo
-            echo "Workflow run: ${RUN_URL}"
-            echo
-            echo "The full report is attached to that run as the \`mutants-${CRATE}\`"
-            echo "artifact. To reproduce locally and see exactly which mutants survived:"
-            echo
-            echo '```sh'
-            echo "just mutants -p ${CRATE}      # then read mutants.out/missed.txt"
-            echo '```'
-            echo
-            echo "For each new survivor: add the assertion that kills it (the real fix), or —"
-            echo "if it is a provably-equivalent / unreachable mutant — document why and raise"
-            echo "the \`${CRATE}\` baseline in \`mutants-baseline.json\` with that justification"
-            echo "(never raise it to hide a genuine gap). See ADR-0031."
-          } > issue-body.md
-
-          if [ -n "$existing" ]; then
-            gh issue edit "$existing" --body-file issue-body.md
-            gh issue comment "$existing" \
-              --body "Still regressed on the $(date -u +%Y-%m-%d) sweep (${MISSED} > ${BASELINE}). See ${RUN_URL}"
-            echo "Updated issue #${existing}"
-          else
-            gh issue create --title "$TITLE" --label "$LABEL" --body-file issue-body.md
-            echo "Opened a new tracking issue"
-          fi
-
-      # A mutation regression is a real weakening of the suite — surface it as a
-      # red job (after the artifact + issue are recorded above).
-      - name: Fail on regression
-        if: steps.eval.outputs.regression == 'true'
-        run: |
-          echo "::error title=mutation regression::${{ matrix.crate }} survivors exceed baseline — see the mutation-regression tracking issue"
-          exit 1
+          if-no-files-found: error

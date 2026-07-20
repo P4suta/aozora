@@ -12,7 +12,7 @@
     "schemaVersion": {
       "description": "Wire schema version. See aozora::json::SCHEMA_VERSION.",
       "type": "integer",
-      "const": 2
+      "const": 3
     },
     "data": {
       "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
@@ -24,10 +24,10 @@
             "type": "string"
           },
           "open": {
-            "$ref": "#/$defs/Offset"
+            "$ref": "#/$defs/Span"
           },
           "close": {
-            "$ref": "#/$defs/Offset"
+            "$ref": "#/$defs/Span"
           }
         },
         "required": [
@@ -35,25 +35,31 @@
           "open",
           "close"
         ],
-        "description": "One `container_pairs` envelope entry — a paired container, open/close\nin normalized coordinates.",
+        "description": "One `container_pairs` envelope entry.",
         "title": "ContainerPair"
       }
     }
   },
   "$defs": {
-    "Offset": {
+    "Span": {
       "type": "object",
       "properties": {
-        "offset": {
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
         }
       },
       "required": [
-        "offset"
+        "start",
+        "end"
       ],
-      "description": "A single byte offset (a `container_pairs` open/close in normalized\ncoordinates)."
+      "description": "One half-open `[start, end)` byte span in a wire envelope."
     }
   }
 }

@@ -8,8 +8,9 @@
 //! - `aozora spec kinds` walks every `pub const ALL: [Self; N]` on the
 //!   spec / syntax enums and tabulates them.
 //! - `aozora spec schema` pretty-prints the generated JSON Schema for
-//!   one of the four JSON envelopes (delegated to
-//!   `aozora::json::schema_*` behind the `schema` Cargo feature).
+//!   the configuration file or a document JSON envelope. Document
+//!   schemas are delegated to `aozora::json::schema_*` behind the
+//!   `schema` Cargo feature.
 //! - `aozora spec slugs` prints the static ［＃…］ slug catalogue as the
 //!   shared `aozora::json` envelope (delegated to `aozora::json::slugs`).
 //! - `aozora explain <kind>` prints the embedded prose page for that
@@ -27,6 +28,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
+use crate::config::ConfigFile;
+use crate::wire::Envelope;
 use aozora::InternalCheckCode;
 use aozora::{
     Diagnostic, DiagnosticSource, NodeKind, PairKind, Severity,
@@ -36,6 +39,8 @@ use aozora::{
 /// `aozora spec schema <which>` subcommand argument.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum SchemaKind {
+    /// `.aozora.toml` configuration shape.
+    Config,
     /// `JsonEnvelope<Diagnostic>` — `diagnostics` output shape.
     Diagnostics,
     /// `JsonEnvelope<Node>` — `nodes` output shape.
@@ -47,7 +52,7 @@ pub(crate) enum SchemaKind {
 }
 
 /// Output format for `aozora spec kinds`: the human tables or the machine
-/// `{"schemaVersion":1,"data":{…}}` envelope, auto-selected by default on the
+/// a versioned `{"schemaVersion":…,"data":{…}}` envelope, auto-selected by default on the
 /// same rule as `check`'s diagnostics — tables when stdout is a terminal, the
 /// JSON envelope when it is piped. `check`'s richer `DiagFormat` (with `short`)
 /// is diagnostic-specific and does not apply here.
@@ -58,7 +63,7 @@ pub(crate) enum OutputFormat {
     Auto,
     /// `comfy-table` tables, one per enum.
     Human,
-    /// The `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` envelope —
+    /// The versioned `{"schemaVersion":…,"data":{nodeKinds,pairKinds,…}}` envelope —
     /// the agent / scripting view.
     Json,
 }
@@ -113,7 +118,7 @@ pub(crate) struct ExplainArgs {
 /// `aozora spec schema <which>` arguments.
 #[derive(Debug, Args)]
 pub(crate) struct SchemaArgs {
-    /// Which JSON envelope schema to dump.
+    /// Which configuration or JSON-envelope schema to dump.
     #[arg(value_enum)]
     pub(crate) which: SchemaKind,
 }
@@ -197,10 +202,7 @@ pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Emit the `{"schemaVersion":1,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
-/// Single-line / compact, matching the shape (two keys / camelCase) of the
-/// `inspect` wire envelopes, though `schemaVersion` here is a CLI-local counter
-/// distinct from the wire `SCHEMA_VERSION`.
+/// Emit the common wire envelope as compact JSON.
 fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
     let mut data = serde_json::Map::new();
     for t in tables {
@@ -211,14 +213,16 @@ fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
             .collect();
         data.insert(t.json_key.to_owned(), serde_json::Value::Array(rows));
     }
-    let envelope = serde_json::json!({ "schemaVersion": 1, "data": data });
+    let envelope = Envelope::new(data);
     let line = serde_json::to_string(&envelope).context("serialize kinds envelope as JSON")?;
     writeln!(out, "{line}").context("write kinds JSON to stdout")
 }
 
-/// Pretty-print the requested JSON envelope schema as JSON.
+/// Pretty-print the requested generated schema as JSON.
 pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     let value = match args.which {
+        SchemaKind::Config => serde_json::to_value(schemars::schema_for!(ConfigFile))
+            .context("failed to serialize config schema")?,
         SchemaKind::Diagnostics => schema_diagnostics(),
         SchemaKind::Nodes => schema_nodes(),
         SchemaKind::Pairs => schema_pairs(),
@@ -325,7 +329,6 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Indent => "Inline indent (字下げ) marker.",
         NodeKind::AlignEnd => "Right-edge alignment (字上げ) marker.",
         NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
-        NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::LineGothic => "ゴシック体 line marker — この行はゴシック体.",
         NodeKind::LineFontSize => "絶対サイズ line marker — ［＃大文字］ ほか.",
         NodeKind::PageBreak => "改ページ.",
@@ -340,7 +343,6 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Directive => "Generic annotation no specific recogniser claimed.",
         NodeKind::AngleQuote => "Double-angle quotation (≪…≫, displays as 《…》).",
         NodeKind::MarginNote => "Side annotation (注記) — 「X」の左に「Y」の注記.",
-        NodeKind::Container => "Inline-attached container (字下げ系の wrap).",
         NodeKind::ContainerOpen => "NodeRef::BlockOpen — paired-container open sentinel.",
         NodeKind::ContainerClose => "NodeRef::BlockClose — paired-container close sentinel.",
         _ => "(unrecognised NodeKind variant — this build is missing a summary; please report it).",
@@ -410,7 +412,6 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ("gaiji", include_str!("node-docs/gaiji.md")),
     ("indent", include_str!("node-docs/indent.md")),
     ("alignEnd", include_str!("node-docs/align-end.md")),
-    ("warichu", include_str!("node-docs/warichu.md")),
     ("pageBreak", include_str!("node-docs/page-break.md")),
     ("sectionBreak", include_str!("node-docs/section-break.md")),
     ("heading", include_str!("node-docs/aozora-heading.md")),
@@ -419,7 +420,6 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ("kaeriten", include_str!("node-docs/kaeriten.md")),
     ("directive", include_str!("node-docs/annotation.md")),
     ("angleQuote", include_str!("node-docs/angle-quote.md")),
-    ("container", include_str!("node-docs/container.md")),
     ("containerOpen", include_str!("node-docs/container-open.md")),
     (
         "containerClose",
@@ -517,6 +517,7 @@ const CONCEPTS: &[(&str, &str)] = &[
     ("ルビ", "ruby"),
     ("外字", "gaiji"),
     ("傍点", "bouten"),
+    ("warichu", "warichu"),
     ("割注", "warichu"),
     ("返り点", "kaeriten"),
     ("kanbun", "kaeriten"),
@@ -663,10 +664,6 @@ mod tests {
             "Centring (中央) marker — ページの左右中央 / 中央揃え."
         );
         assert_eq!(
-            describe_node(NodeKind::Warichu),
-            "割注 — split-line annotation."
-        );
-        assert_eq!(
             describe_node(NodeKind::LineGothic),
             "ゴシック体 line marker — この行はゴシック体."
         );
@@ -700,10 +697,6 @@ mod tests {
         assert_eq!(
             describe_node(NodeKind::MarginNote),
             "Side annotation (注記) — 「X」の左に「Y」の注記."
-        );
-        assert_eq!(
-            describe_node(NodeKind::Container),
-            "Inline-attached container (字下げ系の wrap)."
         );
         assert_eq!(
             describe_node(NodeKind::ContainerOpen),

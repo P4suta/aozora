@@ -2,13 +2,8 @@
 //
 // One golden authority (crates/aozora-conformance/fixtures/render), N thin
 // walkers. This walker loads the wasm-pack `--target nodejs` build and
-// asserts every surface is byte-identical to the golden the in-process
-// Rust `render_gate` pins. A binding that reframes, re-orders, or drops a
-// byte lights up here without duplicating the golden per channel.
-//
-// All six surfaces are byte-exact: the wasm-bindgen accessors return the
-// raw shared `aozora::json` bytes (and `toHtml` / `toSource` output) with
-// no framing.
+// asserts text outputs byte-for-byte and typed projections semantically
+// against the same golden data the Rust gate pins.
 //
 // Usage:  node parity.mjs <path-to-wasm-nodejs-pkg>
 // Driven by `just parity-wasm` (locally, in Docker) and the ci.yml
@@ -18,6 +13,7 @@ import { createRequire } from "node:module";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -44,14 +40,16 @@ const fixturesRoot = resolve(
   "render",
 );
 
-// surface golden file -> Document accessor producing the identical bytes.
-const SURFACES = [
+const TEXT_SURFACES = [
   ["expected.html", (d) => d.toHtml()],
   ["expected.serialize.txt", (d) => d.toSource()],
-  ["expected.diagnostics.json", (d) => d.diagnosticsJson()],
-  ["expected.nodes.json", (d) => d.nodesJson()],
-  ["expected.pairs.json", (d) => d.pairsJson()],
-  ["expected.container_pairs.json", (d) => d.containerPairsJson()],
+];
+
+const STRUCTURED_SURFACES = [
+  ["expected.diagnostics.json", (d) => d.diagnostics()],
+  ["expected.nodes.json", (d) => d.nodes()],
+  ["expected.pairs.json", (d) => d.pairs()],
+  ["expected.container_pairs.json", (d) => d.containerPairs()],
 ];
 
 const dirs = readdirSync(fixturesRoot)
@@ -70,7 +68,7 @@ for (const name of dirs) {
   const fdir = join(fixturesRoot, name);
   const source = readFileSync(join(fdir, "source.txt"), "utf8");
   const doc = new Document(source);
-  for (const [file, accessor] of SURFACES) {
+  for (const [file, accessor] of TEXT_SURFACES) {
     const golden = readFileSync(join(fdir, file), "utf8");
     const actual = accessor(doc);
     checks += 1;
@@ -81,11 +79,22 @@ for (const name of dirs) {
       console.error(`  actual: ${JSON.stringify(actual.slice(0, 160))}`);
     }
   }
+  for (const [file, accessor] of STRUCTURED_SURFACES) {
+    const golden = JSON.parse(readFileSync(join(fdir, file), "utf8")).data;
+    const actual = accessor(doc);
+    checks += 1;
+    if (!isDeepStrictEqual(actual, golden)) {
+      failures += 1;
+      console.error(`DRIFT ${name}/${file}`);
+      console.error(`  golden: ${JSON.stringify(golden).slice(0, 320)}`);
+      console.error(`  actual: ${JSON.stringify(actual).slice(0, 320)}`);
+    }
+  }
   // Free the wasm-side handle eagerly (nodejs target still exposes free()).
   if (typeof doc.free === "function") doc.free();
 }
 
 console.log(
-  `parity-wasm: ${dirs.length} fixtures × ${SURFACES.length} surfaces = ${checks} checks, ${failures} drift`,
+  `parity-wasm: ${dirs.length} fixtures × ${TEXT_SURFACES.length + STRUCTURED_SURFACES.length} surfaces = ${checks} checks, ${failures} drift`,
 );
 process.exit(failures === 0 ? 0 : 1);

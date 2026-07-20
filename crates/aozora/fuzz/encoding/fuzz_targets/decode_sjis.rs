@@ -1,4 +1,4 @@
-//! Fuzz target — `aozora::encoding::decode_sjis` on arbitrary bytes.
+//! Fuzz target — `aozora::decode_sjis` on arbitrary bytes.
 //!
 //! Arbitrary input bytes are fed into `decode_sjis`. Failures
 //! (non-Shift_JIS input) are accepted and skip the iteration; we only
@@ -11,7 +11,7 @@
 
 #![no_main]
 
-use aozora::encoding::decode_sjis;
+use aozora::decode_sjis;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

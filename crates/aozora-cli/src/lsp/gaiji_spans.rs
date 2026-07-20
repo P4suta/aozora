@@ -1,129 +1,48 @@
-//! Gaiji-span extraction primitives.
-//!
-//! The pure walker that extracts every `※［＃description、mencode］` span
-//! from a single tree-sitter [`Tree`] in local (tree-relative) offsets.
-//! It is deliberately paragraph-agnostic — [`crate::lsp::paragraph`] owns the
-//! shift into doc-absolute coordinates.
-//!
-//! The walk holds one `TreeCursor` across the whole tree (a recursive
-//! form would allocate a cursor per node). The `Query` API is slower
-//! here: its general pattern-matching automaton has more per-node
-//! overhead than this single-kind dispatch.
-
 use std::sync::Arc;
 
-use aozora::encoding::gaiji::{GaijiBody, parse_gaiji_body};
-use tree_sitter::{Node, Tree};
-use tree_sitter_aozora::kind;
-
-/// One `※［＃description、mencode］` occurrence.
-///
-/// `description` and `mencode` are `Arc<str>` rather than `String`
-/// so the snapshot rebuild can reuse them across snapshot generations
-/// via pointer bump — the body of a gaiji span doesn't change unless
-/// its containing paragraph was re-parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GaijiSpan {
-    /// Byte offset of the leading `※`. Whether this is paragraph-
-    /// local or doc-absolute depends on the caller — the walker
-    /// returns local; `crate::lsp::paragraph::build_paragraph_snapshot`
-    /// (private) shifts them to absolute.
     pub start_byte: u32,
-    /// Byte offset just past the closing `］`. Same coordinate
-    /// frame as `start_byte`.
     pub end_byte: u32,
-    /// Description text — the bit between `「` and `」`, brackets
-    /// stripped. Used as the resolution key for the gaiji-chuki
-    /// dictionary fallback.
     pub description: Arc<str>,
-    /// `第3水準1-85-54` / `U+1234` / similar — `None` if the source
-    /// omitted the mencode tail.
     pub mencode: Option<Arc<str>>,
 }
 
-/// Walk `tree` once and extract every gaiji span.
-///
-/// Returned spans have **byte offsets relative to `text`** (the tree's
-/// coordinate frame). Output is sorted by `start_byte` because the
-/// tree visit is in source order.
 #[must_use]
-pub(super) fn extract_gaiji_spans_from_tree(tree: &Tree, text: &str) -> Arc<[Arc<GaijiSpan>]> {
-    let mut spans: Vec<Arc<GaijiSpan>> = Vec::new();
-    let mut cursor = tree.root_node().walk();
-    'walk: loop {
-        let node = cursor.node();
-        if node.kind() == kind::GAIJI {
-            if let Some(span) = build_span(node, text) {
-                spans.push(Arc::new(span));
-            }
-            // gaiji nodes are leaves for this walk — skip descent.
-        } else if cursor.goto_first_child() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                break 'walk;
-            }
-        }
-    }
-    spans.into()
-}
-
-fn build_span(gaiji: Node<'_>, text: &str) -> Option<GaijiSpan> {
-    // gaiji wraps a slug whose `body` field carries
-    // `description、mencode`.
-    let mut cursor = gaiji.walk();
-    let slug = gaiji
-        .named_children(&mut cursor)
-        .find(|c| c.kind() == kind::SLUG)?;
-    let body_node = slug.child_by_field_name("body")?;
-    let body_text = body_node.utf8_text(text.as_bytes()).ok()?;
-    let (description, mencode) = parse_body(body_text);
-    Some(GaijiSpan {
-        start_byte: u32::try_from(gaiji.start_byte()).unwrap_or(u32::MAX),
-        end_byte: u32::try_from(gaiji.end_byte()).unwrap_or(u32::MAX),
-        description,
-        mencode,
-    })
-}
-
-/// Split `(description, mencode)` from a slug body via the single
-/// authority in `aozora`'s encoding layer (shared with the parser and the
-/// `gaiji()` wire). Replaces a naive first-`、` split that wrongly cut
-/// the composed-glyph forms (`「X」の「Y」に代えて「Z」、mencode`) — #181.
-fn parse_body(body: &str) -> (Arc<str>, Option<Arc<str>>) {
-    let GaijiBody {
-        description,
-        mencode,
-        ..
-    } = parse_gaiji_body(body);
-    (Arc::from(description), mencode.map(Arc::from))
+pub(super) fn extract_gaiji_spans(snapshot: &aozora::Snapshot) -> Arc<[Arc<GaijiSpan>]> {
+    snapshot
+        .gaiji_resolutions()
+        .iter()
+        .map(|resolution| {
+            let span = resolution.span();
+            Arc::new(GaijiSpan {
+                start_byte: span.start,
+                end_byte: span.end,
+                description: Arc::from(resolution.description()),
+                mencode: resolution.mencode().map(Arc::from),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tree_sitter::Parser;
 
-    fn parse(src: &str) -> Tree {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_aozora::LANGUAGE.into())
-            .unwrap();
-        parser.parse(src, None).unwrap()
+    fn parse(src: &str) -> aozora::Snapshot {
+        aozora::parse(src).expect("small source").snapshot()
     }
 
     #[test]
     fn empty_source_yields_no_spans() {
-        let tree = parse("");
-        assert!(extract_gaiji_spans_from_tree(&tree, "").is_empty());
+        assert!(extract_gaiji_spans(&parse("")).is_empty());
     }
 
     #[test]
     fn extracts_one_gaiji_span() {
         let src = "前※［＃「desc」、第3水準1-85-54］後";
-        let tree = parse(src);
-        let spans = extract_gaiji_spans_from_tree(&tree, src);
+        let spans = extract_gaiji_spans(&parse(src));
         assert_eq!(spans.len(), 1);
         let span = &spans[0];
         assert_eq!(&*span.description, "desc");
@@ -134,8 +53,7 @@ mod tests {
     #[test]
     fn extracts_multiple_spans_in_source_order() {
         let src = "※［＃「a」、第3水準1-85-54］\n※［＃「b」、第3水準1-85-9］";
-        let tree = parse(src);
-        let spans = extract_gaiji_spans_from_tree(&tree, src);
+        let spans = extract_gaiji_spans(&parse(src));
         assert_eq!(spans.len(), 2);
         assert!(spans[0].start_byte < spans[1].start_byte);
         assert_eq!(&*spans[0].description, "a");
@@ -145,8 +63,7 @@ mod tests {
     #[test]
     fn description_only_form_yields_none_mencode() {
         let src = "※［＃「desc-only」］";
-        let tree = parse(src);
-        let spans = extract_gaiji_spans_from_tree(&tree, src);
+        let spans = extract_gaiji_spans(&parse(src));
         assert_eq!(spans.len(), 1);
         assert_eq!(&*spans[0].description, "desc-only");
         assert!(spans[0].mencode.is_none());

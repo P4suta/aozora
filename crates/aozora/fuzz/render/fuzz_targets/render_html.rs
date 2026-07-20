@@ -31,7 +31,7 @@ fuzz_target!(|data: &[u8]| {
     if src.chars().any(|c| PUA_SENTINELS.contains(&c)) {
         return;
     }
-    let html = aozora::parse(src).snapshot().to_html();
+    let html = aozora::parse(src).expect("fuzz input fits parser spans").snapshot().to_html();
     for sentinel in PUA_SENTINELS {
         assert!(
             !html.contains(sentinel),

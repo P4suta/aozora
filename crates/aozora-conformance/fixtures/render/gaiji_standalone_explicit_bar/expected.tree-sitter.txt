@@ -1,1 +1,1 @@
-(document (ERROR (ruby_base_implicit)) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (newline))
+(document (text) (literal_markup) (gaiji) (text) (newline))

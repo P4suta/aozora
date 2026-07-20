@@ -8,32 +8,22 @@
 //!
 //! # Schema envelope
 //!
-//! Every JSON envelope has the shape
-//!
-//! ```json
-//! { "schemaVersion": 2, "data": [ /* …entries… */ ] }
-//! ```
-//!
+//! Every JSON envelope carries [`SCHEMA_VERSION`] and a `data` array.
 //! [`SCHEMA_VERSION`] is bumped on any breaking change to the
 //! serialised shape (variant additions, field renames, envelope
 //! changes). Clients that read the wire format SHOULD branch on the
-//! version to decide their handling — schema 1 makes no guarantees of
+//! version to decide their handling — one schema makes no guarantees of
 //! forward-compatibility with later schemas.
 //!
 //! # Stability vs. `non_exhaustive`
 //!
-//! Both [`crate::Diagnostic`] and [`crate::Node`] are
-//! `#[non_exhaustive]` upstream so the library can add variants in
-//! minor releases. The wire format protects callers by:
-//!
-//! - falling back to `kind: "unknown"` for unrecognised variants, and
-//! - bumping [`SCHEMA_VERSION`] when new variants land in the wire
-//!   (so a client that branches on the version can react before
-//!   `"unknown"` shows up in production traffic).
+//! The wire format projects stable [`crate::Diagnostic`] and
+//! [`crate::NodeView`] values. Breaking shape changes require a
+//! [`SCHEMA_VERSION`] bump.
 
 use serde::Serialize;
 
-use crate::encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
+use crate::encoding::gaiji;
 use crate::spec::SLUGS;
 use crate::{DiagnosticSource, Severity, Snapshot};
 
@@ -41,16 +31,15 @@ use crate::{DiagnosticSource, Severity, Snapshot};
 /// serialised shape (variant additions, field renames, envelope
 /// changes).
 ///
-/// Schema 2 (#435): added the `gothic` weight tag (emphasis / container);
-/// renamed the `lineBold` node kind to `lineGothic`; removed the
-/// `combineUprightRange` container tag (縦中横 has no paired-range form).
-pub const SCHEMA_VERSION: u32 = 2;
+/// Schema 3 uses original-source spans for every endpoint, including
+/// paired containers.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Project a slice of [`crate::Diagnostic`] into a `{ schemaVersion, data }`
 /// JSON envelope. Every entry has the shape
 /// `{ kind, span: { start, end }, codepoint? }`.
 ///
-/// Empty input → `{"schemaVersion":2,"data":[]}`.
+/// Empty input has an empty `data` array.
 #[must_use]
 pub fn diagnostics(diagnostics: &[crate::Diagnostic]) -> String {
     serialize_envelope(&diagnostic_entries(diagnostics))
@@ -68,8 +57,7 @@ pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> 
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Every entry has the shape `{ kind, span: { start, end } }`,
-/// source-coordinate, sorted by `span.start`. Empty parse →
-/// `{"schemaVersion":2,"data":[]}`.
+/// source-coordinate, sorted by `span.start`.
 #[must_use]
 pub fn nodes(snapshot: &Snapshot) -> String {
     serialize_envelope(&node_entries(snapshot))
@@ -80,11 +68,11 @@ pub fn nodes(snapshot: &Snapshot) -> String {
 #[must_use]
 pub fn node_entries(snapshot: &Snapshot) -> Vec<Node> {
     snapshot
-        .source_nodes()
+        .nodes()
         .iter()
-        .map(|sn| Node {
-            kind: sn.node.kind().as_json_tag(),
-            span: sn.source_span.into(),
+        .map(|node| Node {
+            kind: node.kind().as_json_tag(),
+            span: node.span().into(),
         })
         .collect()
 }
@@ -99,7 +87,7 @@ pub fn node_entries(snapshot: &Snapshot) -> Vec<Node> {
 /// `textDocument/linkedEditingRange` and
 /// `textDocument/documentHighlight`.
 ///
-/// Empty parse → `{"schemaVersion":2,"data":[]}`.
+/// An empty parse has an empty `data` array.
 #[must_use]
 pub fn pairs(snapshot: &Snapshot) -> String {
     serialize_envelope(&pair_entries(snapshot))
@@ -124,17 +112,10 @@ pub fn pair_entries(snapshot: &Snapshot) -> Vec<Pair> {
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape
-/// `{ kind, open: { offset }, close: { offset } }` where `kind` is
-/// the [`crate::RegionFormat`] wire tag from its `as_json_tag`
-/// method, and the offsets are
-/// **normalized-coordinate** byte positions that index the PUA
-/// sentinel positions — not the source span the user wrote.
+/// `{ kind, open: { start, end }, close: { start, end } }` in source
+/// byte coordinates.
 ///
-/// Coordinate-system distinction matters: editor surfaces that want
-/// source-coordinate container pairs must translate through
-/// [`Snapshot::source_nodes`].
-///
-/// Empty parse → `{"schemaVersion":2,"data":[]}`.
+/// An empty parse has an empty `data` array.
 #[must_use]
 pub fn container_pairs(snapshot: &Snapshot) -> String {
     serialize_envelope(&container_pair_entries(snapshot))
@@ -149,13 +130,9 @@ pub fn container_pair_entries(snapshot: &Snapshot) -> Vec<ContainerPair> {
         .container_pairs()
         .iter()
         .map(|pair| ContainerPair {
-            kind: pair.kind.as_json_tag(),
-            open: Offset {
-                offset: pair.open.get(),
-            },
-            close: Offset {
-                offset: pair.close.get(),
-            },
+            kind: pair.kind().as_str(),
+            open: pair.open().into(),
+            close: pair.close().into(),
         })
         .collect()
 }
@@ -191,55 +168,44 @@ pub fn slug_entries() -> Vec<Slug> {
         .collect()
 }
 
-/// Project resolved `※［＃…］` gaiji references from `source` into a
+/// Project resolved `※［＃…］` gaiji references from a [`Snapshot`] into a
 /// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry is
 /// `{ span: { start, end }, description, mencode, codepoint, resolved }`
 /// in source-byte coordinates; `mencode` / `codepoint` / `resolved` are
-/// `null` when absent or unresolved. Walks the source once — `O(source)`.
+/// `null` when absent or unresolved.
 ///
 /// Powers inlay-hint UIs (`→GLYPH` after each reference) and batch gaiji
-/// audits. The scan + resolution are the single authority in
-/// [`crate::encoding::gaiji`]; this is only their wire projection.
+/// audits. The core scan and resolver are authoritative; this is only their
+/// wire projection.
 ///
-/// Empty / gaiji-free source → `{"schemaVersion":2,"data":[]}`.
+/// Empty and gaiji-free sources have an empty `data` array.
 #[must_use]
-pub fn gaiji(source: &str) -> String {
-    serialize_envelope(&gaiji_entries(source))
+pub fn gaiji(snapshot: &Snapshot) -> String {
+    serialize_envelope(&gaiji_entries(snapshot))
 }
 
 /// The structured `GaijiResolution` records that back `gaiji()` —
 /// prefer this to re-parsing the JSON when a caller needs the values
 /// directly.
 #[must_use]
-pub fn gaiji_entries(source: &str) -> Vec<GaijiResolution> {
-    gaiji_resolutions(source)
-        .into_iter()
+pub fn gaiji_entries(snapshot: &Snapshot) -> Vec<GaijiResolution> {
+    snapshot
+        .gaiji_resolutions()
+        .iter()
+        .cloned()
         .map(Into::into)
         .collect()
 }
 
-/// Resolve the gaiji reference at `byte_offset` (cursor-local).
-///
-/// Serialises the single
-/// `{ span, description, mencode, codepoint, resolved }` object — or the
-/// literal `"null"` when the offset is not inside a `※［＃…］` span.
-///
-/// For editor cursor-hover: the scan is bounded to a window around the
-/// cursor, so cost is independent of document size (unlike
-/// [`gaiji()`], which walks the whole source).
+/// Resolve one gaiji at a source byte offset as a typed wire record.
 #[must_use]
-pub fn gaiji_at(source: &str, byte_offset: usize) -> String {
-    find_span(source, byte_offset)
-        .and_then(|(start, end)| resolve_at(source, start, end))
-        .map_or_else(
-            || "null".to_owned(),
-            |g| {
-                serde_json::to_string(&GaijiResolution::from(g))
-                    .unwrap_or_else(|_| "null".to_owned())
-            },
-        )
+pub fn gaiji_entry_at(snapshot: &Snapshot, byte_offset: usize) -> Option<GaijiResolution> {
+    snapshot
+        .gaiji_resolution_at(byte_offset)
+        .cloned()
+        .map(Into::into)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -310,10 +276,33 @@ pub fn schema_container_pairs() -> serde_json::Value {
     )
 }
 
+/// JSON Schema for the [`gaiji`] envelope output.
+#[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
+#[must_use]
+pub fn schema_gaiji() -> serde_json::Value {
+    envelope_schema(
+        "AozoraGaijiEnvelope",
+        "Envelope returned by aozora::json::gaiji.",
+        schemars::schema_for!(GaijiResolution),
+    )
+}
+
+/// JSON Schema for the [`slugs`] envelope output.
+#[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
+#[must_use]
+pub fn schema_slugs() -> serde_json::Value {
+    envelope_schema(
+        "AozoraSlugsEnvelope",
+        "Envelope returned by aozora::json::slugs.",
+        schemars::schema_for!(Slug),
+    )
+}
+
 /// Wrap the per-entry schema in the canonical
 /// `{schemaVersion, data: […]}` envelope. The envelope shape is
-/// shared by all four wire functions; only the inner item schema
-/// varies.
+/// shared by wire functions; only the inner item schema varies.
 #[cfg(feature = "schema")]
 fn envelope_schema(
     title: &str,
@@ -397,7 +386,7 @@ pub struct Diagnostic {
     source: &'static str,
     span: Span,
     #[serde(skip_serializing_if = "Option::is_none")]
-    codepoint: Option<char>,
+    codepoint: Option<u32>,
 }
 
 impl From<&crate::Diagnostic> for Diagnostic {
@@ -407,7 +396,7 @@ impl From<&crate::Diagnostic> for Diagnostic {
         // severity/source/code; the codepoint is the only payload that
         // survives variant-by-variant.
         let codepoint = match d {
-            crate::Diagnostic::SourceContainsPua { codepoint, .. } => Some(*codepoint),
+            crate::Diagnostic::SourceContainsPua { codepoint, .. } => Some(u32::from(*codepoint)),
             _ => None,
         };
         // Strip the `aozora::lex::` / `aozora::internal` prefix so the
@@ -460,22 +449,13 @@ pub struct Pair {
     close: Span,
 }
 
-/// One `container_pairs` envelope entry — a paired container, open/close
-/// in normalized coordinates.
+/// One `container_pairs` envelope entry.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContainerPair {
     kind: &'static str,
-    open: Offset,
-    close: Offset,
-}
-
-/// A single byte offset (a `container_pairs` open/close in normalized
-/// coordinates).
-#[derive(Debug, Clone, Copy, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct Offset {
-    offset: u32,
+    open: Span,
+    close: Span,
 }
 
 /// One `slugs` envelope entry — a row of the annotation slug catalogue.
@@ -486,47 +466,32 @@ pub struct Slug {
     family: &'static str,
     accepts_param: bool,
     doc: &'static str,
-    // No `skip_serializing_if`: non-paired families emit `partner:null`
-    // (byte-identical to the prior aozora-wasm `slugs_json` shape).
+    #[serde(skip_serializing_if = "Option::is_none")]
     partner: Option<&'static str>,
-}
-
-/// Source-byte span carried by [`GaijiResolution`].
-///
-/// Distinct from [`Span`] (whose `u32` fields cover sanitized-source
-/// spans): gaiji offsets are raw `usize` byte positions into the original
-/// source, kept as-is to stay byte-identical to the prior aozora-wasm
-/// projection.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ByteSpan {
-    start: usize,
-    end: usize,
 }
 
 /// One `gaiji` envelope entry — a resolved `※［＃…］` reference.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GaijiResolution {
-    span: ByteSpan,
+    span: Span,
     description: String,
-    // Nulls (not skipped) so the shape is fixed across entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
     mencode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     codepoint: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     resolved: Option<String>,
 }
 
 impl From<gaiji::GaijiResolution> for GaijiResolution {
     fn from(g: gaiji::GaijiResolution) -> Self {
         Self {
-            span: ByteSpan {
-                start: g.start,
-                end: g.end,
-            },
-            description: g.description,
-            mencode: g.mencode,
-            codepoint: g.codepoint,
-            resolved: g.resolved,
+            span: g.span().into(),
+            description: g.description().to_owned(),
+            mencode: g.mencode().map(str::to_owned),
+            codepoint: g.codepoint(),
+            resolved: g.resolved().map(str::to_owned),
         }
     }
 }
@@ -536,10 +501,18 @@ mod tests {
     use super::*;
     use crate::Document;
 
+    fn empty_envelope() -> String {
+        format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"data":[]}}"#)
+    }
+
+    fn schema_marker() -> String {
+        format!(r#""schemaVersion":{SCHEMA_VERSION}"#)
+    }
+
     #[test]
     fn slugs_envelope_lists_catalogue_with_known_families() {
         let json = slugs();
-        assert!(json.contains(r#""schemaVersion":2"#));
+        assert!(json.contains(&schema_marker()));
         assert!(json.contains(r#""canonical":"#));
         assert!(json.contains(r#""family":"#));
         // Guard against the silent `_ => "unknown"` degrade: every
@@ -552,43 +525,44 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_empty_envelope_for_plain_text() {
-        assert_eq!(gaiji("no gaiji here"), r#"{"schemaVersion":2,"data":[]}"#);
+        let snapshot = Document::new("no gaiji here").snapshot();
+        assert_eq!(gaiji(&snapshot), empty_envelope());
     }
 
     #[test]
     fn gaiji_resolutions_emits_resolved_entry_in_source_coords() {
-        let json = gaiji("※［＃「々」］");
-        assert!(json.contains(r#""schemaVersion":2"#));
+        let snapshot = Document::new("※［＃「々」］").snapshot();
+        let json = gaiji(&snapshot);
+        assert!(json.contains(&schema_marker()));
         assert!(
             json.contains(r#""span":{"start":0,"end":21}"#),
             "json: {json}"
         );
         assert!(json.contains(r#""description":"々""#), "json: {json}");
         assert!(json.contains(r#""resolved":"々""#), "json: {json}");
-        // Unresolved/absent fields serialise as null, not skipped.
-        assert!(json.contains(r#""mencode":null"#), "json: {json}");
+        assert!(!json.contains(r#""mencode""#), "json: {json}");
     }
 
     #[test]
-    fn gaiji_resolution_at_returns_object_inside_span_else_null() {
+    fn gaiji_entry_at_resolves_only_inside_span() {
         let src = "あ※［＃「々」］い";
+        let snapshot = Document::new(src).snapshot();
         let inside = src.find('※').unwrap() + "※".len();
-        let at = gaiji_at(src, inside);
-        assert!(at.contains(r#""description":"々""#), "{at}");
-        assert!(at.contains(r#""resolved":"々""#), "{at}");
-        // A cursor outside any reference resolves to the literal "null".
-        assert_eq!(gaiji_at(src, 0), "null");
+        let at = gaiji_entry_at(&snapshot, inside).expect("inside gaiji");
+        assert_eq!(at.description, "々");
+        assert_eq!(at.resolved.as_deref(), Some("々"));
+        assert!(gaiji_entry_at(&snapshot, 0).is_none());
     }
 
     #[test]
-    fn schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 2);
+    fn schema_version_matches_the_wire_authority() {
+        assert_eq!(SCHEMA_VERSION, 3);
     }
 
     #[test]
     fn empty_diagnostics_round_trip_envelope() {
         let json = diagnostics(&[]);
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(json, empty_envelope());
     }
 
     #[test]
@@ -596,7 +570,7 @@ mod tests {
         let doc = Document::new("plain");
         let tree = doc.snapshot();
         let json = nodes(&tree);
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(json, empty_envelope());
     }
 
     #[test]
@@ -604,7 +578,7 @@ mod tests {
         let doc = Document::new("plain");
         let tree = doc.snapshot();
         let json = pairs(&tree);
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(json, empty_envelope());
     }
 
     #[test]
@@ -612,9 +586,9 @@ mod tests {
         let doc = Document::new("abc\u{E001}def");
         let tree = doc.snapshot();
         let json = diagnostics(tree.diagnostics());
-        assert!(json.contains(r#""schemaVersion":2"#));
+        assert!(json.contains(&schema_marker()));
         assert!(json.contains(r#""kind":"source_contains_pua""#));
-        assert!(json.contains(r#""codepoint":"""#) || json.contains(r#""codepoint":""#));
+        assert!(json.contains(&format!(r#""codepoint":{}"#, '\u{E001}' as u32)));
     }
 
     #[test]
@@ -623,7 +597,7 @@ mod tests {
         let tree = doc.snapshot();
         let json = nodes(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
-        assert!(json.contains(r#""schemaVersion":2"#));
+        assert!(json.contains(&schema_marker()));
     }
 
     #[test]
@@ -662,7 +636,7 @@ mod tests {
         let pair = &entries[0];
         assert_eq!(pair.kind, "indent", "container kind: {pair:?}");
         assert!(
-            pair.open.offset < pair.close.offset,
+            pair.open.start < pair.close.start,
             "open must precede close: {pair:?}"
         );
     }
@@ -673,11 +647,13 @@ mod tests {
         // Each `schema_*` fn must return its concrete JSON-Schema envelope
         // (a Default::default() → `Value::Null` degrade would drop the
         // title, the `schemaVersion` const, and the `data` array shape).
-        let cases: [(&str, serde_json::Value); 4] = [
+        let cases = [
             ("AozoraDiagnosticsEnvelope", schema_diagnostics()),
             ("AozoraNodesEnvelope", schema_nodes()),
             ("AozoraPairsEnvelope", schema_pairs()),
             ("AozoraContainerPairsEnvelope", schema_container_pairs()),
+            ("AozoraGaijiEnvelope", schema_gaiji()),
+            ("AozoraSlugsEnvelope", schema_slugs()),
         ];
         for (title, value) in cases {
             assert_eq!(
@@ -739,7 +715,7 @@ mod tests {
         // container-pairs wire tag (no `_ => "unknown"` fallback —
         // exhaustiveness is enforced in the syntax layer). The scope-specific
         // `boutenRange` / `combineUprightRange` strings are preserved verbatim
-        // so SCHEMA_VERSION=1 stays byte-stable.
+        // so a schema bump stays deliberate.
         assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");
         assert_eq!(RegionFormat::Bold { padded: true }.as_json_tag(), "bold");
         assert_eq!(

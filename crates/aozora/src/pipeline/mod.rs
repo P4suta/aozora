@@ -36,8 +36,8 @@ pub(crate) mod lexer;
 pub(crate) mod state_machine;
 
 use crate::scan;
-pub(crate) use crate::syntax::ast::{LexOutput, SourceNode};
-pub(crate) use fold::lex;
+pub(crate) use crate::syntax::ast::{LexOutput, RegionOutput, SanitizedText, SourceNode};
+pub(crate) use fold::{lex, lex_region, lex_shared};
 
 /// Eagerly initialise every lazily-built parser table.
 ///

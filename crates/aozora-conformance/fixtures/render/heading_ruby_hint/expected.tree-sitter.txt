@@ -1,1 +1,1 @@
-(document (text) (ERROR) (text) (text) (text) (ERROR) (text) (text) (slug body: (slug_body)) (newline))
+(document (text) (literal_markup) (text) (text) (text) (literal_markup) (text) (text) (slug) (newline))

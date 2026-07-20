@@ -1,1 +1,1 @@
-(document (ERROR (ruby_base_implicit)) (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (newline))
+(document (text) (literal_markup) (explicit_ruby) (text) (newline))

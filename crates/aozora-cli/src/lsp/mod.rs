@@ -1,7 +1,7 @@
 //! The in-process aozora language server (the `aozora lsp` subcommand).
 //!
 //! A `tower-lsp` server over the `aozora` crate: its parse tree, its canonical
-//! `parse ∘ serialize` form, and `aozora::encoding::gaiji` resolution. What the
+//! `parse ∘ serialize` form, and gaiji resolution. What the
 //! server advertises is `capabilities.rs` — pinned by a snapshot test, so this
 //! page does not keep a second list of it.
 //!
@@ -28,6 +28,7 @@ mod diagnostics;
 #[cfg(test)]
 mod differential;
 mod doc_line_view;
+mod document_limit;
 mod document_symbol;
 mod folding_range;
 mod formatting;
@@ -42,8 +43,6 @@ mod line_index;
 mod linked_editing;
 mod metrics;
 mod on_type_formatting;
-mod paragraph;
-mod parse_cache;
 mod position;
 #[cfg(test)]
 mod property_invariants;
@@ -57,7 +56,6 @@ mod snapshots;
 mod state;
 mod structured_snippets;
 mod text_edit;
-mod tree_sitter_doc;
 
 use tokio::io::{stdin, stdout};
 use tokio::runtime::Builder;

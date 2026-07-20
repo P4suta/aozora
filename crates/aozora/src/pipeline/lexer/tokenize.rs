@@ -165,7 +165,7 @@ impl Iterator for Tokenizer<'_> {
         let n_offset = self.newline_offsets.get(self.n_idx).copied();
 
         let next_is_trigger = match (t_offset, n_offset) {
-            (Some(t), Some(n)) => t < n,
+            (Some(t), Some(n)) => t.cmp(&n).is_lt(),
             (Some(_), None) => true,
             (None, Some(_)) => false,
             (None, None) => {
@@ -186,15 +186,19 @@ impl Iterator for Tokenizer<'_> {
                 span: Span::new(t_pos, t_pos + byte_len),
             };
             let text = self.flush_text(t_pos);
-            self.text_start = t_pos + byte_len;
-            self.t_idx += 1;
+            self.text_start = t_pos.saturating_add(byte_len);
+            let previous = self.t_idx;
+            self.t_idx = self.t_idx.saturating_add(1);
+            assert!(self.t_idx > previous, "trigger cursor must advance");
             Some(self.pair_text_then(text, trigger))
         } else {
             let n_pos = n_offset.expect("checked Some by !next_is_trigger arm");
             let text = self.flush_text(n_pos);
             let nl = Token::Newline { pos: n_pos };
-            self.text_start = n_pos + 1;
-            self.n_idx += 1;
+            self.text_start = n_pos.saturating_add(1);
+            let previous = self.n_idx;
+            self.n_idx = self.n_idx.saturating_add(1);
+            assert!(self.n_idx > previous, "newline cursor must advance");
             Some(self.pair_text_then(text, nl))
         }
     }

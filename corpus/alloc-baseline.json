@@ -1,10 +1,32 @@
 {
-  "alloc_blocks_per_file": 201.9163,
-  "alloc_blocks_total": 3612081,
-  "alloc_bytes_per_source_byte": 17.1679,
-  "alloc_bytes_total": 14519361339,
+  "alloc_blocks_per_file": 200.1259,
+  "alloc_blocks_total": 3580052,
+  "alloc_bytes_per_source_byte": 16.3934,
+  "alloc_bytes_total": 13864307407,
+  "contract": {
+    "html_render": {
+      "blocks": 4283,
+      "bytes": 806824
+    },
+    "large_document": {
+      "blocks": 34367,
+      "bytes": 31781795
+    },
+    "multiple_edits": {
+      "blocks": 4862,
+      "bytes": 7344166
+    },
+    "single_edit": {
+      "blocks": 3656,
+      "bytes": 4018546
+    },
+    "snapshot_clone": {
+      "blocks": 0,
+      "bytes": 0
+    }
+  },
   "files_analyzed": 17889,
-  "note": "public Document parse/snapshot (#237 P0.2-real) allocation-pressure ratchet; regenerate with `just alloc-gate-update`. Metrics normalized per-file / per-source-byte so corpus drift does not trip the gate.",
+  "note": "public Document parse/edit/snapshot/render allocation-pressure ratchet; regenerate with `just alloc-gate-update`. Metrics normalized per-file / per-source-byte so corpus drift does not trip the gate.",
   "source_bytes_total": 845727350,
-  "tolerance": 0.03
+  "tolerance": 0.0
 }

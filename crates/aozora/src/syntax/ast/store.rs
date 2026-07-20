@@ -8,10 +8,11 @@
 
 use super::intern::{StrId, StrInterner};
 use super::payload::{Content, Segment};
+use std::sync::Arc;
 
 /// Opaque non-empty run of [`Content`] owned by a [`crate::Snapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContentRange {
+pub(crate) struct ContentRange {
     /// Index of the first [`Content`] in the store's content `Vec`.
     pub(crate) start: u32,
     /// Number of [`Content`] entries in the run.
@@ -20,7 +21,7 @@ pub struct ContentRange {
 
 /// Opaque run of [`Segment`] owned by a [`crate::Snapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SegRange {
+pub(crate) struct SegRange {
     /// Index of the first [`Segment`] in the store's segment `Vec`.
     pub(crate) start: u32,
     /// Number of [`Segment`] entries in the run.
@@ -34,6 +35,10 @@ pub struct SegRange {
 /// `InternStats` field is not `PartialEq`).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeStore {
+    base: Option<Arc<Self>>,
+    string_offset: u32,
+    content_offset: u32,
+    segment_offset: u32,
     /// String interner backing every [`StrId`] in the tree.
     pub(crate) interner: StrInterner,
     /// Flat pool of [`Content`] entries; [`ContentRange`]s index here.
@@ -43,6 +48,30 @@ pub(crate) struct NodeStore {
 }
 
 impl NodeStore {
+    pub(crate) fn layered(base: Arc<Self>) -> Self {
+        let string_offset = base
+            .string_offset
+            .checked_add(u32::try_from(base.interner.len()).expect("string count fits u32"))
+            .expect("string count fits u32");
+        let content_offset = base
+            .content_offset
+            .checked_add(u32::try_from(base.contents.len()).expect("content count fits u32"))
+            .expect("content count fits u32");
+        let segment_offset = base
+            .segment_offset
+            .checked_add(u32::try_from(base.segments.len()).expect("segment count fits u32"))
+            .expect("segment count fits u32");
+        Self {
+            base: Some(base),
+            string_offset,
+            content_offset,
+            segment_offset,
+            interner: StrInterner::default(),
+            contents: Vec::new(),
+            segments: Vec::new(),
+        }
+    }
+
     /// Empty store.
     #[cfg(test)]
     #[must_use]
@@ -52,7 +81,12 @@ impl NodeStore {
 
     /// Intern `s` into the store's interner, returning a stable [`StrId`].
     pub(crate) fn intern(&mut self, s: &str) -> StrId {
-        self.interner.intern(s)
+        let local = self.interner.intern(s);
+        StrId(
+            self.string_offset
+                .checked_add(local.0)
+                .expect("string count fits u32"),
+        )
     }
 
     /// Resolve a [`StrId`] to its interned bytes.
@@ -62,7 +96,13 @@ impl NodeStore {
     /// Panics if `id` was not produced by this store's interner.
     #[must_use]
     pub(crate) fn resolve_str(&self, id: StrId) -> &str {
-        self.interner.resolve(id)
+        let mut store = self;
+        loop {
+            if id.0 >= store.string_offset {
+                return store.interner.resolve(StrId(id.0 - store.string_offset));
+            }
+            store = store.base.as_deref().expect("string id belongs to store");
+        }
     }
 
     /// Append a content run and return the [`ContentRange`] that addresses it.
@@ -72,8 +112,12 @@ impl NodeStore {
     /// Panics if the content pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
     pub(crate) fn push_contents(&mut self, items: &[Content]) -> ContentRange {
-        let start =
-            u32::try_from(self.contents.len()).expect("content pool exceeds u32 entry count");
+        let start = self
+            .content_offset
+            .checked_add(
+                u32::try_from(self.contents.len()).expect("content pool exceeds u32 entry count"),
+            )
+            .expect("content pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("content run exceeds u32 length");
         self.contents.extend_from_slice(items);
         ContentRange { start, len }
@@ -86,8 +130,12 @@ impl NodeStore {
     /// Panics if the segment pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
     pub(crate) fn push_segments(&mut self, items: &[Segment]) -> SegRange {
-        let start =
-            u32::try_from(self.segments.len()).expect("segment pool exceeds u32 entry count");
+        let start = self
+            .segment_offset
+            .checked_add(
+                u32::try_from(self.segments.len()).expect("segment pool exceeds u32 entry count"),
+            )
+            .expect("segment pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("segment run exceeds u32 length");
         self.segments.extend_from_slice(items);
         SegRange { start, len }
@@ -100,8 +148,17 @@ impl NodeStore {
     /// Panics if the range falls outside the content pool.
     #[must_use]
     pub(crate) fn resolve_content_range(&self, range: ContentRange) -> &[Content] {
-        let start = range.start as usize;
-        &self.contents[start..start + range.len as usize]
+        let mut store = self;
+        loop {
+            if range.start >= store.content_offset {
+                let start = (range.start - store.content_offset) as usize;
+                return &store.contents[start..start + range.len as usize];
+            }
+            store = store
+                .base
+                .as_deref()
+                .expect("content range belongs to store");
+        }
     }
 
     /// Resolve a [`SegRange`] to its sub-slice of the segment pool.
@@ -111,8 +168,17 @@ impl NodeStore {
     /// Panics if the range falls outside the segment pool.
     #[must_use]
     pub(crate) fn resolve_seg_range(&self, range: SegRange) -> &[Segment] {
-        let start = range.start as usize;
-        &self.segments[start..start + range.len as usize]
+        let mut store = self;
+        loop {
+            if range.start >= store.segment_offset {
+                let start = (range.start - store.segment_offset) as usize;
+                return &store.segments[start..start + range.len as usize];
+            }
+            store = store
+                .base
+                .as_deref()
+                .expect("segment range belongs to store");
+        }
     }
 
     /// Plain-text fast path over a length-1 content run: `Some(text)` iff the
@@ -132,6 +198,18 @@ impl NodeStore {
             [Content::Plain(id)] => Some(self.resolve_str(*id)),
             _ => None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inherits_from(&self, expected: &Arc<Self>) -> bool {
+        let mut base = self.base.as_ref();
+        while let Some(store) = base {
+            if Arc::ptr_eq(store, expected) {
+                return true;
+            }
+            base = store.base.as_ref();
+        }
+        false
     }
 }
 
@@ -165,6 +243,25 @@ mod tests {
         assert_eq!(
             store.resolve_seg_range(seg),
             &[Segment::Text(a), Segment::Text(c)]
+        );
+    }
+
+    #[test]
+    fn segment_ranges_resolve_in_a_layered_store() {
+        let mut base = NodeStore::new();
+        let a = base.intern("a");
+        let b = base.intern("b");
+        base.push_segments(&[Segment::Text(a), Segment::Text(b)]);
+
+        let mut layered = NodeStore::layered(Arc::new(base));
+        let c = layered.intern("c");
+        let d = layered.intern("d");
+        let range = layered.push_segments(&[Segment::Text(c), Segment::Text(d)]);
+
+        assert_eq!(range, SegRange { start: 2, len: 2 });
+        assert_eq!(
+            layered.resolve_seg_range(range),
+            &[Segment::Text(c), Segment::Text(d)],
         );
     }
 

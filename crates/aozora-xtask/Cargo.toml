@@ -30,10 +30,12 @@ aozora = { workspace = true, features = [
 aozora-corpus = { workspace = true }
 aozora-trace = { workspace = true }
 blake3 = { workspace = true }
+cbindgen = { version = "0.29", default-features = false }
 rayon = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 # AST parsing for `xtask lint suppressions`: counts #[allow] lint pairs
 # per crate by walking the real syntax tree, so `#[cfg(test)]` modules and
 # `reason = "…"` clauses are handled structurally rather than by regex.

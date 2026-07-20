@@ -1,39 +1,36 @@
 # Scripts
 
-On-demand tooling. PR-required gates live in the `cargo test` /
-`cargo clippy` invocations checked into CI; these scripts cover the
-heavier checks that belong on a nightly cron or local exploration.
+Policy, parsing, comparison, and artifact validation belong in
+`aozora-xtask`. This directory is limited to thin external-tool and
+operating-system orchestration where replacing shell would only wrap the same
+process calls.
+
+The crate package verifier, artifact size gate, baseline ratchet, and
+Callgrind performance gate are Rust commands exposed through:
+
+```sh
+just artifact-crates
+just artifact-size-gate
+just baseline-ratchet
+just perf-gate
+```
 
 ## `pgo-build.sh`
 
 Run the Profile-Guided Optimisation pipeline against the full
 Aozora corpus and produce a release binary tuned for the workload.
 
-Three required phases plus one optional fourth:
+The Docker-backed `just pgo` recipe builds an instrumented `aozora` CLI,
+trains it with real corpus documents, merges the LLVM profile, and rebuilds
+the distribution binary with `-Cprofile-use`. It rejects an empty corpus,
+an empty profile, and a final binary that still contains instrumentation.
 
-1. **instrumented build** — `cargo pgo build` compiles `aozora-cli`
-   and the `profile_corpus` example with profiling instrumentation
-2. **profile collection** — runs the instrumented binary three
-   times against `$AOZORA_CORPUS_ROOT` to gather a stable profile
-3. **optimised rebuild** — `cargo pgo optimize build` re-links with
-   the collected profile baked in
-4. *(optional)* **llvm-bolt post-link** — applies binary layout
-   optimisation on top of the PGO output (Linux x86_64 only)
-
-Requirements:
-
-- `cargo install cargo-pgo`
-- `rustup component add llvm-tools-preview`
-- `AOZORA_CORPUS_ROOT` env var pointing at the corpus
-- For phase 4: `llvm-bolt` (e.g. `sudo apt install llvm-bolt`)
-
-Expected gain: 10-15% per LLVM project numbers; aozora-specific
-measurement is in the script's final reporting block (it suggests
-the `hyperfine` invocation that compares baseline vs PGO vs BOLT).
+`AOZORA_CORPUS_ROOT` must point to a checkout visible inside the workspace.
+The result is written to `target/pgo/aozora`.
 
 ```sh
-export AOZORA_CORPUS_ROOT=~/aozora-corpus/aozorabunko_text-master/cards
-scripts/pgo-build.sh
+export AOZORA_CORPUS_ROOT=.corpus
+just pgo
 ```
 
 ## `sanitizers.sh`

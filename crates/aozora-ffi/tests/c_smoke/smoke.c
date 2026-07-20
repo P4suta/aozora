@@ -56,6 +56,13 @@ static int check(const char *what, int condition) {
 
 int main(void) {
     int failures = 0;
+    char empty_envelope[64];
+    int empty_envelope_len =
+        snprintf(empty_envelope, sizeof(empty_envelope),
+                 "{\"schemaVersion\":%u,\"data\":[]}", AOZORA_SCHEMA_VERSION);
+    failures += check("wire expectation fits buffer",
+                      empty_envelope_len > 0 &&
+                          (size_t)empty_envelope_len < sizeof(empty_envelope));
 
     /* 1. parse "Hello, world." */
     const char *src = "Hello, world.";
@@ -80,20 +87,14 @@ int main(void) {
     free(html_str);
     aozora_bytes_free(html);
 
-    /* 3. diagnostics — envelope-shaped JSON for clean input.
-     *    Phase A+B / L1 standardised every wire endpoint on
-     *    `{"schemaVersion": 2, "data": [...]}`; clean parse →
-     *    `data: []`. We assert the canonical bytes verbatim. */
+    /* 3. diagnostics — envelope-shaped JSON for clean input. */
     AozoraBytes diag = {NULL, 0, 0};
     status = aozora_document_diagnostics_json(doc, &diag);
     failures += check("aozora_document_diagnostics_json returns Ok", status == 0);
-    {
-        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
-        size_t expected_len = sizeof(expected) - 1;
-        failures += check("diagnostics JSON is the empty envelope",
-                          diag.len == expected_len &&
-                          memcmp(diag.ptr, expected, expected_len) == 0);
-    }
+    failures += check("diagnostics JSON is the empty envelope",
+                      diag.len == (size_t)empty_envelope_len &&
+                          memcmp(diag.ptr, empty_envelope,
+                                 (size_t)empty_envelope_len) == 0);
     aozora_bytes_free(diag);
 
     /* 3b. round-trip source — to_source re-emits canonical Aozora
@@ -115,13 +116,10 @@ int main(void) {
     AozoraBytes cpairs = {NULL, 0, 0};
     status = aozora_document_container_pairs_json(doc, &cpairs);
     failures += check("aozora_document_container_pairs_json returns Ok", status == 0);
-    {
-        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
-        size_t expected_len = sizeof(expected) - 1;
-        failures += check("container-pairs JSON is the empty envelope",
-                          cpairs.len == expected_len &&
-                          memcmp(cpairs.ptr, expected, expected_len) == 0);
-    }
+    failures += check("container-pairs JSON is the empty envelope",
+                      cpairs.len == (size_t)empty_envelope_len &&
+                          memcmp(cpairs.ptr, empty_envelope,
+                                 (size_t)empty_envelope_len) == 0);
     aozora_bytes_free(cpairs);
 
     /* 3d. gaiji — no gaiji directive in this source, so the empty
@@ -129,13 +127,10 @@ int main(void) {
     AozoraBytes gaiji = {NULL, 0, 0};
     status = aozora_document_gaiji_json(doc, &gaiji);
     failures += check("aozora_document_gaiji_json returns Ok", status == 0);
-    {
-        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
-        size_t expected_len = sizeof(expected) - 1;
-        failures += check("gaiji JSON is the empty envelope",
-                          gaiji.len == expected_len &&
-                          memcmp(gaiji.ptr, expected, expected_len) == 0);
-    }
+    failures += check("gaiji JSON is the empty envelope",
+                      gaiji.len == (size_t)empty_envelope_len &&
+                          memcmp(gaiji.ptr, empty_envelope,
+                                 (size_t)empty_envelope_len) == 0);
     aozora_bytes_free(gaiji);
 
     /* 3e. source byte length — equals strlen(src) for this ASCII input. */

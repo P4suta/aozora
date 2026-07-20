@@ -24,4 +24,4 @@ workspace = true
 pretty_assertions = { workspace = true }
 proptest = { workspace = true }
 aozora-proptest = { workspace = true }
-aozora = { workspace = true, features = ["json"] }
+aozora = { workspace = true, features = ["fmt", "json"] }

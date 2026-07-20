@@ -63,6 +63,9 @@
 use core::ffi::c_int;
 use core::slice;
 
+/// Wire schema version carried by every structured JSON result.
+pub const AOZORA_SCHEMA_VERSION: u32 = aozora::json::SCHEMA_VERSION;
+
 /// Status code returned by every `aozora_*` function.
 ///
 /// `0` is success; negative values are error categories. Positive
@@ -92,14 +95,10 @@ pub enum AozoraStatus {
 /// Opaque handle to a parsed Aozora document. Allocate via
 /// [`aozora_document_new`]; free via [`aozora_document_free`].
 ///
-/// Wraps an [`aozora::Document`], which owns the source buffer
-/// (`Box<str>`); each accessor parses on demand into an owned,
-/// lifetime-free tree backed by a flat `NodeStore` (string interner plus
-/// content / segment pools) and frees that storage when the call
-/// returns. On drop the handle frees the owned source buffer. The C ABI
-/// treats it as a single-owner handle — embedders may move it across
-/// threads but must not call into one handle concurrently from multiple
-/// threads without external synchronisation.
+/// Wraps an [`aozora::Document`] and its immutable parsed snapshot. The
+/// C ABI treats it as a single-owner handle — embedders may move it
+/// across threads but must not call into one handle concurrently from
+/// multiple threads without external synchronisation.
 #[derive(Debug)]
 pub struct AozoraDocument {
     inner: aozora::Document,
@@ -179,7 +178,7 @@ pub unsafe extern "C" fn aozora_document_new(
         return AozoraStatus::InvalidUtf8 as c_int;
     };
     let doc = Box::new(AozoraDocument {
-        inner: aozora::Document::new(source_str.to_owned()),
+        inner: aozora::parse(source_str.to_owned()).expect("source fits parser span limit"),
     });
     // SAFETY: caller guarantees out_doc is writable.
     unsafe { out_doc.write(Box::into_raw(doc)) };
@@ -452,9 +451,8 @@ pub unsafe extern "C" fn aozora_document_container_pairs_json(
 /// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM (`gaijiJson`), PyO3 (`gaiji_json`), and Extism/Go
-/// drivers.
+/// Wire format is defined in [`aozora::json`]. Its records also drive
+/// the WASM `gaiji` values and the Python, Extism, and Go projections.
 ///
 /// # Safety
 ///
@@ -471,7 +469,7 @@ pub unsafe extern "C" fn aozora_document_gaiji_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let json = aozora::json::gaiji(doc_ref.inner.source());
+    let json = aozora::json::gaiji(&doc_ref.inner.snapshot());
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
     unsafe { out_json.write(owned) };
@@ -514,7 +512,7 @@ pub unsafe extern "C" fn aozora_document_source_byte_len(
 ///
 /// This is document-independent — it projects the static slug table from
 /// [`aozora::json::slugs`], the same authority behind the WASM
-/// (`slugsJson`) and PyO3 (`slugs_json`) exports. Editor front ends use
+/// `slugs` and PyO3 `slugs_json` exports. Editor front ends use
 /// it to drive directive completion.
 ///
 /// On success, writes the bytes to `*out_json` and returns
@@ -522,7 +520,7 @@ pub unsafe extern "C" fn aozora_document_source_byte_len(
 /// the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM, PyO3, and Extism/Go drivers.
+/// with PyO3 and Extism/Go.
 ///
 /// # Safety
 ///
@@ -627,8 +625,10 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(diag.ptr, diag.len)) }
             .expect("json is utf8");
-        // Envelope shape — wire format is {"schemaVersion":N,"data":[…]}.
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"schemaVersion":{},"data":[]}}"#, AOZORA_SCHEMA_VERSION)
+        );
         unsafe { aozora_bytes_free(diag) };
 
         unsafe { aozora_document_free(doc) };
@@ -650,7 +650,10 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(nodes.ptr, nodes.len)) }
             .expect("json is utf8");
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"schemaVersion":{},"data":[]}}"#, AOZORA_SCHEMA_VERSION)
+        );
         unsafe { aozora_bytes_free(nodes) };
         unsafe { aozora_document_free(doc) };
     }
@@ -717,7 +720,10 @@ mod tests {
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("source is utf8");
         // Byte-identical to the library's own round-trip authority.
-        let want = aozora::Document::new(src.to_owned()).snapshot().to_source();
+        let want = aozora::parse(src.to_owned())
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_source();
         assert_eq!(got, want, "to_source drift");
         unsafe { aozora_bytes_free(out) };
         unsafe { aozora_document_free(doc) };
@@ -740,7 +746,11 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("json is utf8");
-        let want = aozora::json::container_pairs(&aozora::Document::new(src.to_owned()).snapshot());
+        let want = aozora::json::container_pairs(
+            &aozora::parse(src.to_owned())
+                .expect("source fits parser span limit")
+                .snapshot(),
+        );
         assert_eq!(got, want, "container_pairs_json drift");
         unsafe { aozora_bytes_free(out) };
         unsafe { aozora_document_free(doc) };
@@ -763,7 +773,8 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("json is utf8");
-        let want = aozora::json::gaiji(src);
+        let expected = aozora::parse(src).expect("source is within parser limit");
+        let want = aozora::json::gaiji(&expected.snapshot());
         assert_eq!(got, want, "gaiji_json drift");
         unsafe { aozora_bytes_free(out) };
         unsafe { aozora_document_free(doc) };

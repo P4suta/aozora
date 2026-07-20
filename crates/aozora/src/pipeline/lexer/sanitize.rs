@@ -82,6 +82,7 @@ const DECORATIVE_RULE_MIN_LEN: usize = 10;
 pub(crate) struct SanitizeOutput<'s> {
     pub text: Cow<'s, str>,
     pub diagnostics: Vec<Diagnostic>,
+    pub source_unchanged: bool,
 }
 
 /// Apply the four sanitation steps and return the result. See module
@@ -140,7 +141,12 @@ pub(crate) fn sanitize(source: &str) -> SanitizeOutput<'_> {
     let mut diagnostics = accent_diagnostics;
     diagnostics.extend(pua_diagnostics);
 
-    SanitizeOutput { text, diagnostics }
+    let source_unchanged = matches!(&text, Cow::Borrowed(value) if value.len() == source.len());
+    SanitizeOutput {
+        text,
+        diagnostics,
+        source_unchanged,
+    }
 }
 
 /// Diagnose and neutralize source-side PUA sentinel collisions.
@@ -191,16 +197,6 @@ fn neutralize_sentinel_collisions(text: Cow<'_, str>) -> (Cow<'_, str>, Vec<Diag
         };
         let start = span.start as usize;
         let end = span.end as usize;
-        // Defensive: the scan emitted these spans against this exact
-        // buffer, so `cursor <= start <= end <= src.len()` and each span
-        // brackets a 3-byte sentinel. Guard with bounds + char-boundary
-        // checks so a future drift degrades to "copy verbatim" rather
-        // than panicking on untrusted input.
-        let in_bounds = start >= cursor && end <= src.len();
-        let aligned = src.is_char_boundary(start) && src.is_char_boundary(end);
-        if !(in_bounds && aligned) {
-            continue;
-        }
         out.push_str(&src[cursor..start]);
         out.push(REPLACEMENT_CHAR);
         cursor = end;
@@ -244,16 +240,16 @@ fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0;
 
-    while cursor < input.len() {
-        let Some(open_rel) = input[cursor..].find(TORTOISE_OPEN) else {
+    while let Some(rest) = input.get(cursor..).filter(|rest| !rest.is_empty()) {
+        let Some(open_rel) = rest.find(TORTOISE_OPEN) else {
             // No more opens — copy the remainder verbatim and finish.
-            out.push_str(&input[cursor..]);
+            out.push_str(rest);
             break;
         };
-        let open_abs = cursor + open_rel;
+        let open_abs = cursor.saturating_add(open_rel);
         out.push_str(&input[cursor..open_abs]);
 
-        let after_open = open_abs + TORTOISE_OPEN.len_utf8();
+        let after_open = open_abs.saturating_add(TORTOISE_OPEN.len_utf8());
         let Some(close_rel) = input[after_open..].find(TORTOISE_CLOSE) else {
             // Unclosed `〔` — emit the rest verbatim so the author can
             // see the malformed span in the rendered output rather
@@ -261,7 +257,7 @@ fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic
             out.push_str(&input[open_abs..]);
             break;
         };
-        let close_abs = after_open + close_rel;
+        let close_abs = after_open.saturating_add(close_rel);
 
         let body = &input[after_open..close_abs];
         let decomposed = decompose_fragment(body);
@@ -284,7 +280,9 @@ fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic
             )));
         }
 
-        cursor = close_abs + TORTOISE_CLOSE.len_utf8();
+        let previous = cursor;
+        cursor = close_abs.saturating_add(TORTOISE_CLOSE.len_utf8());
+        assert!(cursor > previous, "accent rewrite must advance");
     }
 
     out
@@ -376,11 +374,12 @@ pub(crate) fn isolate_decorative_rules(input: &str) -> String {
         // an empty / whitespace-only line flips it false so the next
         // rule line does not trigger another spurious insertion.
         prev_nonblank = !trimmed.is_empty();
-        line_start = nl_pos + 1;
+        let previous = line_start;
+        line_start = nl_pos.saturating_add(1);
+        assert!(line_start > previous, "line scan must advance");
     }
     // Final tail line (no trailing `\n`). Mirrors the per-line check.
-    if line_start < bytes.len() {
-        let tail = &input[line_start..];
+    if let Some(tail) = input.get(line_start..).filter(|tail| !tail.is_empty()) {
         let tail_trimmed = tail.trim();
         if is_rule_line_trimmed(tail_trimmed) && prev_nonblank {
             out.push_str(&input[copy_from..line_start]);
@@ -391,8 +390,8 @@ pub(crate) fn isolate_decorative_rules(input: &str) -> String {
     // Single closing flush emits the unmodified tail of the input
     // verbatim. Typical corpus documents take this path with
     // `copy_from == 0` and one big `push_str` of the whole buffer.
-    if copy_from < bytes.len() {
-        out.push_str(&input[copy_from..]);
+    if let Some(tail) = input.get(copy_from..).filter(|tail| !tail.is_empty()) {
+        out.push_str(tail);
     }
     out
 }
@@ -427,21 +426,20 @@ pub(crate) fn normalize_line_endings(input: &str) -> String {
         // Bulk-copy the run between the previous cursor and this `\r`.
         // `push_str` lowers to a single `memcpy` when the chunk is
         // contiguous and non-empty.
-        if cr_pos > cursor {
-            out.push_str(&input[cursor..cr_pos]);
-        }
+        out.push_str(&input[cursor..cr_pos]);
         // Always emit one `\n` for the line terminator. Skip the
         // following `\n` if this is `\r\n` (the CRLF path); otherwise
         // step past the lone `\r` only.
         out.push('\n');
-        cursor = if bytes.get(cr_pos + 1) == Some(&b'\n') {
-            cr_pos + 2
+        let after_cr = cr_pos.saturating_add(1);
+        cursor = if bytes.get(after_cr) == Some(&b'\n') {
+            after_cr.saturating_add(1)
         } else {
-            cr_pos + 1
+            after_cr
         };
     }
-    if cursor < bytes.len() {
-        out.push_str(&input[cursor..]);
+    if let Some(tail) = input.get(cursor..).filter(|tail| !tail.is_empty()) {
+        out.push_str(tail);
     }
     out
 }

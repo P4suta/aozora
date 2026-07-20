@@ -28,6 +28,7 @@ workspace = true
 [[bin]]
 name = "aozora"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 # The one published library dependency. Features enabled here:
@@ -40,11 +41,6 @@ aozora = { workspace = true, features = [
   "fmt",
   "pandoc",
 ] }
-# The tree-sitter grammar the in-process LSP drives (semantic tokens, gaiji
-# spans, folding, …) — a published crate, so the CLI's public dep set stays
-# {aozora, tree-sitter-aozora} + external.
-tree-sitter-aozora = { workspace = true }
-tree-sitter = "0.26" # tree-sitter runtime for the LSP's incremental CST
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_complete_nushell = { workspace = true }
@@ -54,6 +50,7 @@ miette = { workspace = true, features = ["fancy"] }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 toml = { workspace = true }
 notify = { workspace = true }
 rustyline = { workspace = true } # interactive line editor for `aozora repl`
@@ -64,7 +61,6 @@ tui-textarea-2 = { workspace = true } # multi-line source EDIT pane widget for t
 # `AOZORA_LOG`; also the tracing surface the in-process LSP emits on.
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-thiserror = { workspace = true } # the LSP's typed edit errors (text_edit)
 
 # --- Localization (folded from aozora-i18n): the Project Fluent stack backing
 # the human shell strings and the LSP's diagnostic prose (see `src/i18n.rs`). ---
@@ -78,6 +74,8 @@ walkdir = { workspace = true } # directory recursion
 anstream = { workspace = true } # TTY-aware stdout for coloured diffs
 anstyle = { workspace = true } # diff colour styling
 indicatif = { workspace = true } # TTY-gated batch progress bar / spinner (stderr)
+num_cpus = { workspace = true }
+rayon = { workspace = true }
 
 # --- In-process language server (folded from aozora-lsp, `src/lsp/`):
 # tower-lsp over tokio stdio, with rope-backed incremental documents. ---
@@ -92,9 +90,9 @@ hdrhistogram = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 insta = { workspace = true }
-# `#[cfg_attr(test, mutants::skip)]` on the `LocalizedHeadline` miette
-# accessors that are mutation-equivalent survivors (ADR-0031); a no-op
-# outside `cargo mutants`.
+# `#[cfg_attr(test, mutants::skip)]` on live-terminal progress widgets whose
+# pure visibility predicates carry the assertions (ADR-0031); a no-op outside
+# `cargo mutants`.
 mutants = { workspace = true }
 # Golden-fixture loader for the cross-surface parity gate
 # (`tests/fixture_parity.rs`). Declared path-only (no version) on

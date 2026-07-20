@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"containerOpen","span":{"start":0,"end":21}},{"kind":"containerClose","span":{"start":36,"end":66}},{"kind":"ruby","span":{"start":76,"end":100}}]}
+{"schemaVersion":3,"data":[{"kind":"containerOpen","span":{"start":0,"end":21}},{"kind":"containerClose","span":{"start":36,"end":66}},{"kind":"ruby","span":{"start":76,"end":100}}]}

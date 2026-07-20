@@ -13,10 +13,10 @@
 //!   harness checks invariants (no panic, no leaked markers, well-formed
 //!   output, round-trip stability); none of those depend on *what* the
 //!   input is, only that it is some aozora-format text.
-//! - **No lockfile.** The set of inputs is whatever the caller provides.
-//!   Pinning a specific upstream corpus is explicitly rejected: it would
-//!   mandate a particular content set on every contributor and conflate
-//!   "golden ground-truth" with "stress-test volume".
+//! - **Caller-selected input.** Local sweeps accept whichever corpus root the
+//!   caller provides. The release-ready workflow supplies and verifies its
+//!   pinned corpus separately, without making that checkout mandatory for
+//!   contributors' lightweight gates.
 //! - **Opt-in via environment.** With `AOZORA_CORPUS_ROOT` unset, sweep tests
 //!   runtime-skip; they never hard-fail on missing corpus.
 //!
@@ -52,8 +52,7 @@ pub const ENV_CORPUS_ROOT: &str = "AOZORA_CORPUS_ROOT";
 ///
 /// `bytes` is the file content as read from its source, in its original
 /// encoding (typically Shift_JIS for aozora-format texts). Encoding
-/// detection and decoding is the caller's responsibility (see
-/// `aozora::encoding`).
+/// detection and decoding is the caller's responsibility.
 ///
 /// `label` is a human-readable identifier used only in diagnostic output
 /// when an invariant fails. For filesystem sources this is conventionally
@@ -68,7 +67,7 @@ pub struct CorpusItem {
     /// sources any caller-chosen string.
     pub label: String,
     /// Raw file content in its original encoding (typically Shift_JIS).
-    /// Decoding is the caller's responsibility (see `aozora::encoding`).
+    /// Decoding is the caller's responsibility.
     pub bytes: Vec<u8>,
 }
 

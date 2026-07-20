@@ -1,23 +1,14 @@
-import { createMemo, For, Show } from 'solid-js';
-import type { DiagnosticEntry, JsonEnvelope } from '../types';
+import { For, Show } from 'solid-js';
+import type { DiagnosticEntry } from '../editor';
 
 interface DiagnosticsViewProps {
-  json: string;
+  diagnostics: DiagnosticEntry[];
 }
 
 export default function DiagnosticsView(props: DiagnosticsViewProps) {
-  const data = createMemo<DiagnosticEntry[]>(() => {
-    try {
-      const env: JsonEnvelope<DiagnosticEntry> = JSON.parse(props.json);
-      return env.data ?? [];
-    } catch {
-      return [];
-    }
-  });
-
   return (
     <Show
-      when={data().length > 0}
+      when={props.diagnostics.length > 0}
       fallback={
         <div class="diag-empty">
           診断は空です（入力が clean、もしくは入力なし）
@@ -33,7 +24,7 @@ export default function DiagnosticsView(props: DiagnosticsViewProps) {
           </tr>
         </thead>
         <tbody>
-          <For each={data()}>
+          <For each={props.diagnostics}>
             {(entry) => (
               <tr>
                 <td>

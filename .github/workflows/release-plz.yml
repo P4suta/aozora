@@ -29,8 +29,8 @@ on:
   # without waiting for the next push to main. Neither job has an event guard,
   # so a dispatch does exactly what a push on main does — and what that is, is
   # bounded by release-plz.toml's `release_always = false` (release only from a
-  # Release-PR merge commit), not by anything here. See
-  # docs/adr/0039-release-plzs-manual-trigger-stays-unguarded.md.
+  # Release-PR merge commit); a real release also waits for the exact commit's
+  # release-ready proof under ADR-0042.
   workflow_dispatch:
 
 # One release pipeline per ref; never cancel a publish already in flight.
@@ -94,7 +94,7 @@ jobs:
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 480
     # The App key lives in this environment's secrets. Configure it with a
     # deployment-branch policy of `main` only (a workflow on any other branch
     # cannot read the credential) and NO required reviewers: the human gate is
@@ -102,6 +102,7 @@ jobs:
     # unattended publish.
     environment: release-plz
     permissions:
+      actions: read # verify release-ready on this exact commit
       contents: write # create the v* tag
       id-token: write # crates.io OIDC trusted publishing (no CARGO_REGISTRY_TOKEN)
     steps:
@@ -122,6 +123,65 @@ jobs:
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
+
+      - name: Detect release commit
+        id: release-commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=false
+          if git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+            release=true
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+      - name: Require release-ready for this commit
+        if: steps.release-commit.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 420); do
+            state="$(gh run list \
+              --workflow release-ready.yml \
+              --commit "$GITHUB_SHA" \
+              --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] | [.status, (.conclusion // "")] | @tsv')"
+            if [[ "$state" == $'completed\tsuccess' ]]; then
+              exit 0
+            fi
+            if [[ "$state" == completed$'\t'* ]]; then
+              echo "::error title=release-ready::release-ready finished with ${state#*$'\t'}"
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "::error title=release-ready::timed out waiting for this commit"
+          exit 1
+
+      - name: Verify crates.io packages are qualified bytes
+        if: steps.release-commit.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/download-release-ready-artifact.sh \
+            "release-ready-$GITHUB_SHA" qualified
+          while read -r crate; do
+            cargo package --locked -p "$crate"
+          done < <(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.publish != []) | .name')
+          qualified_count=0
+          for package in qualified/*.crate; do
+            local_package="target/package/$(basename "$package")"
+            test -s "$local_package"
+            cmp "$package" "$local_package"
+            qualified_count=$((qualified_count + 1))
+          done
+          test "$qualified_count" -gt 0
+          test "$qualified_count" -eq "$(find target/package -maxdepth 1 -name '*.crate' | wc -l)"
 
       - name: release-plz release
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131

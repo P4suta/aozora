@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"unclosed_bracket","severity":"error","source":"source","span":{"start":51,"end":54}},{"kind":"unrecognised_container_directive","severity":"warning","source":"source","span":{"start":0,"end":78}}]}
+{"schemaVersion":3,"data":[{"kind":"unrecognised_container_directive","severity":"warning","source":"source","span":{"start":0,"end":78}},{"kind":"unclosed_bracket","severity":"error","source":"source","span":{"start":51,"end":54}}]}

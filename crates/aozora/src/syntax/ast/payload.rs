@@ -6,14 +6,14 @@
 //! is an inline [`Content`]. Each scalar payload is held inline
 //! (no `Box`/`Id`), so the whole cluster stays `Copy`.
 
+#[cfg(any(feature = "pandoc", test))]
 use core::fmt;
 
 use crate::encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 
 use crate::syntax::format::{ForwardAttr, ForwardOrigin, LineFormat};
 use crate::syntax::{
-    Container, DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, NodeKind, RubySide,
-    SectionKind,
+    DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, NodeKind, RubySide, SectionKind,
 };
 
 use super::intern::StrId;
@@ -23,7 +23,7 @@ use super::store::{ContentRange, NodeStore, SegRange};
 /// plain run or a mixed sequence of segments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Content {
+pub(crate) enum Content {
     /// Plain text.
     Plain(StrId),
     /// Mixed text + nested constructs.
@@ -33,7 +33,7 @@ pub enum Content {
 /// One element of a [`Content::Segments`] run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Segment {
+pub(crate) enum Segment {
     /// Plain-text run between nested constructs.
     Text(StrId),
     /// Nested 外字 reference.
@@ -64,7 +64,7 @@ impl GaijiCanonicalOwned {
     /// `true` when the source carried a mencode tail. Owned counterpart of
     /// [`GaijiCanonical::has_mencode`] — store-free (only the variant matters).
     #[must_use]
-    pub fn has_mencode(self) -> bool {
+    pub(crate) fn has_mencode(self) -> bool {
         !matches!(self, Self::Unresolved { mencode: None })
     }
 
@@ -79,6 +79,7 @@ impl GaijiCanonicalOwned {
     /// # Panics
     ///
     /// Panics if an `Unresolved` mencode `StrId` was not produced by `store`.
+    #[cfg(any(feature = "pandoc", test))]
     pub(crate) fn write_mencode<W: fmt::Write>(self, store: &NodeStore, w: &mut W) -> fmt::Result {
         self.to_canonical(store).write_mencode(w)
     }
@@ -105,7 +106,7 @@ impl Gaiji {
 
 /// Ruby (furigana) annotation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ruby {
+pub(crate) struct Ruby {
     /// Base text the reading annotates.
     pub base: ContentRange,
     /// Furigana reading.
@@ -128,7 +129,7 @@ pub struct Ruby {
 
 /// Margin note (注記 / 傍記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MarginNote {
+pub(crate) struct MarginNote {
     /// 注記 vs 傍記.
     pub kind: MarginNoteKind,
     /// Preceding run the note attaches to.
@@ -137,28 +138,30 @@ pub struct MarginNote {
     pub note: ContentRange,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForwardPayload {
+    None,
+    NestedSource,
+    AccentBody(StrId),
+}
+
 /// Forward-reference emphasis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ForwardFormat {
+pub(crate) struct ForwardFormat {
     /// Which forward-scope attribute decorates the run.
     pub attr: ForwardAttr,
     /// The decorated run.
     pub target: ContentRange,
     /// Target-text provenance.
     pub origin: ForwardOrigin,
-    /// Raw directive body for [`ForwardAttr::AccentDot`] (#331), interned so
-    /// the renderer can re-derive the per-letter dot composition and the
-    /// serializer can re-emit the body byte-exact. `None` for every other
-    /// attribute — the arena handle lives here (not on the scope-independent
-    /// `ForwardAttr`) to keep that enum a `Copy`, serde-safe, arena-free unit.
-    pub accent_body: Option<StrId>,
+    pub payload: ForwardPayload,
 }
 
 /// Owned, lifetime-free counterpart of
 /// [`crate::encoding::gaiji::GaijiCanonical`], whose `Unresolved` variant
 /// carries a `&'src str`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GaijiCanonicalOwned {
+pub(crate) enum GaijiCanonicalOwned {
     /// Structured `第N水準P-K-T`. Reused lifetime-free `MenKuTen`.
     MenKuTen(MenKuTen),
     /// Explicit `U+XXXX` codepoint.
@@ -172,27 +175,20 @@ pub enum GaijiCanonicalOwned {
 
 /// Out-of-range glyph (外字).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Gaiji {
+pub(crate) struct Gaiji {
     /// Free-form source description / resolver fallback key.
     pub hint: StrId,
     /// Typed canonical value.
     pub canonical: GaijiCanonicalOwned,
+    /// Whether a present mencode tail was separated from the description by `、`.
+    pub mencode_separator: bool,
     /// `true` for the no-`※` standalone form.
     pub standalone: bool,
 }
 
-/// Split annotation (割注).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Warichu {
-    /// First (upper / right) half-size line.
-    pub upper: Content,
-    /// Second (lower / left) half-size line.
-    pub lower: Content,
-}
-
 /// Heading (見出し).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Heading {
+pub(crate) struct Heading {
     /// 大 / 中 / 小 outline level.
     pub kind: HeadingKind,
     /// Standard / 同行 / 窓 style.
@@ -203,7 +199,7 @@ pub struct Heading {
 
 /// Heading hint (見出し指定).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HeadingHint {
+pub(crate) struct HeadingHint {
     /// Intended outline level.
     pub level: HeadingKind,
     /// Standard / 同行 / 窓 style.
@@ -222,7 +218,7 @@ pub struct HeadingHint {
 
 /// Illustration (挿絵).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Illustration {
+pub(crate) struct Illustration {
     /// Image path / filename.
     pub file: StrId,
     /// Optional figure number (raw digits).
@@ -237,7 +233,7 @@ pub struct Illustration {
 
 /// Generic annotation (注記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Directive {
+pub(crate) struct Directive {
     /// Raw bytes between `［＃` and `］`.
     pub raw: StrId,
     /// Classification.
@@ -246,14 +242,14 @@ pub struct Directive {
 
 /// Kanbun reading-order mark (返り点).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Kaeriten {
+pub(crate) struct Kaeriten {
     /// Kanbun reading-order mark.
     pub mark: StrId,
 }
 
 /// Angle quote (`≪…≫` -> `《…》`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AngleQuote {
+pub(crate) struct AngleQuote {
     /// Quoted run.
     pub content: ContentRange,
 }
@@ -263,7 +259,7 @@ pub struct AngleQuote {
 /// value directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Node {
+pub(crate) enum Node {
     /// Ruby (furigana) annotation.
     Ruby(Ruby),
     /// Forward-reference emphasis.
@@ -272,8 +268,6 @@ pub enum Node {
     Gaiji(Gaiji),
     /// Line-level format — `Copy` enum.
     Line(LineFormat),
-    /// Split annotation (割注).
-    Warichu(Warichu),
     /// Page break — unit.
     PageBreak,
     /// Section break — `Copy` enum.
@@ -296,14 +290,12 @@ pub enum Node {
     AngleQuote(AngleQuote),
     /// Margin note (注記 / 傍記).
     MarginNote(MarginNote),
-    /// Container — `Copy` enum.
-    Container(Container),
 }
 
 impl Node {
     /// Cross-cutting [`crate::syntax::NodeKind`] tag for this node.
     #[must_use]
-    pub const fn kind(self) -> NodeKind {
+    pub(crate) const fn kind(self) -> NodeKind {
         use crate::syntax::NodeKind;
         match self {
             Self::Ruby(_) => NodeKind::Ruby,
@@ -320,7 +312,6 @@ impl Node {
                 LineFormat::Gothic => NodeKind::LineGothic,
                 LineFormat::FontSizeAbsolute { .. } => NodeKind::LineFontSize,
             },
-            Self::Warichu(_) => NodeKind::Warichu,
             Self::PageBreak => NodeKind::PageBreak,
             Self::SectionBreak(_) => NodeKind::SectionBreak,
             Self::BodyEnd => NodeKind::BodyEnd,
@@ -332,42 +323,6 @@ impl Node {
             Self::Directive(_) => NodeKind::Directive,
             Self::AngleQuote(_) => NodeKind::AngleQuote,
             Self::MarginNote(_) => NodeKind::MarginNote,
-            Self::Container(_) => NodeKind::Container,
-        }
-    }
-
-    /// Stable XML/element-style node name, feeding the serializer's fallback
-    /// placeholder (`<!-- unsupported-aozora: … -->`).
-    #[must_use]
-    pub const fn xml_node_name(self) -> &'static str {
-        match self {
-            Self::Ruby(_) => "aozora_ruby",
-            Self::Format(f) => match f.attr {
-                ForwardAttr::Bouten { .. } => "aozora_bouten",
-                ForwardAttr::CombineUpright => "aozora_tcy",
-                _ => "aozora_emphasis",
-            },
-            Self::Gaiji(_) => "aozora_gaiji",
-            Self::Line(l) => match l {
-                LineFormat::Indent { .. } => "aozora_indent",
-                LineFormat::AlignEnd { .. } => "aozora_align_end",
-                LineFormat::Center { .. } => "aozora_center",
-                LineFormat::Gothic => "aozora_line_goshikku",
-                LineFormat::FontSizeAbsolute { .. } => "aozora_line_font_size",
-            },
-            Self::Warichu(_) => "aozora_warichu",
-            Self::PageBreak => "aozora_page_break",
-            Self::SectionBreak(_) => "aozora_section_break",
-            Self::BodyEnd => "aozora_body_end",
-            Self::ForcedBreak => "aozora_forced_break",
-            Self::Heading(_) => "aozora_heading",
-            Self::HeadingHint(_) => "aozora_heading_hint",
-            Self::Illustration(_) => "aozora_sashie",
-            Self::Kaeriten(_) => "aozora_kaeriten",
-            Self::Directive(_) => "aozora_annotation",
-            Self::AngleQuote(_) => "aozora_angle_quote",
-            Self::MarginNote(_) => "aozora_side_note",
-            Self::Container(_) => "aozora_container",
         }
     }
 }
@@ -441,11 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn node_kind_and_xml_name_distinguish_forward_attrs() {
-        // 傍点 / 縦中横 forward formats get their own `NodeKind` + XML name;
-        // every other forward attribute rides the Emphasis / emphasis default.
-        // Pins the two dedicated match arms (deleting either would collapse them
-        // into the default) and the non-empty XML-name stubs.
+    fn node_kind_distinguishes_forward_attrs() {
         use crate::syntax::alloc::Allocator;
         use crate::syntax::format::ForwardOrigin;
         use crate::syntax::{BoutenKind, BoutenPosition};
@@ -459,31 +410,15 @@ mod tests {
             ForwardOrigin::Referenced,
         );
         assert_eq!(bouten.kind(), NodeKind::Bouten);
-        assert_eq!(bouten.xml_node_name(), "aozora_bouten");
 
         let t2 = a.content_plain("12");
         let tcy = a.tate_chu_yoko(t2, ForwardOrigin::Referenced);
         assert_eq!(tcy.kind(), NodeKind::CombineUpright);
-        assert_eq!(tcy.xml_node_name(), "aozora_tcy");
 
         // A non-bouten, non-tcy forward attribute falls to the default arm.
         let t3 = a.content_plain("重");
         let bold = a.forward_format(ForwardAttr::Bold, t3, ForwardOrigin::Reclaimed);
         assert_eq!(bold.kind(), NodeKind::Emphasis);
-        assert_eq!(bold.xml_node_name(), "aozora_emphasis");
-    }
-
-    #[test]
-    fn xml_node_name_is_stable_per_variant() {
-        // A spread of unit variants pins the `-> ""` / `-> "xyzzy"` whole-body
-        // stubs to their real, stable element names.
-        assert_eq!(Node::PageBreak.xml_node_name(), "aozora_page_break");
-        assert_eq!(Node::BodyEnd.xml_node_name(), "aozora_body_end");
-        assert_eq!(Node::ForcedBreak.xml_node_name(), "aozora_forced_break");
-        assert_eq!(
-            Node::SectionBreak(SectionKind::Kaicho).xml_node_name(),
-            "aozora_section_break"
-        );
     }
 
     #[test]
@@ -512,6 +447,7 @@ mod tests {
             let owned = Gaiji {
                 hint: hint_id,
                 canonical: owned_canonical,
+                mencode_separator: true,
                 standalone: false,
             };
             assert_eq!(

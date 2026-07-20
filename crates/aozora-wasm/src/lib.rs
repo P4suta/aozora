@@ -18,18 +18,8 @@
 //! size budget for the resulting `.wasm` artifact (post `wasm-opt
 //! -O3 --enable-simd`) is ≤ 500 KiB.
 //!
-//! ## Wire format
-//!
-//! Every JSON-returning method delegates to [`aozora::json`], the
-//! single authority for the cross-driver wire shape. `aozora-ffi` /
-//! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
-//!
-//! ```json
-//! { "schemaVersion": 2, "data": [ … ] }
-//! ```
-//!
-//! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to
-//! that shape.
+//! Structured methods return typed JavaScript values generated from the same
+//! Rust wire records used by CLI and FFI JSON.
 
 #![forbid(unsafe_code)]
 
@@ -73,24 +63,32 @@ const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static st
 }
 
 /// `wasm-bindgen` exports — the JavaScript-facing surface of the parser.
-/// Each function takes/returns JSON strings in the standard wire
-/// envelope (`aozora::json`); only compiled for the `wasm32` target.
 #[cfg(target_arch = "wasm32")]
 pub mod bindings {
-    use aozora::{Document as AozoraDoc, json};
+    use aozora::{Document as AozoraDoc, TextEdit, json};
+    use serde::Deserialize;
     use wasm_bindgen::prelude::*;
 
-    /// All canonical slugs from the spec, packaged in the standard
-    /// wire envelope so JS completion menus can drive a
-    /// `［＃...］` catalogue without re-implementing the table.
+    #[wasm_bindgen(typescript_custom_section)]
+    const GENERATED_TYPES: &str = include_str!("../types/aozora_types.d.ts");
+
+    #[derive(Deserialize)]
+    struct EditInput {
+        start: usize,
+        end: usize,
+        replacement: String,
+    }
+
+    /// The completion catalogue as typed JavaScript values.
     ///
-    /// Each `data[]` entry: `{ canonical, family, accepts_param, doc, partner }`.
-    /// `family` is the camelCase form of the Rust enum variant. Projection
-    /// is the single authority in [`aozora::json::slugs`].
-    #[wasm_bindgen(js_name = slugsJson)]
-    #[must_use]
-    pub fn slugs_json() -> String {
-        json::slugs()
+    /// # Errors
+    ///
+    /// Returns `Err(JsValue)` if the generated wire records cannot be
+    /// converted to JavaScript values.
+    #[wasm_bindgen(js_name = slugs, unchecked_return_type = "ReadonlyArray<Slug>")]
+    pub fn slugs() -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&json::slug_entries())
+            .map_err(|err| JsValue::from_str(&err.to_string()))
     }
 
     /// Force one-time parser-table initialisation off the
@@ -107,10 +105,8 @@ pub mod bindings {
 
     /// The parser's channel-aware build version.
     ///
-    /// Examples: `0.5.0` (stable), `0.5.0-dev+g3672e3f` (a local
-    /// checkout), or `0.5.0-nightly.20260629+g3672e3f` (a scheduled
-    /// build). The playground renders this in its footer so a deployed
-    /// build is traceable back to a commit. Single authority: the
+    /// The playground renders this in its footer so a deployed build is
+    /// traceable back to a commit. Single authority: the
     /// `AOZORA_VERSION_STRING` this crate's `build.rs` injects — never a
     /// hard-coded literal.
     #[wasm_bindgen]
@@ -133,25 +129,10 @@ pub mod bindings {
         json::SCHEMA_VERSION
     }
 
-    /// High-resolution wall-clock for the profile helper. Returns
-    /// milliseconds (f64) using the browser `performance.now()` so
-    /// sub-millisecond precision is preserved. Falls back to 0.0 if
-    /// the host has no `Performance` interface (e.g. a Worker that
-    /// hasn't been told to expose one) — the deltas come out as
-    /// constant 0 in that case, which is the least-surprising
-    /// fallback for the profile UI.
-    fn now_ms() -> f64 {
-        web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now())
-    }
-
     /// JS-facing handle to a parsed Aozora document.
     ///
-    /// Wraps an [`aozora::Document`], which owns the source buffer; each
-    /// accessor parses it on demand into an owned, lifetime-free tree (no
-    /// arena). Drop is automatic when the JS-side handle is GC'd and just
-    /// frees the owned source buffer.
+    /// Wraps an [`aozora::Document`] and its immutable parsed snapshot.
+    /// Drop is automatic when the JS-side handle is GC'd.
     #[wasm_bindgen]
     #[derive(Debug)]
     pub struct Document {
@@ -160,9 +141,7 @@ pub mod bindings {
 
     #[wasm_bindgen]
     impl Document {
-        /// Construct from a UTF-16 JS string. The string is copied
-        /// once into the Document's internal `Box<str>`; each render
-        /// re-parses that source into a fresh owned tree.
+        /// Construct from a UTF-16 JS string and parse it once.
         ///
         /// # Errors
         ///
@@ -177,7 +156,7 @@ pub mod bindings {
         pub fn new(source: String) -> Result<Self, JsValue> {
             crate::source_len_within_span_limit(source.len()).map_err(JsValue::from_str)?;
             Ok(Self {
-                inner: AozoraDoc::new(source),
+                inner: aozora::parse(source).map_err(|err| JsValue::from_str(&err.to_string()))?,
             })
         }
 
@@ -195,55 +174,33 @@ pub mod bindings {
             self.inner.snapshot().to_source()
         }
 
-        /// Diagnostics as JSON. Empty parse →
-        /// `{"schemaVersion":2,"data":[]}`. Wire format defined in
-        /// [`aozora::json`].
-        #[wasm_bindgen(js_name = diagnosticsJson)]
-        #[must_use]
-        pub fn diagnostics_json(&self) -> String {
-            json::diagnostics(self.inner.snapshot().diagnostics())
+        /// Apply a sorted, disjoint edit batch in pre-edit UTF-8 byte offsets.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` for malformed input or an invalid edit batch.
+        #[wasm_bindgen]
+        pub fn edit(
+            &mut self,
+            #[wasm_bindgen(unchecked_param_type = "ReadonlyArray<TextEdit>")] edits: JsValue,
+        ) -> Result<(), JsValue> {
+            let edits: Vec<EditInput> = serde_wasm_bindgen::from_value(edits)
+                .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            self.inner
+                .edit(edits.into_iter().map(|edit| {
+                    TextEdit::new(edit.start..edit.end, edit.replacement.into_boxed_str())
+                }))
+                .map_err(|err| JsValue::from_str(&err.to_string()))
         }
 
         /// Diagnostics as a plain-text report (`miette`-free): one block
         /// per diagnostic with its code, span, message, and the offending
         /// source slice. A clean parse → empty string. For the
-        /// machine-readable view use `diagnosticsJson`.
+        /// machine-readable view use [`Document::diagnostics`].
         #[wasm_bindgen(js_name = diagnosticsText)]
         #[must_use]
         pub fn diagnostics_text(&self) -> String {
             aozora::diagnostics_text(self.inner.source(), self.inner.snapshot().diagnostics())
-        }
-
-        /// Source-keyed Aozora-node spans as JSON. Each entry is
-        /// `{ kind, span: { start, end } }` where `kind` is the
-        /// camelCase [`aozora::Node`] discriminant
-        /// (`"ruby"` / `"bouten"` / `"gaiji"` / …) plus
-        /// `"containerOpen"` / `"containerClose"` for container
-        /// open / close markers. `span` covers source bytes, sorted
-        /// by `span.start`.
-        ///
-        /// Stream-friendly for the aozora-obsidian Lezer-Tree builder
-        /// — the underlying `source_nodes` table tiles spans
-        /// contiguously by construction.
-        #[wasm_bindgen(js_name = nodesJson)]
-        #[must_use]
-        pub fn nodes_json(&self) -> String {
-            json::nodes(&self.inner.snapshot())
-        }
-
-        /// Matched open/close pair links as JSON. Each entry is
-        /// `{ kind, open: { start, end }, close: { start, end } }` in
-        /// sanitized-source coordinates. Useful for LSP requests like
-        /// `textDocument/linkedEditingRange` and
-        /// `textDocument/documentHighlight`.
-        ///
-        /// Unmatched closes and unclosed opens are excluded — they
-        /// have no partner span and would only confuse editor
-        /// surfaces.
-        #[wasm_bindgen(js_name = pairsJson)]
-        #[must_use]
-        pub fn pairs_json(&self) -> String {
-            json::pairs(&self.inner.snapshot())
         }
 
         /// Source byte length. Useful for JS-side progress UI.
@@ -253,115 +210,19 @@ pub mod bindings {
             self.inner.source().len()
         }
 
-        /// Per-method timing snapshot for the current source.
+        /// Resolve the gaiji reference at a source byte offset.
         ///
-        /// Each entry is `{ "name": string, "durationMs": number }`.
-        /// Timings are taken via `performance.now()` on the host
-        /// (`Instant::now()` panics on `wasm32-unknown-unknown`).
+        /// # Errors
         ///
-        /// `parse` is the cost of `Document::snapshot()` alone
-        /// (constructing the owned AST). The render entries
-        /// (`to_html`, `serialize`, `*_json`) are wall-clock for
-        /// that single method call against the already-built tree —
-        /// so summing them is the cost of "produce every output JS
-        /// might want", and `parse` shows how much of the work
-        /// happens up-front in the parser core itself.
-        #[wasm_bindgen(js_name = profileJson)]
-        #[must_use]
-        pub fn profile_json(&self) -> String {
-            let p0 = now_ms();
-            let tree = self.inner.snapshot();
-            let p1 = now_ms();
-
-            let h0 = now_ms();
-            let _html = tree.to_html();
-            let h1 = now_ms();
-
-            let s0 = now_ms();
-            let _serialized = tree.to_source();
-            let s1 = now_ms();
-
-            let d0 = now_ms();
-            let _diag = json::diagnostics(tree.diagnostics());
-            let d1 = now_ms();
-
-            let n0 = now_ms();
-            let _nodes = json::nodes(&tree);
-            let n1 = now_ms();
-
-            let pa0 = now_ms();
-            let _pairs = json::pairs(&tree);
-            let pa1 = now_ms();
-
-            // gaiji_resolutions_json scans the source string directly
-            // (not the parse tree), so we time it separately by
-            // invoking the same code path the JS-side method uses.
-            let g0 = now_ms();
-            let _gaiji = self.gaiji_resolutions_json();
-            let g1 = now_ms();
-
-            let entries = serde_json::json!([
-                { "name": "parse",             "durationMs": p1  - p0  },
-                { "name": "to_html",           "durationMs": h1  - h0  },
-                { "name": "serialize",         "durationMs": s1  - s0  },
-                { "name": "diagnostics_json",  "durationMs": d1  - d0  },
-                { "name": "nodes_json",        "durationMs": n1  - n0  },
-                { "name": "pairs_json",        "durationMs": pa1 - pa0 },
-                { "name": "gaiji_resolutions", "durationMs": g1  - g0  },
-            ]);
-            serde_json::json!({
-                "schemaVersion": 2,
-                "byteLen": self.inner.source().len(),
-                "data": entries,
-            })
-            .to_string()
+        /// Returns `Err(JsValue)` if the typed record cannot be converted.
+        #[wasm_bindgen(
+            js_name = gaijiAt,
+            unchecked_return_type = "GaijiResolution | undefined"
+        )]
+        pub fn gaiji_at(&self, byte_offset: usize) -> Result<JsValue, JsValue> {
+            serde_wasm_bindgen::to_value(&json::gaiji_entry_at(&self.inner.snapshot(), byte_offset))
+                .map_err(|err| JsValue::from_str(&err.to_string()))
         }
-
-        /// Resolve the gaiji reference at `byte_offset` (if any) and
-        /// return a JSON object describing it. Returns the literal
-        /// string `"null"` if the offset is not inside a gaiji span
-        /// or the body cannot be parsed.
-        ///
-        /// JSON shape on hit:
-        /// ```json
-        /// { "span": { "start": u, "end": u },
-        ///   "description": string,
-        ///   "mencode": string | null,
-        ///   "codepoint": u32 | null,
-        ///   "resolved": string | null }
-        /// ```
-        ///
-        /// Locality: the scan is bounded to a 512-byte window either
-        /// side of `byte_offset`, so the cost is independent of
-        /// document size. Editors call this on every cursor move.
-        #[wasm_bindgen(js_name = resolveGaijiAt)]
-        #[must_use]
-        pub fn resolve_gaiji_at(&self, byte_offset: usize) -> String {
-            json::gaiji_at(self.inner.source(), byte_offset)
-        }
-
-        /// All gaiji resolutions found in the document, packaged in
-        /// the standard `{schemaVersion, data:[...]}` wire envelope.
-        /// Powers inlay-hint UIs that show `→GLYPH` after every
-        /// `※［＃…］` span.
-        ///
-        /// Walks the source linearly once; cost is `O(source)`.
-        #[wasm_bindgen(js_name = gaijiJson)]
-        #[must_use]
-        pub fn gaiji_resolutions_json(&self) -> String {
-            json::gaiji(self.inner.source())
-        }
-
-        /// Container open/close pairs as a raw wire-envelope string.
-        #[wasm_bindgen(js_name = containerPairsJson)]
-        #[must_use]
-        pub fn container_pairs_json(&self) -> String {
-            json::container_pairs(&self.inner.snapshot())
-        }
-
-        // ── Structured accessors ──────────────────────────────────
-        // First-class parsed `data[]` (JS objects). The `*Json` methods
-        // above remain the raw-string escape hatch.
 
         /// Source-keyed Aozora nodes as parsed JS objects.
         ///
@@ -369,7 +230,10 @@ pub mod bindings {
         ///
         /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
         /// node records to a JS value — not expected for a well-formed parse.
-        #[wasm_bindgen(js_name = nodes)]
+        #[wasm_bindgen(
+            js_name = nodes,
+            unchecked_return_type = "ReadonlyArray<Node>"
+        )]
         pub fn nodes(&self) -> Result<JsValue, JsValue> {
             serde_wasm_bindgen::to_value(&json::node_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -381,7 +245,10 @@ pub mod bindings {
         ///
         /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
         /// pair records to a JS value — not expected for a well-formed parse.
-        #[wasm_bindgen(js_name = pairs)]
+        #[wasm_bindgen(
+            js_name = pairs,
+            unchecked_return_type = "ReadonlyArray<Pair>"
+        )]
         pub fn pairs(&self) -> Result<JsValue, JsValue> {
             serde_wasm_bindgen::to_value(&json::pair_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -394,7 +261,10 @@ pub mod bindings {
         /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
         /// container-pair records to a JS value — not expected for a
         /// well-formed parse.
-        #[wasm_bindgen(js_name = containerPairs)]
+        #[wasm_bindgen(
+            js_name = containerPairs,
+            unchecked_return_type = "ReadonlyArray<ContainerPair>"
+        )]
         pub fn container_pairs(&self) -> Result<JsValue, JsValue> {
             serde_wasm_bindgen::to_value(&json::container_pair_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -407,7 +277,10 @@ pub mod bindings {
         /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
         /// diagnostic records to a JS value — not expected for a well-formed
         /// parse.
-        #[wasm_bindgen(js_name = diagnostics)]
+        #[wasm_bindgen(
+            js_name = diagnostics,
+            unchecked_return_type = "ReadonlyArray<Diagnostic>"
+        )]
         pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
             serde_wasm_bindgen::to_value(&json::diagnostic_entries(
                 self.inner.snapshot().diagnostics(),
@@ -421,9 +294,12 @@ pub mod bindings {
         ///
         /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
         /// gaiji records to a JS value — not expected for a well-formed parse.
-        #[wasm_bindgen(js_name = gaiji)]
+        #[wasm_bindgen(
+            js_name = gaiji,
+            unchecked_return_type = "ReadonlyArray<GaijiResolution>"
+        )]
         pub fn gaiji(&self) -> Result<JsValue, JsValue> {
-            serde_wasm_bindgen::to_value(&json::gaiji_entries(self.inner.source()))
+            serde_wasm_bindgen::to_value(&json::gaiji_entries(&self.inner.snapshot()))
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         }
     }
@@ -431,7 +307,7 @@ pub mod bindings {
 
 #[cfg(test)]
 mod tests {
-    use aozora::{Document, json};
+    use aozora::json;
 
     /// The boundary guard accepts in-range lengths (including the
     /// inclusive `u32::MAX` upper bound) and rejects anything larger.
@@ -455,23 +331,27 @@ mod tests {
     /// Diagnostics for plain input is the empty envelope.
     #[test]
     fn diagnostics_json_is_empty_envelope_for_clean_input() {
-        let doc = Document::new("plain".to_owned());
+        let doc = aozora::parse("plain".to_owned()).expect("source fits parser span limit");
         let json = json::diagnostics(doc.snapshot().diagnostics());
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"schemaVersion":{},"data":[]}}"#, json::SCHEMA_VERSION)
+        );
     }
 
     /// PUA collision shows up as a `kind:"source_contains_pua"` entry
     /// inside the envelope.
     #[test]
     fn diagnostics_json_emits_pua_diagnostic() {
-        let doc = Document::new("abc\u{E001}def".to_owned());
+        let doc =
+            aozora::parse("abc\u{E001}def".to_owned()).expect("source fits parser span limit");
         let json = json::diagnostics(doc.snapshot().diagnostics());
         assert!(
             json.contains(r#""kind":"source_contains_pua""#),
             "json missing diag kind: {json}"
         );
         assert!(
-            json.contains(r#""schemaVersion":2"#),
+            json.contains(&format!(r#""schemaVersion":{}"#, json::SCHEMA_VERSION)),
             "json missing schemaVersion: {json}"
         );
     }
@@ -480,7 +360,8 @@ mod tests {
     /// that decodes to a `{ schemaVersion, data }` object.
     #[test]
     fn diagnostics_json_round_trips_envelope() {
-        let doc = Document::new("abc\u{E001}def".to_owned());
+        let doc =
+            aozora::parse("abc\u{E001}def".to_owned()).expect("source fits parser span limit");
         let json = json::diagnostics(doc.snapshot().diagnostics());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert!(parsed.is_object(), "wire root must be object");
@@ -488,7 +369,7 @@ mod tests {
             parsed
                 .get("schemaVersion")
                 .and_then(serde_json::Value::as_u64),
-            Some(2)
+            Some(u64::from(json::SCHEMA_VERSION))
         );
         assert!(parsed.get("data").is_some_and(serde_json::Value::is_array));
     }
@@ -496,15 +377,19 @@ mod tests {
     /// Plain input has no Aozora-classified spans → empty envelope.
     #[test]
     fn nodes_json_is_empty_envelope_for_plain_text() {
-        let doc = Document::new("hello, world".to_owned());
+        let doc = aozora::parse("hello, world".to_owned()).expect("source fits parser span limit");
         let json = json::nodes(&doc.snapshot());
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
+        assert_eq!(
+            json,
+            format!(r#"{{"schemaVersion":{},"data":[]}}"#, json::SCHEMA_VERSION)
+        );
     }
 
     /// Ruby span emits a `kind:"ruby"` entry.
     #[test]
     fn nodes_json_classifies_ruby() {
-        let doc = Document::new("｜青梅《おうめ》".to_owned());
+        let doc =
+            aozora::parse("｜青梅《おうめ》".to_owned()).expect("source fits parser span limit");
         let json = json::nodes(&doc.snapshot());
         assert!(
             json.contains(r#""kind":"ruby""#),
@@ -516,7 +401,8 @@ mod tests {
     /// envelope shape.
     #[test]
     fn nodes_json_round_trips_as_envelope() {
-        let doc = Document::new("｜山《やま》や［＃改ページ］\n≪秘密≫".to_owned());
+        let doc = aozora::parse("｜山《やま》や［＃改ページ］\n≪秘密≫".to_owned())
+            .expect("source fits parser span limit");
         let json = json::nodes(&doc.snapshot());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
@@ -536,7 +422,8 @@ mod tests {
     /// `span.start` ascending.
     #[test]
     fn nodes_json_spans_are_in_source_order() {
-        let doc = Document::new("｜山《やま》。｜川《かわ》。｜空《そら》。".to_owned());
+        let doc = aozora::parse("｜山《やま》。｜川《かわ》。｜空《そら》。".to_owned())
+            .expect("source fits parser span limit");
         let json = json::nodes(&doc.snapshot());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
@@ -559,7 +446,8 @@ mod tests {
     /// Ruby pair appears in `pairs_json`.
     #[test]
     fn pairs_json_emits_ruby_pair() {
-        let doc = Document::new("｜青梅《おうめ》".to_owned());
+        let doc =
+            aozora::parse("｜青梅《おうめ》".to_owned()).expect("source fits parser span limit");
         let json = json::pairs(&doc.snapshot());
         assert!(json.contains(r#""kind":"ruby""#), "pairs json: {json}");
         assert!(json.contains(r#""open":"#), "pairs json: {json}");

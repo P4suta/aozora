@@ -18,7 +18,7 @@
 
 #![no_main]
 
-use aozora::render::{DirectiveNormalization, SerializeOptions};
+use aozora::{DirectiveNormalization, SerializeOptions};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let snapshot = aozora::parse(src).snapshot();
+    let snapshot = aozora::parse(src).expect("fuzz input fits parser spans").snapshot();
 
     // `Off` is byte-identical to the default serialize — the opt-in catalogues
     // never alter the default path.
@@ -52,7 +52,10 @@ fuzz_target!(|data: &[u8]| {
     ] {
         let opts = SerializeOptions::default().directives(directives);
         let once = snapshot.to_source_with(opts);
-        let twice = aozora::parse(once.as_str()).snapshot().to_source_with(opts);
+        let twice = aozora::parse(once.as_str())
+            .expect("serialized fuzz input fits parser spans")
+            .snapshot()
+            .to_source_with(opts);
         assert!(
             once == twice,
             "normalization {directives:?} not idempotent for src bytes = {data:?}\n  \

@@ -6,7 +6,7 @@ import { EditorView } from '@codemirror/view';
  * surrounding shell.
  *
  * The `.cm-aozora-*` token classes are emitted by
- * `decorations.ts` based on `nodesJson` from the WASM parser.
+ * `decorations.ts` based on typed nodes from the WASM parser.
  */
 export const aozoraTheme = EditorView.theme({
   '&': {
@@ -65,7 +65,7 @@ export const aozoraTheme = EditorView.theme({
     fontSize: '0.85em',
   },
 
-  // ===== nodesJson kind markers =====
+  // ===== node kind markers =====
   '.cm-aozora-ruby': {
     color: 'var(--token-ruby)',
     fontWeight: '600',

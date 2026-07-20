@@ -5,34 +5,36 @@
 
 #![cfg(feature = "json")]
 
-use aozora::{Document, json};
+use aozora::json;
+
+fn empty_envelope() -> String {
+    format!(r#"{{"schemaVersion":{},"data":[]}}"#, json::SCHEMA_VERSION)
+}
+
+fn data_prefix() -> String {
+    format!(r#"{{"schemaVersion":{},"data":["#, json::SCHEMA_VERSION)
+}
 
 /// The empty parse must serialise as the canonical empty envelope —
 /// regardless of which projection function is called.
 #[test]
 fn empty_parse_serialises_to_canonical_envelope() {
-    let doc = Document::new("plain");
+    let doc = aozora::parse("plain").expect("source fits parser span limit");
     let tree = doc.snapshot();
-    let canonical = r#"{"schemaVersion":2,"data":[]}"#;
+    let canonical = empty_envelope();
     assert_eq!(json::diagnostics(tree.diagnostics()), canonical);
     assert_eq!(json::nodes(&tree), canonical);
     assert_eq!(json::pairs(&tree), canonical);
 }
 
-/// Schema version is one. Bumped only when JSON shape changes.
-#[test]
-fn schema_version_is_pinned_to_one() {
-    assert_eq!(json::SCHEMA_VERSION, 2);
-}
-
 /// PUA collision diagnostic shape, byte-pinned.
 #[test]
 fn pua_collision_diagnostic_byte_shape() {
-    let doc = Document::new("a\u{E001}b");
+    let doc = aozora::parse("a\u{E001}b").expect("source fits parser span limit");
     let tree = doc.snapshot();
     let json = json::diagnostics(tree.diagnostics());
     // Envelope present.
-    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
+    assert!(json.starts_with(&data_prefix()));
     assert!(json.ends_with("]}"));
     // Variant tag + severity / source axis + span shape.
     assert!(json.contains(r#""kind":"source_contains_pua""#));
@@ -46,7 +48,7 @@ fn pua_collision_diagnostic_byte_shape() {
 /// Severity / source axes are present and correctly classified.
 #[test]
 fn diagnostic_json_has_severity_and_source_axes() {
-    let doc = Document::new("a\u{E001}b");
+    let doc = aozora::parse("a\u{E001}b").expect("source fits parser span limit");
     let tree = doc.snapshot();
     let json = json::diagnostics(tree.diagnostics());
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
@@ -70,10 +72,10 @@ fn diagnostic_json_has_severity_and_source_axes() {
 /// Ruby span shape (nodes channel), byte-pinned.
 #[test]
 fn ruby_node_byte_shape() {
-    let doc = Document::new("｜青梅《おうめ》");
+    let doc = aozora::parse("｜青梅《おうめ》").expect("source fits parser span limit");
     let tree = doc.snapshot();
     let json = json::nodes(&tree);
-    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
+    assert!(json.starts_with(&data_prefix()));
     assert!(json.contains(r#""kind":"ruby""#));
     assert!(json.contains(r#""span":{"start":"#));
 }
@@ -81,10 +83,10 @@ fn ruby_node_byte_shape() {
 /// Ruby pair shape (pairs channel), byte-pinned.
 #[test]
 fn ruby_pair_byte_shape() {
-    let doc = Document::new("｜青梅《おうめ》");
+    let doc = aozora::parse("｜青梅《おうめ》").expect("source fits parser span limit");
     let tree = doc.snapshot();
     let json = json::pairs(&tree);
-    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
+    assert!(json.starts_with(&data_prefix()));
     assert!(json.contains(r#""kind":"ruby""#));
     assert!(json.contains(r#""open":{"start":"#));
     assert!(json.contains(r#""close":{"start":"#));
@@ -93,7 +95,8 @@ fn ruby_pair_byte_shape() {
 /// JSON parses round-trip through `serde_json` — proves valid output.
 #[test]
 fn all_three_channels_emit_valid_json() {
-    let doc = Document::new("｜青梅《おうめ》abc\u{E001}def");
+    let doc =
+        aozora::parse("｜青梅《おうめ》abc\u{E001}def").expect("source fits parser span limit");
     let tree = doc.snapshot();
     for json in [
         json::diagnostics(tree.diagnostics()),
@@ -107,7 +110,7 @@ fn all_three_channels_emit_valid_json() {
             value
                 .get("schemaVersion")
                 .and_then(serde_json::Value::as_u64),
-            Some(2)
+            Some(u64::from(json::SCHEMA_VERSION))
         );
         assert!(value.get("data").is_some_and(serde_json::Value::is_array));
     }

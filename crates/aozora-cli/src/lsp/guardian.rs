@@ -142,8 +142,10 @@ fn position_corpus() -> Vec<Position> {
 #[test]
 fn hover_never_panics_on_corpus() {
     for src in adversarial_corpus() {
+        let document = aozora::parse(src.as_str()).expect("test source is within parser limit");
+        let snapshot = document.snapshot();
         for pos in position_corpus() {
-            drop(hover_at(&src, pos, &en()));
+            drop(hover_at(&snapshot, pos, &en()));
         }
     }
 }
@@ -317,7 +319,7 @@ fn random_insert_burst_matches_string_oracle() {
         state.apply_changes(&[edit]).expect("valid insert");
         oracle.insert_str(insert_at, &chunk);
     }
-    assert_eq!(&**state.snapshot().doc_text(), &oracle);
+    assert_eq!(state.snapshot().doc_text(), oracle);
 }
 
 /// Same drill but with random delete-then-insert cycles that
@@ -359,7 +361,7 @@ fn random_replace_burst_matches_string_oracle() {
             oracle.replace_range(start..end, &new_text);
         }
     }
-    assert_eq!(&**state.snapshot().doc_text(), &oracle);
+    assert_eq!(state.snapshot().doc_text(), oracle);
 }
 
 // ---------------------------------------------------------------

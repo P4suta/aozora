@@ -18,7 +18,6 @@
 //!    drift, truncated body, ASCII noise injected) shows up as a
 //!    shrunken counter-example.
 
-use aozora::Document;
 use aozora_conformance::{RenderFixture, fixtures_root};
 use aozora_proptest::config::default_config;
 use proptest::prelude::*;
@@ -38,10 +37,10 @@ fn all_fixture_sources() -> &'static Vec<String> {
 }
 
 fn parse_serialise_parse(source: &str) {
-    let doc = Document::new(source.to_owned());
+    let doc = aozora::parse(source.to_owned()).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let serialised = tree.to_source();
-    let doc2 = Document::new(serialised);
+    let doc2 = aozora::parse(serialised).expect("source fits parser span limit");
     let _tree2 = doc2.snapshot();
 }
 

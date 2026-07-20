@@ -407,7 +407,7 @@ fn load_config(cwd: &Path) -> (ConfigReport, Layers) {
     }
 }
 
-/// Resolve the five effective settings and the source that decided each,
+/// Resolve the effective settings and the source that decided each,
 /// mirroring the runtime **exactly** (that fidelity is the whole point — a
 /// re-implementation that drifts is worse than useless):
 ///

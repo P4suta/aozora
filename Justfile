@@ -173,7 +173,7 @@ test-doc:
     {{_dev}} cargo test --workspace --doc
 
 # Doctests for the umbrella crate with its optional features enabled
-# (wire / cst / query / …), so feature-gated rustdoc examples are
+# (wire / formatter / Pandoc), so feature-gated rustdoc examples are
 # verified too. `just test-doc` stays feature-light for speed; run this
 # before a release or after touching a feature-gated public example.
 test-doc-all:
@@ -192,7 +192,7 @@ test-doc-all:
 #
 # `--all-features` where `just test` is feature-light: a writer that
 # cannot see every snapshot leaves the ones it misses to be hand-edited.
-# The feature-gated snapshots (aozora's fmt / pandoc / cst / query, and the
+# The feature-gated snapshots (aozora's fmt / pandoc, and the
 # in-process LSP folded into aozora-cli) only render under `--all-features`.
 snapshot-update:
     {{_dev}} env INSTA_UPDATE=always cargo nextest run {{_ws}} --all-features --all-targets
@@ -266,6 +266,10 @@ grammar-check:
 # Offline — never contacts crates.io. Wired into `drift-gate`.
 publish-check:
     {{_dev}} cargo run -p aozora-xtask -q -- publish check
+
+# Build and verify the exact local crate archives without publishing them.
+artifact-crates *ARGS:
+    {{_dev}} cargo run -p aozora-xtask -q -- artifacts crates {{ARGS}}
 
 # Drift gate: rust-toolchain.toml's channel (the DEV toolchain) and
 # Cargo.toml's rust-version (the PUBLIC CONTRACT) are two authorities
@@ -361,23 +365,28 @@ new-adr TITLE:
 conformance:
     {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter && cargo test -p aozora-conformance --test works_gate && cargo run -p aozora-xtask -q -- corpus family-coverage'
 
-# Vendor the conformance vectors from the sibling aozora-notation-spec
-# repo into spec-vectors/ (the spec is the source of truth). Host-side —
-# reaches outside the /workspace bind mount, so it runs directly on the
-# host (like `just deps-*` / `just ci`), not in the dev container. Re-run
-# after the spec's vectors change and commit the diff. Override the spec
-# location with AOZORA_SPEC_REPO.
 sync-spec-vectors:
-    cargo run -q --release -p aozora-xtask -- spec-vectors sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    spec="${AOZORA_SPEC_REPO:-$PWD/../aozora-notation-spec}"
+    [[ -d "$spec" ]] || { echo "spec repository not found: $spec" >&2; exit 1; }
+    docker compose run --rm \
+        -v "$spec":/spec:ro \
+        -e AOZORA_SPEC_REPO=/spec \
+        dev cargo run -q --release -p aozora-xtask -- spec-vectors sync
 
-# Fail if the vendored spec-vectors/ have drifted from the sibling spec
-# repo. Host-side; `--allow-missing` makes it a no-op where the spec isn't
-# checked out (cloud CI / dev container), so the vendored copy is
-# authoritative there. Runs in `ci-parallel`'s background lane, so vendored
-# drift is caught before every push, and by the weekly spec-freshness
-# workflow.
 verify-spec-vectors:
-    cargo run -q --release -p aozora-xtask -- spec-vectors check --allow-missing
+    #!/usr/bin/env bash
+    set -euo pipefail
+    spec="${AOZORA_SPEC_REPO:-$PWD/../aozora-notation-spec}"
+    if [[ ! -d "$spec" ]]; then
+        echo "spec repository not configured; vendored vectors remain covered by conformance"
+        exit 0
+    fi
+    docker compose run --rm \
+        -v "$spec":/spec:ro \
+        -e AOZORA_SPEC_REPO=/spec \
+        dev cargo run -q --release -p aozora-xtask -- spec-vectors check
 
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-proptest::config). Fast
@@ -419,19 +428,25 @@ corpus-sweep:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo nextest run --package aozora --test corpus_sweep --test corpus_splice_tiling --test corpus_document_edits --no-capture
+        -e AOZORA_REQUIRE_CORPUS=1 \
+        dev cargo nextest run --release --package aozora --test corpus_sweep --test corpus_document_edits --no-capture
 
-# Conformance regression gate: fail when the corpus per-file Unknown-
-# degradation rate rises above `corpus/baseline.json` — i.e. when a
-# change pushed more notation into the `Annotation{Unknown}` catch-all.
-# Same corpus bind-mount as `corpus-sweep`; runtime-skips (NOT a failure)
-# when AOZORA_CORPUS_ROOT is unset, so a corpus-less machine still
-# pushes — the corpus CI job (which checks out P4suta/aozorabunko_text)
-# is the backstop.
-#
-# Usage:
-#   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
-#   just audit-gate
+incremental-speedup-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]] || [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT must name a readable corpus directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        -e AOZORA_INCREMENTAL_MIN_SPEEDUP=1.10 \
+        -e AOZORA_INCREMENTAL_MAX_SLOWDOWN=1.50 \
+        dev cargo run -q --release -p aozora-bench --example incremental_speedup
+
+# Strict full-corpus parser gate. The release-ready recipe requires a corpus;
+# this developer convenience recipe remains optional when none is configured.
 audit-gate:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -446,22 +461,7 @@ audit-gate:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json
-
-# Re-capture `corpus/baseline.json` from the current corpus — the
-# ratchet step after a recogniser lands and shrinks the Unknown set.
-# Lower it on improvement; never raise it to paper over a regression.
-audit-gate-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a baseline." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json --update
+        dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus
 
 # Verbatim-provenance gate: fail when any corpus document's
 # `Tree::to_source_verbatim()` no longer equals a fresh `sanitize()` of
@@ -486,12 +486,9 @@ verbatim-gate:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus verbatim --root /corpus
+        dev cargo run --release -p aozora-xtask -q -- corpus verbatim --root /corpus
 
-# Render-leak ratchet gate: fail when per-marker leak counts (notation
-# markers surviving into visible rendered HTML) rise above the committed
-# `corpus/render-leak-baseline.json`. The enforcing partner of
-# `corpus render-audit` (the per-file diagnostic). Needs a corpus.
+# Strict unexplained visible-notation gate.
 render-leak-gate:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -506,26 +503,9 @@ render-leak-gate:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus render-leak-gate --root /corpus --baseline corpus/render-leak-baseline.json
+        dev cargo run --release -p aozora-xtask -q -- corpus render-leak-gate --root /corpus
 
-# Re-capture the render-leak baseline (ratchet down after an improvement).
-render-leak-gate-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-leak baseline." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus render-leak-gate --root /corpus --baseline corpus/render-leak-baseline.json --update
-
-# Render-correctness ratchet gate: fail when per-category structural render
-# defects (I-A HTML tags don't balance, I-C emitted aozora-* class absent from
-# AOZORA_CLASSES) rise above `corpus/render-correctness-baseline.json`. The
-# enforcing partner of `corpus render-correctness` (the per-file diagnostic).
-# Needs a corpus; runtime-skips (NOT a failure) when AOZORA_CORPUS_ROOT is unset.
+# Strict structural render gate.
 render-correctness-gate:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -540,86 +520,7 @@ render-correctness-gate:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus --baseline corpus/render-correctness-baseline.json
-
-# Re-capture the render-correctness baseline (ratchet down after a fix).
-render-correctness-gate-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-correctness baseline." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus --baseline corpus/render-correctness-baseline.json --update
-
-# Render-digest ratchet gate: a non-circular distillation of `corpus audit`
-# (panic=0, kind presence-floor, gaiji resolution may only improve). Committed
-# at `corpus/render-digest.json`; `unknown_shapes_top` is the informational
-# worklist for the normalisation layer. Needs a corpus; runtime-skips otherwise.
-digest-gate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; digest-gate skipped (no corpus to walk)."
-        exit 0
-    fi
-    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
-        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json
-
-# Re-capture the render-digest (ratchet after an improvement).
-digest-gate-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-digest." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json --update
-
-# Catalogue-sweep ratchet gate: pin the Tier1/Tier2-matched Unknown shape set and
-# per-tier resolved-occurrence counts (`corpus/catalogue-coverage.json`). Residue
-# may only shrink; a newly-matched shape fails until a human confirms it is a
-# genuine near-miss (the zero-FP guard). Needs a corpus; runtime-skips otherwise.
-catalogue-sweep-gate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; catalogue-sweep-gate skipped (no corpus to walk)."
-        exit 0
-    fi
-    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
-        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus catalogue-sweep-gate --root /corpus --baseline corpus/catalogue-coverage.json
-
-# Re-capture the catalogue-coverage baseline (ratchet after vetting a near-miss).
-catalogue-sweep-gate-update:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; cannot capture catalogue coverage." >&2
-        exit 1
-    fi
-    docker compose run --rm \
-        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
-        -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run -p aozora-xtask -q -- corpus catalogue-sweep-gate --root /corpus --baseline corpus/catalogue-coverage.json --update
+        dev cargo run --release -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus
 
 # Select a stratified, family-diverse set of real works to extend the golden
 # `fixtures/works/` set (#414). Deterministic greedy family set-cover under a
@@ -652,16 +553,14 @@ works-vendor:
     docker compose run --rm -e UPDATE_GOLDEN=1 dev \
         cargo test -p aozora-conformance --test works_gate
 
-# Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
-# dhat around `lex` over the corpus, owned-path allocation count / bytes
-# normalized per-file / per-source-byte, and fails when either regresses beyond
-# the baseline tolerance (default 3%). Same corpus bind-mount and runtime-skip
-# (NOT a failure when AOZORA_CORPUS_ROOT is unset) as `audit-gate`.
+# Public-document allocation-pressure ratchet. Measures parse allocation over
+# the corpus plus fixed edit, snapshot, large-document, and render workloads.
+# Same corpus bind-mount and local runtime-skip as `audit-gate`.
 #
 # Usage:
 #   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
 #   just alloc-gate
-alloc-gate:
+alloc-gate: baseline-ratchet
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
@@ -677,9 +576,7 @@ alloc-gate:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run --release -p aozora-bench --example alloc_gate -- --root /corpus --baseline corpus/alloc-baseline.json
 
-# Re-capture the allocation baseline. Ratchet-down on improvement; raise
-# only with a PR justification plus a `just throughput` run showing
-# wall-clock stays within budget.
+# Re-capture the allocation baseline. The baseline ratchet rejects increases.
 alloc-gate-update:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -712,15 +609,31 @@ throughput:
 # CPU *instructions* — deterministic across runs and machines, unlike
 # wall-clock (too noisy on shared runners to gate on; see `throughput`).
 #
-# Every run compares against the committed baseline and exits non-zero on a
-# >10% instruction regression on any case. Corpus-free — the runner embeds a
+# Every run compares against the committed baseline and exits non-zero on an
+# instruction regression on any case. Corpus-free — the runner embeds a
 # few vendored 青空文庫 works plus a synthetic annotation-dense buffer — so
 # it needs no AOZORA_CORPUS_ROOT. Requires valgrind from the dev image.
 #
 # Runs in the local pre-push gate and required CI.
 #
-perf-gate:
-    {{_dev}} bash scripts/perf-gate.sh
+baseline-ratchet:
+    {{_dev}} cargo run -p aozora-xtask -q -- ratchet
+
+perf-gate: baseline-ratchet
+    {{_dev}} cargo run -p aozora-xtask -q -- perf check
+
+artifact-size-gate: baseline-ratchet extism-build
+    {{_dev}} env CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm --locked
+    {{_dev}} sh -c 'set -eu; wasm=crates/aozora-wasm/pkg/aozora_wasm_bg.wasm; \
+        before=$(wc -c < "$wasm"); \
+        wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
+            --enable-bulk-memory --enable-mutable-globals \
+            --enable-nontrapping-float-to-int "$wasm" -o "$wasm"; \
+        after=$(wc -c < "$wasm"); test "$after" -lt "$before"'
+    {{_dev}} bash -euc 'cargo build --locked --profile dist -p aozora-cli; \
+        mkdir -p target/release-ready-build; \
+        cp /cargo/target/dist/aozora target/release-ready-build/'
+    {{_dev}} cargo run -p aozora-xtask -q -- artifacts size-check
 
 # --- fuzzing -----------------------------------------------------------------
 #
@@ -1018,9 +931,9 @@ coverage-branch:
 # Assertion-strength gate (cargo-mutants). Mutates the source and checks
 # the suite CATCHES each change — the complement region coverage can't
 # give: coverage proves a line ran, mutation proves a wrong result would
-# fail a test (ADR-0031). Report-only today: read `mutants.out/`, write
-# tests to kill surviving mutants, and `#[mutants::skip]` (with a reason)
-# the equivalent / unreachable ones.
+# fail a test (ADR-0031). A sweep succeeds only when no viable survivor or
+# timeout remains; `#[mutants::skip]` needs an equivalence or reachability
+# reason.
 #
 #   just mutants -p aozora-ffi                          # one crate (fast)
 #   just mutants --in-diff <(git diff origin/main)      # only changed lines
@@ -1070,7 +983,7 @@ lint: fmt-check clippy typos strict-code doc
 # deterministic; doc generation is fast enough that the throughput cost is
 # negligible against not having to rerun a flaky required check.
 doc:
-    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --all-features --jobs 1
+    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --jobs 1
 
 # Forbid patterns that hide bugs or introduce unstable/unsafe surface in our
 # own crates. Every check is defensive — each represents a pattern we have
@@ -1372,7 +1285,7 @@ clippy-wasm:
 # The per-commit hook runs only the lighter `clippy`; the pre-push gate
 # (`ci-parallel`) runs `clippy-strict` + `clippy-wasm`, matching CI's
 # authoritative --all-targets + wasm32 lint cells.
-lint-full: fmt-check clippy-strict typos strict-code doc
+lint-full: fmt-check clippy-strict clippy-wasm typos strict-code doc
 
 # Typo check
 typos:
@@ -1400,7 +1313,7 @@ shear:
 # first crates.io release, at which point they drop off this list. (Bin-only
 # and `publish = false` members are skipped automatically; a real break makes
 # the run exit non-zero, which is expected on a breaking release.) After the
-# 18→3 collapse the only checked crate is `aozora` (the 0.4.1 baseline);
+# package collapse the only checked crate is `aozora`;
 # `aozora-cli` is bin-only (auto-skipped) and `tree-sitter-aozora` is a first
 # publish with no baseline yet.
 semver *ARGS:
@@ -1496,35 +1409,32 @@ deps-status:
 
 # --- release optimisation ----------------------------------------------------
 
-# PGO (+ optional BOLT) release build. Needs cargo-pgo installed
-# (`cargo install cargo-pgo`) and AOZORA_CORPUS_ROOT pointing at a
-# real Aozora corpus checkout. See scripts/pgo-build.sh for details.
-# Runs on the host (not in the dev container) because cargo-pgo +
-# llvm-bolt expect direct access to the host's profiling data.
+# PGO release build from a corpus checkout visible inside the workspace.
 pgo:
-    bash scripts/pgo-build.sh
+    {{_dev}} env AOZORA_CORPUS_ROOT='{{ env_var("AOZORA_CORPUS_ROOT") }}' bash scripts/pgo-build.sh
 
 # C ABI smoke test — builds aozora-ffi as cdylib, compiles the C
 # harness against it, runs end-to-end.
 smoke-ffi:
-    bash crates/aozora-ffi/tests/c_smoke/run.sh
+    {{_dev}} bash crates/aozora-ffi/tests/c_smoke/run.sh
 
 # Build the single portable `aozora.wasm` Extism plugin (the polyglot
 # transport hub) and copy it to crates/aozora-extism/dist/. Every
 # language with an Extism host SDK loads this ONE artifact — there is no
 # per-(OS × arch) native build matrix the way the aozora-ffi C ABI needs.
-# The dev image ships binaryen's `wasm-opt` (see Dockerfile); the recipe
-# still degrades gracefully to an unoptimized artifact if a custom image
-# lacks it. See ADR-0006.
+# The dev image ships binaryen's `wasm-opt` (see Dockerfile).
 extism-build:
-    {{_dev}} cargo build --release --target wasm32-unknown-unknown -p aozora-extism
-    {{_dev}} sh -c 'mkdir -p crates/aozora-extism/dist \
+    {{_dev}} env CARGO_PROFILE_RELEASE_OPT_LEVEL=z cargo build --release --target wasm32-unknown-unknown -p aozora-extism
+    {{_dev}} sh -c 'set -eu; command -v wasm-opt >/dev/null; \
+        mkdir -p crates/aozora-extism/dist \
         && cp "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/aozora_extism.wasm" crates/aozora-extism/dist/aozora.wasm \
-        && (command -v wasm-opt >/dev/null 2>&1 \
-            && wasm-opt -O3 --enable-bulk-memory --enable-mutable-globals \
-                crates/aozora-extism/dist/aozora.wasm -o crates/aozora-extism/dist/aozora.wasm \
-            && echo "wasm-opt applied" \
-            || echo "wasm-opt not present — shipping unoptimized artifact")'
+        && before=$(wc -c < crates/aozora-extism/dist/aozora.wasm) \
+        && wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
+            --enable-bulk-memory --enable-mutable-globals \
+            --enable-nontrapping-float-to-int \
+            crates/aozora-extism/dist/aozora.wasm -o crates/aozora-extism/dist/aozora.wasm \
+        && after=$(wc -c < crates/aozora-extism/dist/aozora.wasm) \
+        && test "$after" -lt "$before"'
 
 # End-to-end cross-language ABI check (the Extism analogue of smoke-ffi):
 # build the plugin, then load the built aozora.wasm through the Extism
@@ -1548,18 +1458,10 @@ smoke-go: extism-build
         go vet ./...; \
         go test ./...'
 
-# Python wheel smoke — HOST-side (maturin + a Python interpreter are not
-# in the dev image, like smoke-ffi / pgo). Provisions a throwaway venv,
-# builds the abi3 wheel, installs it, then runs mypy --strict + pytest.
-# Kept out of `just ci` (the dev image can't run it); mirrored by the
-# ci.yml `python-wheel` job. Knobs: AOZORA_PY_PYTHON / AOZORA_PY_VENV.
-#
-# The cross-surface parity gate's Python channel (`tests/test_fixture_parity.py`)
-# rides on this pytest run and its `python-wheel` CI mirror — a DOCUMENTED
-# `ci-parallel` exception: the dev image ships no Python interpreter, so
-# there is no in-container lane for it (same rationale as smoke-ffi).
+# Python wheel smoke. Provisions a throwaway venv, builds and installs the
+# abi3 wheel, then runs mypy and pytest, including fixture parity.
 smoke-py:
-    bash scripts/smoke-py.sh
+    {{_dev}} env AOZORA_PY_VENV=/cargo/target/venv-smoke-py bash scripts/smoke-py.sh
 
 # Cross-surface parity gate — wasm (Node) channel. Builds the wasm-pack
 # `--target nodejs` package and walks every render fixture through it,
@@ -1571,7 +1473,7 @@ smoke-py:
 # and the CI `wasm-build` job (host mirror: two raw steps). The sibling
 # CLI / FFI / Python / Go walkers cover the other channels.
 parity-wasm:
-    {{_dev}} bash -euc 'wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs \
+    {{_dev}} bash -euc 'CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs \
         && node crates/aozora-wasm/tests/js/parity.mjs crates/aozora-wasm/pkg-nodejs'
 
 # --- changelog ---------------------------------------------------------------
@@ -1733,7 +1635,7 @@ ci:
 #   2. Every gate that does NOT take the container's /cargo/target build
 #      lock runs in the BACKGROUND so its wall-time hides behind the
 #      foreground cargo chain: deny / audit (metadata + network),
-#      smoke-ffi (host-side target/), playground-ci / vscode-ci (bun), and
+#      smoke-ffi, playground-ci / vscode-ci (bun), and
 #      the non-compiling lint gates fmt-check / typos / strict-code.
 #   3. The 4096-case `prop-deep` sweep launches AFTER the foreground
 #      `prop` gate (so it reuses the just-built `property_*` binaries —
@@ -1862,8 +1764,8 @@ ci-parallel:
 
     # Background lane — no /cargo/target build-lock contention.
     # verify-spec-vectors is host-side (like smoke-ffi): it drift-checks the
-    # vendored spec-vectors/ against the sibling spec repo, a no-op
-    # (--allow-missing) where the spec isn't checked out. playground-ci and
+    # vendored spec-vectors/ against the sibling spec repo, a no-op where the
+    # spec isn't configured. playground-ci and
     # vscode-ci are each ONE job per frontend project: both bundle their
     # project's `bun install` with its checks so the install runs exactly
     # once, single-threaded (see the recipes).
@@ -2026,7 +1928,14 @@ _pg_root := "docker compose run --rm --no-TTY --user 0 playground"
 # Build the WASM `pkg/` that `vite.config.ts`'s alias targets. Must run
 # before `playground-build` (when `.d.ts` is missing or stale).
 playground-wasm:
-    {{_dev}} wasm-pack build --target web --release crates/aozora-wasm
+    {{_dev}} env CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm
+    {{_dev}} sh -c 'set -eu; wasm=crates/aozora-wasm/pkg/aozora_wasm_bg.wasm; \
+        before=$(wc -c < "$wasm"); \
+        wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
+            --enable-bulk-memory --enable-mutable-globals \
+            --enable-nontrapping-float-to-int "$wasm" -o "$wasm"; \
+        after=$(wc -c < "$wasm"); \
+        test "$after" -lt "$before"'
 
 # Normalise the playground's `node_modules` / `dist` named-volume trees to
 # the compose runtime UID/GID. Docker creates a named volume root-owned on
@@ -2085,8 +1994,10 @@ playground-ci: _playground-ensure
 playground-build: playground-wasm _playground-ensure
     {{_pg}} bun run build
 
-# All playground gates in one shot — typecheck + test + build.
+# All playground gates in one shot and export the production tree from its
+# named volume into the workspace artifact staging area.
 playground-all: playground-typecheck playground-test playground-build
+    {{_pg}} sh -euc 'destination=/workspace/target/release-ready-build/playground; rm -rf "$destination"; mkdir -p "$destination"; cp -R dist/. "$destination/"; test -s "$destination/index.html"'
 
 # Playwright E2E smoke suite (#335 D-5). Runs in the dev-image `playground`
 # service (bun + Rust present): `playground-wasm` rebuilds the WASM engine

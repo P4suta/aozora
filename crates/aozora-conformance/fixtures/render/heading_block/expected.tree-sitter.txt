@@ -1,1 +1,1 @@
-(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))
+(document (text) (newline) (slug) (newline) (text) (newline) (slug) (newline) (text) (newline))

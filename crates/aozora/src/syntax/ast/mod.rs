@@ -21,23 +21,27 @@
 //! builds it directly via an internal allocator
 //! and stores it in the immutable [`crate::Snapshot`] exposed to consumers.
 
+mod graft;
 mod intern;
 mod output;
 mod payload;
 mod registry;
 mod store;
 
-pub use intern::StrId;
+#[cfg(test)]
+pub(crate) use intern::StrId;
 pub(crate) use output::LexOutput;
-pub use output::SourceNode;
-pub use payload::{
-    AngleQuote, Content, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned, Heading,
-    HeadingHint, Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
+pub(crate) use output::RegionOutput;
+pub(crate) use output::SanitizedText;
+pub(crate) use output::SourceNode;
+pub(crate) use payload::{
+    AngleQuote, Content, Directive, ForwardFormat, ForwardPayload, Gaiji, GaijiCanonicalOwned,
+    Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, Ruby, Segment,
 };
 pub(crate) use registry::Registry;
-pub use registry::{ContainerPair, NodeRef};
+pub(crate) use registry::{ContainerPair, NodeRef};
+pub(crate) use store::ContentRange;
 pub(crate) use store::NodeStore;
-pub use store::{ContentRange, SegRange};
 
 #[cfg(test)]
 mod tests {
@@ -80,18 +84,20 @@ mod tests {
         let registry = Registry::from_sorted_slice(&[(0u32, NodeRef::Inline(node))]);
         let source_nodes = vec![SourceNode {
             source_span: Span::new(0, 12),
+            normalized_offset: NormalizedOffset::new(0),
             node: NodeRef::Inline(node),
         }];
 
         let out = LexOutput {
             normalized: String::from("\u{E001}"),
-            sanitized: String::from("日本"),
+            sanitized: String::from("日本").into(),
+            source_unchanged: true,
             registry,
             diagnostics: Vec::new(),
             pairs: Vec::new(),
             source_nodes,
             container_pairs: Vec::new(),
-            store,
+            store: store.into(),
         };
 
         // Recover the node from the registry and resolve its payloads.

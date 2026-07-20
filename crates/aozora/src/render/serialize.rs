@@ -24,10 +24,11 @@ use crate::render::spelling::source::{
     emit_section_break, heading_level_word, heading_style_keyword,
 };
 use crate::render::walk::{SentinelKind, WalkSink, walk};
+use crate::spec::Diagnostic;
 use crate::syntax::ast::{
-    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned,
-    Heading, HeadingHint, Illustration, Kaeriten, LexOutput, MarginNote, Node, NodeRef, NodeStore,
-    Ruby, Segment,
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji,
+    GaijiCanonicalOwned, Heading, HeadingHint, Illustration, Kaeriten, LexOutput, MarginNote, Node,
+    NodeRef, NodeStore, Ruby, Segment,
 };
 use crate::syntax::degraded::degraded_directive;
 use crate::syntax::format::ForwardOrigin;
@@ -38,7 +39,7 @@ use crate::syntax::{
 };
 
 /// Which notation-hygiene catalogue tiers a serialize / render pass consults
-/// when it meets a `DirectiveKind::Unknown` near-miss.
+/// when it meets a `DirectiveKind::Editorial` near-miss.
 ///
 /// The default (`Off`) is the byte-identical, non-judgemental path: an Unknown
 /// directive round-trips its raw bytes verbatim (serialize) / renders as an
@@ -51,12 +52,11 @@ pub enum DirectiveNormalization {
     /// Verbatim / inert — the byte-identical default.
     #[default]
     Off,
-    /// Tier1 only: rewrite verified zero-false-positive near-misses (per
-    /// [`canonical_directive`]) to canonical form. The level `fmt --fix`
-    /// and `render --normalize` use.
+    /// Tier1 only: rewrite verified zero-false-positive near-misses to
+    /// canonical form. The level `fmt --fix` and `render --normalize` use.
     Canonical,
     /// Tier1 + Tier2: additionally reduce the lossy / judgment degraded forms
-    /// (per [`degraded_directive`]) Tier1 refuses. Constructed **only** by the
+    /// that Tier1 refuses. Constructed **only** by the
     /// opt-in renderer via `render --degraded`,
     /// never by a persistent-write path, so a Tier2 reduction applied in
     /// error can reach only `--degraded` render output — never source. See
@@ -68,14 +68,14 @@ pub enum DirectiveNormalization {
 ///
 /// The default (`directives: Off`) preserves the strong contract that every
 /// directive round-trips its `raw` bytes verbatim — including the
-/// `DirectiveKind::Unknown` near-misses the notation-hygiene lint flags.
+/// `DirectiveKind::Editorial` near-misses the notation-hygiene lint flags.
 /// Opting in (`aozora fmt --fix` = `Canonical`) lets the serializer
 /// rewrite those flagged near-misses to their canonical spelling via the single
-/// [`canonical_directive`] authority.
+/// canonical catalogue authority.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SerializeOptions {
-    /// Which notation-hygiene tiers to consult for `DirectiveKind::Unknown`
+    /// Which notation-hygiene tiers to consult for `DirectiveKind::Editorial`
     /// near-misses. `Degraded` is reserved for the opt-in renderer. Set through
     /// [`SerializeOptions::directives`]; private so future options can be added
     /// without a breaking change.
@@ -84,7 +84,7 @@ pub struct SerializeOptions {
 
 impl SerializeOptions {
     /// Select which notation-hygiene tiers to consult for
-    /// `DirectiveKind::Unknown` near-misses. Builder over
+    /// `DirectiveKind::Editorial` near-misses. Builder over
     /// [`SerializeOptions::default`]:
     /// `SerializeOptions::default().directives(DirectiveNormalization::Canonical)`.
     #[must_use]
@@ -113,7 +113,7 @@ pub(crate) fn serialize(out: &LexOutput) -> String {
 /// [`SerializeOptions`].
 ///
 /// With the default options this is identical to [`serialize()`]. With
-/// `directives` not `Off`, `DirectiveKind::Unknown` near-misses are rewritten
+/// `directives` not `Off`, `DirectiveKind::Editorial` near-misses are rewritten
 /// to canonical form (see [`SerializeOptions`]); the rewrite is idempotent
 /// because a canonical body parses to a recognized (non-`Unknown`) node and so
 /// is never revisited on a second pass.
@@ -123,6 +123,9 @@ pub(crate) fn serialize(out: &LexOutput) -> String {
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
 pub(crate) fn serialize_with(out: &LexOutput, opts: SerializeOptions) -> String {
+    if opts.directives == DirectiveNormalization::Off && requires_verbatim_recovery(out) {
+        return out.sanitized.to_string();
+    }
     let first = serialize_pass(out, opts);
     match opts.directives {
         DirectiveNormalization::Off => first,
@@ -179,10 +182,24 @@ pub(crate) fn serialize_into_with<W: Write>(
     writer: &mut W,
     opts: SerializeOptions,
 ) -> fmt::Result {
+    if opts.directives == DirectiveNormalization::Off && requires_verbatim_recovery(out) {
+        return writer.write_str(&out.sanitized);
+    }
     if opts.directives != DirectiveNormalization::Off {
         return writer.write_str(&serialize_with(out, opts));
     }
     serialize_into_pass(out, writer, opts)
+}
+
+pub(crate) fn requires_verbatim_recovery(out: &LexOutput) -> bool {
+    out.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            Diagnostic::UnclosedBracket { .. }
+                | Diagnostic::MismatchedContainerClose { .. }
+                | Diagnostic::NestedRuby { .. }
+        )
+    })
 }
 
 fn serialize_into_pass<W: Write>(
@@ -204,15 +221,12 @@ fn serialize_into_pass<W: Write>(
 struct SerializeSink<'a, W: Write> {
     store: &'a NodeStore,
     out: &'a mut TrackingWriter<W>,
-    /// Which notation-hygiene tiers to apply to `DirectiveKind::Unknown`
+    /// Which notation-hygiene tiers to apply to `DirectiveKind::Editorial`
     /// near-misses (`Off` = verbatim; `Canonical` = Tier1; `Degraded` = Tier1+Tier2).
     directives: DirectiveNormalization,
 }
 
 impl<W: Write> WalkSink for SerializeSink<'_, W> {
-    // Serialization copies `\n` verbatim, so it is not a structural event.
-    const WANTS_NEWLINES: bool = false;
-
     fn on_text(&mut self, text: &str) -> fmt::Result {
         self.out.write_str(text)
     }
@@ -259,14 +273,6 @@ fn emit_aozora<W: Write>(
         Node::Illustration(s) => emit_sashie(&s, store, out),
         Node::HeadingHint(h) => emit_heading_hint(h, store, out),
         Node::Heading(h) => emit_aozora_heading(&h, store, out),
-        // Variants not covered inline: Container is routed through the
-        // open/close sentinel path; Warichu lands here as a diagnostic
-        // placeholder.
-        _ => {
-            out.write_str("<!-- unsupported-aozora: ")?;
-            out.write_str(node.xml_node_name())?;
-            out.write_str(" -->")
-        }
     }
 }
 
@@ -437,7 +443,7 @@ fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> f
         // (byte-exact round-trip). The `Reclaimed` leading literal — the run the
         // dots compose onto — was already emitted above.
         out.write_str("［＃")?;
-        if let Some(id) = f.accent_body {
+        if let ForwardPayload::AccentBody(id) = f.payload {
             out.write_str(store.resolve_str(id))?;
         }
         return out.write_char('］');
@@ -533,7 +539,9 @@ fn emit_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Resul
         out.write_char('」')?;
     }
     if gaiji_has_mencode(g.canonical) {
-        out.write_char('、')?;
+        if g.mencode_separator {
+            out.write_char('、')?;
+        }
         write_gaiji_mencode(g.canonical, store, out)?;
     }
     out.write_char('］')
@@ -585,7 +593,7 @@ fn emit_annotation<W: Write>(
     directives: DirectiveNormalization,
 ) -> fmt::Result {
     let raw = store.resolve_str(a.raw);
-    if directives != DirectiveNormalization::Off && a.kind == DirectiveKind::Unknown {
+    if directives != DirectiveNormalization::Off && a.kind == DirectiveKind::NonCanonical {
         let body = raw
             .strip_prefix("［＃")
             .and_then(|s| s.strip_suffix('］'))
@@ -735,6 +743,37 @@ mod tests {
         serialize_into_with(&out, &mut streamed, opts)
             .expect("serialize into String is infallible");
         assert_eq!(streamed, expected);
+    }
+
+    #[test]
+    fn serializer_off_preserves_and_canonical_repairs_near_miss() {
+        let source = "本文［＃ゴチック］続き［";
+        let out = lex(source);
+
+        assert!(requires_verbatim_recovery(&out));
+        assert_eq!(serialize_with(&out, SerializeOptions::default()), source);
+        assert_eq!(
+            serialize_with(
+                &out,
+                SerializeOptions::default().directives(DirectiveNormalization::Canonical),
+            ),
+            "本文［＃ゴシック体］続き［"
+        );
+    }
+
+    #[test]
+    fn angle_quote_emitter_and_round_trip_preserve_delimiters() {
+        let mut a = Allocator::new();
+        let content = a.content_plain("重要");
+        let Node::AngleQuote(angle) = a.angle_quote(content) else {
+            panic!("angle quote constructor returns its node");
+        };
+        let store = a.into_store();
+        let mut emitted = String::new();
+        emit_angle_quote(angle, &store, &mut emitted).expect("serialize into String is infallible");
+
+        assert_eq!(emitted, "≪重要≫");
+        assert_eq!(serialize(&lex("前≪重要≫後")), "前≪重要≫後");
     }
 
     /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) is not
@@ -891,7 +930,7 @@ mod tests {
         let text = a.seg_text("あ");
         let gaiji = a.make_gaiji("げ", None, false);
         let gseg = a.seg_gaiji(gaiji);
-        let directive = a.make_directive("［＃注記］", DirectiveKind::Unknown);
+        let directive = a.make_directive("［＃注記］", DirectiveKind::Editorial);
         let dseg = a.seg_annotation(directive);
         let content = a.content_segments(&[text, gseg, dseg]);
         let store = a.into_store();
@@ -1044,7 +1083,7 @@ mod tests {
         assert_eq!(
             annotate(
                 "［＃ゴチック］",
-                DirectiveKind::Unknown,
+                DirectiveKind::NonCanonical,
                 DirectiveNormalization::Canonical,
             ),
             "［＃ゴシック体］",
@@ -1060,7 +1099,7 @@ mod tests {
         assert_eq!(
             annotate(
                 "［＃ゴチック］",
-                DirectiveKind::Unknown,
+                DirectiveKind::NonCanonical,
                 DirectiveNormalization::Off,
             ),
             "［＃ゴチック］",
@@ -1068,7 +1107,7 @@ mod tests {
         assert_eq!(
             annotate(
                 "［＃ここから最後まで3字下げ］",
-                DirectiveKind::Unknown,
+                DirectiveKind::NonCanonical,
                 DirectiveNormalization::Degraded,
             ),
             "［＃ここから3字下げ］",
@@ -1076,7 +1115,7 @@ mod tests {
         assert_eq!(
             annotate(
                 "［＃ここから最後まで3字下げ］",
-                DirectiveKind::Unknown,
+                DirectiveKind::NonCanonical,
                 DirectiveNormalization::Canonical,
             ),
             "［＃ここから最後まで3字下げ］",

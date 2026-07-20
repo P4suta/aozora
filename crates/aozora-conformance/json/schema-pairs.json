@@ -12,7 +12,7 @@
     "schemaVersion": {
       "description": "Wire schema version. See aozora::json::SCHEMA_VERSION.",
       "type": "integer",
-      "const": 2
+      "const": 3
     },
     "data": {
       "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",

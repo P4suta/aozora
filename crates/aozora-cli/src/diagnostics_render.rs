@@ -1,4 +1,4 @@
-//! Diagnostic rendering for `aozora check`.
+//! Diagnostic rendering for document subcommands.
 //!
 //! Three views over the same `&[Diagnostic]`:
 //!
@@ -18,13 +18,12 @@ use std::fmt;
 use std::io::{self, IsTerminal, Write};
 
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
-use aozora::Document;
 use aozora::json;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
 
-/// How `aozora check` renders diagnostics.
-#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize)]
+/// How document subcommands render diagnostics.
+#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum DiagFormat {
     /// Graphical (`human`) on a terminal, machine (`json`) when piped.
@@ -66,13 +65,13 @@ impl DiagFormat {
 pub(crate) fn render(
     format: DiagFormat,
     path: &str,
-    doc: &Document,
+    source: &str,
     diagnostics: &[aozora::Diagnostic],
     lang: &LanguageIdentifier,
 ) -> io::Result<()> {
     match format.resolved() {
         // `resolved()` never returns `Auto`, but match exhaustively.
-        DiagFormat::Human | DiagFormat::Auto => render_human(path, doc, diagnostics, lang),
+        DiagFormat::Human | DiagFormat::Auto => render_human(path, source, diagnostics, lang),
         DiagFormat::Json => render_json(diagnostics),
         DiagFormat::Short => render_short(path, diagnostics),
     }
@@ -80,18 +79,10 @@ pub(crate) fn render(
 
 fn render_human(
     path: &str,
-    doc: &Document,
+    source: &str,
     diagnostics: &[aozora::Diagnostic],
     lang: &LanguageIdentifier,
 ) -> io::Result<()> {
-    // Diagnostic spans live in SANITIZED coordinates: the sanitize stage
-    // strips the BOM, folds CRLF→LF, and decomposes 〔…〕 accent digraphs — each of
-    // which shifts byte offsets. Aozora Bunko files ship as CRLF, so
-    // attaching the *raw* bytes would slide every caret right by the
-    // number of preceding line breaks. Re-derive the sanitized text (the
-    // exact bytes the lexer spanned into) and attach that instead.
-    let snapshot = doc.snapshot();
-    let sanitized = snapshot.sanitized();
     // English keeps the byte-stable `#[error]` Display as the report headline
     // (unchanged); any other language substitutes the localized title through
     // the `LocalizedHeadline` adapter. The machine views (`json` / `short`)
@@ -99,7 +90,7 @@ fn render_human(
     let localize_headline = !i18n::is_english(lang);
     let mut stderr = io::stderr().lock();
     for diag in diagnostics {
-        let source = NamedSource::new(path, sanitized.to_owned());
+        let source = NamedSource::new(path, source.to_owned());
         // With miette's `fancy` feature, `{:?}` renders the graphical report.
         if localize_headline {
             let headline = LocalizedHeadline {
@@ -176,31 +167,6 @@ impl miette::Diagnostic for LocalizedHeadline {
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         miette::Diagnostic::labels(&self.inner)
-    }
-
-    // `source_code` / `related` / `diagnostic_source` are faithful
-    // delegations, but each is a mutation-equivalent survivor: no
-    // `aozora::Diagnostic` variant carries a `#[source_code]` / `#[related]`
-    // field or a diagnostic-source, so the inner accessor is `None` for every
-    // possible input and no assertion can tell delegation apart from a hard
-    // `None`. They are kept for adapter faithfulness — a future variant that
-    // gains one of those fields is then delegated automatically instead of
-    // silently dropped — and `mutants::skip`-ed rather than left as permanent
-    // report-only survivors. The value-bearing accessors above (`severity` /
-    // `help` / `url` / `labels` / `code`) are covered by delegation tests.
-    #[cfg_attr(test, mutants::skip)]
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        miette::Diagnostic::source_code(&self.inner)
-    }
-
-    #[cfg_attr(test, mutants::skip)]
-    fn related(&self) -> Option<Box<dyn Iterator<Item = &dyn miette::Diagnostic> + '_>> {
-        miette::Diagnostic::related(&self.inner)
-    }
-
-    #[cfg_attr(test, mutants::skip)]
-    fn diagnostic_source(&self) -> Option<&dyn miette::Diagnostic> {
-        miette::Diagnostic::diagnostic_source(&self.inner)
     }
 }
 
@@ -324,16 +290,15 @@ mod tests {
     // ---- LocalizedHeadline: the --lang report-headline adapter ----
     //
     // The adapter swaps ONLY the `Display` headline for the localized title and
-    // delegates every miette structural accessor to the inner diagnostic. A
+    // delegates every value-bearing structural accessor to the inner diagnostic. A
     // real `source_contains_pua` warning is the value-bearing fixture: it has a
     // non-default severity (Warning; miette defaults to Error), help text, a
-    // docs URL and a single caret label — so the delegation of each is
-    // observable. (`source_code` / `related` / `diagnostic_source` are `None`
-    // for every aozora variant; see the `mutants::skip` note on the impl.)
+    // docs URL and a single caret label, so the delegation of each is observable.
 
     /// A representative inner diagnostic built through the public `aozora` API.
     fn pua_diagnostic() -> aozora::Diagnostic {
-        Document::new("a\u{E001}b")
+        aozora::parse("a\u{E001}b")
+            .expect("source fits parser span limit")
             .snapshot()
             .diagnostics()
             .first()

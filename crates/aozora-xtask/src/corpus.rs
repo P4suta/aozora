@@ -47,14 +47,15 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
-use aozora::encoding::decode_auto;
-use aozora::render::AOZORA_CLASSES;
-use aozora::{Catalogue, CatalogueMatch, DirectiveKind, Document, Node, NodeKind, NodeRef};
+use aozora::AOZORA_CLASSES;
+use aozora::decode_auto;
+use aozora::{Catalogue, CatalogueMatch, DirectiveClass, NodeKind};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -159,157 +160,37 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Conformance regression gate: fail (exit 1) when the corpus
-    /// per-file Unknown-degradation rate rises above a committed
-    /// baseline — i.e. when a change pushed more notation into the
-    /// `DirectiveKind::Unknown` catch-all. Runs the full audit
-    /// (`$AOZORA_CORPUS_ROOT` or `--root`), so it needs a corpus; in
-    /// CI that is a checkout of `P4suta/aozorabunko_text`, locally the
-    /// developer's `$AOZORA_CORPUS_ROOT`.
+    /// Strict corpus conformance gate.
     AuditGate {
         /// Corpus root directory of `.txt` files. Defaults to
         /// `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Baseline JSON (`{ unknown_total, files_analyzed }`).
-        #[arg(long, default_value = "corpus/baseline.json")]
-        baseline: PathBuf,
-        /// Rewrite the baseline from the current run (ratchet down).
-        #[arg(long)]
-        update: bool,
-        /// Relative slack on the baseline rate before failing, to
-        /// absorb daily corpus drift (default 0.02 = 2 %).
-        #[arg(long, default_value_t = 0.02)]
-        tolerance: f64,
     },
     /// Verbatim-provenance gate: fail (exit 1) when any corpus document's
-    /// `Tree::to_source_verbatim()` no longer equals a fresh `sanitize()`
-    /// of its decoded source (the I5 invariant). Binary — one byte of
-    /// drift fails. Needs a corpus (`$AOZORA_CORPUS_ROOT` or `--root`);
-    /// gracefully skips (exit 0) when none is set.
+    /// `Snapshot::to_source_verbatim()` no longer equals its decoded original
+    /// source. Binary — one byte of drift fails. Needs a corpus
+    /// (`$AOZORA_CORPUS_ROOT` or `--root`); gracefully skips (exit 0) when
+    /// none is set.
     Verbatim {
         /// Corpus root directory of `.txt` files. Defaults to
         /// `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Render-leak audit: render every corpus document to HTML and report
-    /// where aozora notation control markers (`《 》 ［＃ ｜`) survive into
-    /// the *visible* text of the output — the signature of a notation that
-    /// failed to resolve (e.g. a ruby that never attached to its base and
-    /// leaked as literal `《…》`). Report-only measurement (always exit 0);
-    /// the enforcing gate is `render-leak-gate`. The legitimate literal
-    /// `《…》` an `≪…≫` angle-quote emits (inside an `aozora-angle-quote`
-    /// span) and empty ruby `《》` are excluded structurally.
-    RenderAudit {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Sample offenders to print per marker category.
-        #[arg(long, default_value_t = 12)]
-        top: usize,
-        /// Process at most N files (debugging; default: whole corpus).
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Render-leak ratchet gate: fail (exit 1) when the per-marker leak
-    /// counts (files + occurrences of `《…》` / `｜` / `［＃…］` surviving into
-    /// visible rendered text) rise above a committed baseline. The
-    /// enforcing counterpart of `render-audit`, modelled on `audit-gate`:
-    /// leaks may only shrink, never grow. `render-audit` remains the
-    /// per-file diagnostic to find WHICH document regressed. Needs a corpus;
-    /// skips (exit 0) when none is set. `--update` re-captures the baseline.
+    /// Strict render-leak gate.
     RenderLeakGate {
         /// Corpus root directory of `.txt` files. Defaults to
         /// `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Committed baseline JSON path.
-        #[arg(long, default_value = "corpus/render-leak-baseline.json")]
-        baseline: PathBuf,
-        /// Re-capture the baseline from the current run (ratchet).
-        #[arg(long)]
-        update: bool,
     },
-    /// Render-correctness audit: render every corpus document to HTML and
-    /// report *structural* defects that the recognition/leak gates cannot
-    /// see — a directive that is recognised (not `Unknown`) but rendered
-    /// wrong. Two invariants, checkable without ground truth:
-    ///   I-A  HTML tag balance — every open has a LIFO-matching close and the
-    ///        stack is empty at EOF (catches an unclosed region `<div>` from
-    ///        the `finish()` gap, or an unbalanced inline warichu `<span>`).
-    ///   I-C  every emitted `aozora-*` class (numeric suffix collapsed to its
-    ///        stem) is a member of `AOZORA_CLASSES` (catches an emitter
-    ///        writing a class the published contract / stylesheet omits).
-    /// Report-only measurement (always exit 0). Needs a corpus; skips when none.
-    RenderCorrectness {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Sample offenders to print per defect category.
-        #[arg(long, default_value_t = 12)]
-        top: usize,
-        /// Process at most N files (debugging; default: whole corpus).
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Render-correctness ratchet gate: fail (exit 1) when the per-category
-    /// structural-defect counts (I-A unbalanced tags, I-C undeclared class)
-    /// rise above a committed baseline. The enforcing counterpart of
-    /// `render-correctness`, modelled on `render-leak-gate`: defects may only
-    /// shrink, never grow. Needs a corpus; skips (exit 0) when none is set.
-    /// `--update` re-captures the baseline (ratchet down on improvement).
+    /// Strict render-correctness gate.
     RenderCorrectnessGate {
         /// Corpus root directory of `.txt` files. Defaults to
         /// `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Committed baseline JSON path.
-        #[arg(long, default_value = "corpus/render-correctness-baseline.json")]
-        baseline: PathBuf,
-        /// Re-capture the baseline from the current run (ratchet).
-        #[arg(long)]
-        update: bool,
-    },
-    /// Render-digest ratchet gate: a committed, NON-CIRCULAR distillation of
-    /// the audit — gated only on known-good-direction ratchets (never an
-    /// equality oracle against parser output): `panic_count` may not rise, a
-    /// node/annotation kind that was nonzero may not vanish (a family silently
-    /// dropping out = a recogniser regression), and the gaiji resolution rate
-    /// may only improve. The top Unknown shapes are recorded informationally
-    /// (the occurrence-ranked worklist for the normalisation layer). Needs a
-    /// corpus; skips (exit 0) when none is set. `--update` re-captures.
-    DigestGate {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Committed digest JSON path.
-        #[arg(long, default_value = "corpus/render-digest.json")]
-        baseline: PathBuf,
-        /// Re-capture the digest from the current run (ratchet).
-        #[arg(long)]
-        update: bool,
-    },
-    /// Catalogue-sweep ratchet gate: pin the Tier1/Tier2-matched Unknown shape
-    /// set and per-tier resolved-occurrence counts, and fail if the catalogues
-    /// regress OR silently start matching a new shape. The corpus-side twin of
-    /// `classify-unknown` — where that prints a throwaway worklist, this gates a
-    /// committed baseline: residue may only shrink, resolved occurrences may only
-    /// rise, and a newly-matched shape fails until a human confirms it is a
-    /// genuine near-miss (not an editorial false-positive) and re-baselines.
-    CatalogueSweepGate {
-        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Committed catalogue-coverage JSON path.
-        #[arg(long, default_value = "corpus/catalogue-coverage.json")]
-        baseline: PathBuf,
-        /// Re-capture the coverage baseline from the current run (ratchet).
-        #[arg(long)]
-        update: bool,
     },
     /// Select a stratified, family-diverse set of real works to extend the
     /// `fixtures/works/` golden set (WS-1 / #414). Deterministic greedy
@@ -387,10 +268,8 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value_t = 40)]
         top: usize,
     },
-    /// Gate golden family coverage: every one of the 43 notation families must
-    /// be either exercised by the golden fixtures OR listed in
-    /// [`STRUCTURALLY_UNREACHABLE`] (the "covered OR correctly-irreducible"
-    /// invariant). Counts the union of the vendored golden works
+    /// Gate golden family coverage: every notation family must be exercised by
+    /// the golden fixtures. Counts the union of the vendored golden works
     /// (`fixtures/works/`) AND the crafted render fixtures (`fixtures/render/`),
     /// so a structurally-rare family with no clean corpus work is covered by a
     /// crafted fixture. Reads only committed fixtures, so it needs no corpus.
@@ -434,39 +313,10 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             top,
             limit,
         } => audit(root.as_deref(), out.as_deref(), *top, *limit),
-        CorpusTarget::AuditGate {
-            root,
-            baseline,
-            update,
-            tolerance,
-        } => audit_gate(root.as_deref(), baseline, *update, *tolerance),
+        CorpusTarget::AuditGate { root } => audit_gate(root.as_deref()),
         CorpusTarget::Verbatim { root } => verbatim_gate(root.as_deref()),
-        CorpusTarget::RenderAudit { root, top, limit } => {
-            render_audit(root.as_deref(), *top, *limit)
-        }
-        CorpusTarget::RenderLeakGate {
-            root,
-            baseline,
-            update,
-        } => render_leak_gate(root.as_deref(), baseline, *update),
-        CorpusTarget::RenderCorrectness { root, top, limit } => {
-            render_correctness(root.as_deref(), *top, *limit)
-        }
-        CorpusTarget::RenderCorrectnessGate {
-            root,
-            baseline,
-            update,
-        } => render_correctness_gate(root.as_deref(), baseline, *update),
-        CorpusTarget::DigestGate {
-            root,
-            baseline,
-            update,
-        } => digest_gate(root.as_deref(), baseline, *update),
-        CorpusTarget::CatalogueSweepGate {
-            root,
-            baseline,
-            update,
-        } => catalogue_sweep_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::RenderLeakGate { root } => render_leak_gate(root.as_deref()),
+        CorpusTarget::RenderCorrectnessGate { root } => render_correctness_gate(root.as_deref()),
         CorpusTarget::SelectWorks {
             root,
             target,
@@ -1093,11 +943,10 @@ impl PrevArchive {
 // corpus audit — empirical ground truth for spec-conformance work
 // ===========================================================================
 
-/// `DirectiveKind` variants, in the fixed order used by
-/// [`FileStat::annotation_kinds`] / the report's `annotation_kinds`
-/// table. `Unknown` is index 0 — it is the one that matters.
-const ANN_KIND_LABELS: [&str; 13] = [
-    "unknown",
+/// Directive classes in report order.
+const ANN_KIND_LABELS: &[&str] = &[
+    "nonCanonical",
+    "editorial",
     "asIs",
     "textualNote",
     "warichuOpen",
@@ -1112,17 +961,9 @@ const ANN_KIND_LABELS: [&str; 13] = [
     "marginNotePairClose",
 ];
 
-/// `annotation_kinds` arrays are indexed parallel to `ANN_KIND_LABELS`; a new
-/// `DirectiveKind` bucket must bump both in lock-step or the per-kind tally
-/// indexes out of bounds.
-const _: () = assert!(
-    ANN_KIND_LABELS.len() == 13,
-    "bump annotation_kinds arrays to match"
-);
-
 /// 外字 mencode address-form buckets, in the fixed order used by
 /// [`gaiji_bucket`] / [`FileStat::gaiji_forms`].
-const GAIJI_FORM_LABELS: [&str; 6] = [
+const GAIJI_FORM_LABELS: &[&str] = &[
     "jisLevel",  // 第N水準… (named JIS level)
     "jisTriple", // men-ku-ten N-N-N
     "unicode",   // U+XXXX
@@ -1130,15 +971,6 @@ const GAIJI_FORM_LABELS: [&str; 6] = [
     "named",     // free-form description / other
     "absent",    // no mencode at all
 ];
-
-/// The `node_kinds` arrays below are indexed parallel to [`NodeKind::ALL`], so
-/// their length must track it. A new `NodeKind` variant that forgets to bump
-/// these would otherwise index out of bounds and panic per-file (see the audit
-/// path at `s.node_kinds[i] += 1`).
-const _: () = assert!(
-    NodeKind::ALL.len() == 25,
-    "bump node_kinds arrays to NodeKind::ALL.len()"
-);
 
 /// Per-file audit accumulator. Owned data only — it must cross the
 /// rayon worker boundary, so it holds no borrows into the per-file
@@ -1149,13 +981,13 @@ struct FileStat {
     decode_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
-    node_kinds: [u64; 25],
+    node_kinds: [u64; NodeKind::ALL.len()],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
-    annotation_kinds: [u64; 13],
+    annotation_kinds: [u64; ANN_KIND_LABELS.len()],
     gaiji_total: u64,
     gaiji_unresolved: u64,
     /// Indexed parallel to [`GAIJI_FORM_LABELS`].
-    gaiji_forms: [u64; 6],
+    gaiji_forms: [u64; GAIJI_FORM_LABELS.len()],
     /// One `(raw body, 1-based line)` per Unknown annotation occurrence.
     unknown: Vec<(String, u32)>,
     /// Diagnostic codes emitted for this file.
@@ -1214,8 +1046,8 @@ struct AuditReport {
 }
 
 /// Walk the corpus and build the [`AuditReport`] without emitting any
-/// human/JSON output — the shared core behind both `corpus audit` (which
-/// prints) and `corpus audit-gate` (which compares against a baseline).
+/// human/JSON output — the shared core behind both `corpus audit` and the
+/// strict zero-residue `corpus audit-gate`.
 fn run_audit(root: Option<&Path>, limit: Option<usize>) -> Result<AuditReport, String> {
     let corpus = resolve_corpus(root)?;
     let root_display = corpus.root().display().to_string();
@@ -1264,123 +1096,72 @@ fn audit(
     Ok(())
 }
 
-/// Committed Unknown-degradation budget. `corpus audit-gate` fails when
-/// the live per-file Unknown rate rises above this baseline (modulo a
-/// relative tolerance that absorbs daily corpus drift). It is a
-/// ratchet: lower it whenever a recogniser lands and shrinks the
-/// Unknown set; never raise it to paper over a regression.
-#[derive(Serialize, Deserialize)]
-struct Baseline {
-    /// Total `DirectiveKind::Unknown` occurrences captured at baseline.
-    unknown_total: u64,
-    /// Files analysed at baseline (the rate denominator).
-    files_analyzed: usize,
-    /// Free-form provenance / ratchet note (date, corpus SHA, …).
-    #[serde(default)]
-    note: String,
-}
-
-impl Baseline {
-    fn rate(&self) -> f64 {
-        self.unknown_total as f64 / self.files_analyzed.max(1) as f64
-    }
-}
-
-fn audit_gate(
-    root: Option<&Path>,
-    baseline_path: &Path,
-    update: bool,
-    tolerance: f64,
-) -> Result<(), String> {
+fn audit_gate(root: Option<&Path>) -> Result<(), String> {
     let report = run_audit(root, None)?;
-    let cur_total = report.unknown_total;
-    let cur_files = report.files_analyzed;
-    let cur_rate = cur_total as f64 / cur_files.max(1) as f64;
-
-    if update {
-        let baseline = Baseline {
-            unknown_total: cur_total,
-            files_analyzed: cur_files,
-            note: "ratchet-down Unknown-degradation budget; lower on improvement, never raise. \
-                   Re-capture with `xtask corpus audit-gate --update`."
-                .to_owned(),
-        };
-        let mut json =
-            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
-        fs::write(baseline_path, json)
-            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
-        eprintln!(
-            "audit-gate: wrote baseline {} (unknown {cur_total} / files {cur_files}, rate {cur_rate:.6})",
-            baseline_path.display()
-        );
-        return Ok(());
+    let mut problems = Vec::new();
+    if report.files_analyzed == 0 {
+        problems.push("no corpus documents were analyzed".to_owned());
     }
-
-    let text = fs::read_to_string(baseline_path)
-        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
-    let baseline: Baseline = serde_json::from_str(&text)
-        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
-    let base_rate = baseline.rate();
-    let allowed = base_rate * (1.0 + tolerance);
-
-    eprintln!(
-        "audit-gate: current unknown {cur_total} / files {cur_files} = rate {cur_rate:.6}\n\
-         audit-gate: baseline unknown {} / files {} = rate {base_rate:.6} (allowed ≤ {allowed:.6}, tolerance {tolerance})",
-        baseline.unknown_total, baseline.files_analyzed,
-    );
-
-    if cur_rate > allowed {
-        return Err(format!(
-            "Unknown-degradation regression: current rate {cur_rate:.6} exceeds allowed {allowed:.6}. \
-             A recogniser change pushed more notation into the Directive{{Unknown}} catch-all. \
-             Fix the recogniser, or — if this is an intentional, justified shift — re-baseline with \
-             `xtask corpus audit-gate --update`."
+    if report.decode_errors != 0 {
+        problems.push(format!(
+            "{} document(s) failed decoding",
+            report.decode_errors
         ));
     }
-
-    if cur_rate < base_rate {
-        eprintln!(
-            "audit-gate: PASS — Unknown rate dropped below baseline. Ratchet it down with \
-             `xtask corpus audit-gate --update` so future regressions are caught against the new floor."
-        );
-    } else {
-        eprintln!("audit-gate: PASS");
+    if report.walk_errors != 0 {
+        problems.push(format!(
+            "{} corpus path(s) failed to read",
+            report.walk_errors
+        ));
     }
-    Ok(())
+    if report.panic_count != 0 {
+        problems.push(format!("{} document(s) panicked", report.panic_count));
+    }
+    if report.unknown_total != 0 {
+        problems.push(format!(
+            "{} annotation(s) reached the unknown fallback",
+            report.unknown_total
+        ));
+    }
+    let internal: u64 = report
+        .diagnostics
+        .iter()
+        .filter(|row| {
+            aozora::InternalCheckCode::ALL
+                .iter()
+                .any(|code| code.as_code() == row.key)
+        })
+        .map(|row| row.count)
+        .sum();
+    if internal != 0 {
+        problems.push(format!("{internal} internal diagnostic(s) fired"));
+    }
+    if problems.is_empty() {
+        eprintln!(
+            "audit-gate: PASS — {} documents, zero decode/read/panic/internal/unknown failures",
+            report.files_analyzed
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "strict corpus audit failed:\n  {}",
+            problems.join("\n  ")
+        ))
+    }
 }
 
 /// Outcome of checking one document's verbatim-provenance invariant.
 enum VerbatimOutcome {
-    /// `to_source_verbatim()` equalled the fresh `sanitize()`.
+    /// `to_source_verbatim()` equalled the decoded original source.
     Match,
-    /// Source decoded as neither UTF-8 nor Shift_JIS — skipped, not a
-    /// failure (mirrors the `corpus_sweep` test's decode-skip).
+    /// Source decoded as neither UTF-8 nor Shift_JIS.
     DecodeSkipped,
     /// The invariant broke (or the parse panicked); carries the label.
     Mismatch(String),
 }
 
-/// Verbatim-provenance gate: assert `tree.to_source_verbatim() ==
-/// sanitize(decoded_source).text` for **every** corpus document.
-///
-/// The oracle is a *fresh* `sanitize()` of the decoded source, not
-/// `tree.sanitized()` (which returns the same buffer
-/// `to_source_verbatim()` does — comparing them would be a tautology).
-/// Binary: a single byte of drift on a single document fails the gate.
-/// Independent of the round-trip fixed-point (`corpus_sweep`), which the
-/// lowering pass holds for every document (the allowlist is empty).
+/// Verbatim-provenance gate for every corpus document.
 fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
-    // Graceful skip when no corpus is available — mirrors the
-    // `corpus-sweep` / `audit-gate` recipes, so a corpus-less environment
-    // (GitHub CI) is a no-op rather than a hard failure.
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus verbatim: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
-        );
-        return Ok(());
-    }
-
     let corpus = resolve_corpus(root)?;
     let root_display = corpus.root().display().to_string();
     eprintln!("xtask corpus verbatim: walking {root_display} …");
@@ -1414,6 +1195,15 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
     }
     let elapsed = start.elapsed().as_secs_f64();
 
+    if checked == 0 {
+        failures.push("no corpus documents were checked".to_owned());
+    }
+    if decode_skipped != 0 {
+        failures.push(format!("{decode_skipped} document(s) failed decoding"));
+    }
+    if walk_errors != 0 {
+        failures.push(format!("{walk_errors} corpus path(s) failed to read"));
+    }
     if !failures.is_empty() {
         failures.sort();
         let list = failures
@@ -1429,40 +1219,35 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
             String::new()
         };
         return Err(format!(
-            "verbatim-provenance regression: {} of {checked} document(s) have \
-             to_source_verbatim() != sanitize():\n  {list}{tail}\n\
-             The I5 verbatim==sanitize invariant must hold byte-exact.",
+            "strict verbatim gate failed with {} failure(s) across {checked} document(s):\n  \
+             {list}{tail}",
             failures.len()
         ));
     }
 
     eprintln!(
-        "xtask corpus verbatim: PASS — {checked} docs, all to_source_verbatim() == sanitize() \
-         ({decode_skipped} undecodable skipped, {walk_errors} walk error(s), {elapsed:.1}s)"
+        "xtask corpus verbatim: PASS — {checked} docs, all to_source_verbatim() == original \
+         ({elapsed:.1}s)"
     );
     Ok(())
 }
 
-/// Check one document's verbatim invariant. The fresh `sanitize()` is
-/// computed before the source is moved into the parser; the parse +
-/// verbatim recovery are `catch_unwind`-guarded so a pathological doc is
-/// a `Mismatch` rather than aborting the sweep.
+/// Check one document's verbatim invariant.
 fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
     let label = item.label;
-    let text = match decode_auto(&item.bytes) {
-        Ok(t) => t.into_owned(),
+    let source: Arc<str> = match decode_auto(&item.bytes) {
+        Ok(text) => Arc::from(text.into_owned()),
         Err(_) => return VerbatimOutcome::DecodeSkipped,
     };
-    let expected = aozora::parse(text.as_str())
-        .snapshot()
-        .sanitized()
-        .to_owned();
     let Ok(got) = panic::catch_unwind(AssertUnwindSafe(|| {
-        Document::new(text).snapshot().to_source_verbatim()
+        aozora::parse(Arc::clone(&source))
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_source_verbatim()
     })) else {
         return VerbatimOutcome::Mismatch(label);
     };
-    if got == expected {
+    if got == source.as_ref() {
         VerbatimOutcome::Match
     } else {
         VerbatimOutcome::Mismatch(label)
@@ -1495,118 +1280,10 @@ enum DocRenderOutcome {
     Clean,
     /// Neither UTF-8 nor Shift_JIS — skipped (mirrors `corpus_sweep`).
     DecodeSkipped,
-    /// Skipped by `--limit` (not rendered).
-    LimitSkipped,
     /// `to_html()` panicked; carries the label.
     Panicked(String),
     /// Rendered and leaked ≥1 marker.
     Leaked { label: String, hits: Vec<LeakHit> },
-}
-
-/// Render-leak audit (report-only): render every corpus document to HTML
-/// and count aozora notation control markers surviving into *visible*
-/// text. Never fails — the enforcing counterpart is `render_leak_gate`.
-fn render_audit(root: Option<&Path>, top: usize, limit: Option<usize>) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus render-audit: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
-        );
-        return Ok(());
-    }
-
-    let corpus = resolve_corpus(root)?;
-    let root_display = corpus.root().display().to_string();
-    eprintln!("xtask corpus render-audit: rendering {root_display} …");
-    let start = Instant::now();
-
-    // A ruby leak on a pathological doc must never abort the sweep.
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-
-    let counter = std::sync::atomic::AtomicUsize::new(0);
-    let results: Vec<Result<DocRenderOutcome, aozora_corpus::CorpusError>> =
-        par_load_decoded(&corpus, |item| {
-            if let Some(n) = limit
-                && counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= n
-            {
-                return DocRenderOutcome::LimitSkipped;
-            }
-            render_audit_one(item)
-        });
-
-    panic::set_hook(prev_hook);
-
-    let mut scanned = 0usize;
-    let mut decode_skipped = 0usize;
-    let mut limit_skipped = 0usize;
-    let mut panicked = 0usize;
-    let mut panicked_labels: Vec<String> = Vec::new();
-    let mut walk_errors = 0usize;
-    let mut ruby = CatAgg::default();
-    let mut bar = CatAgg::default();
-    let mut directive = CatAgg::default();
-
-    for r in results {
-        match r {
-            Err(_) => walk_errors += 1,
-            Ok(DocRenderOutcome::Clean) => scanned += 1,
-            Ok(DocRenderOutcome::DecodeSkipped) => decode_skipped += 1,
-            Ok(DocRenderOutcome::LimitSkipped) => limit_skipped += 1,
-            Ok(DocRenderOutcome::Panicked(label)) => {
-                scanned += 1;
-                panicked += 1;
-                if panicked_labels.len() < top {
-                    panicked_labels.push(label);
-                }
-            }
-            Ok(DocRenderOutcome::Leaked { label, hits }) => {
-                scanned += 1;
-                for cat in [LeakCat::Ruby, LeakCat::Bar, LeakCat::Directive] {
-                    let agg = match cat {
-                        LeakCat::Ruby => &mut ruby,
-                        LeakCat::Bar => &mut bar,
-                        LeakCat::Directive => &mut directive,
-                    };
-                    agg.record(cat, &label, &hits, top);
-                }
-            }
-        }
-    }
-
-    let elapsed = start.elapsed().as_secs_f64();
-    let denom = scanned.max(1) as f64;
-    eprintln!(
-        "\nxtask corpus render-audit: rendered {scanned} docs \
-         ({decode_skipped} undecodable, {limit_skipped} limit-skipped, \
-         {panicked} panicked, {walk_errors} walk-error(s)) in {elapsed:.1}s\n"
-    );
-    for (name, glyphs, agg) in [
-        ("ruby", "《…》", &ruby),
-        ("bar", "｜", &bar),
-        ("directive", "［＃…］", &directive),
-    ] {
-        let rate = 100.0 * agg.files as f64 / denom;
-        eprintln!(
-            "  {name:<9} {glyphs:<6} leaks: {:>6} files ({rate:5.2}%), {:>7} occurrences",
-            agg.files, agg.occurrences
-        );
-    }
-    for (name, agg) in [("ruby", &ruby), ("bar", &bar), ("directive", &directive)] {
-        if agg.samples.is_empty() {
-            continue;
-        }
-        eprintln!("\n  [{name}] sample offenders:");
-        for (label, snippet) in &agg.samples {
-            eprintln!("    {label} — …{snippet}…");
-        }
-    }
-    if !panicked_labels.is_empty() {
-        eprintln!("\n  [panicked] to_html() panicked on:");
-        for label in &panicked_labels {
-            eprintln!("    {label}");
-        }
-    }
-    Ok(())
 }
 
 /// Aggregated leak stats for one marker category.
@@ -1644,12 +1321,19 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     // Render only the literary body — the standard header legend
     // documents the notation glyphs verbatim and would swamp the signal.
     let text = aozora_body(&decoded);
-    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| {
-        Document::new(text).snapshot().to_html()
+    let Ok((html, literal_markup)) = panic::catch_unwind(AssertUnwindSafe(|| {
+        let document = aozora::parse(text).expect("source fits parser span limit");
+        let snapshot = document.snapshot();
+        let literal_markup = snapshot
+            .literal_markup()
+            .iter()
+            .map(|view| view.kind())
+            .collect::<Vec<_>>();
+        (snapshot.to_html(), literal_markup)
     })) else {
         return DocRenderOutcome::Panicked(label);
     };
-    let hits = visible_leak_markers(&html);
+    let hits = unaccounted_leak_markers(&html, &literal_markup);
     if hits.is_empty() {
         DocRenderOutcome::Clean
     } else {
@@ -1680,7 +1364,6 @@ enum CorrCat {
 enum DocCorrOutcome {
     Clean,
     DecodeSkipped,
-    LimitSkipped,
     Panicked,
     Defective { label: String, hits: Vec<CorrHit> },
 }
@@ -1801,7 +1484,10 @@ fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
     };
     let text = aozora_body(&decoded);
     let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| {
-        Document::new(text).snapshot().to_html()
+        aozora::parse(text)
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_html()
     })) else {
         return DocCorrOutcome::Panicked;
     };
@@ -1828,113 +1514,24 @@ fn record_corr(agg: &mut CatAgg, cat: CorrCat, label: &str, hits: &[CorrHit], to
     }
 }
 
-/// Render-correctness sweep: report I-A / I-C structural defects across the
-/// corpus. Report-only (always exit 0); the enforcing gate lands separately.
-fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus render-correctness: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
-        );
-        return Ok(());
-    }
-    let corpus = resolve_corpus(root)?;
-    eprintln!(
-        "xtask corpus render-correctness: rendering {} …",
-        corpus.root().display()
-    );
-    let start = Instant::now();
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let counter = std::sync::atomic::AtomicUsize::new(0);
-    let results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>> =
-        par_load_decoded(&corpus, |item| {
-            if let Some(n) = limit
-                && counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= n
-            {
-                return DocCorrOutcome::LimitSkipped;
-            }
-            render_correctness_one(item)
-        });
-    panic::set_hook(prev_hook);
-
-    let (mut scanned, mut decode_skipped, mut panicked) = (0usize, 0usize, 0usize);
-    let mut unbalanced = CatAgg::default();
-    let mut bad_ruby = CatAgg::default();
-    let mut undeclared = CatAgg::default();
-    for r in results {
-        match r {
-            Ok(DocCorrOutcome::Clean) => scanned += 1,
-            Ok(DocCorrOutcome::DecodeSkipped) => decode_skipped += 1,
-            Ok(DocCorrOutcome::Panicked) => {
-                scanned += 1;
-                panicked += 1;
-            }
-            Ok(DocCorrOutcome::Defective { label, hits }) => {
-                scanned += 1;
-                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, top);
-                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, top);
-                record_corr(
-                    &mut undeclared,
-                    CorrCat::UndeclaredClass,
-                    &label,
-                    &hits,
-                    top,
-                );
-            }
-            Ok(DocCorrOutcome::LimitSkipped) | Err(_) => {}
-        }
-    }
-    let elapsed = start.elapsed().as_secs_f64();
-    eprintln!(
-        "\nxtask corpus render-correctness: rendered {scanned} docs \
-         ({decode_skipped} undecodable, {panicked} panicked) in {elapsed:.1}s\n"
-    );
-    let cats = [
-        ("I-A unbalanced-tags", &unbalanced),
-        ("I-B empty-ruby-base", &bad_ruby),
-        ("I-C undeclared-class", &undeclared),
-    ];
-    for (name, agg) in cats {
-        eprintln!(
-            "  {name:<22}: {:>6} files, {:>7} occurrences",
-            agg.files, agg.occurrences
-        );
-    }
-    for (name, agg) in cats {
-        for (label, snippet) in &agg.samples {
-            eprintln!("  [{name}] {label} — {snippet}");
-        }
-    }
-    Ok(())
-}
-
-/// Committed baseline for the render-correctness ratchet gate. Structural
-/// render defects may only shrink below these counts; any rise fails the gate.
-#[derive(Serialize, Deserialize, Default)]
-struct RenderCorrectnessBaseline {
-    #[serde(default)]
-    note: String,
-    /// I-A: documents whose rendered HTML tags do not balance.
+#[derive(Default)]
+struct RenderCorrectnessCounts {
     unbalanced: MarkerStat,
-    /// I-B: documents with a `<ruby>` whose base is empty.
-    #[serde(default)]
     bad_ruby: MarkerStat,
-    /// I-C: documents emitting an `aozora-*` class absent from `AOZORA_CLASSES`.
     undeclared: MarkerStat,
 }
 
-/// Fold a render-correctness sweep into per-category `MarkerStat`s. Returns
-/// `(current, scanned, panicked)`.
 fn tally_render_correctness(
     results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>>,
-) -> (RenderCorrectnessBaseline, usize, usize) {
+) -> (RenderCorrectnessCounts, usize, usize, usize, usize) {
     let mut unbalanced = CatAgg::default();
     let mut bad_ruby = CatAgg::default();
     let mut undeclared = CatAgg::default();
-    let (mut scanned, mut panicked) = (0usize, 0usize);
+    let (mut scanned, mut decode_errors, mut panicked, mut walk_errors) = (0, 0, 0, 0);
     for r in results {
         match r {
             Ok(DocCorrOutcome::Clean) => scanned += 1,
+            Ok(DocCorrOutcome::DecodeSkipped) => decode_errors += 1,
             Ok(DocCorrOutcome::Panicked) => {
                 scanned += 1;
                 panicked += 1;
@@ -1945,76 +1542,22 @@ fn tally_render_correctness(
                 record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, 0);
                 record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 0);
             }
-            Ok(DocCorrOutcome::DecodeSkipped | DocCorrOutcome::LimitSkipped) | Err(_) => {}
+            Err(_) => walk_errors += 1,
         }
     }
     let stat = |a: &CatAgg| MarkerStat {
         files: a.files,
         occurrences: a.occurrences,
     };
-    let current = RenderCorrectnessBaseline {
-        note: String::new(),
+    let current = RenderCorrectnessCounts {
         unbalanced: stat(&unbalanced),
         bad_ruby: stat(&bad_ruby),
         undeclared: stat(&undeclared),
     };
-    (current, scanned, panicked)
+    (current, scanned, decode_errors, panicked, walk_errors)
 }
 
-/// Categories that rose above `baseline` (fails the gate), and whether any
-/// dropped (invites a ratchet-down with `--update`).
-fn correctness_regressions(
-    current: &RenderCorrectnessBaseline,
-    baseline: &RenderCorrectnessBaseline,
-) -> (Vec<String>, bool) {
-    let mut problems = Vec::new();
-    let mut dropped = false;
-    for (name, cur, base) in [
-        (
-            "I-A unbalanced-tags",
-            current.unbalanced,
-            baseline.unbalanced,
-        ),
-        ("I-B empty-ruby-base", current.bad_ruby, baseline.bad_ruby),
-        (
-            "I-C undeclared-class",
-            current.undeclared,
-            baseline.undeclared,
-        ),
-    ] {
-        if cur.files > base.files {
-            problems.push(format!(
-                "{name}: {} files now defective (baseline {})",
-                cur.files, base.files
-            ));
-        }
-        dropped |= cur.files < base.files;
-    }
-    (problems, dropped)
-}
-
-const CORRECTNESS_NOTE: &str = "Render-correctness ratchet: per-category (files, occurrences) of \
-    structural render defects — I-A rendered HTML tags do not balance (unclosed region / unbalanced \
-    inline span), I-B a <ruby> has an empty base, I-C emitted aozora-* class absent from \
-    AOZORA_CLASSES. Defects may only SHRINK; any rise fails the gate, ratchet down with `--update`. \
-    Run `xtask corpus render-correctness` to find WHICH document regressed. Residual (2026-07-04): \
-    all structural render defects resolved — I-A = 0 (inline 割注 span imbalance #415 + unclosed \
-    inline 太字 container straddling </p> #420), I-B = 0, I-C = 0.";
-
-/// Render-correctness ratchet gate (the enforcing partner of
-/// `render-correctness`): fail when any per-category defect count rises above
-/// the committed baseline. Modelled on [`render_leak_gate`].
-fn render_correctness_gate(
-    root: Option<&Path>,
-    baseline_path: &Path,
-    update: bool,
-) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus render-correctness-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
-        );
-        return Ok(());
-    }
+fn render_correctness_gate(root: Option<&Path>) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     eprintln!(
         "xtask corpus render-correctness-gate: walking {} …",
@@ -2025,241 +1568,73 @@ fn render_correctness_gate(
     panic::set_hook(Box::new(|_| {}));
     let results = par_load_decoded(&corpus, render_correctness_one);
     panic::set_hook(prev_hook);
-    let (current, scanned, panicked) = tally_render_correctness(results);
+    let (current, scanned, decode_errors, panicked, walk_errors) =
+        tally_render_correctness(results);
     let elapsed = start.elapsed().as_secs_f64();
-
-    if update {
-        let baseline = RenderCorrectnessBaseline {
-            note: CORRECTNESS_NOTE.to_owned(),
-            ..current
-        };
-        let mut json =
-            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
-        fs::write(baseline_path, json)
-            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
-        eprintln!(
-            "render-correctness-gate: wrote baseline {} — I-A {}f, I-B {}f, I-C {}f",
-            baseline_path.display(),
-            current.unbalanced.files,
-            current.bad_ruby.files,
-            current.undeclared.files,
-        );
-        return Ok(());
-    }
-
-    let text = fs::read_to_string(baseline_path)
-        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
-    let baseline: RenderCorrectnessBaseline = serde_json::from_str(&text)
-        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
-    let (mut problems, dropped) = correctness_regressions(&current, &baseline);
-    if panicked > 0 {
-        problems.push(format!("{panicked} document(s) panicked while rendering"));
-    }
     eprintln!(
         "render-correctness-gate: scanned {scanned} docs in {elapsed:.1}s — \
-         I-A {}f, I-B {}f, I-C {}f (baseline I-A {}f, I-B {}f, I-C {}f)",
-        current.unbalanced.files,
-        current.bad_ruby.files,
-        current.undeclared.files,
-        baseline.unbalanced.files,
-        baseline.bad_ruby.files,
-        baseline.undeclared.files,
+         I-A {}f, I-B {}f, I-C {}f",
+        current.unbalanced.files, current.bad_ruby.files, current.undeclared.files,
     );
+    let mut problems = Vec::new();
+    if scanned == 0 {
+        problems.push("no corpus documents were rendered".to_owned());
+    }
+    if decode_errors != 0 {
+        problems.push(format!("{decode_errors} document(s) failed decoding"));
+    }
+    if walk_errors != 0 {
+        problems.push(format!("{walk_errors} corpus path(s) failed to read"));
+    }
+    if panicked != 0 {
+        problems.push(format!("{panicked} document(s) panicked while rendering"));
+    }
+    for (name, stat) in [
+        ("unbalanced tags", current.unbalanced),
+        ("empty ruby bases", current.bad_ruby),
+        ("undeclared classes", current.undeclared),
+    ] {
+        if stat.occurrences != 0 {
+            problems.push(format!("{} {name}", stat.occurrences));
+        }
+    }
     if !problems.is_empty() {
         return Err(format!(
-            "render-correctness regression:\n  {}\n  A render change made more documents \
-             structurally malformed. Fix the renderer, do not raise the baseline.",
+            "strict render correctness failed:\n  {}",
             problems.join("\n  ")
         ));
     }
-    if dropped {
-        eprintln!(
-            "render-correctness-gate: PASS — defects dropped below baseline. Ratchet down with `--update`."
-        );
-    }
+    eprintln!("render-correctness-gate: PASS");
     Ok(())
 }
 
-/// Committed, non-circular distillation of the corpus audit. Only fields whose
-/// desirable direction is known a priori live here, and the gate asserts ONLY
-/// monotone ratchets in that direction — never `actual == committed` against
-/// parser output (the circularity the throwaway audit exists to avoid).
-#[derive(Serialize, Deserialize, Default)]
-struct RenderDigest {
-    #[serde(default)]
-    note: String,
-    files_analyzed: usize,
-    /// Ratchet: may not rise (catch_unwind-guarded; expected 0).
-    panic_count: usize,
-    gaiji_total: u64,
-    /// Ratchet: `resolved / total` may only improve.
-    gaiji_resolved: u64,
-    /// Presence floor: a kind nonzero here may not drop to zero.
-    node_kinds: BTreeMap<String, u64>,
-    annotation_kinds: BTreeMap<String, u64>,
-    /// Informational only (NOT gated): the occurrence-ranked Unknown-shape
-    /// worklist that drives the normalisation-layer catalogue (Thrust 3).
-    #[serde(default)]
-    unknown_shapes_top: Vec<Kv>,
-}
-
-/// Distil an [`AuditReport`] into the committed digest. `top_shapes` bounds the
-/// informational Unknown-shape worklist.
-fn digest_from_report(r: &AuditReport, top_shapes: usize) -> RenderDigest {
-    let to_map = |kvs: &[Kv]| -> BTreeMap<String, u64> {
-        kvs.iter()
-            .filter(|k| k.count > 0)
-            .map(|k| (k.key.clone(), k.count))
-            .collect()
-    };
-    RenderDigest {
-        note: String::new(),
-        files_analyzed: r.files_analyzed,
-        panic_count: r.panic_count,
-        gaiji_total: r.gaiji.total,
-        gaiji_resolved: r.gaiji.total.saturating_sub(r.gaiji.unresolved),
-        node_kinds: to_map(&r.node_kinds),
-        annotation_kinds: to_map(&r.annotation_kinds),
-        unknown_shapes_top: r
-            .unknown_shapes
-            .iter()
-            .take(top_shapes)
-            .map(|s| Kv {
-                key: s.shape.clone(),
-                count: s.count,
-            })
-            .collect(),
-    }
-}
-
-/// Known-good-direction ratchet violations (never an equality oracle).
-fn digest_regressions(cur: &RenderDigest, base: &RenderDigest) -> Vec<String> {
-    let mut p = Vec::new();
-    if cur.panic_count > base.panic_count {
-        p.push(format!(
-            "panic_count rose {} → {}",
-            base.panic_count, cur.panic_count
-        ));
-    }
-    let vanished = |kind: &str, was: u64, now: &BTreeMap<String, u64>, what: &str| {
-        (was > 0 && now.get(kind).copied().unwrap_or(0) == 0)
-            .then(|| format!("{what} kind '{kind}' vanished (was {was})"))
-    };
-    for (k, &was) in &base.node_kinds {
-        p.extend(vanished(k, was, &cur.node_kinds, "node"));
-    }
-    for (k, &was) in &base.annotation_kinds {
-        p.extend(vanished(k, was, &cur.annotation_kinds, "annotation"));
-    }
-    if cur.gaiji_total > 0 && base.gaiji_total > 0 {
-        #[expect(clippy::cast_precision_loss, reason = "counts well under 2^53")]
-        let rate = |res: u64, tot: u64| res as f64 / tot as f64;
-        let (cur_r, base_r) = (
-            rate(cur.gaiji_resolved, cur.gaiji_total),
-            rate(base.gaiji_resolved, base.gaiji_total),
-        );
-        if cur_r < base_r - 0.005 {
-            p.push(format!("gaiji resolution dropped {base_r:.4} → {cur_r:.4}"));
-        }
-    }
-    p
-}
-
-const DIGEST_NOTE: &str = "Corpus render-digest: a NON-CIRCULAR distillation of `corpus audit`, \
-    gated ONLY on known-good-direction ratchets (never actual == committed against parser output). \
-    panic_count may not rise; a node/annotation kind that was nonzero may not vanish (a family \
-    silently dropping out is a recogniser regression); the gaiji resolution rate (resolved/total) \
-    may only improve. `unknown_shapes_top` is INFORMATIONAL (never gated) — the occurrence-ranked \
-    worklist for the normalisation-layer catalogue (#414 Thrust 3). Re-capture with `--update`.";
-
-/// Render-digest ratchet gate. Reuses [`run_audit`]; asserts only monotone
-/// known-good-direction ratchets (see [`DIGEST_NOTE`]).
-fn digest_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!("xtask corpus digest-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT");
-        return Ok(());
-    }
-    let report = run_audit(root, None)?;
-    let current = digest_from_report(&report, 40);
-    if update {
-        let digest = RenderDigest {
-            note: DIGEST_NOTE.to_owned(),
-            ..current
-        };
-        let mut json =
-            serde_json::to_string_pretty(&digest).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
-        fs::write(baseline_path, json)
-            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
-        let resolved_pct = (100 * digest.gaiji_resolved)
-            .checked_div(digest.gaiji_total)
-            .unwrap_or(0);
-        eprintln!(
-            "digest-gate: wrote {} — {} node kinds, {} annotation kinds, gaiji {}% resolved, panic {}",
-            baseline_path.display(),
-            digest.node_kinds.len(),
-            digest.annotation_kinds.len(),
-            resolved_pct,
-            digest.panic_count,
-        );
-        return Ok(());
-    }
-    let text = fs::read_to_string(baseline_path)
-        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
-    let baseline: RenderDigest = serde_json::from_str(&text)
-        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
-    let problems = digest_regressions(&current, &baseline);
-    if problems.is_empty() {
-        eprintln!(
-            "digest-gate: PASS — {} node / {} annotation kinds present, gaiji resolution held, 0 panics.",
-            current.node_kinds.len(),
-            current.annotation_kinds.len(),
-        );
-        return Ok(());
-    }
-    Err(format!(
-        "render-digest regression:\n  {}\n  A change moved a known-good metric the wrong way. \
-         Fix the recogniser/renderer, do not raise the baseline.",
-        problems.join("\n  ")
-    ))
-}
-
-/// Per-marker leak counts (files with ≥1 leak, and total occurrences) for
-/// the render-leak ratchet baseline.
-#[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 struct MarkerStat {
     files: usize,
     occurrences: usize,
 }
 
-/// Committed baseline for the render-leak ratchet gate. Leaks may only
-/// shrink below these counts; any rise fails the gate.
-#[derive(Serialize, Deserialize)]
-struct RenderLeakBaseline {
-    #[serde(default)]
-    note: String,
+#[derive(Default)]
+struct RenderLeakCounts {
     ruby: MarkerStat,
     bar: MarkerStat,
     directive: MarkerStat,
 }
 
-/// Fold a corpus render sweep into per-marker `MarkerStat`s using the same
-/// `CatAgg` counting as `render-audit` (samples suppressed via `top = 0`).
-/// Returns `(current, scanned, panicked, walk_errors)`.
 fn tally_render_leaks(
     results: Vec<Result<DocRenderOutcome, aozora_corpus::CorpusError>>,
-) -> (RenderLeakBaseline, usize, Vec<String>, usize) {
+) -> (RenderLeakCounts, usize, usize, Vec<String>, usize) {
     let mut ruby = CatAgg::default();
     let mut bar = CatAgg::default();
     let mut directive = CatAgg::default();
     let mut scanned = 0usize;
+    let mut decode_errors = 0usize;
     let mut panicked: Vec<String> = Vec::new();
     let mut walk_errors = 0usize;
     for r in results {
         match r {
             Err(_) => walk_errors += 1,
-            Ok(DocRenderOutcome::DecodeSkipped | DocRenderOutcome::LimitSkipped) => {}
+            Ok(DocRenderOutcome::DecodeSkipped) => decode_errors += 1,
             Ok(DocRenderOutcome::Clean) => scanned += 1,
             Ok(DocRenderOutcome::Panicked(label)) => {
                 scanned += 1;
@@ -2273,8 +1648,7 @@ fn tally_render_leaks(
             }
         }
     }
-    let current = RenderLeakBaseline {
-        note: String::new(),
+    let current = RenderLeakCounts {
         ruby: MarkerStat {
             files: ruby.files,
             occurrences: ruby.occurrences,
@@ -2288,50 +1662,10 @@ fn tally_render_leaks(
             occurrences: directive.occurrences,
         },
     };
-    (current, scanned, panicked, walk_errors)
+    (current, scanned, decode_errors, panicked, walk_errors)
 }
 
-/// Compare a fresh tally against a baseline: a leak count may only shrink.
-/// Returns the per-marker regression messages (empty ⇒ pass) and whether
-/// any count dropped (a ratchet-down hint).
-fn leak_regressions(
-    current: &RenderLeakBaseline,
-    baseline: &RenderLeakBaseline,
-) -> (Vec<String>, bool) {
-    let mut problems: Vec<String> = Vec::new();
-    let mut dropped = false;
-    for (name, cur, base) in [
-        ("ruby 《…》", current.ruby, baseline.ruby),
-        ("bar ｜", current.bar, baseline.bar),
-        ("directive ［＃…］", current.directive, baseline.directive),
-    ] {
-        if cur.files > base.files {
-            problems.push(format!(
-                "{name}: {} files now leak (baseline {})",
-                cur.files, base.files
-            ));
-        }
-        if cur.occurrences > base.occurrences {
-            problems.push(format!(
-                "{name}: {} occurrences now leak (baseline {})",
-                cur.occurrences, base.occurrences
-            ));
-        }
-        dropped |= cur.files < base.files || cur.occurrences < base.occurrences;
-    }
-    (problems, dropped)
-}
-
-/// Render-leak ratchet gate (the enforcing partner of `render-audit`):
-/// fail when any per-marker leak count rises above the committed baseline.
-/// Modelled on `audit_gate`; `render-audit` remains the per-file diagnostic.
-fn render_leak_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus render-leak-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
-        );
-        return Ok(());
-    }
+fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     eprintln!(
         "xtask corpus render-leak-gate: walking {} …",
@@ -2344,45 +1678,19 @@ fn render_leak_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> 
     let results = par_load_decoded(&corpus, render_audit_one);
     panic::set_hook(prev_hook);
 
-    let (current, scanned, mut panicked, walk_errors) = tally_render_leaks(results);
+    let (current, scanned, decode_errors, mut panicked, walk_errors) = tally_render_leaks(results);
     let elapsed = start.elapsed().as_secs_f64();
 
-    if update {
-        let baseline = RenderLeakBaseline {
-            note: "Render-leak ratchet: per-marker (files, occurrences) of aozora notation control \
-                   markers (《…》 / ｜ / ［＃…］) surviving into VISIBLE rendered HTML. Leaks may only \
-                   SHRINK — any rise fails the gate; ratchet down on improvement with `--update`. Run \
-                   `xtask corpus render-audit` to find WHICH document regressed. The residual is a \
-                   documented long tail (2026-07-03, campaign #399): mixed kanji+gaiji ruby base (E2), \
-                   ヵ/ヶ ateji declines, symbol/digit/Cyrillic/kanbun bases, and authorial 《…》 with no \
-                   ruby base (a correct literal, not a leak) — irreducible or tracked follow-ups."
-                .to_owned(),
-            ..current
-        };
-        let mut json =
-            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
-        fs::write(baseline_path, json)
-            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
-        eprintln!(
-            "render-leak-gate: wrote baseline {} — ruby {}f/{}o, bar {}f/{}o, directive {}f/{}o",
-            baseline_path.display(),
-            current.ruby.files,
-            current.ruby.occurrences,
-            current.bar.files,
-            current.bar.occurrences,
-            current.directive.files,
-            current.directive.occurrences,
-        );
-        return Ok(());
+    let mut problems = Vec::new();
+    if scanned == 0 {
+        problems.push("no corpus documents were rendered".to_owned());
     }
-
-    let text = fs::read_to_string(baseline_path)
-        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
-    let baseline: RenderLeakBaseline = serde_json::from_str(&text)
-        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
-
-    let (mut problems, dropped) = leak_regressions(&current, &baseline);
+    if decode_errors != 0 {
+        problems.push(format!("{decode_errors} document(s) failed decoding"));
+    }
+    if walk_errors != 0 {
+        problems.push(format!("{walk_errors} corpus path(s) failed to read"));
+    }
     if !panicked.is_empty() {
         panicked.sort();
         problems.push(format!(
@@ -2396,27 +1704,29 @@ fn render_leak_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> 
                 .join(", ")
         ));
     }
-
+    for (name, stat) in [
+        ("ruby delimiter", current.ruby),
+        ("ruby base marker", current.bar),
+        ("directive marker", current.directive),
+    ] {
+        if stat.occurrences != 0 {
+            problems.push(format!(
+                "{} unexplained {name} occurrence(s) across {} document(s)",
+                stat.occurrences, stat.files
+            ));
+        }
+    }
     if !problems.is_empty() {
         return Err(format!(
-            "render-leak regression — aozora notation markers newly survive into visible rendered text:\n  {}\n\
-             Fix the classifier/renderer so the notation resolves; run \
-             `xtask corpus render-audit` to find the offending document(s). If the rise is an \
-             intentional, justified shift, re-baseline with `xtask corpus render-leak-gate --update`.",
+            "strict render-leak gate failed:\n  {}",
             problems.join("\n  ")
         ));
     }
 
     eprintln!(
-        "render-leak-gate: PASS — {scanned} docs, no marker rose above baseline \
-         ({walk_errors} walk error(s), {elapsed:.1}s)"
+        "render-leak-gate: PASS — {scanned} docs, zero unexplained visible notation markers \
+         ({elapsed:.1}s)"
     );
-    if dropped {
-        eprintln!(
-            "render-leak-gate: leaks dropped below baseline — ratchet down with \
-             `xtask corpus render-leak-gate --update` so future regressions are caught against the new floor."
-        );
-    }
     Ok(())
 }
 
@@ -2450,6 +1760,38 @@ fn visible_leak_markers(html: &str) -> Vec<LeakHit> {
     hits
 }
 
+fn unaccounted_leak_markers(
+    html: &str,
+    literal_markup: &[aozora::LiteralMarkupKind],
+) -> Vec<LeakHit> {
+    let mut literal_counts = [0usize; 3];
+    for kind in literal_markup {
+        let index = match kind {
+            aozora::LiteralMarkupKind::RubyDelimiters => 0,
+            aozora::LiteralMarkupKind::RubyBaseMarker => 1,
+            aozora::LiteralMarkupKind::DirectiveMarker => 2,
+            _ => continue,
+        };
+        literal_counts[index] += 1;
+    }
+    visible_leak_markers(html)
+        .into_iter()
+        .filter(|hit| {
+            let index = match hit.cat {
+                LeakCat::Ruby => 0,
+                LeakCat::Bar => 1,
+                LeakCat::Directive => 2,
+            };
+            if literal_counts[index] == 0 {
+                true
+            } else {
+                literal_counts[index] -= 1;
+                false
+            }
+        })
+        .collect()
+}
+
 /// Collect the visible text of `html`: drop everything inside `<…>` tags,
 /// and drop the entire content of spans that do not display —
 /// `aozora-angle-quote` (whose `《…》` delimiters are legitimate output)
@@ -2477,7 +1819,9 @@ fn strip_to_visible_text(html: &str) -> String {
                     suppress_target = None;
                 }
             } else if is_span_open(tag) {
-                let suppressed = tag.contains("aozora-angle-quote") || tag.contains(" hidden");
+                let suppressed = tag.contains("aozora-angle-quote")
+                    || tag.contains(" data-codepoint=")
+                    || tag.contains(" hidden");
                 if suppress_target.is_none() && suppressed {
                     suppress_target = Some(span_depth);
                 }
@@ -2593,50 +1937,43 @@ fn audit_one(item: CorpusItem) -> FileStat {
 /// resolved through the output's store; the returned `FileStat` owns its
 /// strings.
 fn analyze(text: &str) -> FileStat {
-    let doc = Document::new(text);
+    let doc = aozora::parse(text).expect("source fits parser span limit");
     let snapshot = doc.snapshot();
     let mut s = FileStat::default();
 
-    for sn in snapshot.source_nodes() {
-        if let Some(i) = NodeKind::ALL.iter().position(|k| *k == sn.node.kind()) {
+    for node in snapshot.nodes() {
+        if let Some(i) = NodeKind::ALL.iter().position(|kind| *kind == node.kind()) {
             s.node_kinds[i] += 1;
         }
-        match sn.node {
-            NodeRef::Inline(Node::Directive(a)) | NodeRef::BlockLeaf(Node::Directive(a)) => {
-                match a.kind {
-                    DirectiveKind::Unknown => {
-                        s.annotation_kinds[0] += 1;
-                        let line = line_of(text, sn.source_span.start);
-                        s.unknown
-                            .push((snapshot.directive_source(a).to_owned(), line));
-                    }
-                    DirectiveKind::Sic => s.annotation_kinds[1] += 1,
-                    DirectiveKind::BaseTextVariant => s.annotation_kinds[2] += 1,
-                    DirectiveKind::WarichuOpen => s.annotation_kinds[3] += 1,
-                    DirectiveKind::WarichuClose => s.annotation_kinds[4] += 1,
-                    DirectiveKind::Empty => s.annotation_kinds[5] += 1,
-                    DirectiveKind::EditorNote => s.annotation_kinds[6] += 1,
-                    DirectiveKind::RubyAttached => s.annotation_kinds[7] += 1,
-                    DirectiveKind::RubyRetarget => s.annotation_kinds[8] += 1,
-                    DirectiveKind::RubyPairOpen => s.annotation_kinds[9] += 1,
-                    DirectiveKind::RubyPairClose => s.annotation_kinds[10] += 1,
-                    DirectiveKind::MarginNotePairOpen => s.annotation_kinds[11] += 1,
-                    DirectiveKind::MarginNotePairClose => s.annotation_kinds[12] += 1,
-                    // `DirectiveKind` is #[non_exhaustive]; a future variant
-                    // is simply not bucketed until this match is extended.
-                    _ => {}
-                }
-            }
-            NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
-                s.gaiji_total += 1;
-                if snapshot.resolve_gaiji(&g).is_none() {
-                    s.gaiji_unresolved += 1;
-                }
-                let mencode = snapshot.gaiji_mencode(&g);
-                s.gaiji_forms[gaiji_bucket(mencode.as_deref())] += 1;
-            }
-            _ => {}
+    }
+
+    for directive in snapshot.directives() {
+        let bucket = match directive.kind() {
+            DirectiveClass::NonCanonical => 0,
+            DirectiveClass::Editorial => 1,
+            DirectiveClass::Sic => 2,
+            DirectiveClass::BaseTextVariant => 3,
+            DirectiveClass::WarichuOpen => 4,
+            DirectiveClass::WarichuClose => 5,
+            DirectiveClass::Empty => 6,
+            DirectiveClass::EditorNote => 7,
+            DirectiveClass::RubyAttached => 8,
+            DirectiveClass::RubyRetarget => 9,
+            DirectiveClass::RubyPairOpen => 10,
+            DirectiveClass::RubyPairClose => 11,
+            DirectiveClass::MarginNotePairOpen => 12,
+            DirectiveClass::MarginNotePairClose => 13,
+            _ => continue,
+        };
+        s.annotation_kinds[bucket] += 1;
+    }
+
+    for gaiji in snapshot.gaiji_resolutions() {
+        s.gaiji_total += 1;
+        if gaiji.resolved().is_none() {
+            s.gaiji_unresolved += 1;
         }
+        s.gaiji_forms[gaiji_bucket(gaiji.mencode())] += 1;
     }
 
     for d in snapshot.diagnostics() {
@@ -2649,6 +1986,7 @@ fn analyze(text: &str) -> FileStat {
 /// sanitized-source coordinates, which equal raw-source coordinates for
 /// the typical document (no BOM, LF-only, no `〔…〕` accent spans); the
 /// `example` pointer is approximate when sanitization shifted bytes.
+#[cfg(test)]
 fn line_of(text: &str, byte_off: u32) -> u32 {
     let off = (byte_off as usize).min(text.len());
     let newlines = text.as_bytes()[..off]
@@ -2736,9 +2074,9 @@ fn merge(
     corpus_root: String,
     elapsed_secs: f64,
 ) -> AuditReport {
-    let mut node_kinds = [0u64; 25];
-    let mut ann = [0u64; 13];
-    let mut gforms = [0u64; 6];
+    let mut node_kinds = [0u64; NodeKind::ALL.len()];
+    let mut ann = [0u64; ANN_KIND_LABELS.len()];
+    let mut gforms = [0u64; GAIJI_FORM_LABELS.len()];
     let mut gaiji_total = 0u64;
     let mut gaiji_unresolved = 0u64;
     let mut diag_map: HashMap<&'static str, u64> = HashMap::new();
@@ -2973,11 +2311,9 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
 // of a new golden is the family *combination* it forces through `to_html()`, so
 // coverage (not proportional sampling) is the objective.
 
-/// Family universe: `NodeKind::ALL` (25) ∪ non-Unknown `ANN_KIND_LABELS` (12) ∪
-/// `GAIJI_FORM_LABELS` (6) = 43. Id layout: `[0,25)` node, `[25,37)` annotation,
-/// `[37,43)` gaiji.
+/// Family universe derived from the three wire authorities.
 const FAM_NODE: usize = NodeKind::ALL.len();
-const FAM_ANN: usize = ANN_KIND_LABELS.len() - 1; // skip index 0 (unknown)
+const FAM_ANN: usize = ANN_KIND_LABELS.len();
 const FAM_GAIJI: usize = GAIJI_FORM_LABELS.len();
 const FAM_TOTAL: usize = FAM_NODE + FAM_ANN + FAM_GAIJI;
 
@@ -2985,7 +2321,7 @@ fn family_name(id: usize) -> &'static str {
     if id < FAM_NODE {
         NodeKind::ALL[id].as_json_tag()
     } else if id < FAM_NODE + FAM_ANN {
-        ANN_KIND_LABELS[id - FAM_NODE + 1]
+        ANN_KIND_LABELS[id - FAM_NODE]
     } else {
         GAIJI_FORM_LABELS[id - FAM_NODE - FAM_ANN]
     }
@@ -3004,9 +2340,9 @@ fn family_ids(stat: &FileStat) -> Vec<usize> {
             ids.push(i);
         }
     }
-    for i in 1..ANN_KIND_LABELS.len() {
+    for i in 0..ANN_KIND_LABELS.len() {
         if stat.annotation_kinds[i] > 0 {
-            ids.push(FAM_NODE + i - 1);
+            ids.push(FAM_NODE + i);
         }
     }
     for (i, &c) in stat.gaiji_forms.iter().enumerate() {
@@ -3157,190 +2493,6 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
     Ok(())
 }
 
-/// Committed baseline for the catalogue-sweep ratchet gate: the Tier1/Tier2
-/// matched Unknown-shape sets and per-tier resolved-occurrence counts. Unlike
-/// [`ClassifyReport`] (a throwaway worklist that carries `path:line` samples),
-/// this is deterministic and diff-stable — shape sets are `BTreeMap`s and no
-/// example locations are recorded.
-#[derive(Serialize, Deserialize, Default, Clone)]
-struct CatalogueCoverage {
-    #[serde(default)]
-    note: String,
-    files_analyzed: usize,
-    unknown_total: u64,
-    /// Occurrences Tier1 catalogue normalization resolves.
-    tier1_occurrences: u64,
-    /// Occurrences Tier2 catalogue normalization reduces (render-only).
-    tier2_occurrences: u64,
-    /// Occurrences neither catalogue matches — the discovery residue.
-    residue_occurrences: u64,
-    /// Shape → summed occurrences the Tier1 catalogue resolves.
-    tier1_shapes: BTreeMap<String, u64>,
-    /// Shape → summed occurrences the Tier2 catalogue reduces.
-    tier2_shapes: BTreeMap<String, u64>,
-}
-
-/// Bucket the Unknown bodies into the committed coverage baseline. Reuses
-/// [`classify_body`]; keys the matched-shape maps by the normalised `shape`
-/// (digits / `「…」` operands elided) so the baseline is small and stable.
-fn catalogue_coverage(
-    bodies: &[UnknownRow],
-    files_analyzed: usize,
-    unknown_total: u64,
-) -> CatalogueCoverage {
-    let (mut t1, mut t2, mut residue) = (0_u64, 0_u64, 0_u64);
-    let mut tier1_shapes: BTreeMap<String, u64> = BTreeMap::new();
-    let mut tier2_shapes: BTreeMap<String, u64> = BTreeMap::new();
-    for row in bodies {
-        match classify_body(&row.body) {
-            Bucket::Tier1 => {
-                t1 += row.count;
-                *tier1_shapes.entry(row.shape.clone()).or_default() += row.count;
-            }
-            Bucket::Tier2 => {
-                t2 += row.count;
-                *tier2_shapes.entry(row.shape.clone()).or_default() += row.count;
-            }
-            Bucket::Residue => residue += row.count,
-        }
-    }
-    CatalogueCoverage {
-        note: String::new(),
-        files_analyzed,
-        unknown_total,
-        tier1_occurrences: t1,
-        tier2_occurrences: t2,
-        residue_occurrences: residue,
-        tier1_shapes,
-        tier2_shapes,
-    }
-}
-
-/// Ratchet violations (never an equality oracle). The corpus is fixed, so the
-/// matched-shape set changes ONLY when a catalogue rule changes: a new match is
-/// an unconfirmed near-miss (or false-positive) a human must vet; a lost match
-/// or grown residue is a rule regression.
-fn catalogue_regressions(cur: &CatalogueCoverage, base: &CatalogueCoverage) -> Vec<String> {
-    let mut p = Vec::new();
-    let mut new_matches =
-        |tier: &str, cur_m: &BTreeMap<String, u64>, base_m: &BTreeMap<String, u64>| {
-            for shape in cur_m.keys() {
-                if !base_m.contains_key(shape) {
-                    p.push(format!(
-                        "{tier} now matches a new shape {shape} — confirm it is a genuine \
-                     near-miss (not an editorial false-positive), then re-baseline with --update"
-                    ));
-                }
-            }
-        };
-    new_matches("Tier1", &cur.tier1_shapes, &base.tier1_shapes);
-    new_matches("Tier2", &cur.tier2_shapes, &base.tier2_shapes);
-    let mut lost_matches =
-        |tier: &str, cur_m: &BTreeMap<String, u64>, base_m: &BTreeMap<String, u64>| {
-            for shape in base_m.keys() {
-                if !cur_m.contains_key(shape) {
-                    p.push(format!(
-                        "{tier} no longer matches {shape} — a catalogue rule regressed \
-                         (the shape fell back to residue). Fix the rule, do not --update."
-                    ));
-                }
-            }
-        };
-    lost_matches("Tier1", &cur.tier1_shapes, &base.tier1_shapes);
-    lost_matches("Tier2", &cur.tier2_shapes, &base.tier2_shapes);
-    if cur.tier1_occurrences < base.tier1_occurrences {
-        p.push(format!(
-            "Tier1 occurrences fell {} → {}",
-            base.tier1_occurrences, cur.tier1_occurrences
-        ));
-    }
-    if cur.tier2_occurrences < base.tier2_occurrences {
-        p.push(format!(
-            "Tier2 occurrences fell {} → {}",
-            base.tier2_occurrences, cur.tier2_occurrences
-        ));
-    }
-    if cur.residue_occurrences > base.residue_occurrences {
-        p.push(format!(
-            "residue grew {} → {} — Unknown coverage regressed",
-            base.residue_occurrences, cur.residue_occurrences
-        ));
-    }
-    p
-}
-
-const CATALOGUE_NOTE: &str = "Catalogue-sweep coverage baseline: the Tier1 \
-    (`canonical_directive`) / Tier2 (`degraded_directive`) matched Unknown-shape sets and \
-    per-tier resolved-occurrence counts over the corpus. Ratchet: residue may only shrink and \
-    resolved occurrences may only rise; a newly-matched shape FAILS the gate until a human \
-    confirms it is a genuine near-miss (not an editorial false-positive) and re-baselines — the \
-    zero-false-positive guard from the corpus side. A lost match or grown residue is a catalogue \
-    regression (fix the rule, do not --update). Re-capture with `xtask corpus catalogue-sweep-gate --update`.";
-
-/// Catalogue-sweep ratchet gate. Reuses [`run_audit`] + [`classify_body`]; the
-/// corpus-side twin of `classify-unknown` (see [`CATALOGUE_NOTE`]).
-fn catalogue_sweep_gate(
-    root: Option<&Path>,
-    baseline_path: &Path,
-    update: bool,
-) -> Result<(), String> {
-    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
-        eprintln!(
-            "xtask corpus catalogue-sweep-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
-        );
-        return Ok(());
-    }
-    let report = run_audit(root, None)?;
-    let current = catalogue_coverage(
-        &report.unknown_bodies,
-        report.files_analyzed,
-        report.unknown_total,
-    );
-
-    if update {
-        let coverage = CatalogueCoverage {
-            note: CATALOGUE_NOTE.to_owned(),
-            ..current
-        };
-        let mut json =
-            serde_json::to_string_pretty(&coverage).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
-        fs::write(baseline_path, json)
-            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
-        eprintln!(
-            "catalogue-sweep-gate: wrote {} — Tier1 {} occ / {} shapes, Tier2 {} occ / {} shapes, residue {} occ",
-            baseline_path.display(),
-            coverage.tier1_occurrences,
-            coverage.tier1_shapes.len(),
-            coverage.tier2_occurrences,
-            coverage.tier2_shapes.len(),
-            coverage.residue_occurrences,
-        );
-        return Ok(());
-    }
-
-    let text = fs::read_to_string(baseline_path)
-        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
-    let baseline: CatalogueCoverage = serde_json::from_str(&text)
-        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
-    let problems = catalogue_regressions(&current, &baseline);
-    if problems.is_empty() {
-        eprintln!(
-            "catalogue-sweep-gate: PASS — Tier1 {} / Tier2 {} / residue {} occ; {} + {} matched shapes held.",
-            current.tier1_occurrences,
-            current.tier2_occurrences,
-            current.residue_occurrences,
-            current.tier1_shapes.len(),
-            current.tier2_shapes.len(),
-        );
-        return Ok(());
-    }
-    Err(format!(
-        "catalogue-sweep regression:\n  {}",
-        problems.join("\n  ")
-    ))
-}
-
 /// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
 /// pure set-difference behind `family-coverage`.
 fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static str> {
@@ -3350,21 +2502,7 @@ fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static 
         .collect()
 }
 
-/// The families no source exercises via the [`analyze`] (`source_nodes`) walk,
-/// so `family-coverage` can never count them — the negative catalogue that makes
-/// "covered OR correctly-irreducible" *provable* (mirrors the
-/// `EDITORIAL_MUST_STAY_UNKNOWN` refuse-list on the notation-hygiene side).
-///
-/// `warichu` / `container` are **not dead** — they are live POST-FOLD nodes
-/// (`Node::Warichu` / `Node::Container`, built in splice/render). The pre-fold
-/// `source_nodes` carry their `…Open` / `…Close` directive forms instead, which
-/// ARE covered as their own families. This walk simply predates the fold.
-const STRUCTURALLY_UNREACHABLE: &[&str] = &["warichu", "container"];
-
-/// `corpus family-coverage`: assert every one of the 43 notation families is
-/// either exercised by the golden fixtures (real works `∪` crafted render
-/// fixtures) or listed in [`STRUCTURALLY_UNREACHABLE`]. Reads only committed
-/// fixtures, so it needs no corpus.
+/// Assert every notation family is exercised by committed fixtures.
 fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
     if !vendored.is_dir() {
         return Err(format!("not a directory: {}", vendored.display()));
@@ -3380,28 +2518,18 @@ fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
         covered.len(),
     );
 
-    // A missing family is only acceptable if it is structurally unreachable;
-    // anything else is a reachable family that lost its golden fixture.
-    let regressed: Vec<&str> = missing
-        .iter()
-        .copied()
-        .filter(|m| !STRUCTURALLY_UNREACHABLE.contains(m))
-        .collect();
-    if regressed.is_empty() {
+    if missing.is_empty() {
         eprintln!(
-            "family-coverage: PASS — {} covered + {} structurally-unreachable = {FAM_TOTAL} \
-             (covered OR correctly-irreducible).",
+            "family-coverage: PASS — {} covered = {FAM_TOTAL}.",
             covered.len(),
-            STRUCTURALLY_UNREACHABLE.len(),
         );
         Ok(())
     } else {
         Err(format!(
-            "family-coverage regression: reachable families no longer covered: {}. \
+            "family-coverage regression: families no longer covered: {}. \
              Add a golden work (`select-works --require-family`) or a `fixtures/render/` \
-             fixture; only add to STRUCTURALLY_UNREACHABLE (with rationale) if a family \
-             genuinely became unreachable.",
-            regressed.join(", ")
+             fixture.",
+            missing.join(", ")
         ))
     }
 }
@@ -3517,14 +2645,17 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
             let ratio = if ann_total == 0 {
                 0.0
             } else {
-                (s.annotation_kinds[0] as f64) / (ann_total as f64)
+                ((s.annotation_kinds[0] + s.annotation_kinds[1]) as f64) / (ann_total as f64)
             };
             (family_ids(s), ratio)
         },
     );
     let clean = stat.is_some()
         && panic::catch_unwind(AssertUnwindSafe(|| {
-            let html = Document::new(text.clone()).snapshot().to_html();
+            let html = aozora::parse(text.clone())
+                .expect("source fits parser span limit")
+                .snapshot()
+                .to_html();
             scan_correctness(&html).is_empty() && visible_leak_markers(&html).is_empty()
         }))
         .unwrap_or(false);
@@ -3931,41 +3062,6 @@ mod tests {
         );
     }
 
-    // ---- digest_regressions (non-circular ratchets) -------------------
-
-    #[test]
-    fn digest_regressions_flags_only_bad_directions() {
-        let mk = |nodes: &[(&str, u64)], gaiji_total: u64, gaiji_resolved: u64, panic: usize| {
-            RenderDigest {
-                node_kinds: nodes.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect(),
-                gaiji_total,
-                gaiji_resolved,
-                panic_count: panic,
-                ..Default::default()
-            }
-        };
-        let base = mk(&[("ruby", 100)], 1000, 950, 0);
-        // Identical → clean.
-        assert!(digest_regressions(&mk(&[("ruby", 100)], 1000, 950, 0), &base).is_empty());
-        // A kind that was nonzero vanished → flagged.
-        assert_eq!(digest_regressions(&mk(&[], 1000, 950, 0), &base).len(), 1);
-        // Gaiji resolution dropped → flagged.
-        assert_eq!(
-            digest_regressions(&mk(&[("ruby", 100)], 1000, 800, 0), &base).len(),
-            1
-        );
-        // Panic count rose → flagged.
-        assert_eq!(
-            digest_regressions(&mk(&[("ruby", 100)], 1000, 950, 3), &base).len(),
-            1
-        );
-        // Improvements (a new kind, higher resolution) → clean.
-        assert!(
-            digest_regressions(&mk(&[("ruby", 100), ("bouten", 50)], 1000, 990, 0), &base)
-                .is_empty()
-        );
-    }
-
     // ---- band_slot ----------------------------------------------------
 
     #[test]
@@ -4023,6 +3119,21 @@ mod tests {
     }
 
     #[test]
+    fn leak_ignores_resolved_gaiji_notation_glyphs() {
+        assert!(visible_leak_markers(
+            r#"<p><span class="aozora-gaiji" data-codepoint="U+300A">《</span>x<span class="aozora-gaiji" data-codepoint="U+300B">》</span></p>"#
+        )
+        .is_empty());
+        assert_eq!(
+            visible_leak_markers(
+                r#"<p><span class="aozora-gaiji" data-description="raw">［＃raw］</span></p>"#
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
     fn leak_ignores_nested_span_inside_angle_quote() {
         // A gaiji span nested inside an angle-quote must be suppressed with
         // it (span-depth tracking), and the outer 《…》 delimiters too.
@@ -4042,6 +3153,21 @@ mod tests {
     fn leak_ignores_empty_ruby() {
         // `《》` with no reading renders literally by design (empty_ruby).
         assert_eq!(cats("<p>青梅《》</p>"), (0, 0, 0));
+    }
+
+    #[test]
+    fn leak_gate_accounts_for_explicit_literal_markup() {
+        use aozora::LiteralMarkupKind;
+
+        let literal = [
+            LiteralMarkupKind::RubyDelimiters,
+            LiteralMarkupKind::RubyBaseMarker,
+            LiteralMarkupKind::DirectiveMarker,
+        ];
+        assert!(unaccounted_leak_markers("<p>六ヶ《むつか》 ｜ ［＃注</p>", &literal).is_empty());
+        let hits = unaccounted_leak_markers("<p>六ヶ《むつか》 別《もれ》</p>", &literal[..1]);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].cat, LeakCat::Ruby);
     }
 
     #[test]
@@ -4291,52 +3417,6 @@ mod tests {
         assert_eq!(out.chars().count(), 3, "char count respects the limit");
     }
 
-    // ---- Baseline::rate ----------------------------------------------
-
-    #[test]
-    fn baseline_rate_is_unknown_over_files() {
-        let b = Baseline {
-            unknown_total: 10,
-            files_analyzed: 4,
-            note: String::new(),
-        };
-        assert!((b.rate() - 2.5).abs() < f64::EPSILON, "10/4 = 2.5");
-    }
-
-    #[test]
-    fn baseline_rate_zero_files_avoids_div_by_zero() {
-        let b = Baseline {
-            unknown_total: 7,
-            files_analyzed: 0,
-            note: String::new(),
-        };
-        // Denominator clamps to 1 → rate equals the numerator.
-        assert!(
-            (b.rate() - 7.0).abs() < f64::EPSILON,
-            "0 files → divide by 1"
-        );
-    }
-
-    #[test]
-    fn baseline_serde_round_trips() {
-        let b = Baseline {
-            unknown_total: 42,
-            files_analyzed: 17,
-            note: "n".to_owned(),
-        };
-        let json = serde_json::to_string(&b).expect("serialize baseline");
-        let back: Baseline = serde_json::from_str(&json).expect("deserialize baseline");
-        assert_eq!(back.unknown_total, 42, "unknown_total round-trips");
-        assert_eq!(back.files_analyzed, 17, "files_analyzed round-trips");
-    }
-
-    #[test]
-    fn baseline_note_defaults_when_absent() {
-        let back: Baseline = serde_json::from_str(r#"{ "unknown_total": 1, "files_analyzed": 2 }"#)
-            .expect("note is optional");
-        assert_eq!(back.note, "", "missing note defaults to empty");
-    }
-
     // ---- analyze (real parser, pure str → FileStat) -------------------
 
     #[test]
@@ -4362,13 +3442,10 @@ mod tests {
     }
 
     #[test]
-    fn analyze_unknown_annotation_records_body_and_line() {
-        // A nonsense directive falls through to DirectiveKind::Unknown.
+    fn analyze_editorial_annotation_has_an_explicit_bucket() {
         let stat = analyze("前置き\n［＃まったく未知の指示］");
-        assert_eq!(stat.annotation_kinds[0], 1, "one Unknown annotation");
-        assert_eq!(stat.unknown.len(), 1, "one unknown body captured");
-        let (_body, line) = &stat.unknown[0];
-        assert_eq!(*line, 2, "directive sits on the second line");
+        assert_eq!(stat.annotation_kinds[1], 1);
+        assert!(stat.unknown.is_empty());
     }
 
     // ---- audit_one (CorpusItem → FileStat) ----------------------------
@@ -4470,7 +3547,7 @@ mod tests {
         let mk = |label: &str, body: &str, line: u32| FileStat {
             label: label.to_owned(),
             annotation_kinds: {
-                let mut a = [0u64; 13];
+                let mut a = [0u64; ANN_KIND_LABELS.len()];
                 a[0] = 1;
                 a
             },
@@ -4543,38 +3620,6 @@ mod tests {
         MarkerStat { files, occurrences }
     }
 
-    fn baseline(ruby: MarkerStat, bar: MarkerStat, directive: MarkerStat) -> RenderLeakBaseline {
-        RenderLeakBaseline {
-            note: String::new(),
-            ruby,
-            bar,
-            directive,
-        }
-    }
-
-    #[test]
-    fn leak_regressions_flags_only_rises() {
-        let base = baseline(stat(10, 100), stat(5, 50), stat(2, 20));
-
-        // Equal → pass, nothing dropped.
-        let (p, dropped) = leak_regressions(&base, &base);
-        assert!(p.is_empty());
-        assert!(!dropped);
-
-        // A file rise in ruby fails; a file drop in bar is a ratchet hint.
-        let up = baseline(stat(11, 100), stat(4, 50), stat(2, 20));
-        let (p, dropped) = leak_regressions(&up, &base);
-        assert_eq!(p.len(), 1, "only the ruby rise is flagged: {p:?}");
-        assert!(p[0].contains("ruby") && p[0].contains("files"));
-        assert!(dropped, "the bar drop is a ratchet-down hint");
-
-        // An occurrence rise with equal files still fails.
-        let occ = baseline(stat(10, 100), stat(5, 50), stat(2, 21));
-        let (p, _) = leak_regressions(&occ, &base);
-        assert_eq!(p.len(), 1);
-        assert!(p[0].contains("directive") && p[0].contains("occurrences"));
-    }
-
     #[test]
     fn tally_render_leaks_counts_files_and_occurrences() {
         let leak = |label: &str, cats: &[LeakCat]| {
@@ -4595,11 +3640,12 @@ mod tests {
             Ok(DocRenderOutcome::Clean),
             Ok(DocRenderOutcome::DecodeSkipped),
         ];
-        let (cur, scanned, panicked, walk_errors) = tally_render_leaks(results);
+        let (cur, scanned, decode_errors, panicked, walk_errors) = tally_render_leaks(results);
         assert_eq!(cur.ruby, stat(2, 3));
         assert_eq!(cur.bar, stat(1, 1));
         assert_eq!(cur.directive, stat(0, 0));
         assert_eq!(scanned, 3, "2 leaked + 1 clean; decode-skip not scanned");
+        assert_eq!(decode_errors, 1);
         assert!(panicked.is_empty());
         assert_eq!(walk_errors, 0);
     }
@@ -4633,22 +3679,25 @@ mod tests {
 
     #[test]
     fn family_ids_and_names_span_the_universe() {
-        let mut node_kinds = [0u64; 25];
-        node_kinds[0] = 3; // first node family present
-        let mut annotation_kinds = [0u64; 13];
-        annotation_kinds[0] = 5; // Unknown — index 0 is NOT a family
-        annotation_kinds[1] = 2; // first annotation family present
-        let mut gaiji_forms = [0u64; 6];
-        gaiji_forms[0] = 1; // first gaiji family present
+        let mut node_kinds = [0u64; NodeKind::ALL.len()];
+        node_kinds[0] = 3;
+        let mut annotation_kinds = [0u64; ANN_KIND_LABELS.len()];
+        annotation_kinds[0] = 5;
+        annotation_kinds[1] = 2;
+        let mut gaiji_forms = [0u64; GAIJI_FORM_LABELS.len()];
+        gaiji_forms[0] = 1;
         let s = FileStat {
             node_kinds,
             annotation_kinds,
             gaiji_forms,
             ..FileStat::default()
         };
-        assert_eq!(family_ids(&s), vec![0, FAM_NODE, FAM_NODE + FAM_ANN]);
+        assert_eq!(
+            family_ids(&s),
+            vec![0, FAM_NODE, FAM_NODE + 1, FAM_NODE + FAM_ANN]
+        );
         assert_eq!(family_name(0), NodeKind::ALL[0].as_json_tag());
-        assert_eq!(family_name(FAM_NODE), ANN_KIND_LABELS[1]);
+        assert_eq!(family_name(FAM_NODE), ANN_KIND_LABELS[0]);
         assert_eq!(family_name(FAM_NODE + FAM_ANN), GAIJI_FORM_LABELS[0]);
         assert_eq!(FAM_TOTAL, FAM_NODE + FAM_ANN + FAM_GAIJI);
     }
@@ -4712,78 +3761,6 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_coverage_collects_matched_shape_sets() {
-        fn row(body: &str, count: u64, shape: &str) -> UnknownRow {
-            UnknownRow {
-                body: body.to_owned(),
-                count,
-                example: "x:1".to_owned(),
-                shape: shape.to_owned(),
-            }
-        }
-        let bodies = vec![
-            row("［＃字下げ終わり］", 5, "［＃字下げ終わり］"), // Tier1
-            row(
-                "［＃下げて、地より2字あきで］",
-                4,
-                "［＃下げて、地よりN字あきで］",
-            ), // Tier2 (D6)
-            row(
-                "［＃「甲」は「乙」の誤記か］",
-                7,
-                "［＃「」は「」の誤記か］",
-            ), // residue
-        ];
-        let c = catalogue_coverage(&bodies, 100, 16);
-        assert_eq!(c.tier1_occurrences, 5);
-        assert_eq!(c.tier2_occurrences, 4);
-        assert_eq!(c.residue_occurrences, 7);
-        // Matched shapes are keyed by the normalised shape; residue is NOT recorded.
-        assert_eq!(c.tier1_shapes.get("［＃字下げ終わり］"), Some(&5));
-        assert_eq!(
-            c.tier2_shapes.get("［＃下げて、地よりN字あきで］"),
-            Some(&4)
-        );
-        assert!(!c.tier1_shapes.contains_key("［＃「」は「」の誤記か］"));
-        assert!(!c.tier2_shapes.contains_key("［＃「」は「」の誤記か］"));
-    }
-
-    #[test]
-    fn catalogue_regressions_flags_new_match_lost_and_residue_growth() {
-        let base = CatalogueCoverage {
-            tier1_occurrences: 10,
-            tier2_occurrences: 5,
-            residue_occurrences: 100,
-            tier1_shapes: BTreeMap::from([("［＃字下げ終わり］".to_owned(), 10)]),
-            tier2_shapes: BTreeMap::from([("［＃下げて、地よりN字あきで］".to_owned(), 5)]),
-            ..Default::default()
-        };
-        // Identical → no violations.
-        assert!(catalogue_regressions(&base, &base).is_empty());
-
-        // A brand-new Tier2 match not in the baseline → the false-positive guard.
-        let mut new_match = base.clone();
-        new_match
-            .tier2_shapes
-            .insert("［＃地付き、地よりN字アキ］".to_owned(), 3);
-        new_match.tier2_occurrences = 8;
-        new_match.residue_occurrences = 97;
-        let p = catalogue_regressions(&new_match, &base);
-        assert_eq!(p.len(), 1);
-        assert!(p[0].contains("now matches a new shape"));
-
-        // A lost Tier1 match (fell back to residue) → catalogue regression.
-        let mut regressed = base.clone();
-        regressed.tier1_shapes.clear();
-        regressed.tier1_occurrences = 0;
-        regressed.residue_occurrences = 110;
-        let p = catalogue_regressions(&regressed, &base);
-        assert!(p.iter().any(|m| m.contains("no longer matches")));
-        assert!(p.iter().any(|m| m.contains("Tier1 occurrences fell")));
-        assert!(p.iter().any(|m| m.contains("residue grew")));
-    }
-
-    #[test]
     fn missing_families_is_the_uncovered_complement() {
         let mut covered: std::collections::HashSet<usize> = (0..FAM_TOTAL).collect();
         assert!(
@@ -4797,20 +3774,5 @@ mod tests {
         assert_eq!(missing.len(), 2);
         assert!(missing.contains(&family_name(0)));
         assert!(missing.contains(&family_name(FAM_NODE)));
-    }
-
-    #[test]
-    fn structurally_unreachable_families_are_valid_and_distinct() {
-        let mut seen = std::collections::HashSet::new();
-        for name in STRUCTURALLY_UNREACHABLE {
-            assert!(
-                family_id_by_name(name).is_some(),
-                "{name} is not a family name (typo / renamed?)"
-            );
-            assert!(seen.insert(*name), "{name} listed twice");
-        }
-        // The invariant the family-coverage gate enforces: the unreachable set is
-        // a subset of the universe, leaving a coverable remainder.
-        assert!(STRUCTURALLY_UNREACHABLE.len() < FAM_TOTAL);
     }
 }

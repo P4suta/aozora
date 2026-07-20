@@ -14,15 +14,17 @@
 //! `just smoke-extism`, which builds the artifact first.
 #![cfg(feature = "host-smoke")]
 
+use std::env;
 use std::fs;
+use std::path::PathBuf;
 
-use aozora::{Document, json};
+use aozora::json;
 use extism::{Manifest, Plugin, Wasm};
 
 /// The artifact `just extism-build` writes. Read at runtime (not
 /// `include_bytes!`) so a normal compile never depends on the build
 /// having run.
-const WASM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dist/aozora.wasm");
+const DEFAULT_WASM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dist/aozora.wasm");
 
 /// Same corpus as the library unit tests: plain text, a ruby span, a
 /// PUA-collision diagnostic, an indent container, and a gaiji reference.
@@ -35,8 +37,13 @@ const CORPUS: [&str; 5] = [
 ];
 
 fn load_plugin() -> Plugin {
-    let bytes = fs::read(WASM_PATH).unwrap_or_else(|e| {
-        panic!("could not read {WASM_PATH}: {e}\nrun `just extism-build` first");
+    let path = env::var_os("AOZORA_EXTISM_ARTIFACT")
+        .map_or_else(|| PathBuf::from(DEFAULT_WASM_PATH), PathBuf::from);
+    let bytes = fs::read(&path).unwrap_or_else(|error| {
+        panic!(
+            "could not read {}: {error}\nrun `just extism-build` first",
+            path.display()
+        );
     });
     let manifest = Manifest::new([Wasm::data(bytes)]);
     Plugin::new(&manifest, [], false).expect("instantiate aozora.wasm plugin")
@@ -46,7 +53,7 @@ fn load_plugin() -> Plugin {
 fn every_export_is_byte_identical_to_the_shared_authority() {
     let mut plugin = load_plugin();
     for src in CORPUS {
-        let doc = Document::new(src.to_owned());
+        let doc = aozora::parse(src.to_owned()).expect("source fits parser span limit");
         let tree = doc.snapshot();
 
         let html: &str = plugin.call("to_html", src).expect("to_html");
@@ -80,7 +87,7 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
         );
 
         let gaiji: &str = plugin.call("gaiji_json", src).expect("gaiji_json");
-        assert_eq!(gaiji, json::gaiji(src), "gaiji_json src: {src}");
+        assert_eq!(gaiji, json::gaiji(&tree), "gaiji_json src: {src}");
     }
 }
 

@@ -6,8 +6,8 @@
 //! Tree-sitter's grammar tokenises `［＃…］` as a slug node but does
 //! NOT semantically pair `ここから` / `終わり` markers. The aozora
 //! semantic parser does, but it's too slow for a per-cursor request
-//! like folding ranges. Direct text scanning against the snapshot's
-//! `Arc<str>` is `O(n)` once per request, no parser invoked, and reuses
+//! like folding ranges. Direct text scanning against the snapshot source is
+//! `O(n)` once per request, no parser invoked, and reuses
 //! the same byte-then-line conversion pipeline as the rest of the LSP.
 //!
 //! Two shapes of folds are emitted:
@@ -24,8 +24,8 @@ use tower_lsp::lsp_types::{FoldingRange, FoldingRangeKind};
 
 /// Compute every folding range for `source`.
 ///
-/// `source` is taken as a snapshot's `Arc<str>` (immutable for the
-/// duration of the call); ranges are returned in source order.
+/// `source` is borrowed from an immutable snapshot; ranges are returned in
+/// source order.
 #[must_use]
 pub(super) fn folding_ranges(source: &str) -> Vec<FoldingRange> {
     let mut out = Vec::new();

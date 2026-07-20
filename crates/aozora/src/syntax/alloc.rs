@@ -27,19 +27,16 @@
 
 use crate::encoding::gaiji::GaijiCanonical;
 
-#[cfg(test)]
-use crate::syntax::Container;
 use crate::syntax::format::{ForwardAttr, ForwardOrigin, LineFormat};
 use crate::syntax::{
     BoutenKind, BoutenPosition, DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, RubySide,
     SectionKind,
 };
 
-#[cfg(test)]
-use super::ast::Warichu;
 use super::ast::{
-    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned,
-    Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore, Ruby, Segment,
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji,
+    GaijiCanonicalOwned, Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore,
+    Ruby, Segment,
 };
 
 /// `true` for the canonical empty-content form (an empty segment run).
@@ -185,6 +182,7 @@ impl Allocator {
         Gaiji {
             hint,
             canonical,
+            mencode_separator: true,
             standalone,
         }
     }
@@ -291,6 +289,19 @@ impl Allocator {
         self.forward_format(ForwardAttr::Bouten { kind, position }, target, origin)
     }
 
+    pub(crate) fn bouten_range(
+        &mut self,
+        kind: BoutenKind,
+        target: Content,
+        position: BoutenPosition,
+    ) -> Node {
+        self.forward_format_nested(
+            ForwardAttr::Bouten { kind, position },
+            target,
+            ForwardOrigin::Reclaimed,
+        )
+    }
+
     /// `Node::Format` with a 縦中横 attribute.
     ///
     /// # Panics
@@ -320,7 +331,25 @@ impl Allocator {
             attr,
             target,
             origin,
-            accent_body: None,
+            payload: ForwardPayload::None,
+        })
+    }
+
+    pub(crate) fn forward_format_nested(
+        &mut self,
+        attr: ForwardAttr,
+        text: Content,
+        origin: ForwardOrigin,
+    ) -> Node {
+        let target = self.push_nonempty(
+            text,
+            "classify stage must emit a forward format with a non-empty target",
+        );
+        Node::Format(ForwardFormat {
+            attr,
+            target,
+            origin,
+            payload: ForwardPayload::NestedSource,
         })
     }
 
@@ -337,12 +366,12 @@ impl Allocator {
             text,
             "classify stage must emit an accent-dot format with a non-empty target",
         );
-        let accent_body = Some(self.store.intern(body));
+        let payload = ForwardPayload::AccentBody(self.store.intern(body));
         Node::Format(ForwardFormat {
             attr: ForwardAttr::AccentDot,
             target,
             origin,
-            accent_body,
+            payload,
         })
     }
 
@@ -356,13 +385,6 @@ impl Allocator {
     #[must_use]
     pub(crate) fn line(&self, lf: LineFormat) -> Node {
         Node::Line(lf)
-    }
-
-    /// `Node::Warichu(Warichu { upper, lower })` — bare-content fields.
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn warichu(&self, upper: Content, lower: Content) -> Node {
-        Node::Warichu(Warichu { upper, lower })
     }
 
     /// `Node::PageBreak`.
@@ -537,13 +559,6 @@ impl Allocator {
         );
         Node::AngleQuote(AngleQuote { content })
     }
-
-    /// `Node::Container(c)`.
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn container(&self, c: Container) -> Node {
-        Node::Container(c)
-    }
 }
 
 #[cfg(test)]
@@ -703,24 +718,6 @@ mod tests {
         };
         assert_eq!(a.store().resolve_str(dn.raw), "［＃ママ］");
         assert_eq!(dn.kind, DirectiveKind::Sic);
-    }
-
-    #[test]
-    fn warichu_round_trip() {
-        let mut a = Allocator::new();
-        let upper = a.content_plain("上");
-        let lower = a.content_plain("下");
-        let Node::Warichu(w) = a.warichu(upper, lower) else {
-            panic!("expected Warichu");
-        };
-        let Content::Plain(u) = w.upper else {
-            panic!("upper not plain");
-        };
-        let Content::Plain(l) = w.lower else {
-            panic!("lower not plain");
-        };
-        assert_eq!(a.store().resolve_str(u), "上");
-        assert_eq!(a.store().resolve_str(l), "下");
     }
 
     #[test]

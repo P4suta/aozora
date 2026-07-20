@@ -24,8 +24,6 @@
 
 use aozora::InternalCheckCode;
 // `Document` is reached only by the `#[cfg(test)]` `diagnostics_for_source`.
-#[cfg(test)]
-use aozora::Document;
 use aozora::{Diagnostic as AozoraDiagnostic, PairKind, Severity};
 
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
@@ -136,7 +134,7 @@ impl SerializablePairKind {
 #[cfg(test)]
 #[must_use]
 pub(crate) fn diagnostics_for_source(source: &str, lang: &LanguageIdentifier) -> Vec<Diagnostic> {
-    let document = Document::new(source);
+    let document = aozora::parse(source).expect("source fits parser span limit");
     let tree = document.snapshot();
     let view = DocLineView::from_source(source);
     diagnostics_from_aozora(&view, tree.diagnostics(), lang)

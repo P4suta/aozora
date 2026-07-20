@@ -1,6 +1,6 @@
 /**
  * Vitest 用の aozora-wasm スタブ。テストでは Document クラスや
- * `slugsJson` を実際には呼ばない（純粋関数のみテスト対象）が、
+ * `slugs` を実際には呼ばない（純粋関数のみテスト対象）が、
  * 解決対象の import を成功させるためにダミーを export する。
  */
 
@@ -11,26 +11,24 @@ export class Document {
   toHtml(): string {
     return '';
   }
-  serialize(): string {
+  toSource(): string {
     return '';
   }
-  diagnosticsJson(): string {
-    return '{"schemaVersion":2,"data":[]}';
+  edit(_edits: unknown[]): void {}
+  nodes(): unknown[] {
+    return [];
   }
-  nodesJson(): string {
-    return '{"schemaVersion":2,"data":[]}';
+  diagnostics(): unknown[] {
+    return [];
   }
-  pairsJson(): string {
-    return '{"schemaVersion":2,"data":[]}';
+  pairs(): unknown[] {
+    return [];
   }
-  gaijiJson(): string {
-    return '{"schemaVersion":2,"data":[]}';
+  gaiji(): unknown[] {
+    return [];
   }
-  profileJson(): string {
-    return '{"schemaVersion":2,"data":[]}';
-  }
-  resolveGaijiAt(_byte_offset: number): string {
-    return 'null';
+  gaijiAt(_byte_offset: number): undefined {
+    return undefined;
   }
   sourceByteLen(): number {
     return 0;
@@ -40,13 +38,15 @@ export class Document {
   }
 }
 
-export function slugsJson(): string {
-  return '{"schemaVersion":2,"data":[]}';
+export function slugs(): unknown[] {
+  return [];
 }
 
 export function version(): string {
   return '0.0.0-test';
 }
+
+export function prewarm(): void {}
 
 export default async function init(): Promise<void> {
   /* no-op */

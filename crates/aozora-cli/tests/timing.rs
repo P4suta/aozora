@@ -13,6 +13,8 @@
 use std::io::Write;
 use std::process::Stdio;
 
+use aozora::json::SCHEMA_VERSION;
+
 mod common;
 
 /// Run `aozora <args>` feeding `stdin`; return `(stdout, stderr)`.
@@ -48,7 +50,7 @@ fn timing_auto_selects_json_when_stderr_is_piped() {
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("auto → json envelope parses");
     assert_eq!(
-        value["schemaVersion"], 1,
+        value["schemaVersion"], SCHEMA_VERSION,
         "auto resolves to the json envelope off a TTY: {stderr:?}"
     );
 }
@@ -70,8 +72,8 @@ fn timing_json_envelope_carries_phases_and_total_under_data() {
     let (_, stderr) = run(&["render", "--timing"], RUBY);
     let value: serde_json::Value = serde_json::from_str(stderr.trim()).expect("timing json parses");
     assert_eq!(
-        value["schemaVersion"], 1,
-        "carries the cli-local schemaVersion: {stderr:?}"
+        value["schemaVersion"], SCHEMA_VERSION,
+        "carries the wire schemaVersion: {stderr:?}"
     );
     // Two-key envelope: the phases + total live UNDER `data`.
     let names: Vec<&str> = value["data"]["phases"]

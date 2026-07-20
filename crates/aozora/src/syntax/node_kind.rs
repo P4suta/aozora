@@ -14,13 +14,6 @@
 
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
-/// The first 23 variants ([`Self::Ruby`] through [`Self::Container`])
-/// project from `Node`'s discriminant. The
-/// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
-/// only arise from `NodeRef`'s container open /
-/// close variants — the inline `Container` payload uses
-/// [`Self::Container`].
-///
 /// `#[non_exhaustive]` so adding a new `Node` variant only needs
 /// to land here and on the per-call `match` sites; existing wire
 /// consumers see the new variant as an unrecognised tag and gracefully
@@ -44,10 +37,8 @@ pub enum NodeKind {
     AlignEnd,
     /// Centring (中央) marker (`ページの左右中央` / `中央揃え`).
     Center,
-    /// 割注 (warichu) — split-line annotation.
-    Warichu,
     /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on
-    /// in gothic ([`crate::syntax::Format::Gothic`], distinct from 太字).
+    /// in gothic, distinct from 太字.
     LineGothic,
     /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the
     /// line it sits on.
@@ -76,8 +67,6 @@ pub enum NodeKind {
     Emphasis,
     /// Side annotation (注記) — `「X」の左に「Y」の注記`.
     MarginNote,
-    /// Inline-attached container (字下げ系の `Node` 包み込み).
-    Container,
     /// `NodeRef::BlockOpen` projection — paired-container open
     /// sentinel position.
     ContainerOpen,
@@ -92,7 +81,7 @@ impl NodeKind {
     /// Used by `aozora spec kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 23] = [
         Self::Ruby,
         Self::Bouten,
         Self::CombineUpright,
@@ -100,7 +89,6 @@ impl NodeKind {
         Self::Indent,
         Self::AlignEnd,
         Self::Center,
-        Self::Warichu,
         Self::LineGothic,
         Self::LineFontSize,
         Self::PageBreak,
@@ -115,7 +103,6 @@ impl NodeKind {
         Self::AngleQuote,
         Self::Emphasis,
         Self::MarginNote,
-        Self::Container,
         Self::ContainerOpen,
         Self::ContainerClose,
     ];
@@ -136,7 +123,6 @@ impl NodeKind {
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
-            Self::Warichu => "warichu",
             Self::LineGothic => "lineGothic",
             Self::LineFontSize => "lineFontSize",
             Self::PageBreak => "pageBreak",
@@ -151,7 +137,6 @@ impl NodeKind {
             Self::AngleQuote => "angleQuote",
             Self::Emphasis => "emphasis",
             Self::MarginNote => "marginNote",
-            Self::Container => "container",
             Self::ContainerOpen => "containerOpen",
             Self::ContainerClose => "containerClose",
         }
@@ -174,7 +159,6 @@ mod tests {
         assert_eq!(NodeKind::Indent.as_json_tag(), "indent");
         assert_eq!(NodeKind::AlignEnd.as_json_tag(), "alignEnd");
         assert_eq!(NodeKind::Center.as_json_tag(), "center");
-        assert_eq!(NodeKind::Warichu.as_json_tag(), "warichu");
         assert_eq!(NodeKind::PageBreak.as_json_tag(), "pageBreak");
         assert_eq!(NodeKind::SectionBreak.as_json_tag(), "sectionBreak");
         assert_eq!(NodeKind::BodyEnd.as_json_tag(), "bodyEnd");
@@ -187,7 +171,6 @@ mod tests {
         assert_eq!(NodeKind::AngleQuote.as_json_tag(), "angleQuote");
         assert_eq!(NodeKind::Emphasis.as_json_tag(), "emphasis");
         assert_eq!(NodeKind::MarginNote.as_json_tag(), "marginNote");
-        assert_eq!(NodeKind::Container.as_json_tag(), "container");
         assert_eq!(NodeKind::ContainerOpen.as_json_tag(), "containerOpen");
         assert_eq!(NodeKind::ContainerClose.as_json_tag(), "containerClose");
     }

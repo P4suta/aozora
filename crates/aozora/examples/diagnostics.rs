@@ -11,14 +11,12 @@
 //! cargo run --example diagnostics
 //! ```
 
-use aozora::Document;
-
 fn main() {
     // `［＃` opens an annotation that is never closed — the pairing
     // phase reaches end-of-input with the open delimiter still on its
     // stack and emits `aozora::lex::unclosed_bracket`.
     let source = "正しい段落。\n［＃ここから2字下げ";
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     let diagnostics = tree.diagnostics();

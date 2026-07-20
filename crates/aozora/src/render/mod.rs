@@ -22,7 +22,7 @@ pub use classes::AOZORA_CLASSES;
 pub use html::RenderOptions;
 pub(crate) use html::{render_html, render_html_normalized};
 pub use serialize::{DirectiveNormalization, SerializeOptions};
-pub(crate) use serialize::{serialize, serialize_with};
+pub(crate) use serialize::{requires_verbatim_recovery, serialize, serialize_with};
 
 #[cfg(test)]
 mod tests {

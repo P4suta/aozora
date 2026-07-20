@@ -19,13 +19,15 @@ use crate::spec::roman_slug;
 use crate::syntax::GaijiCanonical;
 use crate::syntax::accent::{compose_accent, compose_accent_dots};
 use crate::syntax::ast::{
-    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned,
-    Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore, Ruby, Segment,
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji,
+    GaijiCanonicalOwned, Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore,
+    Ruby, Segment,
 };
 use crate::syntax::format::ForwardOrigin;
 use crate::syntax::{AccentMark, DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
 
 use crate::render::classes;
+use crate::render::html::render_inline_source;
 use crate::render::spelling::html::{
     escape_text, parse_sashie_dimensions, render_line, write_heading_close, write_heading_open,
 };
@@ -66,10 +68,6 @@ pub(crate) fn render<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fm
         Node::Illustration(s) => render_sashie(&s, store, out),
         Node::Heading(h) => render_aozora_heading(&h, store, out),
         Node::HeadingHint(h) => render_heading_hint(h, store, out),
-        // Other variants (`Warichu`, `Container`, future non-exhaustive
-        // additions) — emit a fallback `<!-- name -->` comment so the rendered
-        // HTML stays diagnosable; the node's `xml_node_name` supplies the name.
-        _ => write!(out, "<!-- {} -->", node.xml_node_name()),
     }
 }
 
@@ -110,6 +108,47 @@ fn render_content_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> f
     }
 }
 
+#[cold]
+fn render_nested_source_range<W: Write>(
+    range: ContentRange,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    match store.content_range_as_plain(range) {
+        Some(source) => render_inline_source(source, out),
+        None => render_content_range(range, store, out),
+    }
+}
+
+fn contains_nested_markup(text: &str) -> bool {
+    text.split_once('《')
+        .is_some_and(|(_, tail)| tail.contains('》'))
+        || text
+            .split_once("［＃")
+            .is_some_and(|(_, tail)| tail.contains('］'))
+        || text
+            .split_once('≪')
+            .is_some_and(|(_, tail)| tail.contains('≫'))
+}
+
+fn render_nested_content_one<W: Write>(
+    content: Content,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    match content {
+        Content::Plain(id) => {
+            let text = store.resolve_str(id);
+            if contains_nested_markup(text) {
+                render_inline_source(text, out)
+            } else {
+                escape_text(text, out)
+            }
+        }
+        _ => render_content_one(content, store, out),
+    }
+}
+
 // ----------------------------------------------------------------------
 // Per-variant AST emitters.
 // ----------------------------------------------------------------------
@@ -134,7 +173,7 @@ fn render_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut W) -> fmt::Resul
                 attr,
                 target: r.base,
                 origin: ForwardOrigin::SelfContained,
-                accent_body: None,
+                payload: ForwardPayload::None,
             };
             render_format(&deco, store, out)?;
         }
@@ -177,13 +216,16 @@ fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) ->
     }
     match f.attr {
         ForwardAttr::Bouten { kind, position } => {
-            write!(
-                out,
-                r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
-                kind = classes::bouten_kind_slug(kind),
-                pos = classes::bouten_position_slug(position),
-            )?;
-            render_content_range(f.target, store, out)?;
+            out.write_str(r#"<em class="aozora-bouten aozora-bouten-"#)?;
+            out.write_str(classes::bouten_kind_slug(kind))?;
+            out.write_str(" aozora-bouten-")?;
+            out.write_str(classes::bouten_position_slug(position))?;
+            out.write_str(r#"">"#)?;
+            if matches!(f.payload, ForwardPayload::NestedSource) {
+                render_nested_source_range(f.target, store, out)?;
+            } else {
+                render_content_range(f.target, store, out)?;
+            }
             out.write_str("</em>")
         }
         ForwardAttr::CombineUpright => {
@@ -316,18 +358,20 @@ fn render_forward_semantic<W: Write>(
 
 /// Render a #331 dotted-letter forward: compose the addressed letters of the
 /// reclaimed run into their precomposed glyphs inside an `aozora-accent-dot`
-/// span. The selector grammar lives in the interned `accent_body`; the shared
+/// span. The selector grammar lives in [`ForwardPayload::AccentBody`]; the shared
 /// composer (also the classifier's validator) produces the visible run. A
 /// literal class (not slug-derived) keeps this off the `slugs.rs` / Hepburn
 /// path; a body-less or structured target falls back to the run verbatim.
 fn render_accent_dot<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> fmt::Result {
     out.write_str(r#"<span class="aozora-accent-dot">"#)?;
-    match (store.content_range_as_plain(f.target), f.accent_body) {
-        (Some(run), Some(body_id)) => match compose_accent_dots(run, store.resolve_str(body_id)) {
-            Some(composed) => escape_text(&composed, out)?,
-            // Unreachable post-classify; render the run rather than drop it.
-            None => escape_text(run, out)?,
-        },
+    match (store.content_range_as_plain(f.target), f.payload) {
+        (Some(run), ForwardPayload::AccentBody(body_id)) => {
+            match compose_accent_dots(run, store.resolve_str(body_id)) {
+                Some(composed) => escape_text(&composed, out)?,
+                // Unreachable post-classify; render the run rather than drop it.
+                None => escape_text(run, out)?,
+            }
+        }
         // A structured / body-less target can't be composed; emit as-is.
         _ => render_content_range(f.target, store, out)?,
     }
@@ -530,7 +574,7 @@ fn render_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> 
     out.write_str(r#"" />"#)?;
     if let Some(caption) = s.caption {
         out.write_str("<figcaption>")?;
-        render_content_one(caption, store, out)?;
+        render_nested_content_one(caption, store, out)?;
         out.write_str("</figcaption>")?;
     }
     out.write_str("</figure>")
@@ -637,6 +681,36 @@ mod tests {
         let gi = out.find("aozora-gaiji").expect("gaiji present");
         let di = out.find("aozora-directive").expect("directive present");
         assert!(t < gi && gi < di, "segment order diverged: {out}");
+    }
+
+    #[test]
+    fn nested_markup_requires_one_complete_delimiter_pair() {
+        assert!(!contains_nested_markup("plain text"));
+        assert!(contains_nested_markup("語《ご》"));
+        assert!(contains_nested_markup("前［＃ママ］後"));
+        assert!(contains_nested_markup("前≪引用≫後"));
+        assert!(!contains_nested_markup("語《ご"));
+        assert!(!contains_nested_markup("前［＃ママ"));
+        assert!(!contains_nested_markup("前≪引用"));
+    }
+
+    #[test]
+    fn gaiji_codepoint_attribute_separates_multiple_scalars() {
+        let mut a = Allocator::new();
+        let single = a.make_gaiji("々", None, false);
+        let single = a.gaiji(single);
+        let multiple = a.make_gaiji("", Some("第3水準1-4-87"), false);
+        let multiple = a.gaiji(multiple);
+        let store = a.into_store();
+
+        assert_eq!(
+            html(single, &store),
+            r#"<span class="aozora-gaiji" data-codepoint="U+3005">々</span>"#
+        );
+        assert_eq!(
+            html(multiple, &store),
+            "<span class=\"aozora-gaiji\" data-codepoint=\"U+304B U+309A\">か\u{309A}</span>"
+        );
     }
 
     /// A margin note renders a full `<ruby>` with the note carried in an

@@ -13,7 +13,7 @@ Arguments:
   [DIR]
           Directory to scaffold into (created if it does not exist). Defaults to the current
           directory
-          
+
           [default: .]
 
 Options:

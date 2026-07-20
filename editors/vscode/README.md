@@ -9,20 +9,23 @@ CLI に組み込まれた `aozora lsp` サブコマンド (in-process) で、そ
 
 ## インストール
 
-**まだ公開していない。** Marketplace にも無く、`.vsix` も配布していない。
-動かすにはリポジトリから:
+VS Code Marketplace または Open VSX から `aozora-vscode` をインストールする。
+コマンドラインでは:
 
 ```sh
-cargo install --path crates/aozora-cli   # `aozora` CLI + 言語サーバ (~/.cargo/bin へ)
-cd editors/vscode && bun install
+code --install-extension yasunobu-sakashita.aozora-vscode
 ```
 
-`editors/vscode/` を VS Code で開いて F5 を押すと、拡張を読み込んだ
-Extension Development Host が起動する。`.aozora` ファイルを開けば有効になる。
+GitHub Release の対象プラットフォーム向け `.vsix` も
+`code --install-extension FILE.vsix` でインストールできる。
 
-言語サーバは `aozora lsp --stdio` として起動される。`aozora` は `PATH` から
-解決される。ビルドツリーのバイナリを直接使うなら `aozora.lsp.path` に指定する
-(`${workspaceFolder}` が使える)。
+各プラットフォーム向けパッケージには言語サーバ兼 CLI が同梱されるため、追加設定
+なしで診断・補完・フォーマット・プレビュー・workspace lint が動作する。独自ビルド
+を使う場合だけ `aozora.lsp.path` または `aozora.cli.path` を設定する
+（`${workspaceFolder}` が使える）。
+
+ソースから開発する場合は `editors/vscode/` で `bun install` を実行し、VS Code
+から F5 を押す。
 
 ## ライセンス
 

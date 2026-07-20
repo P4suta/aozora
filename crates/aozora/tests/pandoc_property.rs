@@ -17,14 +17,13 @@
 //!    diff-compares output.
 #![cfg(feature = "pandoc")]
 
-use aozora::Document;
 use aozora::pandoc::to_pandoc;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use proptest::prelude::*;
 
 fn project_to_json(source: &str) -> serde_json::Value {
-    let doc = Document::new(source.to_owned());
+    let doc = aozora::parse(source.to_owned()).expect("source fits parser span limit");
     let snapshot = doc.snapshot();
     let pandoc = to_pandoc(&snapshot);
     serde_json::to_value(&pandoc).expect("pandoc_ast::Pandoc serialises into a serde_json::Value")

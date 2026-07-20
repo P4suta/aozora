@@ -4,10 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use aozora::render::{DirectiveNormalization, SerializeOptions};
+use aozora::{DirectiveNormalization, SerializeOptions};
 use clap::{Args, ValueEnum};
-
-use crate::fmt::encoding::Encoding;
 
 /// The formatter's argument surface, flattened into the `aozora fmt` subcommand.
 #[derive(Args, Debug)]
@@ -40,11 +38,6 @@ pub(crate) struct FmtArgs {
     #[arg(long, conflicts_with_all = ["write", "list", "diff"])]
     json: bool,
 
-    /// Source encoding. Falls back to `AOZORA_ENCODING`, then auto-detection
-    /// (valid UTF-8 as-is, otherwise Shift_JIS — the Aozora Bunko default).
-    #[arg(long, short = 'E', value_name = "ENCODING", env = "AOZORA_ENCODING")]
-    encoding: Option<Encoding>,
-
     /// Rewrite non-canonical directive near-misses to their canonical
     /// spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the
     /// fixes flagged by the `aozora::lint::non_canonical_directive`
@@ -60,7 +53,9 @@ pub(crate) struct FmtArgs {
 /// subcommands share one colour policy with the formatter. `Deserialize`
 /// (lowercase, mirroring [`Encoding`]) lets it back the `color` key in
 /// `.aozora.toml`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ColorChoice {
     /// Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`).
@@ -111,13 +106,6 @@ impl FmtArgs {
         &self.paths
     }
 
-    /// The `-E/--encoding` override, if any (else the caller's default —
-    /// `AOZORA_ENCODING`, the `.aozora.toml` key, or auto-detection).
-    #[must_use]
-    pub(crate) fn encoding(&self) -> Option<Encoding> {
-        self.encoding
-    }
-
     /// The serialization options derived from the flags — currently just the
     /// `--fix` autofix opt-in, which applies zero-false-positive Tier1 only
     /// (`Canonical`); the lossy Tier2 reductions are render-only (ADR-0026).
@@ -165,21 +153,8 @@ mod tests {
             diff: false,
             list: false,
             json: false,
-            encoding: None,
             fix: false,
         }
-    }
-
-    #[test]
-    fn encoding_passes_the_override_through() {
-        // No `-E`: defer to the caller (None), not a defaulted `Auto`.
-        assert_eq!(args().encoding(), None);
-        // An explicit override is surfaced verbatim — and `Sjis` is *not*
-        // `Encoding::default()` (`Auto`), so this also rejects a
-        // `Some(Default::default())` stand-in.
-        let mut a = args();
-        a.encoding = Some(Encoding::Sjis);
-        assert_eq!(a.encoding(), Some(Encoding::Sjis));
     }
 
     #[test]

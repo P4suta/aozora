@@ -142,11 +142,7 @@ fn config_encoding_utf8_rejects_sjis_bytes() {
     write_config(dir.path(), "encoding = \"utf8\"\n");
     // 「あ」in Shift_JIS (0x82 0xA0) is not valid UTF-8.
     let (code, stderr) = run_in(dir.path(), &["check"], &[], b"\x82\xa0");
-    assert_ne!(
-        code,
-        Some(0),
-        "utf8 config rejects non-UTF-8 input: {stderr:?}"
-    );
+    assert_eq!(code, Some(2), "invalid input encoding: {stderr:?}");
 }
 
 #[test]
@@ -154,7 +150,7 @@ fn unknown_config_key_is_rejected() {
     let dir = TempDir::new().expect("tempdir");
     write_config(dir.path(), "bogus = 1\n");
     let (code, stderr) = run_in(dir.path(), &["check"], &[], ONE_PUA);
-    assert_ne!(code, Some(0), "unknown key → non-zero exit: {stderr:?}");
+    assert_eq!(code, Some(2), "unknown key is a configuration error");
     assert!(
         stderr.contains("invalid config"),
         "error explains the bad config: {stderr:?}"
@@ -262,11 +258,7 @@ fn invalid_color_value_is_rejected() {
     let dir = TempDir::new().expect("tempdir");
     write_config(dir.path(), "color = \"rainbow\"\n");
     let (code, stderr) = run_in(dir.path(), &["check"], &[], ONE_PUA);
-    assert_ne!(
-        code,
-        Some(0),
-        "unknown color value → non-zero exit: {stderr:?}"
-    );
+    assert_eq!(code, Some(2), "unknown color value is a config error");
     assert!(
         stderr.contains("invalid config"),
         "error explains the bad color value: {stderr:?}"

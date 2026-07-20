@@ -11,14 +11,12 @@
 //! cargo run --example literal_contexts
 //! ```
 
-use aozora::Document;
-
 fn main() {
     let source = "冒頭｜青梅《おうめ》。［＃改ページ］次の章。";
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
-    for sn in tree.source_nodes() {
-        println!("{}", sn.source_span.slice(source));
+    for node in tree.nodes() {
+        println!("{}", tree.slice(node.span()).expect("node span is valid"));
     }
 }

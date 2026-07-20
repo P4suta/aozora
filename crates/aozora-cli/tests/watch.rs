@@ -1,12 +1,9 @@
-//! Integration coverage for `--watch` (src/watch.rs).
-//!
-//! The decisive, deterministic check is that `--watch` on stdin is a
-//! usage error — a real watch loop is non-deterministic and long-running,
-//! so the end-to-end re-run test is `#[ignore]`d (run it by name with
-//! `cargo test -- --ignored`).
+//! Integration coverage for `--watch`.
 
 use std::io::Write;
 use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
 mod common;
 
@@ -23,6 +20,15 @@ fn watch_on_stdin_is_a_usage_error() {
         .expect("spawn aozora");
     // Close stdin so the child cannot block on a read.
     drop(child.stdin.take());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while child.try_wait().expect("poll aozora").is_none() {
+        if Instant::now() >= deadline {
+            child.kill().expect("stop hung aozora");
+            child.wait().expect("reap hung aozora");
+            panic!("--watch on stdin entered the watch loop");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     let output = child.wait_with_output().expect("wait for aozora");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
@@ -37,7 +43,6 @@ fn watch_on_stdin_is_a_usage_error() {
 }
 
 #[test]
-#[ignore = "long-running watch loop; run explicitly with --ignored"]
 fn watch_reruns_on_change() {
     use std::fs;
     use std::thread::sleep;
@@ -61,9 +66,15 @@ fn watch_reruns_on_change() {
         .spawn()
         .expect("spawn aozora");
 
-    sleep(Duration::from_millis(300));
-    fs::write(&path, "｜赤《あか》").expect("edit input");
-    sleep(Duration::from_millis(600));
+    for iteration in 0..30 {
+        let source = if iteration % 2 == 0 {
+            "｜赤《あか》"
+        } else {
+            "｜青《あお》"
+        };
+        fs::write(&path, source).expect("edit input");
+        sleep(Duration::from_millis(100));
+    }
     child.kill().expect("kill watch");
     let output = child.wait_with_output().expect("wait for aozora");
     let stdout = String::from_utf8_lossy(&output.stdout);

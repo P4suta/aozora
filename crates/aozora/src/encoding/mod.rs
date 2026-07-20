@@ -151,7 +151,7 @@ pub const fn has_utf8_bom(input: &[u8]) -> bool {
     matches!(input, [0xEF, 0xBB, 0xBF, ..])
 }
 
-pub mod gaiji;
+pub(crate) mod gaiji;
 
 /// PHF tables (single, combo, description) emitted by `build.rs`
 /// at compile time via `phf_codegen`. Lives in `OUT_DIR` so it's

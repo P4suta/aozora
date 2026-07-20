@@ -1,13 +1,5 @@
-import { slugsJson } from '../wasm-loader';
-import { warn } from '../logger';
-
-export interface SlugEntry {
-  canonical: string;
-  family: string;
-  accepts_param: boolean;
-  doc: string;
-  partner: string | null;
-}
+import type { Slug as SlugEntry } from 'aozora-wasm';
+import { slugs } from '../wasm-loader';
 
 let cache: SlugEntry[] | null = null;
 
@@ -20,15 +12,8 @@ let cache: SlugEntry[] | null = null;
  */
 export function loadSlugCatalog(): SlugEntry[] {
   if (cache) return cache;
-  try {
-    const env = JSON.parse(slugsJson()) as {
-      schemaVersion: number;
-      data: SlugEntry[];
-    };
-    cache = env.data ?? [];
-  } catch (err) {
-    warn('Failed to load slug catalog from WASM:', err);
-    cache = [];
-  }
+  cache = Array.from(slugs());
   return cache;
 }
+
+export type { SlugEntry };

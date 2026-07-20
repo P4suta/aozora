@@ -45,11 +45,7 @@
 //!
 //! ## Wire format
 //!
-//! Every JSON-returning plugin function delegates to [`aozora::json`]:
-//!
-//! ```json
-//! { "schemaVersion": 2, "data": [ … ] }
-//! ```
+//! Every JSON-returning plugin function delegates to [`aozora::json`].
 //!
 //! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to that
 //! shape. The `schema_version` plugin export lets a host assert wasm/SDK
@@ -68,7 +64,7 @@
 /// `aozora-wasm` gates its `MAX_SOURCE_BYTES` guard.
 #[cfg(any(target_arch = "wasm32", test))]
 mod logic {
-    use aozora::{Document, json};
+    use aozora::json;
 
     /// Largest input the parser core accepts, in bytes. Its span
     /// offsets are `u32`, so a longer source trips a `u32::MAX` assert
@@ -107,7 +103,10 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_html(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(Document::new(source).snapshot().to_html())
+        Ok(aozora::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_html())
     }
 
     /// Parse `source` and re-emit it as Aozora source text (round-trip
@@ -119,12 +118,14 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_source(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(Document::new(source).snapshot().to_source())
+        Ok(aozora::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_source())
     }
 
     /// Parse `source` and serialize its diagnostics through the shared
-    /// [`aozora::json`] authority. Empty document →
-    /// `{"schemaVersion":2,"data":[]}`.
+    /// [`aozora::json`] authority. An empty document has an empty `data` array.
     ///
     /// # Errors
     ///
@@ -133,7 +134,10 @@ mod logic {
     pub(crate) fn render_diagnostics_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         Ok(json::diagnostics(
-            Document::new(source).snapshot().diagnostics(),
+            aozora::parse(source)
+                .expect("source fits parser span limit")
+                .snapshot()
+                .diagnostics(),
         ))
     }
 
@@ -146,7 +150,7 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_nodes_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        let doc = Document::new(source);
+        let doc = aozora::parse(source).expect("source fits parser span limit");
         Ok(json::nodes(&doc.snapshot()))
     }
 
@@ -159,7 +163,7 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        let doc = Document::new(source);
+        let doc = aozora::parse(source).expect("source fits parser span limit");
         Ok(json::pairs(&doc.snapshot()))
     }
 
@@ -172,7 +176,7 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_container_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        let doc = Document::new(source);
+        let doc = aozora::parse(source).expect("source fits parser span limit");
         Ok(json::container_pairs(&doc.snapshot()))
     }
 
@@ -185,7 +189,8 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_gaiji_json(source: &str) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(json::gaiji(source))
+        let document = aozora::parse(source.to_owned()).expect("source fits parser span limit");
+        Ok(json::gaiji(&document.snapshot()))
     }
 
     /// Serialize the static spec slug catalogue through the shared
@@ -195,10 +200,9 @@ mod logic {
         json::slugs()
     }
 
-    /// The parser's channel-aware build version (e.g. `0.5.0`,
-    /// `0.5.0-dev+g3672e3f`). Single authority: the
-    /// `AOZORA_VERSION_STRING` this crate's `build.rs` injects — never a
-    /// hard-coded literal. Mirrors `aozora-wasm`'s `version()`.
+    /// The parser's channel-aware build version. Single authority: the
+    /// `AOZORA_VERSION_STRING` this crate's `build.rs` injects. Mirrors
+    /// `aozora-wasm`'s `version()`.
     pub(crate) fn version() -> &'static str {
         env!("AOZORA_VERSION_STRING")
     }
@@ -225,7 +229,7 @@ mod tests {
         render_diagnostics_json, render_gaiji_json, render_html, render_nodes_json,
         render_pairs_json, render_source, schema_version, slugs_json, version,
     };
-    use aozora::{Document, json};
+    use aozora::json;
 
     /// Inputs that, between them, exercise every serializer with
     /// non-empty data: plain text, a ruby span (nodes + pairs), a
@@ -247,7 +251,7 @@ mod tests {
     #[test]
     fn every_serializer_is_byte_identical_to_the_shared_authority() {
         for src in CORPUS {
-            let doc = Document::new(src.to_owned());
+            let doc = aozora::parse(src.to_owned()).expect("source fits parser span limit");
             let tree = doc.snapshot();
             assert_eq!(
                 render_html(src.to_owned()).expect("within span limit"),
@@ -281,7 +285,7 @@ mod tests {
             );
             assert_eq!(
                 render_gaiji_json(src).expect("within span limit"),
-                json::gaiji(src),
+                json::gaiji(&tree),
                 "gaiji_json src: {src}"
             );
         }

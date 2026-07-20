@@ -1,7 +1,7 @@
 //! Tier2 degraded-form matcher for the notation-hygiene layers (ADR-0026).
 //!
 //! [`degraded_directive`] maps a `［＃…］` directive body that the parser keeps
-//! as `DirectiveKind::Unknown` — and that Tier1 ([`crate::syntax::lint::canonical_directive`])
+//! as `DirectiveKind::Editorial` — and that Tier1 ([`crate::syntax::lint::canonical_directive`])
 //! deliberately declines — to a directly parser-recognized spelling. Where
 //! Tier1 is a *zero-false-positive* map of verified near-misses that lose no
 //! meaning, Tier2 is the opt-in home for the reductions Tier1 must refuse
@@ -38,7 +38,7 @@ use crate::syntax::lint::is_digit_run;
 /// `fmt --fix` rewrite source lossily and hides the loss behind a purely
 /// syntactic self-test.
 #[must_use]
-pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
+pub(crate) fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
     // (The former D1 — line-scope 中文字、ゴシック体 → 中文字、太字 — was removed
     // in #435: ゴシック体 is now a first-class gothic construct distinct from
     // 太字, so folding it to 太字 is a meaning change, not a faithful render.
@@ -129,7 +129,8 @@ pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
 /// is `Some`, `canonical_directive(sample)` is `None` (disjoint from Tier1),
 /// `［＃sample］` parses to Unknown, `［＃<output>］` parses to a non-Unknown
 /// node, and `degraded_directive(output)` is `None` (idempotent).
-pub const DEGRADED_SAMPLES: &[&str] = &[
+#[cfg(test)]
+pub(crate) const DEGRADED_SAMPLES: &[&str] = &[
     "ここから最後まで3字下げ",
     "地付き、地より3字アキ",
     "地付き、地より3字あき",

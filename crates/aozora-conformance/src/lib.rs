@@ -8,7 +8,8 @@
 //!
 //! - `source.txt` — input bytes (UTF-8) for the parser
 //! - `expected.html` — golden output from `tree.to_html()`
-//! - `expected.serialize.txt` — golden output from `tree.to_source()`
+//! - `expected.serialize.txt` — golden output from
+//!   `aozora::fmt::format_source(...)`
 //! - `expected.diagnostics.json` — golden output from
 //!   `aozora::json::diagnostics(tree.diagnostics())`
 //! - `expected.nodes.json` — golden output from
@@ -110,11 +111,10 @@ impl RenderFixture {
             .unwrap_or_else(|_| panic!("missing source.txt in fixture {group}/{case}"));
         let expected_html = fs::read_to_string(dir.join("expected.html")).ok();
         let expected_serialize = fs::read_to_string(dir.join("expected.serialize.txt")).ok();
-        let expected_diagnostics = fs::read_to_string(dir.join("expected.diagnostics.json")).ok();
-        let expected_nodes = fs::read_to_string(dir.join("expected.nodes.json")).ok();
-        let expected_pairs = fs::read_to_string(dir.join("expected.pairs.json")).ok();
-        let expected_container_pairs =
-            fs::read_to_string(dir.join("expected.container_pairs.json")).ok();
+        let expected_diagnostics = read_wire_golden(&dir.join("expected.diagnostics.json"));
+        let expected_nodes = read_wire_golden(&dir.join("expected.nodes.json"));
+        let expected_pairs = read_wire_golden(&dir.join("expected.pairs.json"));
+        let expected_container_pairs = read_wire_golden(&dir.join("expected.container_pairs.json"));
         Self {
             name: format!("{group}/{case}"),
             dir: dir.to_path_buf(),
@@ -213,6 +213,18 @@ impl RenderFixture {
             )
         })
     }
+}
+
+fn read_wire_golden(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().map(|mut value| {
+        if value.ends_with('\n') {
+            value.pop();
+            if value.ends_with('\r') {
+                value.pop();
+            }
+        }
+        value
+    })
 }
 
 /// Internal helper bundle for `RenderFixture::golden_for` — keeps the

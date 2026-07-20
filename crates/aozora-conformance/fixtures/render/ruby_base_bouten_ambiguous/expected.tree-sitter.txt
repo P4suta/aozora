@@ -1,1 +1,1 @@
-(document (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (slug body: (slug_body)) (text) (newline))
+(document (explicit_ruby) (text) (explicit_ruby) (text) (slug) (text) (newline))

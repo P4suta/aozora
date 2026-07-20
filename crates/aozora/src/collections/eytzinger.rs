@@ -28,6 +28,10 @@ impl<T> EytzingerArray<T> {
         Self { data: Vec::new() }
     }
 
+    pub(super) fn from_layout(data: Vec<T>) -> Self {
+        Self { data }
+    }
+
     /// Number of elements.
     #[cfg(test)]
     #[must_use]
@@ -71,11 +75,23 @@ impl<T: Ord> EytzingerArray<T> {
         let mut k = 0usize;
         while k < n {
             let here = &self.data[k];
+            let previous = k;
             match target.cmp(here) {
-                Ordering::Less => k = 2 * k + 1,
-                Ordering::Greater => k = 2 * k + 2,
+                Ordering::Less => {
+                    k = k
+                        .checked_mul(2)
+                        .and_then(|index| index.checked_add(1))
+                        .unwrap_or(n);
+                }
+                Ordering::Greater => {
+                    k = k
+                        .checked_mul(2)
+                        .and_then(|index| index.checked_add(2))
+                        .unwrap_or(n);
+                }
                 Ordering::Equal => return Some(k),
             }
+            assert!(k > previous, "Eytzinger traversal must advance");
         }
         None
     }
@@ -90,6 +106,7 @@ impl<T: Ord + Clone> EytzingerArray<T> {
     /// release builds the search invariant is silently violated for
     /// out-of-order input — verify the source upstream.
     #[must_use]
+    #[cfg(test)]
     pub(super) fn from_sorted_slice(sorted: &[T]) -> Self {
         debug_assert!(
             sorted.windows(2).all(|w| w[0] <= w[1]),
@@ -122,6 +139,7 @@ impl<T: Ord + Clone> EytzingerArray<T> {
 /// In-order traversal of the implicit Eytzinger tree, placing
 /// `sorted[*sorted_idx]` at each node. The recursive call depth is
 /// O(log n); the per-node work is O(1).
+#[cfg(test)]
 fn eytzinger_build<T: Clone>(
     data: &mut [Option<T>],
     sorted: &[T],
@@ -172,6 +190,9 @@ mod tests {
         assert_eq!(arr.get(4), Some(&30));
         assert_eq!(arr.get(5), Some(&50));
         assert_eq!(arr.get(6), Some(&70));
+        assert_eq!(arr.search(&10), Some(3));
+        assert_eq!(arr.search(&30), Some(4));
+        assert_eq!(arr.search(&70), Some(6));
     }
 
     #[test]

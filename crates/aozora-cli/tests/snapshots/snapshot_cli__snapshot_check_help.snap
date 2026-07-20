@@ -9,7 +9,7 @@ Usage: aozora check [OPTIONS] [FILE]
 Arguments:
   [FILE]
           Input path; pass `-` (or omit) to read from stdin
-          
+
           [default: -]
 
 Options:
@@ -23,8 +23,29 @@ Options:
             mirrors are common, and the caller should not have to know which they have
           - utf8: Force UTF-8; error if the input is not valid UTF-8
           - sjis: Force Shift_JIS decoding
-          
+
           [env: AOZORA_ENCODING=]
+
+      --format <FORMAT>
+          How to render diagnostics: `human`, `json`, or `short`.
+
+          Defaults to `human` on a terminal and `json` when piped. Falls back to `AOZORA_FORMAT`,
+          then `.aozora.toml`.
+
+          Possible values:
+          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
+          - human: miette graphical report — source snippet + caret + label + help
+          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
+          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
+
+          [env: AOZORA_FORMAT=]
+
+  -s, --strict
+          Exit non-zero when parsing emits a diagnostic.
+
+          Also settable via `AOZORA_STRICT` or `.aozora.toml`.
+
+          [env: AOZORA_STRICT=]
 
       --config <PATH>
           Read settings from this `.aozora.toml` instead of searching upward from the working
@@ -34,31 +55,11 @@ Options:
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
           stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline. The report
           auto-selects its view like `check`'s diagnostics: aligned `human` lines when stderr is a
-          terminal, the `{schemaVersion:1,data:{phases,totalNanos}}` envelope when it is piped
+          terminal, a versioned `{schemaVersion,data:{phases,totalNanos}}` envelope when it is piped
 
       --watch
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
-
-  -s, --strict
-          Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT` or the `strict` key in
-          `.aozora.toml`
-          
-          [env: AOZORA_STRICT=]
-
-      --format <FORMAT>
-          How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
-          (the `aozora::json` envelope, the default when stderr is piped — the machine / agent
-          path), or `short` (one grep-able line per diagnostic). Falls back to `AOZORA_FORMAT`, then
-          `.aozora.toml`
-
-          Possible values:
-          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
-          - human: miette graphical report — source snippet + caret + label + help
-          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
-          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
-          
-          [env: AOZORA_FORMAT=]
 
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /

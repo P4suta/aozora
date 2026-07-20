@@ -117,6 +117,7 @@ impl RecogniseCtx<'_, '_> {
         let gaiji_resolve::GaijiBody {
             description,
             mencode,
+            mencode_separator,
             ..
         } = gaiji_resolve::recognize_gaiji_body(body)?;
 
@@ -124,7 +125,8 @@ impl RecogniseCtx<'_, '_> {
         // all) inside the GaijiCanonical; resolution to a glyph happens
         // lazily via `Gaiji::resolve`, which strips the suffix for the
         // men-ku-ten lookup. No eager `ucs` column is stored.
-        let payload = self.alloc.make_gaiji(description, mencode, standalone);
+        let mut payload = self.alloc.make_gaiji(description, mencode, standalone);
+        payload.mencode_separator = mencode_separator;
         Some(GaijiMatch {
             payload,
             consume_start,

@@ -6,8 +6,9 @@
 //! That lets LSP clients short-circuit "already formatted" buffers
 //! without applying a no-op edit.
 
-use aozora::Document;
 use tower_lsp::lsp_types::{Position, Range, TextEdit};
+
+use aozora::fmt::format_source;
 
 use crate::lsp::position::byte_offset_to_position;
 
@@ -19,7 +20,7 @@ use crate::lsp::position::byte_offset_to_position;
 /// pulling in the formatter frontend's CLI-only dependencies.
 #[must_use]
 pub(super) fn format_edits(source: &str) -> Vec<TextEdit> {
-    let formatted = Document::new(source).snapshot().to_source();
+    let formatted = format_source(source);
     if formatted == source {
         return Vec::new();
     }

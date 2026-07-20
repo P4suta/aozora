@@ -64,7 +64,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
-use aozora::encoding::decode_auto;
+use aozora::decode_auto;
 use aozora_bench::{
     SizeBand, SizeBandedCorpus, archive_size_bands, corpus_size_bands_from_decoded,
     parallel_size_bands,
@@ -396,8 +396,7 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
 /// `Arena`'s `!Sync` contract).
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     // Pre-size the per-thread arena to `source.len() * 4` before each
-    // parse. The factor matches the production `Document::new` path
-    // and covers owned-AST shape on every observed corpus doc.
+    // parse. The factor covers the owned AST on the measured corpus.
     // When the worker's arena is already at least that large
     // (steady state after the first big doc), `reset_with_hint`
     // degrades to plain `reset()` — no syscall. The growth path
@@ -408,7 +407,9 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     let measure = |text: &str| -> (u64, u64) {
         WORKER_ARENA.with(|_cell| {
             let t = Instant::now();
-            let _out = aozora::parse(text).snapshot();
+            let _out = aozora::parse(text)
+                .expect("source fits parser span limit")
+                .snapshot();
             let ns = t.elapsed().as_nanos() as u64;
             (text.len() as u64, ns)
         })

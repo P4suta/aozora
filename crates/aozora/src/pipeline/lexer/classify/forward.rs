@@ -18,6 +18,7 @@ use crate::spec::Diagnostic;
 use crate::syntax::accent::{compose_accent, compose_accent_dots};
 use crate::syntax::alloc::Allocator;
 use crate::syntax::ast::{Content, Node, Segment};
+use crate::syntax::degraded::degraded_directive;
 use crate::syntax::format::ForwardOrigin;
 use crate::syntax::lint::canonical_directive;
 use crate::syntax::{
@@ -114,12 +115,12 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     // "scanned the whole doc".
     let mut count = 0usize;
     for _ in memmem::find_iter(bytes, QUOTE_OPEN) {
-        count += 1;
-        if count >= FORWARD_QUOTE_BODY_THRESHOLD {
+        count = count.saturating_add(1);
+        if count.cmp(&FORWARD_QUOTE_BODY_THRESHOLD).is_ge() {
             break;
         }
     }
-    if count < FORWARD_QUOTE_BODY_THRESHOLD {
+    if count.cmp(&FORWARD_QUOTE_BODY_THRESHOLD).is_lt() {
         clear_forward_target_index_if_installed();
         return;
     }
@@ -153,7 +154,10 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     let mut opens_iter = opens.iter().copied().peekable();
     for close_pos in memmem::find_iter(bytes, QUOTE_CLOSE) {
         // Push every `「` that opens before this `」`.
-        while opens_iter.peek().is_some_and(|&op| op < close_pos) {
+        while opens_iter
+            .peek()
+            .is_some_and(|&op| op.cmp(&close_pos).is_lt())
+        {
             open_stack.push(opens_iter.next().expect("peeked Some"));
         }
         // Match this `」` to the innermost still-open `「`; a stray close
@@ -161,7 +165,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
         let Some(open_pos) = open_stack.pop() else {
             continue;
         };
-        let body_start = open_pos + QUOTE_OPEN.len();
+        let body_start = open_pos.saturating_add(QUOTE_OPEN.len());
         let body = &source[body_start..close_pos];
         if body.is_empty() {
             continue;
@@ -175,7 +179,11 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
         });
     }
 
-    if first_positions.len() < FORWARD_QUOTE_BODY_THRESHOLD {
+    if first_positions
+        .len()
+        .cmp(&FORWARD_QUOTE_BODY_THRESHOLD)
+        .is_lt()
+    {
         clear_forward_target_index();
         return;
     }
@@ -563,16 +571,16 @@ impl RecogniseCtx<'_, '_> {
         tcy_pending: Option<Diagnostic>,
     ) -> AnnotationMatch {
         let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
-        // One payload for `emit`, one for `annotation_payload`, so the
-        // body-builder can re-wrap without re-interning the raw string.
-        let payload = self.alloc.make_directive(raw, DirectiveKind::Unknown);
+        let canonical = canonical_directive(body);
+        let kind = if canonical.is_some() || degraded_directive(body).is_some() {
+            DirectiveKind::NonCanonical
+        } else {
+            DirectiveKind::Editorial
+        };
+        let payload = self.alloc.make_directive(raw, kind);
         let node = self.alloc.annotation(payload);
-        let payload_for_seg = self.alloc.make_directive(raw, DirectiveKind::Unknown);
-        // Notation-hygiene lint: a body that is a verified near-miss of a
-        // recognized directive (kept as Unknown) gets a canonical-form
-        // suggestion. Catalogue bodies are disjoint from the ここから / 縦中横
-        // cases below, so the priority is only defensive — never double-fires.
-        let pending_diagnostic = canonical_directive(body)
+        let payload_for_seg = self.alloc.make_directive(raw, kind);
+        let pending_diagnostic = canonical
             .map(|canonical| Diagnostic::non_canonical_directive(directive_span, canonical))
             .or(tcy_pending)
             .or_else(|| {
@@ -650,10 +658,10 @@ impl RecogniseCtx<'_, '_> {
         let [start_target] = extracted.targets.as_slice() else {
             return None;
         };
-        let rest = extracted
-            .suffix
+        let suffix = extracted.suffix;
+        let rest = suffix
             .strip_prefix("～「")
-            .or_else(|| extracted.suffix.strip_prefix("〜「"))?;
+            .or_else(|| suffix.strip_prefix("〜「"))?;
         let (end_target, after) = rest.split_once('」')?;
         if start_target.is_empty() || end_target.is_empty() {
             return None;
@@ -684,8 +692,7 @@ impl RecogniseCtx<'_, '_> {
         let phrase = &self.source[x_start..cutoff];
         let content = self.alloc.content_plain(phrase);
         Some((
-            self.alloc
-                .bouten(kind, content, position, ForwardOrigin::Reclaimed),
+            self.alloc.bouten_range(kind, content, position),
             u32::try_from(x_start).ok()?,
         ))
     }
@@ -697,15 +704,16 @@ impl RecogniseCtx<'_, '_> {
         close_idx: usize,
     ) -> Option<(Node, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let suffix = extracted.suffix;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
         // Shape 3: `の両側に<kind>` — both sides.
-        let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
+        let (position, kind_suffix) = if let Some(rest) = suffix.strip_prefix("に") {
             (BoutenPosition::Right, rest)
-        } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
+        } else if let Some(rest) = suffix.strip_prefix("の左に") {
             (BoutenPosition::Left, rest)
         } else {
-            let rest = extracted.suffix.strip_prefix("の両側に")?;
+            let rest = suffix.strip_prefix("の両側に")?;
             (BoutenPosition::Both, rest)
         };
         let kind = bouten_kind_from_suffix(kind_suffix)?;
@@ -728,8 +736,16 @@ impl RecogniseCtx<'_, '_> {
         {
             let target = build_bouten_target(&extracted.targets, self.alloc);
             return Some((
-                self.alloc
-                    .bouten(kind, target, position, ForwardOrigin::SelfContained),
+                if extracted.nested_source {
+                    self.alloc.forward_format_nested(
+                        ForwardAttr::Bouten { kind, position },
+                        target,
+                        ForwardOrigin::SelfContained,
+                    )
+                } else {
+                    self.alloc
+                        .bouten(kind, target, position, ForwardOrigin::SelfContained)
+                },
                 open_span.start,
                 ForwardDiag::None,
             ));
@@ -767,6 +783,7 @@ impl RecogniseCtx<'_, '_> {
                 view,
                 open_idx,
                 open_span_start: open_span.start,
+                nested_source: extracted.nested_source,
             },
             ForwardAttr::Bouten { kind, position },
             only,
@@ -896,6 +913,7 @@ impl RecogniseCtx<'_, '_> {
                 view,
                 open_idx,
                 open_span_start: open_span.start,
+                nested_source: extracted.nested_source,
             },
             ForwardAttr::CombineUpright,
             first,
@@ -970,14 +988,15 @@ fn forward_heading_target_is_preceded_ruby_stripped(
         return false;
     };
     let prefix = &source[..span.start as usize];
+    let stripped = strip_ruby_notation(prefix);
+    let target = strip_ruby_notation(target);
+    stripped.contains(&target)
+}
 
-    // Drop every `《reading》` span and explicit-base `｜`. A `《` with no
-    // closing `》` leaves `in_ruby` set, dropping the tail — a ruby-less real
-    // heading is unaffected, and an unmatched `《` only suppresses a match
-    // (never invents one), so the gate stays conservative.
-    let mut stripped = String::with_capacity(prefix.len());
+fn strip_ruby_notation(source: &str) -> String {
+    let mut stripped = String::with_capacity(source.len());
     let mut in_ruby = false;
-    for ch in prefix.chars() {
+    for ch in source.chars() {
         match ch {
             '《' => in_ruby = true,
             '》' => in_ruby = false,
@@ -986,7 +1005,7 @@ fn forward_heading_target_is_preceded_ruby_stripped(
             _ => stripped.push(ch),
         }
     }
-    stripped.contains(target)
+    stripped
 }
 
 /// Like [`forward_target_is_preceded`] but stricter: returns the byte
@@ -1140,6 +1159,11 @@ struct ForwardQuoteExtract<'s> {
     /// the long tail rarely exceeds 2-3.
     targets: smallvec::SmallVec<[&'s str; 4]>,
     suffix: &'s str,
+    nested_source: bool,
+}
+
+fn trim_forward_suffix(suffix: &str) -> &str {
+    suffix.trim()
 }
 
 /// Shared helper for the `［＃「X」…<particle><keyword>］` shape.
@@ -1170,8 +1194,9 @@ fn extract_forward_quote_targets<'s>(
     };
 
     let mut targets: smallvec::SmallVec<[&'s str; 4]> = smallvec::SmallVec::new();
-    let mut cursor = open_idx + 2; // skip `［` and `＃`
+    let mut cursor = open_idx.saturating_add(2);
     let mut last_quote_end: u32 = 0;
+    let mut nested_source = false;
 
     while let Some(&PairEvent::PairOpen {
         kind: PairKind::Quote,
@@ -1188,7 +1213,7 @@ fn extract_forward_quote_targets<'s>(
         let quote_close_idx = quote_close_link as usize;
         // The quote must close *before* the bracket — a cross-boundary
         // close would mean the quote is not nested inside the bracket.
-        if quote_close_idx >= close_idx {
+        if quote_close_idx.cmp(&close_idx).is_ge() {
             return None;
         }
         let Some(&PairEvent::PairClose {
@@ -1203,16 +1228,25 @@ fn extract_forward_quote_targets<'s>(
         let body = &source[quote_open_span.end as usize..quote_close_span.start as usize];
         if !body.is_empty() {
             targets.push(body);
+            let adjacent_close = cursor.saturating_add(2);
+            if quote_close_idx.cmp(&adjacent_close).is_ne() {
+                nested_source = true;
+            }
         }
         last_quote_end = quote_close_span.end;
-        cursor = quote_close_idx + 1;
+        cursor = quote_close_idx.saturating_add(1);
     }
 
     if targets.is_empty() {
         return None;
     }
-    let suffix = source[last_quote_end as usize..bracket_close_span.start as usize].trim();
-    Some(ForwardQuoteExtract { targets, suffix })
+    let suffix =
+        trim_forward_suffix(&source[last_quote_end as usize..bracket_close_span.start as usize]);
+    Some(ForwardQuoteExtract {
+        targets,
+        suffix,
+        nested_source,
+    })
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -1288,7 +1322,7 @@ impl RecogniseCtx<'_, '_> {
         // fallback copies the whole look-back, so a second call per heading would
         // double the parser's allocation pressure).
         let self_contained = match extracted.targets.as_slice() {
-            [only] if !only.is_empty() => !preceded(only),
+            [only] => !preceded(only),
             targets if targets.iter().any(|t| !t.is_empty() && !preceded(t)) => return None,
             _ => false,
         };
@@ -1324,11 +1358,9 @@ impl RecogniseCtx<'_, '_> {
         let [target] = extracted.targets.as_slice() else {
             return None;
         };
+        let suffix = extracted.suffix;
         // suffix == の左に「<reading>」のルビ
-        let reading_text = extracted
-            .suffix
-            .strip_prefix("の左に「")?
-            .strip_suffix("」のルビ")?;
+        let reading_text = suffix.strip_prefix("の左に「")?.strip_suffix("」のルビ")?;
         if reading_text.is_empty() {
             return None;
         }
@@ -1373,18 +1405,19 @@ impl RecogniseCtx<'_, '_> {
         let [target] = extracted.targets.as_slice() else {
             return None;
         };
+        let suffix = extracted.suffix;
         // Pick the flavour by trailing keyword, then the note text:
         //   注記: explicit `の左に「Y」の注記` or bare `に「Y」の注記` — both map
         //         to the same node (`MarginNote` has no side axis).
         //   傍記: bare `に「Y」の傍記` only (the corpus's sole 傍記 shape; an
         //         unattested `の左に…の傍記` would be ambiguous to round-trip).
-        let (kind, note_text) = if let Some(inner) = extracted.suffix.strip_suffix("」の注記") {
+        let (kind, note_text) = if let Some(inner) = suffix.strip_suffix("」の注記") {
             let note = inner
                 .strip_prefix("の左に「")
                 .or_else(|| inner.strip_prefix("に「"))?;
             (MarginNoteKind::Gloss, note)
         } else {
-            let inner = extracted.suffix.strip_suffix("」の傍記")?;
+            let inner = suffix.strip_suffix("」の傍記")?;
             (MarginNoteKind::Marginal, inner.strip_prefix("に「")?)
         };
         if note_text.is_empty() {
@@ -1451,6 +1484,7 @@ struct ForwardBracket<'a> {
     view: BodyView<'a>,
     open_idx: usize,
     open_span_start: u32,
+    nested_source: bool,
 }
 
 /// Classify a `［＃「target」は太字／斜体］` forward-reference emphasis.
@@ -1480,14 +1514,15 @@ impl RecogniseCtx<'_, '_> {
         &mut self,
         bracket: ForwardBracket<'_>,
         attr: ForwardAttr,
-        only: &str,
+        target: &str,
     ) -> (Node, u32, ForwardDiag) {
         let ForwardBracket {
             view,
             open_idx,
             open_span_start,
+            nested_source,
         } = bracket;
-        let text = self.alloc.content_plain(only);
+        let text = self.alloc.content_plain(target);
         match resolve_forward_referent(
             ReferentSearch {
                 events: view.events,
@@ -1495,18 +1530,27 @@ impl RecogniseCtx<'_, '_> {
                 open_idx,
                 pending_plain_start: self.pending_plain_start,
             },
-            only,
+            target,
         ) {
             ForwardReferent::Adjacent(consume_start) => (
-                self.alloc
-                    .forward_format(attr, text, ForwardOrigin::Reclaimed),
+                if nested_source {
+                    self.alloc
+                        .forward_format_nested(attr, text, ForwardOrigin::Reclaimed)
+                } else {
+                    self.alloc
+                        .forward_format(attr, text, ForwardOrigin::Reclaimed)
+                },
                 consume_start,
                 ForwardDiag::None,
             ),
             ForwardReferent::Interior { start, end } => {
-                let deco = self
-                    .alloc
-                    .forward_format(attr, text, ForwardOrigin::Detached);
+                let deco = if nested_source {
+                    self.alloc
+                        .forward_format_nested(attr, text, ForwardOrigin::Detached)
+                } else {
+                    self.alloc
+                        .forward_format(attr, text, ForwardOrigin::Detached)
+                };
                 self.pending_decoration = Some((deco, Span::new(start, end)));
                 (
                     self.alloc
@@ -1531,16 +1575,17 @@ impl RecogniseCtx<'_, '_> {
         close_idx: usize,
     ) -> Option<(Node, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let suffix = extracted.suffix;
         // The particle is tied to the decoration. `は` is the dominant emphasis
         // form (`「X」は太字`). The frame decoration also takes the "applied to"
         // particle `に` (`「X」に枠囲み`) — but 太字/斜体/… stay `は`-only, so a `に`
         // suffix is accepted only when it resolves to `Framed`. Bouten runs
         // earlier in the cascade and already claims `に〈bouten-kind〉`. The
         // serializer canonicalises both particles to `」は`.
-        let attr = if let Some(rest) = extracted.suffix.strip_prefix("は") {
+        let attr = if let Some(rest) = suffix.strip_prefix("は") {
             forward_attr_from_suffix(rest)?
         } else {
-            let rest = extracted.suffix.strip_prefix("に")?;
+            let rest = suffix.strip_prefix("に")?;
             match forward_attr_from_suffix(rest)? {
                 framed @ ForwardAttr::Framed(_) => framed,
                 _ => return None,
@@ -1575,8 +1620,13 @@ impl RecogniseCtx<'_, '_> {
             // `Unknown` and the #228 double-render is structurally impossible.
             let text = self.alloc.content_plain(only);
             return Some((
-                self.alloc
-                    .forward_format(attr, text, ForwardOrigin::SelfContained),
+                if extracted.nested_source {
+                    self.alloc
+                        .forward_format_nested(attr, text, ForwardOrigin::SelfContained)
+                } else {
+                    self.alloc
+                        .forward_format(attr, text, ForwardOrigin::SelfContained)
+                },
                 open_span.start,
                 ForwardDiag::None,
             ));
@@ -1586,6 +1636,7 @@ impl RecogniseCtx<'_, '_> {
                 view,
                 open_idx,
                 open_span_start: open_span.start,
+                nested_source: extracted.nested_source,
             },
             attr,
             only,
@@ -1636,8 +1687,13 @@ impl RecogniseCtx<'_, '_> {
             // the old `Unknown` and the #228 double-render is impossible.
             let text = self.alloc.content_plain(target);
             return Some((
-                self.alloc
-                    .forward_format(attr, text, ForwardOrigin::SelfContained),
+                if extracted.nested_source {
+                    self.alloc
+                        .forward_format_nested(attr, text, ForwardOrigin::SelfContained)
+                } else {
+                    self.alloc
+                        .forward_format(attr, text, ForwardOrigin::SelfContained)
+                },
                 open_span.start,
                 ForwardDiag::None,
             ));
@@ -1647,6 +1703,7 @@ impl RecogniseCtx<'_, '_> {
                 view,
                 open_idx,
                 open_span_start: open_span.start,
+                nested_source: extracted.nested_source,
             },
             attr,
             target,
@@ -2080,6 +2137,12 @@ mod tests {
     // --- quote extraction ------------------------------------------------
 
     #[test]
+    fn forward_suffix_trims_unicode_whitespace() {
+        assert_eq!(trim_forward_suffix("\u{2003}に傍点\u{205f}"), "に傍点");
+        assert_eq!(trim_forward_suffix("\u{3000}は太字\u{00a0}"), "は太字");
+    }
+
+    #[test]
     fn extract_collects_every_consecutive_quote_target() {
         let (src, ev, links, oi, ci) = build("", &["A", "B"], "に傍点");
         let view = BodyView {
@@ -2099,6 +2162,32 @@ mod tests {
             panic!("all-text multi-target folds to a single Plain run");
         };
         assert_eq!(alloc.store().resolve_str(id), "A、B");
+    }
+
+    fn run_forward_bouten(prefix: &str) -> ForwardDiag {
+        let (src, events, links, open_idx, close_idx) = build(prefix, &["A"], "に傍点");
+        let view = BodyView {
+            events: &events,
+            links: &links,
+        };
+        let mut alloc = Allocator::new();
+        let mut context = RecogniseCtx {
+            alloc: &mut alloc,
+            source: &src,
+            diagnostics: Vec::new(),
+            pending_plain_start: None,
+            pending_decoration: None,
+        };
+        context
+            .classify_forward_bouten(view, open_idx, close_idx)
+            .expect("forward bouten recognised")
+            .2
+    }
+
+    #[test]
+    fn forward_bouten_ambiguity_starts_at_the_second_candidate() {
+        assert!(matches!(run_forward_bouten("A"), ForwardDiag::None));
+        assert!(matches!(run_forward_bouten("A A"), ForwardDiag::Ambiguous));
     }
 
     // --- range bouten ----------------------------------------------------
@@ -2165,8 +2254,9 @@ mod tests {
         let cases: &[(&str, &str, bool)] = &[
             ("A《x》B", "AB", true), // `《x》` reading stripped
             ("A｜B", "AB", true),    // explicit-base `｜` stripped
-            ("AB", "AB", true),      // ruby-free run matches directly
-            ("XY", "AB", false),     // genuinely absent
+            ("A《x》B《y》", "A《x》B", true),
+            ("AB", "AB", true),  // ruby-free run matches directly
+            ("XY", "AB", false), // genuinely absent
         ];
         for (prefix, target, want) in cases {
             let (src, ev, links, oi, _ci) = build(prefix, &["z"], "は大見出し");

@@ -51,6 +51,7 @@ use std::process::{self, Command, ExitStatus};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+mod artifacts;
 mod ci;
 mod conformance;
 mod coords;
@@ -60,7 +61,9 @@ mod docs;
 mod grammar;
 mod lint;
 mod msrv;
+mod perf;
 mod publish;
+mod ratchet;
 mod scan;
 mod schema;
 mod spec_vectors;
@@ -68,6 +71,7 @@ mod trace;
 mod types;
 mod version;
 
+pub(crate) use artifacts::ArtifactsArgs;
 pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
 pub(crate) use deps::DepsArgs;
@@ -89,6 +93,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Build and verify local distribution artifacts without publishing them.
+    Artifacts(ArtifactsArgs),
     /// Sample-profile a target via `samply`.
     Samply(SamplyArgs),
     /// Analyse a saved samply `.json.gz` trace via `aozora-trace`.
@@ -135,8 +141,7 @@ enum Cmd {
     /// `aozora-notation-spec` repo (the source of truth). `sync` copies the
     /// vectors + schema + RUNNER.md into
     /// `crates/aozora-conformance/spec-vectors/`; `check` fails the build
-    /// when the vendored copy has drifted (`--allow-missing` skips where the
-    /// sibling isn't checked out, i.e. the dev container / cloud CI).
+    /// when the vendored copy has drifted or the configured source is absent.
     SpecVectors(SpecVectorsArgs),
     /// crates.io publish-path ledger drift gate. Offline — never contacts
     /// a registry; it reads manifests only. Cross-checks the workspace's
@@ -146,6 +151,10 @@ enum Cmd {
     /// the root `Cargo.toml` already states in prose: path-only internal
     /// dev-deps, and no registry `version` on a `publish = false` member.
     Publish(PublishArgs),
+    /// Run deterministic instruction-count performance contracts.
+    Perf(PerfArgs),
+    /// Enforce monotonic performance, allocation, artifact, and wire baselines.
+    Ratchet(RatchetArgs),
     /// MSRV / toolchain pin coherence gate. `rust-toolchain.toml`'s
     /// channel (the DEV toolchain, tracking latest stable) and
     /// `Cargo.toml`'s `rust-version` (the PUBLIC CONTRACT, a measured
@@ -220,6 +229,25 @@ struct PublishArgs {
     op: PublishOp,
 }
 
+#[derive(Args)]
+struct PerfArgs {
+    #[command(subcommand)]
+    op: PerfOp,
+}
+
+#[derive(Subcommand)]
+enum PerfOp {
+    /// Run every committed Callgrind workload and enforce edit speedups.
+    Check,
+}
+
+#[derive(Args)]
+struct RatchetArgs {
+    /// Git commit containing the previous baselines.
+    #[arg(long, env = "BASELINE_RATCHET_BASE", default_value = "HEAD")]
+    base: String,
+}
+
 #[derive(Subcommand)]
 enum PublishOp {
     /// Fail when the publish ledger has drifted — `release-plz.toml`
@@ -238,13 +266,7 @@ struct SpecVectorsArgs {
 enum SpecVectorsOp {
     /// Fail when the vendored `spec-vectors/` has drifted from the sibling
     /// spec's `conformance/` subtree (vectors + schema + RUNNER.md).
-    Check {
-        /// Treat an absent sibling checkout as a skip (exit 0) instead of an
-        /// error. The vendored copy is authoritative where the spec isn't
-        /// checked out (dev container / cloud CI).
-        #[arg(long)]
-        allow_missing: bool,
-    },
+    Check,
     /// Copy the vectors + schema + RUNNER.md out of the sibling spec into the
     /// vendored copy, replacing them wholesale so spec-side deletions
     /// propagate. Commit the diff.
@@ -333,8 +355,8 @@ enum ConformanceOp {
     ///
     /// `rust` (default) holds the parser to each vector's `expected`
     /// projections (`serialize` / `nodes` / `pairs` / `diagnostics`) per
-    /// its `meta.level`: `must` mismatches exit non-zero; `should` / `may`
-    /// warn. The `html` channel is informative (spec §8) and only warns.
+    /// its `meta.level`. Any projection mismatch exits non-zero, including
+    /// `should`, `may`, and HTML.
     ///
     /// `tree-sitter` runs the reference grammar over each vector's
     /// `source`: it reports the per-tier pass rate (no ERROR nodes) and
@@ -451,6 +473,7 @@ enum SamplyTarget {
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
+        Cmd::Artifacts(args) => artifacts::dispatch(&args),
         Cmd::Samply(args) => match args.target {
             SamplyTarget::Doc {
                 relative_path,
@@ -469,6 +492,8 @@ fn main() {
         Cmd::Version(args) => version::dispatch(&args),
         Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
         Cmd::Publish(args) => publish::dispatch(&args),
+        Cmd::Perf(args) => perf::dispatch(&args),
+        Cmd::Ratchet(args) => ratchet::check(&args),
         Cmd::Msrv(args) => msrv::dispatch(&args),
         Cmd::Docs(args) => match args.op {
             DocsOp::Check => docs::check(),

@@ -94,9 +94,8 @@ impl PairKind {
 
 /// Resolved open/close pair, as observed by the pair stage.
 ///
-/// Both `open` and `close` are byte-spans in the *sanitized* source
-/// (the same coordinate system every other pair-stage / classify-stage
-/// `Span` lives in). Used downstream by editor surfaces such as LSP
+/// Both `open` and `close` are byte-spans in the original source.
+/// Used downstream by editor surfaces such as LSP
 /// `textDocument/linkedEditingRange` and `documentHighlight`.
 ///
 /// `Unclosed` opens (no matching close was found before EOF) and stray
@@ -108,9 +107,9 @@ impl PairKind {
 pub struct PairLink {
     /// Which delimiter family this pair belongs to.
     pub kind: PairKind,
-    /// Byte-span of the open delimiter in the sanitized source.
+    /// Byte-span of the open delimiter in the original source.
     pub open: Span,
-    /// Byte-span of the close delimiter in the sanitized source.
+    /// Byte-span of the close delimiter in the original source.
     pub close: Span,
 }
 

@@ -1,1 +1,1 @@
-(document (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading) (MISSING "》")) (newline))
+(document (literal_markup) (text) (literal_markup) (text) (newline))

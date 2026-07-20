@@ -184,9 +184,28 @@ pub(crate) enum SpanKind {
 /// Pure function; no I/O. The yielded spans byte-contiguously cover
 /// `source` — see the module-level span-coverage invariant.
 #[must_use]
+#[cfg(test)]
 pub(crate) fn classify<'src, 'al, I>(
     events: I,
     source: &'src str,
+    alloc: &'al mut Allocator,
+) -> ClassifyStream<'src, 'al, I::IntoIter>
+where
+    I: IntoIterator<Item = PairEvent>,
+{
+    classify_range(
+        events,
+        source,
+        u32::try_from(source.len()).unwrap_or(u32::MAX),
+        alloc,
+    )
+}
+
+#[must_use]
+pub(crate) fn classify_range<'src, 'al, I>(
+    events: I,
+    source: &'src str,
+    source_end: u32,
     alloc: &'al mut Allocator,
 ) -> ClassifyStream<'src, 'al, I::IntoIter>
 where
@@ -204,7 +223,7 @@ where
     // 252-occurrence doc reclaims the 170 ms → 20 ms classify win this
     // index used to give the legacy event-driven pre-pass).
     install_forward_target_index_from_source(source);
-    ClassifyStream::new(events.into_iter(), source, alloc)
+    ClassifyStream::new(events.into_iter(), source, source_end, alloc)
 }
 
 /// Streaming classify-stage classifier.
@@ -457,7 +476,7 @@ enum FrameOutcome {
     /// The outermost open was force-resolved as `Unclosed` (a stray `［`
     /// crossing a line break, or the EOF drain) — abandon the frame,
     /// folding its buffered fragment to plain (F21). See
-    /// [`ClassifyStream::abandon_frame`].
+    /// the frame-abandon path.
     Abandoned,
 }
 
@@ -486,10 +505,10 @@ fn empty_explicit_ruby_span(
     close_span: Span,
 ) -> Option<Span> {
     let bar_off = bar_byte_offset?;
-    if open_span.end < close_span.start {
+    if open_span.end.cmp(&close_span.start).is_ne() {
         return None; // reading carries bytes — not empty
     }
-    let bar_pos = preceding_start + u32::try_from(bar_off).ok()?;
+    let bar_pos = preceding_start.checked_add(u32::try_from(bar_off).ok()?)?;
     Some(Span::new(bar_pos, close_span.end))
 }
 
@@ -524,12 +543,17 @@ fn build_synth_ruby_view(
     bar_byte_offset: Option<usize>,
 ) -> Option<SynthRubyView> {
     let mut synth: smallvec::SmallVec<[PairEvent; 16]> =
-        smallvec::SmallVec::with_capacity(body.events.len() + 2);
+        smallvec::SmallVec::with_capacity(body.events.len().saturating_add(2));
     let mut synth_links: smallvec::SmallVec<[u32; 16]> =
-        smallvec::SmallVec::with_capacity(body.events.len() + 2);
+        smallvec::SmallVec::with_capacity(body.events.len().saturating_add(2));
     let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
-        let bar_pos = prev_text_range.start + u32::try_from(bar_off).expect("bar offset fits");
-        let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
+        let bar_pos = prev_text_range
+            .start
+            .saturating_add(u32::try_from(bar_off).unwrap_or(u32::MAX));
+        let bar_span = Span::new(
+            bar_pos,
+            bar_pos.saturating_add(u32::try_from('｜'.len_utf8()).unwrap_or(u32::MAX)),
+        );
         synth.push(PairEvent::Solo {
             kind: TriggerKind::Bar,
             span: bar_span,
@@ -553,11 +577,13 @@ fn build_synth_ruby_view(
     // Append the body events verbatim, shifting their links past the prefix.
     let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
     synth.extend(body.events.iter().cloned());
-    synth_links.extend(
-        body.links
-            .iter()
-            .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
-    );
+    synth_links.extend(body.links.iter().map(|&l| {
+        if l == u32::MAX {
+            u32::MAX
+        } else {
+            l.saturating_add(shift)
+        }
+    }));
     Some((synth, synth_links, synth_open_idx))
 }
 
@@ -565,11 +591,11 @@ impl<'src, 'al, I> ClassifyStream<'src, 'al, I>
 where
     I: Iterator<Item = PairEvent>,
 {
-    fn new(events: I, source: &'src str, alloc: &'al mut Allocator) -> Self {
+    fn new(events: I, source: &'src str, source_len: u32, alloc: &'al mut Allocator) -> Self {
         Self {
             events,
             source,
-            source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
+            source_len,
             alloc,
             pending_outputs: VecDeque::new(),
             frame: None,
@@ -622,10 +648,18 @@ where
         }
         // Document-wide base presence per ladder family.
         let mut has_base = [false; 3];
-        for o in obs.iter().filter(|o| o.is_ladder && o.rank == 1) {
+        for o in obs
+            .iter()
+            .filter(|o| o.is_ladder)
+            .filter(|o| matches!(o.rank, 1))
+        {
             has_base[family_index(o.family)] = true;
         }
-        for o in obs.iter().filter(|o| o.is_ladder && o.rank > 1) {
+        for o in obs
+            .iter()
+            .filter(|o| o.is_ladder)
+            .filter(|o| matches!(o.rank, 2..=u8::MAX))
+        {
             if !has_base[family_index(o.family)] {
                 self.diagnostics
                     .push(Diagnostic::bracketed_kaeriten_no_pair(o.span));
@@ -761,12 +795,14 @@ where
                 //   open may never be closed by a real `PairClose`, so the frame
                 //   is a stray delimiter, not an annotation body: abandon it —
                 //   fold the buffered fragment to plain and resume top-level
-                //   classification on the live stream (see `abandon_frame`).
+                //   classification on the live stream.
                 if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind) {
-                    if pos == 0 {
-                        return FrameOutcome::Abandoned;
+                    match pos {
+                        0 => return FrameOutcome::Abandoned,
+                        _ => {
+                            frame.inner_stack.remove(pos);
+                        }
                     }
-                    frame.inner_stack.remove(pos);
                 }
                 frame.body.push(event);
                 frame.links.push(u32::MAX);
@@ -942,11 +978,33 @@ where
         {
             self.pending_plain_start = Some(rm.start);
         }
-        for ev in body {
-            if matches!(ev, PairEvent::Unclosed { .. }) {
-                continue;
+        let mut events = body.into_iter();
+        let Some(first) = events.next() else {
+            return;
+        };
+        if let Some(span) = first.span()
+            && self.pending_plain_start.is_none()
+        {
+            self.pending_plain_start = Some(span.start);
+        }
+        let mut trailing = None;
+        for event in events {
+            if let Some(inner) = trailing.replace(event)
+                && !matches!(inner, PairEvent::Unclosed { .. })
+            {
+                self.process_event(inner);
             }
-            self.handle_top_level(ev, /*replay=*/ true);
+        }
+        if let Some(last) = trailing {
+            if matches!(last, PairEvent::Unclosed { .. }) {
+                if let Some(refmark) = self.pending_refmark.take()
+                    && self.pending_plain_start.is_none()
+                {
+                    self.pending_plain_start = Some(refmark.start);
+                }
+            } else {
+                self.process_event(last);
+            }
         }
     }
 
@@ -970,20 +1028,8 @@ where
     /// once, forward, off the real event stream. Byte coverage is unchanged —
     /// the fragment folds to plain, identical to the EOF replay path — so the
     /// verbatim / round-trip invariants hold; only the visible render improves.
-    fn abandon_frame(&mut self) {
-        let frame = self
-            .frame
-            .take()
-            .expect("abandon_frame requires an active frame");
-        let refmark = frame.gaiji_refmark;
-        self.replay_unrecognised_body(frame.body, refmark);
-    }
-
-    /// Handle a top-level event (no active frame) in either streaming
-    /// mode (`replay = false`) or replay mode (`replay = true`, which
-    /// suppresses the frame-open path so a residual nested `PairOpen` in
-    /// a declined body doesn't try to re-open a sub-frame).
-    fn handle_top_level(&mut self, event: PairEvent, replay: bool) {
+    /// Handle a top-level event with no active frame.
+    fn handle_top_level(&mut self, event: PairEvent) {
         match event {
             PairEvent::Newline { pos } => {
                 self.flush_plain_up_to(pos);
@@ -995,13 +1041,13 @@ where
             PairEvent::Solo {
                 kind: TriggerKind::RefMark,
                 span,
-            } if !replay => {
+            } => {
                 // Hold the refmark pending the next event. If a flush
                 // is requested before the next event arrives the
                 // refmark is folded into the plain run.
                 self.pending_refmark = Some(span);
             }
-            PairEvent::PairOpen { kind, span, .. } if !replay => {
+            PairEvent::PairOpen { kind, span, .. } => {
                 // Stream-through: Quote and Tortoise have no
                 // top-level recogniser. Buffering their body events
                 // for an inevitable replay would burn O(N) work for
@@ -1073,8 +1119,8 @@ where
     }
 
     /// Handle one event while in stream-through mode (top-level
-    /// Quote / Tortoise pair, no recogniser candidate). Mirrors the
-    /// `replay = true` behaviour of [`Self::handle_top_level`] but
+    /// Quote / Tortoise pair, no recogniser candidate). Mirrors literal
+    /// body replay but
     /// (a) reads from the live event stream rather than a buffered
     /// `SmallVec`, (b) tracks nested-open depth so the outer close
     /// unambiguously exits the mode, and (c) skips the inner-frame
@@ -1158,18 +1204,18 @@ where
                     source_span: Span::new(pos, pos + 1),
                 });
             }
-            PairEvent::PairOpen { kind, span } if kind == stream.kind => {
+            PairEvent::PairOpen { kind, span } if kind.eq(&stream.kind) => {
                 stream.depth = stream.depth.saturating_add(1);
                 if self.pending_plain_start.is_none() {
                     self.pending_plain_start = Some(span.start);
                 }
             }
-            PairEvent::PairClose { kind, span } if kind == stream.kind => {
+            PairEvent::PairClose { kind, span } if kind.eq(&stream.kind) => {
                 stream.depth = stream.depth.saturating_sub(1);
                 if self.pending_plain_start.is_none() {
                     self.pending_plain_start = Some(span.start);
                 }
-                if stream.depth == 0 {
+                if matches!(stream.depth, 0) {
                     self.streaming = None;
                 }
             }
@@ -1190,9 +1236,9 @@ where
                 // exit streaming. Other-kind Unclosed events (a
                 // nested Bracket / Ruby / AngleQuote that streaming
                 // mode never opened a frame for) are simply ignored.
-                if kind == stream.kind {
+                if kind.eq(&stream.kind) {
                     stream.depth = stream.depth.saturating_sub(1);
-                    if stream.depth == 0 {
+                    if matches!(stream.depth, 0) {
                         self.streaming = None;
                     }
                 }
@@ -1270,7 +1316,7 @@ where
             let reading = ctx.build_content_from_body(
                 body,
                 &BodyWindow {
-                    events: open_idx + 1..close_idx,
+                    events: open_idx.saturating_add(1)..close_idx,
                     bytes: open_span.end..close_span.start,
                 },
             );
@@ -1323,7 +1369,8 @@ where
         // body is an authoring error. Flag the first one (caret on the
         // inner `《`); the outer ruby still parses best-effort. Touched
         // before `ctx` reborrows `self.alloc`, so no borrow clash.
-        if let Some(inner_open) = first_nested_ruby_open(body.events, open_idx + 1, close_idx) {
+        let reading_start = open_idx.saturating_add(1);
+        if let Some(inner_open) = first_nested_ruby_open(body.events, reading_start, close_idx) {
             self.diagnostics.push(Diagnostic::nested_ruby(inner_open));
         }
 
@@ -1349,7 +1396,7 @@ where
 
         let (synth, synth_links, synth_open_idx) =
             build_synth_ruby_view(body, prev_text_range, bar_byte_offset)?;
-        let synth_close_idx = synth_open_idx + (close_idx - open_idx);
+        let synth_close_idx = synth_open_idx.saturating_add(close_idx.saturating_sub(open_idx));
         let synth_view = BodyView {
             events: synth.as_slice(),
             links: synth_links.as_slice(),
@@ -1437,7 +1484,7 @@ where
         let content = ctx.build_content_from_body(
             body,
             &BodyWindow {
-                events: open_idx + 1..close_idx,
+                events: open_idx.saturating_add(1)..close_idx,
                 bytes: open_span.end..close_span.start,
             },
         );
@@ -1691,7 +1738,12 @@ where
             );
             match self.append_to_frame(event) {
                 FrameOutcome::Closed => self.recognize_and_emit(),
-                FrameOutcome::Abandoned => self.abandon_frame(),
+                FrameOutcome::Abandoned => {
+                    let Some(frame) = self.frame.take() else {
+                        unreachable!("abandoned outcome requires an active frame");
+                    };
+                    self.replay_unrecognised_body(frame.body, frame.gaiji_refmark);
+                }
                 FrameOutcome::Open => {}
             }
             return;
@@ -1759,7 +1811,7 @@ where
             }
         }
 
-        self.handle_top_level(event, /*replay=*/ false);
+        self.handle_top_level(event);
     }
 }
 
@@ -1826,12 +1878,10 @@ impl<'s> RecogniseCtx<'_, 's> {
             // Empty reading — the `《…》` body has no bytes.
             return None;
         }
-        if open_idx == 0 {
-            return None;
-        }
+        let previous_idx = open_idx.checked_sub(1)?;
         let PairEvent::Text {
             range: prev_range, ..
-        } = events[open_idx - 1]
+        } = events[previous_idx]
         else {
             return None;
         };
@@ -1840,18 +1890,18 @@ impl<'s> RecogniseCtx<'_, 's> {
         let reading = self.build_content_from_body(
             view,
             &BodyWindow {
-                events: open_idx + 1..close_idx,
+                events: open_idx.saturating_add(1)..close_idx,
                 bytes: open_span.end..close_span.start,
             },
         );
 
         // Explicit form: Solo(Bar) two events before the open, with the
         // Text between them acting as the base.
-        if open_idx >= 2
+        if let Some(bar_idx) = open_idx.checked_sub(2)
             && let PairEvent::Solo {
                 kind: TriggerKind::Bar,
                 span: bar_span,
-            } = events[open_idx - 2]
+            } = events[bar_idx]
         {
             if prev_text.is_empty() {
                 return None;
@@ -1871,8 +1921,9 @@ impl<'s> RecogniseCtx<'_, 's> {
         if base_offset == prev_text.len() {
             return None;
         }
-        let consume_start =
-            prev_range.start + u32::try_from(base_offset).expect("base offset fits in u32");
+        let consume_start = prev_range
+            .start
+            .saturating_add(u32::try_from(base_offset).unwrap_or(u32::MAX));
         Some(RubyMatch {
             base: &prev_text[base_offset..],
             reading,
@@ -1916,7 +1967,7 @@ struct BodyWindow {
 ///
 /// ## Fast path
 ///
-/// [`has_nested_candidate`] first short-circuits the body scan: when
+/// The initial event scan short-circuits the body walk when
 /// no `Solo(RefMark)` and no `PairOpen(Bracket)` appear, the body is
 /// guaranteed to be plain text (possibly peppered with unrelated
 /// triggers like `｜` or mismatched quotes, which we treat as text).
@@ -1930,9 +1981,8 @@ struct BodyWindow {
 /// tracks the earliest byte that has not yet been committed to a Text
 /// segment; flushing is strictly triggered by a *recognised* nested
 /// construct, so unrelated events cost a single index increment. Each
-/// recognition jumps to `close_idx + 1` using the pair stage's pre-linked
-/// pair indices, keeping the sweep strictly forward-only regardless
-/// of nesting depth.
+/// recognition jumps past the pair stage's pre-linked close, keeping
+/// the sweep strictly forward-only regardless of nesting depth.
 ///
 /// The returned value is always normalised via
 /// `Content::from_segments`, so a slow-path body that turned out to
@@ -1989,7 +2039,19 @@ impl RecogniseCtx<'_, '_> {
         );
 
         let body_events = &view.events[window.events.start..window.events.end];
-        if !has_nested_candidate(body_events) {
+        let nested_candidate = body_events.iter().find(|event| {
+            matches!(
+                event,
+                PairEvent::Solo {
+                    kind: TriggerKind::RefMark,
+                    ..
+                } | PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
+                }
+            )
+        });
+        if nested_candidate.is_none() {
             // Fast path: no `※` and no `［` in the body; bytes pass
             // through verbatim. `content_plain("")` canonicalises to
             // empty `Segments(&[])` to match the legacy
@@ -2006,20 +2068,30 @@ impl RecogniseCtx<'_, '_> {
         // events).
         let body = BodyWalkCtx { view, window };
         let mut build = ContentBuild {
-            segments: Vec::with_capacity(body_events.len() + 1),
+            segments: Vec::with_capacity(body_events.len().saturating_add(1)),
             text_start: window.bytes.start,
         };
         let mut i = window.events.start;
-        while i < window.events.end {
+        while window.events.contains(&i) {
             if let Some(next_i) = self.try_emit_gaiji_at(body, &mut build, i) {
+                assert!(
+                    next_i.cmp(&i).is_gt(),
+                    "nested gaiji recognition must advance the event cursor"
+                );
                 i = next_i;
                 continue;
             }
             if let Some(next_i) = self.try_emit_annotation_at(body, &mut build, i) {
+                assert!(
+                    next_i.cmp(&i).is_gt(),
+                    "nested annotation recognition must advance the event cursor"
+                );
                 i = next_i;
                 continue;
             }
-            i += 1;
+            let previous = i;
+            i = i.saturating_add(1);
+            assert!(i > previous, "content walk must advance the event cursor");
         }
         push_text_segment(
             &mut build.segments,
@@ -2049,8 +2121,8 @@ impl RecogniseCtx<'_, '_> {
         else {
             return None;
         };
-        let bracket_idx = i + 1;
-        if bracket_idx >= body.window.events.end {
+        let bracket_idx = i.checked_add(1)?;
+        if !body.window.events.contains(&bracket_idx) {
             return None;
         }
         let PairEvent::PairOpen {
@@ -2065,7 +2137,7 @@ impl RecogniseCtx<'_, '_> {
             return None;
         }
         let close_idx = close_link as usize;
-        if close_idx >= body.window.events.end {
+        if !body.window.events.contains(&close_idx) {
             return None;
         }
         let g = self.recognize_gaiji(body.view, refmark_span, bracket_idx)?;
@@ -2088,7 +2160,7 @@ impl RecogniseCtx<'_, '_> {
                     g.consume_end,
                 )));
         }
-        Some(close_idx + 1)
+        close_idx.checked_add(1)
     }
 
     /// Shape 2: `［＃…］` — a standalone bracket annotation. Tried
@@ -2119,7 +2191,7 @@ impl RecogniseCtx<'_, '_> {
             return None;
         }
         let close_idx = close_link as usize;
-        if close_idx >= body.window.events.end {
+        if !body.window.events.contains(&close_idx) {
             return None;
         }
         let a = self.recognize_annotation(body.view, i, close_idx)?;
@@ -2157,37 +2229,13 @@ impl RecogniseCtx<'_, '_> {
                 p
             } else {
                 let raw = &self.source[open_span.start as usize..close_span.end as usize];
-                self.alloc.make_directive(raw, DirectiveKind::Unknown)
+                self.alloc.make_directive(raw, DirectiveKind::Editorial)
             };
             build.segments.push(self.alloc.seg_annotation(payload));
         }
         build.text_start = a.consume_end;
-        Some(close_idx + 1)
+        close_idx.checked_add(1)
     }
-}
-
-/// Whether `body` could host a nested gaiji / annotation. The pair-stage
-/// event model guarantees that:
-///
-/// * `※［＃…］` always emits a `Solo(RefMark)` event at its `※`.
-/// * `［＃…］` always emits a `PairOpen(Bracket)` event at its `［`.
-///
-/// So the absence of both event shapes in the body is sufficient proof
-/// that no nested construct can be recognised, allowing
-/// `build_content_from_body` to take the allocation-free fast path.
-fn has_nested_candidate(body: &[PairEvent]) -> bool {
-    body.iter().any(|e| {
-        matches!(
-            e,
-            PairEvent::Solo {
-                kind: TriggerKind::RefMark,
-                ..
-            } | PairEvent::PairOpen {
-                kind: PairKind::Bracket,
-                ..
-            }
-        )
-    })
 }
 
 /// Append `source[start..end]` to `segments` as a `Segment::Text` if
@@ -2282,6 +2330,8 @@ mod tests {
     //! `Allocator`'s `NodeStore`. End-to-end byte-identity of the rendered
     //! output is pinned separately by the conformance vectors, the corpus
     //! verbatim gate, and the render byte-identity gates — the frozen authority.
+
+    use core::iter;
 
     use super::*;
     use crate::syntax::ast::{Content, ContentRange, Node, NodeStore, Segment, StrId};
@@ -2493,12 +2543,61 @@ mod tests {
     }
 
     #[test]
+    fn kaeriten_base_suppresses_unpaired_diagnostic() {
+        run!(out, "漢［＃一］字［＃二］");
+        assert!(
+            !out.diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic, Diagnostic::BracketedKaeritenNoPair { .. })),
+            "paired ladder diagnostics: {:?}",
+            out.diagnostics,
+        );
+    }
+
+    #[test]
+    fn unclosed_nested_pair_removes_its_matching_frame_entry() {
+        let mut alloc = Allocator::new();
+        let mut stream = ClassifyStream::new(iter::empty(), "", 0, &mut alloc);
+        stream.frame = Some(Frame {
+            body: smallvec::smallvec![
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    span: Span::new(0, 1),
+                },
+                PairEvent::PairOpen {
+                    kind: PairKind::Ruby,
+                    span: Span::new(1, 2),
+                },
+            ],
+            links: smallvec::smallvec![u32::MAX, u32::MAX],
+            inner_stack: smallvec::smallvec![(PairKind::Bracket, 0), (PairKind::Ruby, 1)],
+            gaiji_refmark: None,
+        });
+
+        let outcome = stream.append_to_frame(PairEvent::Unclosed {
+            kind: PairKind::Ruby,
+            span: Span::new(1, 2),
+        });
+
+        assert_eq!(outcome, FrameOutcome::Open);
+        assert_eq!(
+            stream
+                .frame
+                .as_ref()
+                .expect("active frame")
+                .inner_stack
+                .as_slice(),
+            &[(PairKind::Bracket, 0)],
+        );
+    }
+
+    #[test]
     fn unknown_annotation_is_directive_not_bare_bracket() {
         run!(out, "［＃まったく未知の注記です］");
         let Node::Directive(d) = out.only_aozora() else {
             panic!("expected a Directive, got {:?}", out.only_aozora());
         };
-        assert_eq!(d.kind, DirectiveKind::Unknown);
+        assert_eq!(d.kind, DirectiveKind::Editorial);
         assert!(out.s(d.raw).starts_with("［＃"));
     }
 
@@ -2545,6 +2644,42 @@ mod tests {
     }
 
     // ---- mutation-survivor kills (classify/mod.rs) ----
+
+    #[test]
+    fn ruby_helper_boundaries_are_exact() {
+        let inner = Span::new(3, 6);
+        let events = [
+            PairEvent::Text {
+                range: Span::new(0, 3),
+            },
+            PairEvent::PairOpen {
+                kind: PairKind::Ruby,
+                span: inner,
+            },
+            PairEvent::PairClose {
+                kind: PairKind::Ruby,
+                span: Span::new(9, 12),
+            },
+        ];
+        assert_eq!(
+            first_nested_ruby_open(&events, 0, events.len()),
+            Some(inner)
+        );
+        assert_eq!(first_nested_ruby_open(&events, 0, 1), None);
+
+        assert_eq!(
+            empty_explicit_ruby_span(Some(3), 10, Span::new(20, 23), Span::new(23, 26),),
+            Some(Span::new(13, 26)),
+        );
+        assert_eq!(
+            empty_explicit_ruby_span(Some(3), 10, Span::new(20, 23), Span::new(24, 27),),
+            None,
+        );
+        assert_eq!(
+            empty_explicit_ruby_span(None, 10, Span::new(20, 23), Span::new(23, 26)),
+            None,
+        );
+    }
 
     impl TestClassifyOutput {
         /// Count spans whose kind is `SpanKind::Plain`.
@@ -2651,6 +2786,18 @@ mod tests {
         };
         assert_eq!(out.plain(r.base), Some("青梅"));
         assert_eq!(out.plain(r.reading), Some("おうめ"));
+    }
+
+    #[test]
+    fn literal_bracket_preserves_nested_ruby() {
+        run!(out, "［注｜糠栗《コウリツ》］");
+        assert!(
+            out.spans
+                .iter()
+                .any(|span| matches!(span.kind, SpanKind::Aozora(Node::Ruby(_)))),
+            "{:?}",
+            out.spans
+        );
     }
 
     /// #333 interior forward-reference: the bouten target `青空` occurs at the
