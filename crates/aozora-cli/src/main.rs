@@ -993,18 +993,19 @@ fn fmt_watched(
     lang: &LanguageIdentifier,
     once: impl Fn() -> Result<ExitCode>,
 ) -> Result<ExitCode> {
-    if !args.document.watch {
-        return once();
+    if args.document.watch {
+        let files = watch_target_paths(args.fmt.paths());
+        let [path] = files.as_slice() else {
+            let _drop = writeln!(
+                io::stderr(),
+                "aozora fmt: --watch needs exactly one file path (not stdin or multiple paths)"
+            );
+            return Ok(ExitCode::from(2));
+        };
+        watch::watch(path, lang, once)
+    } else {
+        once()
     }
-    let files = watch_target_paths(args.fmt.paths());
-    let [path] = files.as_slice() else {
-        let _drop = writeln!(
-            io::stderr(),
-            "aozora fmt: --watch needs exactly one file path (not stdin or multiple paths)"
-        );
-        return Ok(ExitCode::from(2));
-    };
-    watch::watch(path, lang, once)
 }
 
 fn run_fmt_once(

@@ -357,6 +357,8 @@ mod tests {
 
     #[test]
     fn batch_len_respects_count_and_source_byte_limits() {
+        assert_eq!(MAX_BATCH_SOURCE_BYTES, 67_108_864);
+
         let small = (0..=batch_width())
             .map(|index| scratch(&format!("missing-{index}.aozora")))
             .collect::<Vec<_>>();

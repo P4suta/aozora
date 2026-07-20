@@ -247,6 +247,25 @@ mod tests {
     }
 
     #[test]
+    fn segment_ranges_resolve_in_a_layered_store() {
+        let mut base = NodeStore::new();
+        let a = base.intern("a");
+        let b = base.intern("b");
+        base.push_segments(&[Segment::Text(a), Segment::Text(b)]);
+
+        let mut layered = NodeStore::layered(Arc::new(base));
+        let c = layered.intern("c");
+        let d = layered.intern("d");
+        let range = layered.push_segments(&[Segment::Text(c), Segment::Text(d)]);
+
+        assert_eq!(range, SegRange { start: 2, len: 2 });
+        assert_eq!(
+            layered.resolve_seg_range(range),
+            &[Segment::Text(c), Segment::Text(d)],
+        );
+    }
+
+    #[test]
     fn content_range_as_plain_length_one() {
         let mut store = NodeStore::new();
         let a = store.intern("foo");

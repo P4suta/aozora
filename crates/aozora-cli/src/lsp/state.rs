@@ -218,7 +218,7 @@ impl OpenDocument {
             cache_bytes_estimate: source_bytes as u64,
         });
         let threshold_us = slow_parse_threshold_us();
-        if latency_us > threshold_us {
+        if parse_is_slow(latency_us, threshold_us) {
             tracing::warn!(
                 latency_us,
                 threshold_us,
@@ -228,6 +228,10 @@ impl OpenDocument {
             );
         }
     }
+}
+
+const fn parse_is_slow(latency_us: u64, threshold_us: u64) -> bool {
+    latency_us > threshold_us
 }
 
 fn parse_slow_threshold(value: Option<&str>) -> u64 {
@@ -272,6 +276,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_metrics_distinguish_incremental_hits_from_full_parse_misses() {
+        let state = OpenDocument::new("plain".to_owned());
+        let initial = state.metrics.snapshot();
+        assert_eq!(initial.cache_hit_total, 0);
+        assert_eq!(initial.cache_miss_total, 1);
+
+        assert_eq!(
+            state.apply_changes(&[ByteEdit {
+                range: 0..5,
+                new_text: "changed".to_owned(),
+            }]),
+            Some(1),
+        );
+        let incremental = state.metrics.snapshot();
+        assert_eq!(incremental.cache_hit_total, 1);
+        assert_eq!(incremental.cache_miss_total, 1);
+
+        state.replace_text("replaced".to_owned());
+        let replaced = state.metrics.snapshot();
+        assert_eq!(replaced.cache_hit_total, 1);
+        assert_eq!(replaced.cache_miss_total, 2);
+    }
+
+    #[test]
     fn older_snapshot_cannot_replace_newer() {
         let state = OpenDocument::new("new".to_owned());
         let candidate = DocSnapshot::new(aozora::parse("old").expect("small source").snapshot(), 0);
@@ -285,5 +313,12 @@ mod tests {
         assert_eq!(parse_slow_threshold(None), 100_000);
         assert_eq!(parse_slow_threshold(Some("42")), 42);
         assert_eq!(parse_slow_threshold(Some("invalid")), 100_000);
+    }
+
+    #[test]
+    fn slow_parse_threshold_is_exclusive() {
+        assert!(!parse_is_slow(41, 42));
+        assert!(!parse_is_slow(42, 42));
+        assert!(parse_is_slow(43, 42));
     }
 }

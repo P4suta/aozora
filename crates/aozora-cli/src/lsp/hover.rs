@@ -142,6 +142,26 @@ mod tests {
     }
 
     #[test]
+    fn single_scalar_resolution_uses_scalar_markdown() {
+        assert_eq!(
+            render_markdown(&lang("en"), "description", None, Some("枘")),
+            "**Gaiji (外字)**\n\n\
+             - Resolved: `枘` (U+6798)\n\
+             - Description: `description`\n",
+        );
+    }
+
+    #[test]
+    fn multi_scalar_resolution_uses_composed_markdown() {
+        assert_eq!(
+            render_markdown(&lang("en"), "description", None, Some("か゚")),
+            "**Gaiji (外字)**\n\n\
+             - Resolved: `か゚` (composed sequence: U+304B + U+309A)\n\
+             - Description: `description`\n",
+        );
+    }
+
+    #[test]
     fn hover_outside_gaiji_returns_none() {
         let src = "ただの文です";
         let pos = Position::new(0, 2);

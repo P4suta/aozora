@@ -497,7 +497,9 @@ fn lower_spans(
             let back_is_plain = matches!(back.kind, SpanKind::Plain);
             let (ss, se) = (span.source_span.start, span.source_span.end);
             if ss <= bs && be <= se && (ss < bs || se > be) {
-                out_len -= 1;
+                out_len = out_len
+                    .checked_sub(1)
+                    .expect("out_len is non-zero inside the guarded loop");
             } else if back_is_plain && bs < ss {
                 spans[out_len - 1].source_span.end = be.min(ss);
                 break;

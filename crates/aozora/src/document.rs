@@ -2126,6 +2126,59 @@ mod tests {
         assert_snapshots_match(&document.snapshot(), &full.snapshot());
     }
 
+    fn incremental_sanitize(source: &str, edit: &TextEdit) -> Option<IncrementalSanitized> {
+        let document = Document::new(source);
+        let map = CoordinateMap::new(
+            document.state.source(),
+            &document.state.output.sanitized,
+            document.state.output.source_unchanged,
+        );
+        document.sanitize_after_edit(edit, &map)
+    }
+
+    #[test]
+    fn incremental_sanitize_rejects_each_accent_boundary() {
+        assert!(incremental_sanitize("abc", &TextEdit::new(1..1, "〔")).is_none());
+        assert!(incremental_sanitize("abc", &TextEdit::new(1..1, "〕")).is_none());
+    }
+
+    #[test]
+    fn incremental_sanitize_accepts_clean_and_leading_bom_edits() {
+        assert!(incremental_sanitize("abc", &TextEdit::new(1..1, "x")).is_some());
+
+        let source = "\u{FEFF}abc";
+        let after_bom = '\u{FEFF}'.len_utf8();
+        let sanitized = incremental_sanitize(source, &TextEdit::new(after_bom..after_bom, "x"))
+            .expect("leading BOM remains a document-level rewrite");
+        assert_eq!(sanitized.text.as_ref(), "xabc");
+        assert!(!sanitized.source_unchanged);
+    }
+
+    #[test]
+    fn incremental_sanitize_combines_prior_and_fragment_identity() {
+        let source = "\u{FEFF}first\n\nmiddle";
+        let at = source.find("middle").expect("middle paragraph");
+        let sanitized = incremental_sanitize(source, &TextEdit::new(at..at, "x"))
+            .expect("clean paragraph edit can be sanitized incrementally");
+        assert_eq!(sanitized.text.as_ref(), "first\n\nxmiddle");
+        assert!(!sanitized.source_unchanged);
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(sanitized.source.is_none());
+    }
+
+    #[test]
+    fn incremental_sanitize_helpers_splice_exact_ranges() {
+        let edit = TextEdit::new(2..4, "XY");
+        assert_eq!(
+            edited_fragment("abcdef", &edit, 1..5).as_deref(),
+            Some("bXYe"),
+        );
+        assert_eq!(
+            splice_sanitized("abcdef", 2..4, "XY").as_deref(),
+            Some("abXYef"),
+        );
+    }
+
     #[test]
     fn edits_preserve_sanitize_diagnostics_outside_the_changed_paragraph() {
         let source = "前〔cafe'〕\n\nmiddle\n\n後〔cafe'〕";
@@ -2154,6 +2207,31 @@ mod tests {
         let edit = TextEdit::new(1..3, "replacement");
         assert_eq!(edit.range(), 1..3);
         assert_eq!(edit.replacement(), "replacement");
+    }
+
+    #[test]
+    fn container_kind_wire_tags_are_stable() {
+        assert_eq!(
+            ContainerKind::ALL.map(ContainerKind::as_str),
+            [
+                "indent",
+                "warichu",
+                "framed",
+                "alignEnd",
+                "lineWidth",
+                "boutenRange",
+                "bold",
+                "gothic",
+                "italic",
+                "heading",
+                "columns",
+                "table",
+                "horizontal",
+                "fontSize",
+                "smallScript",
+                "caption",
+            ],
+        );
     }
 
     #[test]
