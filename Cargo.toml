@@ -376,7 +376,7 @@ unic-langid = "0.9"
 # ICU4X's `icu_locid`, whereas fluent-bundle 0.16 and `unic-langid` here speak
 # `unic_langid::LanguageIdentifier`. 0.13 keeps the whole stack on the one
 # identifier type so bundles and negotiation share it without a bridge.
-fluent-langneg = "0.13"
+fluent-langneg = "0.14"
 
 # Testing
 insta = { version = "1.47", features = ["yaml", "json", "filters"] }
