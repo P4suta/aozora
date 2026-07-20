@@ -236,7 +236,7 @@ ropey = { version = "1.6", default-features = false, features = [
 ] } # default features OFF: with neither cr_lines nor unicode_lines, ropey's line metrics count only 0x0A — byte-identical to LineIndex (see doc_line_view guard test)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-hdrhistogram = { version = "7.5", default-features = false } # constant-memory percentile metrics
+hdrhistogram = { version = "=7.5.4", default-features = false } # constant-memory percentile metrics
 
 # Pandoc AST serde for `aozora`'s `pandoc` feature (Phase M1).
 # `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs

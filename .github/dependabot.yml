@@ -12,6 +12,13 @@ updates:
       rust-deps:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # ADR-0033 rejects the ICU identifier split introduced in 0.14.
+      - dependency-name: fluent-langneg
+        versions: [">=0.14"]
+      # 7.6.0 declares the non-SPDX expression MIT/Apache-2.0.
+      - dependency-name: hdrhistogram
+        versions: ["7.6.0"]
 
   - package-ecosystem: github-actions
     directory: "/"

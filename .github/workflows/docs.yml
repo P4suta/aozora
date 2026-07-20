@@ -60,7 +60,7 @@ jobs:
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: "1.97.0"
           targets: wasm32-unknown-unknown
@@ -78,12 +78,9 @@ jobs:
 
       - name: Install wasm-pack
         if: steps.release.outputs.release != 'true'
-        # Pinned action + version (was an unpinned `curl … | sh`) so the
-        # auto-fetched wasm-bindgen-cli is deterministic. Mirrors the
-        # sibling afm repo's docs workflow.
-        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa  # v0.4.0
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b  # v2.83.4
         with:
-          version: 'v0.15.0'
+          tool: wasm-pack@0.15.0
 
 
       - name: Build rustdoc
