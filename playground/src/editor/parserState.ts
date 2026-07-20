@@ -1,5 +1,12 @@
 import { StateField } from '@codemirror/state';
 import type { EditorState, Transaction } from '@codemirror/state';
+import type {
+  Diagnostic,
+  GaijiResolution,
+  Node,
+  Pair,
+  TextEdit as WasmTextEdit,
+} from 'aozora-wasm';
 import { Document } from '../wasm-loader';
 
 /** A single container fold range, both endpoints in UTF-16 code units. */
@@ -23,52 +30,18 @@ export interface HeadingEntry {
   level: number;
 }
 
-/** A `nodesJson` entry, post-parse. Spans are UTF-8 byte offsets. */
-export interface NodeEntry {
-  kind: string;
-  span: { start: number; end: number };
-}
-
-/** A `diagnosticsJson` entry. */
-export interface DiagnosticEntry {
-  kind: string;
-  span: { start: number; end: number };
-  codepoint?: number;
-}
-
-/** A `pairsJson` entry — matched open/close bracket pair. */
-export interface PairEntry {
-  kind: string;
-  open: { start: number; end: number };
-  close: { start: number; end: number };
-}
-
-/** A `gaijiJson` entry. */
-export interface GaijiResolutionEntry {
-  span: { start: number; end: number };
-  description: string;
-  mencode: string | null;
-  codepoint: number | null;
-  resolved: string | null;
-}
-
-/** One row of `profileJson`. */
-export interface ProfilePhaseEntry {
-  name: string;
-  duration_ms: number;
-}
+export type NodeEntry = Node;
+export type DiagnosticEntry = Diagnostic;
+export type PairEntry = Pair;
+export type GaijiResolutionEntry = GaijiResolution;
 
 export interface ParserState {
   doc: Document | null;
   source: string;
   html: string;
   serialized: string;
-  /** Raw wire-format JSON (kept for the side tabs in PreviewPane). */
+  /** Raw wire-format JSON kept for the nodes side tab. */
   nodesJson: string;
-  diagJson: string;
-  pairsJson: string;
-  gaijiResJson: string;
-  /** Pre-parsed forms — each consumer uses these instead of JSON.parse-ing again. */
   nodes: NodeEntry[];
   diagnostics: DiagnosticEntry[];
   pairs: PairEntry[];
@@ -83,33 +56,7 @@ export interface ParserState {
   containerFolds: ContainerFold[];
   /** Heading entries for the outline panel, in source order. */
   headings: HeadingEntry[];
-  /** Per-method profile (parse / toHtml / serialize / each *_json). */
-  profile: ProfilePhaseEntry[];
 }
-
-const EMPTY_ENVELOPE = '{"schemaVersion":2,"data":[]}';
-
-const EMPTY_PARSER_STATE: ParserState = {
-  doc: null,
-  source: '',
-  html: '',
-  serialized: '',
-  nodesJson: EMPTY_ENVELOPE,
-  diagJson: EMPTY_ENVELOPE,
-  pairsJson: EMPTY_ENVELOPE,
-  gaijiResJson: EMPTY_ENVELOPE,
-  nodes: [],
-  diagnostics: [],
-  pairs: [],
-  gaijiResolutions: [],
-  parseDurationMs: 0,
-  byteLen: 0,
-  u2b: new Uint32Array(1),
-  b2u: new Uint32Array(1),
-  containerFolds: [],
-  headings: [],
-  profile: [],
-};
 
 /**
  * Build UTF-16 ↔ UTF-8 offset translation tables for `source`.
@@ -170,15 +117,6 @@ let callbacks: ParseCallbacks = {};
 
 export function setParseCallbacks(cb: ParseCallbacks): void {
   callbacks = cb;
-}
-
-function safeParseData<T>(json: string): T[] {
-  try {
-    const env = JSON.parse(json) as { data?: T[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
 }
 
 interface SecondaryData {
@@ -244,7 +182,7 @@ function deriveSecondaryData(
       }
       // 次に来る aozoraHeading 用にも pending（block 形式）
       pendingLevel = lvl;
-    } else if (entry.kind === 'aozoraHeading') {
+    } else if (entry.kind === 'heading') {
       const from = utf16At(entry.span.start);
       const to = utf16At(entry.span.end);
       const text = source.slice(from, to).trim();
@@ -257,45 +195,35 @@ function deriveSecondaryData(
   return { containerFolds, headings };
 }
 
-function computeParserState(prev: ParserState | null, source: string): ParserState {
-  prev?.doc?.free();
-  if (source === '') {
-    const tables = buildOffsetTables('');
-    const ps: ParserState = {
-      ...EMPTY_PARSER_STATE,
-      source: '',
-      u2b: tables.u2b,
-      b2u: tables.b2u,
-    };
-    callbacks.onParse?.(ps);
-    return ps;
-  }
+function computeParserState(
+  prev: ParserState | null,
+  source: string,
+  edits: WasmTextEdit[] | null,
+): ParserState {
   const t0 = performance.now();
-  const doc = new Document(source);
+  let doc: Document;
+  if (prev?.doc && edits) {
+    doc = prev.doc;
+    try {
+      doc.edit(edits);
+    } catch {
+      doc.free();
+      doc = new Document(source);
+    }
+  } else {
+    prev?.doc?.free();
+    doc = new Document(source);
+  }
   const html = doc.toHtml();
   const parseDurationMs = performance.now() - t0;
   const serialized = doc.toSource();
-  const nodesJson = doc.nodesJson();
-  const diagJson = doc.diagnosticsJson();
-  const pairsJson = doc.pairsJson();
-  const gaijiResJson = doc.gaijiJson();
+  const nodes = Array.from(doc.nodes());
+  const nodesJson = JSON.stringify(nodes, null, 2);
+  const diagnostics = Array.from(doc.diagnostics());
+  const pairs = Array.from(doc.pairs());
+  const gaijiResolutions = Array.from(doc.gaiji());
   const byteLen = doc.sourceByteLen();
   const tables = buildOffsetTables(source);
-
-  // Single source of truth for parsed JSON — every CM6 extension
-  // reads from these arrays instead of re-running JSON.parse on its
-  // own. The wire-format strings (nodesJson / diagJson / ...) are
-  // still exposed for the side tabs that display raw JSON.
-  const nodes = safeParseData<NodeEntry>(nodesJson);
-  const diagnostics = safeParseData<DiagnosticEntry>(diagJson);
-  const pairs = safeParseData<PairEntry>(pairsJson);
-  const gaijiResolutions = safeParseData<GaijiResolutionEntry>(gaijiResJson);
-
-  // profileJson invokes each method again to time it independently;
-  // this roughly doubles parse cost but the badge popover wants
-  // numbers that aren't contaminated by JS<>WASM bridge overhead.
-  // For documents up to a few MB this is invisible UX-wise.
-  const profile = safeParseData<ProfilePhaseEntry>(doc.profileJson());
 
   const secondary = deriveSecondaryData(source, nodes, tables.b2u);
   const ps: ParserState = {
@@ -304,9 +232,6 @@ function computeParserState(prev: ParserState | null, source: string): ParserSta
     html,
     serialized,
     nodesJson,
-    diagJson,
-    pairsJson,
-    gaijiResJson,
     nodes,
     diagnostics,
     pairs,
@@ -317,7 +242,6 @@ function computeParserState(prev: ParserState | null, source: string): ParserSta
     b2u: tables.b2u,
     containerFolds: secondary.containerFolds,
     headings: secondary.headings,
-    profile,
   };
   callbacks.onParse?.(ps);
   return ps;
@@ -325,17 +249,23 @@ function computeParserState(prev: ParserState | null, source: string): ParserSta
 
 /**
  * The single Document owner. All CM6 extensions read parsed data
- * from `view.state.field(parserStateField)`. The previous Document
- * is `.free()`-ed inside `computeParserState` to keep WASM heap
- * stable.
+ * from `view.state.field(parserStateField)`.
  */
 export const parserStateField = StateField.define<ParserState>({
   create(state: EditorState): ParserState {
-    return computeParserState(null, state.doc.toString());
+    return computeParserState(null, state.doc.toString(), null);
   },
   update(value: ParserState, tr: Transaction): ParserState {
     if (!tr.docChanged) return value;
-    return computeParserState(value, tr.newDoc.toString());
+    const edits: WasmTextEdit[] = [];
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      edits.push({
+        start: utf16ToByte(value, fromA),
+        end: utf16ToByte(value, toA),
+        replacement: inserted.toString(),
+      });
+    });
+    return computeParserState(value, tr.newDoc.toString(), edits);
   },
 });
 

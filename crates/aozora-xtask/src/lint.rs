@@ -57,7 +57,6 @@ const OUTER_BASELINE: &[(&str, usize)] = &[("aozora-py", 1)];
 /// so it deserves its own visible ledger. Same edit rule as
 /// [`OUTER_BASELINE`].
 const INNER_BASELINE: &[(&str, usize)] = &[
-    ("aozora", 1),
     ("aozora-cli", 4),
     ("aozora-corpus", 7),
     ("aozora-extism", 1),

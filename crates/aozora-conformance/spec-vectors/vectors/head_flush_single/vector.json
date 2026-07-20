@@ -8,7 +8,7 @@
   },
   "source": "和歌の本文［＃改行天付き、折り返して２字下げ］続き\n",
   "expected": {
-    "html": "<p>和歌の本文</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-0 aozora-container-wrap-indent\" data-amount=\"0\" data-wrap=\"2\">\n<p>続き</p>\n",
+    "html": "<p>和歌の本文</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-0 aozora-container-wrap-indent\" data-amount=\"0\" data-wrap=\"2\">\n<p>続き</p>\n</div>\n",
     "serialize": "和歌の本文\n\n［＃ここから0字下げ、折り返して2字下げ］\n\n続き\n",
     "nodes": [
       {

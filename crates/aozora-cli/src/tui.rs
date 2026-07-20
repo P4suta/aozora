@@ -50,8 +50,8 @@ use std::time::{Duration, Instant};
 use crate::fmt::{decode, read_file};
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
+use aozora::json;
 use aozora::pandoc::to_pandoc;
-use aozora::{Document, json};
 use clap::{Parser, ValueEnum};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{execute, terminal};
@@ -158,7 +158,7 @@ struct Derived {
 /// the HTML matches `aozora render`, the nodes match `aozora inspect nodes`,
 /// and the report matches `aozora`'s portable diagnostic text exactly.
 fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived {
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     let preview_text = match preview {
@@ -508,11 +508,8 @@ fn all_terminals(stream_ttys: [bool; 2]) -> bool {
 /// and key input — a piped invocation gets an actionable error, not a hang),
 /// open the optional file, then run the loop. Always exits 0 on a clean quit.
 ///
-/// Real-tty only past the guard ([`run_app`] enters raw mode + the alternate
-/// screen), so the sweep cannot exercise it; its one decision — the pure
-/// [`all_terminals`] predicate — is unit-tested, and the refusal path is
-/// covered end-to-end by the `tui_without_a_terminal_refuses` smoke test.
-#[cfg_attr(test, mutants::skip)]
+/// The pseudo-terminal integration test exercises the live terminal path;
+/// [`all_terminals`] separately pins the guard decision.
 pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     if !all_terminals([io::stdin().is_terminal(), io::stdout().is_terminal()]) {
         anyhow::bail!("{}", i18n::t(lang, "tui-no-tty"));
@@ -523,9 +520,7 @@ pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
 
 /// Enter raw mode + the alternate screen, run [`event_loop`], then restore the
 /// terminal on every exit path (clean quit, error, or panic-unwind of the
-/// loop). Needs a real terminal, so it is skipped by the mutation sweep and
-/// covered only by the pure [`render`] / [`command_for`] / `App` tests below.
-#[cfg_attr(test, mutants::skip)]
+/// loop).
 fn run_app(mut app: App) -> Result<ExitCode> {
     terminal::enable_raw_mode().context("failed to enable raw mode")?;
     let mut stdout = io::stdout();
@@ -547,9 +542,7 @@ fn run_app(mut app: App) -> Result<ExitCode> {
 
 /// The draw / input loop: redraw when something changed, poll for a key, run
 /// its [`Command`] (or forward it to the editor), and fire the debounced
-/// recompute once the buffer goes quiet. Returns on `Ctrl-Q`. Real-tty only —
-/// skipped by the sweep; the pure seams it drives are unit-tested.
-#[cfg_attr(test, mutants::skip)]
+/// recompute once the buffer goes quiet. Returns on `Ctrl-Q`.
 fn event_loop(
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -643,7 +636,10 @@ mod tests {
     fn derive_html_matches_the_render_engine() {
         let source = "｜青空《あおぞら》";
         let d = derive(source, Preview::Html, &lang("en"));
-        let expected = Document::new(source).snapshot().to_html();
+        let expected = aozora::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_html();
         assert!(!expected.is_empty(), "fixture renders to non-empty HTML");
         assert_eq!(d.preview, expected, "preview is the render bytes");
         assert_eq!(d.diag_count, 0, "clean fixture");
@@ -653,7 +649,11 @@ mod tests {
     fn derive_nodes_matches_the_inspect_engine() {
         let source = "青空《あおぞら》";
         let d = derive(source, Preview::Nodes, &lang("en"));
-        let expected = json::nodes(&Document::new(source).snapshot());
+        let expected = json::nodes(
+            &aozora::parse(source)
+                .expect("source fits parser span limit")
+                .snapshot(),
+        );
         assert_eq!(d.preview, expected, "preview is the inspect-nodes bytes");
     }
 
@@ -773,7 +773,11 @@ mod tests {
         assert_ne!(a.derived.preview, html, "panes recomputed for the new view");
         assert_eq!(
             a.derived.preview,
-            json::nodes(&Document::new("青空《あおぞら》").snapshot()),
+            json::nodes(
+                &aozora::parse("青空《あおぞら》")
+                    .expect("source fits parser span limit")
+                    .snapshot()
+            ),
             "now showing the nodes bytes"
         );
     }

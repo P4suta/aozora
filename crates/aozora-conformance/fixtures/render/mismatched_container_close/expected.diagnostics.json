@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"mismatched_container_close","severity":"error","source":"source","span":{"start":37,"end":73}}]}
+{"schemaVersion":3,"data":[{"kind":"mismatched_container_close","severity":"error","source":"source","span":{"start":37,"end":73}}]}

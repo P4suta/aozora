@@ -2,14 +2,76 @@
 //!
 //! [`SourceNode`] pairs a sanitized-source span with the node it
 //! classified there; [`LexOutput`] holds the lexer's output, with a
-//! `store: NodeStore` that backs the `StrId`/range payloads. The whole struct
+//! shared [`NodeStore`] that backs the `StrId`/range payloads. The whole struct
 //! is `Send + Sync` (static assertion below) — the point of the owned
 //! representation for the #237 incremental cache / LSP consumer.
 
-use crate::spec::{Diagnostic, PairLink, SourceOffset, Span};
+use core::ops::Deref;
+use std::sync::Arc;
+
+use crate::spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 
 use super::registry::{ContainerPair, NodeRef, Registry};
 use super::store::NodeStore;
+
+#[derive(Debug, Clone)]
+pub(crate) enum SanitizedText {
+    Shared(Arc<str>),
+    Owned(String),
+}
+
+impl SanitizedText {
+    pub(crate) fn shared(text: Arc<str>) -> Self {
+        Self::Shared(text)
+    }
+
+    pub(crate) fn owned(text: String) -> Self {
+        Self::Owned(text)
+    }
+}
+
+impl Deref for SanitizedText {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Shared(text) => text,
+            Self::Owned(text) => text,
+        }
+    }
+}
+
+impl AsRef<str> for SanitizedText {
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+impl PartialEq for SanitizedText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for SanitizedText {}
+
+impl From<String> for SanitizedText {
+    fn from(text: String) -> Self {
+        Self::Owned(text)
+    }
+}
+
+impl From<Arc<str>> for SanitizedText {
+    fn from(text: Arc<str>) -> Self {
+        Self::Shared(text)
+    }
+}
+
+impl From<&str> for SanitizedText {
+    fn from(text: &str) -> Self {
+        Self::Owned(text.to_owned())
+    }
+}
 
 /// Source-keyed registry entry.
 ///
@@ -17,10 +79,11 @@ use super::store::NodeStore;
 /// Derives `Debug, Clone, Copy`; deliberately no `PartialEq`/`Eq`. `Copy`
 /// requires [`NodeRef`] be `Copy`.
 #[derive(Debug, Clone, Copy)]
-pub struct SourceNode {
+pub(crate) struct SourceNode {
     /// Half-open byte range, in sanitized-source coordinates, this node was
     /// classified from. Entries are sorted by `start`. (`Span` reused.)
     pub source_span: Span,
+    pub(crate) normalized_offset: NormalizedOffset,
     /// The classified node landed at `source_span`, tagged with where it sits
     /// in the normalized stream.
     pub node: NodeRef,
@@ -29,7 +92,7 @@ pub struct SourceNode {
 /// The lexer's complete owned, no-lifetime output.
 ///
 /// Every field is owned (`String`, [`Registry`], `Vec<_>`), with a
-/// `store: NodeStore` that backs the `StrId`/range payloads referenced by the
+/// shared [`NodeStore`] that backs the `StrId`/range payloads referenced by the
 /// owned nodes. `Send + Sync` (see static assertion below). Not `Copy`.
 /// Derives `Debug` only.
 #[derive(Debug)]
@@ -39,7 +102,8 @@ pub(crate) struct LexOutput {
     pub(crate) normalized: String,
     /// Verbatim post-sanitize source text (no sentinels, no padding) — the
     /// coordinate space every `source_span` indexes.
-    pub(crate) sanitized: String,
+    pub(crate) sanitized: SanitizedText,
+    pub(crate) source_unchanged: bool,
     /// Sentinel-position → node lookup table.
     pub(crate) registry: Registry,
     /// Non-fatal observations from every stage.
@@ -53,6 +117,16 @@ pub(crate) struct LexOutput {
     pub(crate) container_pairs: Vec<ContainerPair>,
     /// Owned backing store (string interner + flat content/segment `Vec`s) the
     /// owned nodes' `StrId`/range payloads resolve against.
+    pub(crate) store: Arc<NodeStore>,
+}
+
+#[derive(Debug)]
+pub(crate) struct RegionOutput {
+    pub(crate) normalized: String,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) pairs: Vec<PairLink>,
+    pub(crate) source_nodes: Vec<SourceNode>,
+    pub(crate) container_pairs: Vec<ContainerPair>,
     pub(crate) store: NodeStore,
 }
 
@@ -73,23 +147,34 @@ impl LexOutput {
     )]
     pub(crate) fn new(
         normalized: String,
-        sanitized: String,
+        sanitized: impl Into<SanitizedText>,
+        source_unchanged: bool,
         registry: Registry,
-        diagnostics: Vec<Diagnostic>,
+        mut diagnostics: Vec<Diagnostic>,
         pairs: Vec<PairLink>,
         source_nodes: Vec<SourceNode>,
         container_pairs: Vec<ContainerPair>,
-        store: NodeStore,
+        store: impl Into<Arc<NodeStore>>,
     ) -> Self {
+        diagnostics.sort_unstable_by(|left, right| {
+            let left_span = left.span();
+            let right_span = right.span();
+            left_span
+                .start
+                .cmp(&right_span.start)
+                .then_with(|| left_span.end.cmp(&right_span.end))
+                .then_with(|| left.code().cmp(right.code()))
+        });
         Self {
             normalized,
-            sanitized,
+            sanitized: sanitized.into(),
+            source_unchanged,
             registry,
             diagnostics,
             pairs,
             source_nodes,
             container_pairs,
-            store,
+            store: store.into(),
         }
     }
 
@@ -127,6 +212,7 @@ mod tests {
         LexOutput::new(
             String::new(),
             String::new(),
+            true,
             Registry::empty(),
             Vec::new(),
             Vec::new(),
@@ -146,10 +232,12 @@ mod tests {
         let sn = vec![
             SourceNode {
                 source_span: Span::new(2, 5),
+                normalized_offset: NormalizedOffset::new(0),
                 node: NodeRef::Inline(Node::PageBreak),
             },
             SourceNode {
                 source_span: Span::new(10, 20),
+                normalized_offset: NormalizedOffset::new(3),
                 node: NodeRef::Inline(Node::BodyEnd),
             },
         ];

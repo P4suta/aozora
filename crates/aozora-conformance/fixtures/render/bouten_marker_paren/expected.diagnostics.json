@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"non_canonical_directive","severity":"warning","source":"source","span":{"start":12,"end":60}}]}
+{"schemaVersion":3,"data":[{"kind":"non_canonical_directive","severity":"warning","source":"source","span":{"start":12,"end":60}}]}

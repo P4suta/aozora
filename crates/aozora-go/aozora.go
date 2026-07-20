@@ -4,10 +4,9 @@
 // It embeds and runs the portable `aozora.wasm` Extism plugin through the
 // pure-Go wazero runtime (no cgo, no native libextism), exposing the
 // parser's text-in / JSON-out wire API: ruby, bouten, 縦中横, 外字,
-// kaeriten, indent containers, page breaks. The same `aozora.wasm` powers
-// every language's host SDK, so the output here is byte-identical to the
-// Rust / WASM / Python / C-ABI front doors (all funnel through
-// `aozora::json`).
+// kaeriten, indent containers, page breaks. Its output is byte-identical to
+// the Rust / WASM / Python / C-ABI front doors because every channel funnels
+// through `aozora::json`.
 //
 // The generated JSON types live in json_gen.go (regenerate with
 // `just types-langs`). This file is the hand-written transport wrapper.
@@ -28,12 +27,6 @@ import (
 //
 //go:embed aozora.wasm
 var wasmBytes []byte
-
-// SchemaVersion is the wire-format schema version this SDK is built
-// against. Open verifies the loaded plugin reports the same version, so a
-// plugin/SDK skew fails loudly instead of decoding against the wrong
-// shape. Mirrors aozora::json::SCHEMA_VERSION.
-const SchemaVersion = 2
 
 // Parser is a loaded aozora plugin instance. It is NOT safe for
 // concurrent use; create one per goroutine or guard it with a mutex.
@@ -106,31 +99,30 @@ func (p *Parser) Pairs(source string) (AozoraPairsEnvelope, error) {
 }
 
 // ContainerPairs parses source and returns the container open/close pair
-// envelope (indent / warichu / keigakomi / alignEnd, in normalized coords).
+// envelope (indent / warichu / keigakomi / alignEnd, in source coords).
 func (p *Parser) ContainerPairs(source string) (AozoraContainerPairsEnvelope, error) {
 	var env AozoraContainerPairsEnvelope
 	err := p.callJSON("container_pairs_json", source, &env)
 	return env, err
 }
 
-// Gaiji parses source and returns the resolved ※［＃…］ gaiji-reference
-// wire envelope as raw JSON, byte-identical to aozora::json::gaiji.
-func (p *Parser) Gaiji(source string) (string, error) {
-	return p.call("gaiji_json", source)
+// Gaiji parses source and returns resolved ※［＃…］ gaiji references.
+func (p *Parser) Gaiji(source string) (AozoraGaijiEnvelope, error) {
+	var env AozoraGaijiEnvelope
+	err := p.callJSON("gaiji_json", source, &env)
+	return env, err
 }
 
-// Slugs returns the static spec slug catalogue as a raw-JSON wire
-// envelope (byte-identical to aozora::json::slugs). It is input-independent
-// — the same envelope every call — so the result can be cached. Powers
-// ［＃…］ annotation completion.
-func (p *Parser) Slugs() (string, error) {
-	return p.call("slugs_json", "")
+// Slugs returns the static spec slug catalogue used by completion.
+func (p *Parser) Slugs() (AozoraSlugsEnvelope, error) {
+	var env AozoraSlugsEnvelope
+	err := p.callJSON("slugs_json", "", &env)
+	return env, err
 }
 
-// Version returns the parser's channel-aware build version string (e.g.
-// "0.5.0" or "0.5.0-dev+g3672e3f"). This is the engine build stamp,
-// distinct from SchemaVersion (the wire-contract version). Mirrors the
-// version() export of the WASM / Python drivers.
+// Version returns the parser's channel-aware build version string. This is
+// the engine build stamp, distinct from SchemaVersion (the wire-contract
+// version). Mirrors the version() export of the WASM / Python drivers.
 func (p *Parser) Version() (string, error) {
 	return p.call("version", "")
 }

@@ -20,10 +20,10 @@
 //! bypasses BOTH the upward search and the global layer, loading that one
 //! file alone.
 //!
-//! `serde` + `toml` only — no new external crate (ADR-0013); XDG is resolved
-//! by reading the two environment variables by hand. Unknown keys are
-//! rejected (`deny_unknown_fields`) so a mistyped setting fails loudly
-//! instead of being silently ignored.
+//! Deserialization and JSON Schema derive from this same model (ADR-0048);
+//! XDG is resolved by reading the two environment variables directly.
+//! Unknown keys are rejected (`deny_unknown_fields`) so a mistyped setting
+//! fails loudly instead of being silently ignored.
 
 use std::env;
 use std::ffi::OsString;
@@ -44,8 +44,9 @@ const CONFIG_NAME: &str = ".aozora.toml";
 /// `config.toml`. Every field is optional: a present value becomes the
 /// default for that setting, still overridable by a higher-precedence layer
 /// (project over global) or by a flag / environment variable.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[schemars(title = "AozoraConfig")]
 pub(crate) struct ConfigFile {
     pub encoding: Option<Encoding>,
     pub format: Option<DiagFormat>,

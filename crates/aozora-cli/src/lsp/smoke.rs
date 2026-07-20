@@ -64,9 +64,9 @@ fn canonical_ruby_reformats_to_itself() {
 #[test]
 fn hover_on_known_gaiji_mentions_resolved_character() {
     let src = "語※［＃「木＋吶のつくり」、第3水準1-85-54］で";
-    // cursor inside the gaiji token
     let pos = Position::new(0, 3);
-    let hover = hover_at(src, pos, &en()).expect("hover must fire");
+    let document = aozora::parse(src).expect("test source is within parser limit");
+    let hover = hover_at(&document.snapshot(), pos, &en()).expect("hover must fire");
     let md = match hover.contents {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected Markdown hover"),
@@ -77,5 +77,6 @@ fn hover_on_known_gaiji_mentions_resolved_character() {
 
 #[test]
 fn hover_outside_any_gaiji_returns_none() {
-    assert!(hover_at("ただの文", Position::new(0, 1), &en()).is_none());
+    let document = aozora::parse("ただの文").expect("test source is within parser limit");
+    assert!(hover_at(&document.snapshot(), Position::new(0, 1), &en()).is_none());
 }

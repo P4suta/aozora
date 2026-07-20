@@ -25,7 +25,7 @@
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example alloc_gate -p aozora-bench \
-//!     -- --baseline corpus/alloc-baseline.json [--root DIR] [--update] [--tolerance 0.03]
+//!     -- --baseline corpus/alloc-baseline.json [--root DIR] [--update]
 //! ```
 //!
 //! Exit codes: `0` pass (or no corpus → skip), `1` over budget, `2` usage /
@@ -40,25 +40,28 @@
     reason = "profiling-gate tool, not library code"
 )]
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use aozora::encoding::decode_auto;
+use aozora::{TextEdit, decode_auto};
+use aozora_bench::build_synthetic_aozora;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use dhat::{HeapStats, Profiler};
-use serde_json::{Value, from_str, json, to_string_pretty};
+use serde_json::{Map, Value, from_str, json, to_string_pretty};
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// Default per-metric headroom over baseline. Wider than `audit-gate`'s 1%
-/// because the CI corpus checks out `P4suta/aozorabunko_text` at unpinned HEAD
-/// — the doc set drifts run-to-run, and 3% absorbs the resulting mean shift
-/// once the per-file / per-source-byte normalization has absorbed count drift.
-const DEFAULT_TOLERANCE: f64 = 0.03;
+/// The release corpus and toolchain are pinned, so allocation ceilings have no
+/// regression headroom.
+const DEFAULT_TOLERANCE: f64 = 0.0;
+const EDIT_BYTES: usize = 256 * 1024;
+const LARGE_BYTES: usize = 1024 * 1024;
+const SNAPSHOT_CLONES: usize = 1000;
 
 struct Args {
     baseline: PathBuf,
@@ -136,6 +139,14 @@ struct Totals {
     decode_errors: u64,
 }
 
+#[derive(Clone, Copy)]
+struct Allocation {
+    blocks: u64,
+    bytes: u64,
+}
+
+type Contract = BTreeMap<&'static str, Allocation>;
+
 impl Totals {
     fn blocks_per_file(&self) -> f64 {
         if self.files == 0 {
@@ -177,7 +188,9 @@ fn main() {
         // Measured window: only the owned producer's allocations (transient
         // scratch + owned storage) land in the delta.
         let before = HeapStats::get();
-        let owned = aozora::parse(text.as_ref()).snapshot();
+        let owned = aozora::parse(text.as_ref())
+            .expect("source fits parser span limit")
+            .snapshot();
         let after = HeapStats::get();
         totals.alloc_blocks += after.total_blocks - before.total_blocks;
         totals.alloc_bytes += after.total_bytes - before.total_bytes;
@@ -186,7 +199,7 @@ fn main() {
 
         // Read the side-table lengths so the optimiser cannot elide the parse.
         black_box((
-            owned.source_nodes().len(),
+            owned.nodes().len(),
             owned.pairs().len(),
             owned.container_pairs().len(),
             owned.diagnostics().len(),
@@ -194,21 +207,33 @@ fn main() {
     }
 
     if totals.files == 0 {
-        println!("alloc_gate: corpus yielded 0 decodable documents — skipped.");
-        process::exit(0);
+        eprintln!("alloc_gate: corpus yielded 0 decodable documents.");
+        process::exit(1);
     }
 
     let blocks_per_file = totals.blocks_per_file();
     let bytes_per_source_byte = totals.bytes_per_source_byte();
+    let contract = allocation_contract();
     println!(
         "alloc_gate: {} files, {} decode errors",
         totals.files, totals.decode_errors
     );
     println!("  alloc_blocks_per_file       = {blocks_per_file:.4}");
     println!("  alloc_bytes_per_source_byte = {bytes_per_source_byte:.4}");
+    for (name, allocation) in &contract {
+        println!(
+            "  {name:<28} = {:>8} blocks, {:>12} bytes",
+            allocation.blocks, allocation.bytes
+        );
+    }
 
     if args.update {
-        write_baseline(&args, &totals, blocks_per_file, bytes_per_source_byte);
+        write_baseline(
+            &args,
+            &totals,
+            (blocks_per_file, bytes_per_source_byte),
+            &contract,
+        );
         println!(
             "alloc_gate: baseline written to {}",
             args.baseline.display()
@@ -221,7 +246,15 @@ fn main() {
         .tolerance
         .filter(|t| t.is_finite() && *t >= 0.0)
         .unwrap_or(args.tolerance);
-    let mut failed = false;
+    let mut failed = if totals.decode_errors != 0 {
+        eprintln!(
+            "  decode_errors: {} document(s) could not be decoded",
+            totals.decode_errors
+        );
+        true
+    } else {
+        false
+    };
     failed |= check_metric(
         "alloc_blocks_per_file",
         blocks_per_file,
@@ -234,6 +267,9 @@ fn main() {
         baseline.bytes_per_source_byte,
         tol,
     );
+    for (name, allocation) in contract {
+        failed |= check_contract(name, allocation, &baseline.contract);
+    }
 
     if failed {
         eprintln!(
@@ -248,6 +284,90 @@ fn main() {
         "alloc_gate: PASS (within +{:.1}% of baseline).",
         tol * 100.0
     );
+}
+
+fn allocation_contract() -> Contract {
+    let edit_source = build_synthetic_aozora(EDIT_BYTES);
+    let large_source = build_synthetic_aozora(LARGE_BYTES);
+    let mut contract = Contract::new();
+
+    contract.insert(
+        "large_document",
+        measure(|| {
+            let snapshot = aozora::parse(black_box(large_source.as_str()))
+                .expect("synthetic source fits parser spans")
+                .snapshot();
+            black_box(snapshot.nodes().len());
+        }),
+    );
+
+    let mut single =
+        aozora::parse(edit_source.clone()).expect("synthetic source fits parser spans");
+    let at = edit_offset(&edit_source);
+    contract.insert(
+        "single_edit",
+        measure(|| {
+            single
+                .edit([TextEdit::new(at..at, "x")])
+                .expect("synthetic edit is valid");
+            black_box(single.snapshot());
+        }),
+    );
+
+    let mut multiple =
+        aozora::parse(edit_source.clone()).expect("synthetic source fits parser spans");
+    let first = edit_source.find("\n\n").expect("paragraph boundary") + 2;
+    let second = edit_source.rfind("\n\n").expect("paragraph boundary");
+    contract.insert(
+        "multiple_edits",
+        measure(|| {
+            multiple
+                .edit([
+                    TextEdit::new(first..first, "x"),
+                    TextEdit::new(second..second, "y"),
+                ])
+                .expect("synthetic edits are valid");
+            black_box(multiple.snapshot());
+        }),
+    );
+
+    let snapshot = aozora::parse(edit_source)
+        .expect("synthetic source fits parser spans")
+        .snapshot();
+    contract.insert(
+        "snapshot_clone",
+        measure(|| {
+            for _ in 0..SNAPSHOT_CLONES {
+                black_box(snapshot.clone());
+            }
+        }),
+    );
+
+    contract.insert(
+        "html_render",
+        measure(|| {
+            black_box(snapshot.to_html());
+        }),
+    );
+
+    contract
+}
+
+fn edit_offset(source: &str) -> usize {
+    let middle = source.len() / 2;
+    source[middle..]
+        .find("\n\n")
+        .map_or(middle, |relative| middle + relative + 2)
+}
+
+fn measure(operation: impl FnOnce()) -> Allocation {
+    let before = HeapStats::get();
+    operation();
+    let after = HeapStats::get();
+    Allocation {
+        blocks: after.total_blocks - before.total_blocks,
+        bytes: after.total_bytes - before.total_bytes,
+    }
 }
 
 /// Pass iff `current <= baseline * (1 + tolerance)`. A missing baseline metric
@@ -269,10 +389,27 @@ fn check_metric(name: &str, current: f64, baseline: f64, tolerance: f64) -> bool
     }
 }
 
+fn check_contract(name: &str, current: Allocation, baseline: &Value) -> bool {
+    let mut failed = false;
+    for (metric, actual) in [("blocks", current.blocks), ("bytes", current.bytes)] {
+        let Some(ceiling) = baseline[name][metric].as_u64() else {
+            eprintln!("alloc_gate: baseline metric contract.{name}.{metric} missing/invalid");
+            failed = true;
+            continue;
+        };
+        if actual > ceiling {
+            eprintln!("  contract.{name}.{metric}: {actual} > baseline ceiling {ceiling}");
+            failed = true;
+        }
+    }
+    failed
+}
+
 struct Baseline {
     blocks_per_file: f64,
     bytes_per_source_byte: f64,
     tolerance: Option<f64>,
+    contract: Value,
 }
 
 fn read_baseline(path: &Path) -> Baseline {
@@ -290,10 +427,26 @@ fn read_baseline(path: &Path) -> Baseline {
             .as_f64()
             .unwrap_or(f64::NAN),
         tolerance: v["tolerance"].as_f64(),
+        contract: v["contract"].clone(),
     }
 }
 
-fn write_baseline(args: &Args, totals: &Totals, blocks_per_file: f64, bytes_per_source_byte: f64) {
+fn write_baseline(args: &Args, totals: &Totals, ratios: (f64, f64), contract: &Contract) {
+    let (blocks_per_file, bytes_per_source_byte) = ratios;
+    let contract = Value::Object(
+        contract
+            .iter()
+            .map(|(name, allocation)| {
+                (
+                    (*name).to_owned(),
+                    json!({
+                        "blocks": allocation.blocks,
+                        "bytes": allocation.bytes,
+                    }),
+                )
+            })
+            .collect::<Map<_, _>>(),
+    );
     let json = json!({
         "tolerance": args.tolerance,
         "files_analyzed": totals.files,
@@ -302,7 +455,8 @@ fn write_baseline(args: &Args, totals: &Totals, blocks_per_file: f64, bytes_per_
         "alloc_bytes_total": totals.alloc_bytes,
         "alloc_blocks_per_file": round4(blocks_per_file),
         "alloc_bytes_per_source_byte": round4(bytes_per_source_byte),
-        "note": "public Document parse/snapshot (#237 P0.2-real) allocation-pressure ratchet; \
+        "contract": contract,
+        "note": "public Document parse/edit/snapshot/render allocation-pressure ratchet; \
                  regenerate with `just alloc-gate-update`. Metrics normalized \
                  per-file / per-source-byte so corpus drift does not trip the gate.",
     });

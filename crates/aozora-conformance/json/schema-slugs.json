@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AozoraSlugsEnvelope",
+  "description": "Envelope returned by aozora::json::slugs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "data"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "Wire schema version. See aozora::json::SCHEMA_VERSION.",
+      "type": "integer",
+      "const": 3
+    },
+    "data": {
+      "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "canonical": {
+            "type": "string"
+          },
+          "family": {
+            "type": "string"
+          },
+          "accepts_param": {
+            "type": "boolean"
+          },
+          "doc": {
+            "type": "string"
+          },
+          "partner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "canonical",
+          "family",
+          "accepts_param",
+          "doc"
+        ],
+        "description": "One `slugs` envelope entry — a row of the annotation slug catalogue.",
+        "title": "Slug"
+      }
+    }
+  }
+}

@@ -6,24 +6,13 @@
 //! and [`Snapshot`].
 //!
 //! ```
-//! use aozora::Document;
+//! use aozora::parse;
 //!
-//! let doc = Document::new("｜青空《あおぞら》文庫");
+//! let doc = parse("｜青空《あおぞら》文庫")?;
 //! let snapshot = doc.snapshot();
 //! let html = snapshot.to_html();
 //! assert!(html.contains("青空")); // the ruby base survives into the HTML
-//! ```
-//!
-//! Tunable parses go through the builder chain:
-//!
-//! ```
-//! use aozora::{Document, DiagnosticPolicy};
-//!
-//! let doc = Document::options()
-//!     .diagnostic_policy(DiagnosticPolicy::DropInternal)
-//!     .build("｜青梅《おうめ》");
-//! let snapshot = doc.snapshot();
-//! assert!(!snapshot.to_source().is_empty());
+//! # Ok::<(), aozora::ParseError>(())
 //! ```
 //!
 //! # Architecture
@@ -32,23 +21,15 @@
 //! [`Document::snapshot`] returns an immutable, owned [`Snapshot`] that
 //! is `Clone + Send + Sync`.
 //!
-//! The parse/render chain (`spec`, `syntax`, `scan`, `encoding`,
-//! `collections`, `pipeline`, `render`) lives as private modules inside
-//! this crate; the crate root re-exports a *curated* surface (never a
-//! `pub use …::*` glob), so the internal layering can be refactored
-//! without reshaping what `aozora` consumers see. The parsed-AST types
-//! live at the crate root ([`Document`], [`Snapshot`], [`Node`], [`NodeRef`],
-//! …); the [`syntax::ast`] / [`render`] / [`encoding`] / [`json`] modules
-//! expose the few extra types those surfaces document as stable.
+//! The parsing and rendering implementation is private. Consumers use the
+//! crate-root façade: [`Parser`], [`Document`], immutable [`Snapshot`],
+//! original-source spans and stable projection views. The feature-gated
+//! [`json`] module is the only public low-level wire surface.
 //!
 //! ---
 //!
 //! The crate README follows; its Quickstart example is compiled as a
 //! doctest so it can never drift from the live API.
-#![allow(
-    clippy::doc_markdown,
-    reason = "the included README is human-facing prose; proper nouns (PyO3, x86_64, macOS, …) are intentionally not code-spanned"
-)]
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 // Emit "Available on crate feature `…`" badges on docs.rs (and the
@@ -56,38 +37,35 @@
 // stable — `docsrs` is unset, so this never trips `feature(doc_cfg)`.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-// The core parse/render chain. Leaf primitives (`spec`, `collections`,
-// `scan`) and the lex `pipeline` stay private; `encoding` / `syntax` /
-// `render` carry the curated facade surface (see their re-exports below).
+use std::sync::Arc;
+
 mod catalogue;
 mod collections;
 mod pipeline;
 mod scan;
 mod spec;
 
-pub mod encoding;
-pub mod render;
-pub mod syntax;
+mod encoding;
+mod incremental;
+mod render;
+mod syntax;
 
 pub use catalogue::{Catalogue, CatalogueMatch};
+pub use encoding::gaiji::GaijiResolution;
+pub use encoding::{
+    DecodeError, decode_auto, decode_auto_into, decode_sjis, decode_sjis_into, has_utf8_bom,
+};
+pub use render::{AOZORA_CLASSES, DirectiveNormalization, RenderOptions, SerializeOptions};
 
 /// Canonical diagnostic / span / pair types — the single definitions live in
 /// the crate-internal `spec` module; re-exported here as the stable crate-root
 /// facade.
 pub use crate::spec::{
-    Diagnostic, DiagnosticInfo, DiagnosticSource, InternalCheckCode, NormalizedOffset, PairKind,
-    PairLink, RENDER_SLUGS, RenderSlug, Severity, SourceOffset, Span,
+    Diagnostic, DiagnosticInfo, DiagnosticSource, InternalCheckCode, PairKind, PairLink, Severity,
+    Span,
 };
 pub use crate::spec::{SlugEntry as CatalogueEntry, SlugFamily as CatalogueFamily};
-/// Owned-AST node types editor surfaces match against (hover, completion,
-/// code actions, semantic tokens), plus the shared `Copy` style/format enums.
-pub use crate::syntax::{
-    BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, EnclosureKind, FontShift,
-    Format, ForwardAttr, ForwardOrigin, GaijiCanonical, HeadingKind, HeadingStyle, IndentBlock,
-    IndentLayout, Kumi, LineFormat, LineWidth, MenKuTen, NodeKind, RegionClose, RegionFormat,
-    Resolved, RubySide, SectionKind,
-    ast::{Content, Node, NodeRef},
-};
+pub use crate::syntax::{NodeKind, RubySide};
 
 mod diagnostics_text;
 mod document;
@@ -100,15 +78,29 @@ pub mod json;
 /// Plain-text diagnostic rendering (`miette`-free, every target).
 pub use diagnostics_text::diagnostics_text;
 pub use document::{
-    DiagnosticPolicy, Document, EditError, ParseOptions, Parser, Snapshot, TextEdit,
+    ContainerKind, ContainerPair, DirectiveClass, DirectiveView, Document, EditError,
+    LiteralMarkupKind, LiteralMarkupView, NodeView, ParseError, Parser, RubyView, Snapshot,
+    TextEdit,
 };
-/// Source-region ownership and minimal-diff source splicing (#202).
-pub use splice::{CoupledKind, Coupling, Region, RegionRole, SpliceError, SpliceSafety};
 
 /// Parse source with default settings.
-#[must_use]
-pub fn parse(source: impl Into<Box<str>>) -> Document {
+///
+/// # Errors
+///
+/// Returns [`ParseError::SourceTooLarge`] when the source cannot be represented
+/// by the parser's byte spans.
+pub fn parse(source: impl Into<Arc<str>>) -> Result<Document, ParseError> {
     Parser::new().parse(source)
+}
+
+/// Resolve one gaiji description and optional mencode to a glyph sequence.
+#[must_use]
+pub fn resolve_gaiji(mencode: Option<&str>, description: &str) -> Option<String> {
+    encoding::gaiji::lookup(None, mencode, description).map(|resolved| {
+        let mut value = String::new();
+        _ = resolved.write_to(&mut value);
+        value
+    })
 }
 
 /// Eagerly initialise the parser's process-global lazy tables.
@@ -128,8 +120,9 @@ pub fn parse(source: impl Into<Box<str>>) -> Document {
 ///
 /// ```
 /// aozora::prewarm();
-/// let doc = aozora::Document::new("｜青梅《おうめ》");
+/// let doc = aozora::parse("｜青梅《おうめ》")?;
 /// let _ = doc.snapshot().to_html();
+/// # Ok::<(), aozora::ParseError>(())
 /// ```
 pub fn prewarm() {
     pipeline::prewarm();
@@ -150,31 +143,6 @@ pub mod fmt;
 #[cfg_attr(docsrs, doc(cfg(feature = "pandoc")))]
 pub mod pandoc;
 
-/// Lossless concrete syntax tree.
-///
-/// A rowan-backed `SyntaxNode` projection under the `cst` feature. Enables
-/// editor-grade surfaces (LSP servers, source-faithful refactoring / formatting
-/// tools) without pulling rowan into the dep tree of plain library consumers.
-///
-/// ```
-/// use aozora::Document;
-/// let cst = aozora::cst::from_snapshot(&Document::new("｜青梅《おうめ》").snapshot());
-/// // Walk the rowan SyntaxNode tree …
-/// assert_eq!(cst.kind(), aozora::cst::SyntaxKind::Document);
-/// ```
-#[cfg(feature = "cst")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cst")))]
-pub mod cst;
-
-/// Tree-sitter-flavoured pattern queries over the CST.
-///
-/// A tiny selector DSL under the `query` feature (implies `cst`). Editor
-/// surfaces (`textDocument/documentHighlight`, "find all ruby annotations")
-/// compose against the DSL instead of re-implementing tree walks.
-#[cfg(feature = "query")]
-#[cfg_attr(docsrs, doc(cfg(feature = "query")))]
-pub mod query;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +153,16 @@ mod tests {
         let tree = doc.snapshot();
         // Plain text round-trips intact.
         assert_eq!(tree.to_source(), "hello, world");
+    }
+
+    #[test]
+    fn public_gaiji_resolution_returns_exact_glyphs() {
+        assert_eq!(resolve_gaiji(None, "々").as_deref(), Some("々"));
+        assert_eq!(
+            resolve_gaiji(Some("第3水準1-85-54"), "木＋吶のつくり").as_deref(),
+            Some("枘")
+        );
+        assert_eq!(resolve_gaiji(None, "未知の字形"), None);
     }
 
     #[test]

@@ -18,7 +18,10 @@
 use std::fs;
 use std::io::{self, Write};
 use std::process::{ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use aozora::json::SCHEMA_VERSION;
 use tempfile::NamedTempFile;
 
 mod common;
@@ -58,6 +61,19 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
             Err(e) => panic!("write stdin: {e}"),
+        }
+    }
+    drop(child.stdin.take());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait().expect("poll aozora") {
+            Some(_) => break,
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            None => {
+                drop(child.kill());
+                drop(child.wait());
+                panic!("aozora did not exit: {args:?}");
+            }
         }
     }
     let output = child.wait_with_output().expect("wait");
@@ -139,6 +155,28 @@ fn check_strict_fails_on_pua_collision() {
     );
 }
 
+#[test]
+fn every_document_projection_shares_diagnostic_flags_and_exit_codes() {
+    let source = "abc\u{E001}def";
+    for args in [
+        &["render", "--strict", "--format", "short"][..],
+        &["inspect", "nodes", "--strict", "--format", "short"][..],
+        &["pandoc", "--strict", "--format", "short"][..],
+        &["fmt", "--strict", "--format", "short"][..],
+    ] {
+        let (status, _, stderr) = run(args, Some(source));
+        assert_eq!(
+            status.code(),
+            Some(1),
+            "{args:?} must apply the shared strict exit: {stderr:?}",
+        );
+        assert!(
+            stderr.contains("source_contains_pua"),
+            "{args:?} must apply the shared diagnostic format: {stderr:?}",
+        );
+    }
+}
+
 // ---------------------------------------------------------------------
 // `aozora fmt` — round-trip path
 // ---------------------------------------------------------------------
@@ -172,6 +210,25 @@ fn fmt_check_succeeds_on_already_canonical_input() {
 }
 
 #[test]
+fn fmt_json_reports_the_processed_file() {
+    let file = write_temp("plain text\n");
+    let path = file.path().to_str().expect("utf8 temp path");
+    let (status, stdout, stderr) = run(&["fmt", "--json", "--format", "json", path], None);
+    assert!(status.success(), "fmt --json failed: {stderr:?}");
+    assert!(
+        stderr.is_empty(),
+        "clean input has no diagnostics: {stderr:?}"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("fmt report json");
+    assert_eq!(report["schemaVersion"], SCHEMA_VERSION);
+    assert_eq!(report["data"]["formatted"], true);
+    let files = report["data"]["files"].as_array().expect("files array");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["path"], path);
+    assert_eq!(files[0]["status"], "ok");
+}
+
+#[test]
 fn fmt_check_fails_on_non_canonical_input() {
     let non_canonical = "｜日本《にほん》"; // redundant ｜ (canonical form is bare)
     let (status, _, stderr) = run(&["fmt", "--check"], Some(non_canonical));
@@ -199,13 +256,42 @@ fn fmt_check_and_write_are_mutually_exclusive() {
 fn fmt_write_overwrites_file_on_disk() {
     let f = write_temp("｜日本《にほん》");
     let path = f.path().to_str().unwrap();
-    let (status, _, stderr) = run(&["fmt", "--write", path], None);
+    let (status, stdout, stderr) = run(&["fmt", "--write", path], None);
     assert!(status.success(), "fmt --write must succeed: {stderr:?}");
+    assert!(stdout.is_empty(), "--write without --list stays silent");
     let written = fs::read_to_string(path).expect("read back");
     assert!(
         written.contains("日本《にほん》") && !written.contains('｜'),
         "file must contain bare canonical output: {written:?}"
     );
+}
+
+#[test]
+fn fmt_list_reports_only_dirty_stdin() {
+    let (dirty_status, dirty_stdout, dirty_stderr) =
+        run(&["fmt", "--list"], Some("｜日本《にほん》"));
+    assert!(
+        dirty_status.success(),
+        "dirty stdin is informational: {dirty_stderr:?}"
+    );
+    assert_eq!(dirty_stdout, "<stdin>\n");
+
+    let (clean_status, clean_stdout, clean_stderr) =
+        run(&["fmt", "--list"], Some("日本《にほん》\n"));
+    assert!(
+        clean_status.success(),
+        "canonical stdin succeeds: {clean_stderr:?}"
+    );
+    assert!(clean_stdout.is_empty());
+}
+
+#[test]
+fn fmt_list_reports_a_dirty_file() {
+    let file = write_temp("｜日本《にほん》");
+    let path = file.path().to_str().expect("utf8 path");
+    let (status, stdout, stderr) = run(&["fmt", "--list", path], None);
+    assert!(status.success(), "--list is informational: {stderr:?}");
+    assert_eq!(stdout, format!("{path}\n"));
 }
 
 #[test]
@@ -220,6 +306,54 @@ fn fmt_diff_prints_unified_diff() {
     assert!(
         stdout.contains("@@") && stdout.contains("-｜日本") && stdout.contains("+日本"),
         "expected a unified diff hunk: {stdout:?}"
+    );
+}
+
+#[test]
+fn pandoc_without_output_format_emits_json() {
+    let (status, stdout, stderr) = run(&["pandoc"], Some("青空\n"));
+    assert!(status.success(), "pandoc projection failed: {stderr:?}");
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("Pandoc JSON");
+    assert!(value.get("pandoc-api-version").is_some());
+    assert!(value.get("blocks").is_some());
+}
+
+#[test]
+fn fmt_diff_is_silent_for_canonical_stdin() {
+    let (status, stdout, stderr) = run(
+        &["fmt", "--diff", "--color", "never"],
+        Some("日本《にほん》\n"),
+    );
+    assert!(status.success(), "canonical input must pass: {stderr:?}");
+    assert!(stdout.is_empty(), "canonical input has no diff: {stdout:?}");
+}
+
+#[test]
+fn fmt_diff_on_a_file_uses_the_diff_reporter() {
+    let file = write_temp("｜日本《にほん》");
+    let path = file.path().to_str().expect("utf8 path");
+    let (status, stdout, stderr) = run(&["fmt", "--diff", "--color", "never", path], None);
+    assert!(!status.success(), "--diff on dirty input exits non-zero");
+    assert!(
+        stdout.contains("@@") && stdout.contains("-｜日本") && stdout.contains("+日本"),
+        "expected a unified diff hunk: {stdout:?}"
+    );
+    assert!(
+        !stderr.contains("would be reformatted"),
+        "diff mode must not use the check-only reporter: {stderr:?}"
+    );
+}
+
+#[test]
+fn fmt_check_on_a_file_reports_dirty_input() {
+    let file = write_temp("｜日本《にほん》");
+    let path = file.path().to_str().expect("utf8 path");
+    let (status, stdout, stderr) = run(&["fmt", "--check", path], None);
+    assert!(!status.success(), "--check on dirty input exits non-zero");
+    assert!(stdout.is_empty(), "plain check has no stdout: {stdout:?}");
+    assert!(
+        stderr.contains("would be reformatted"),
+        "plain check reports the file: {stderr:?}"
     );
 }
 
@@ -369,11 +503,38 @@ fn render_rejects_non_utf8_input_when_encoding_is_utf8() {
         .expect("write");
     let output = child.wait_with_output().expect("wait");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "must reject invalid UTF-8");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "invalid UTF-8 is an input error"
+    );
     assert!(
         stderr.contains("UTF-8") || stderr.contains("utf-8"),
         "expected encoding hint on stderr: {stderr:?}"
     );
+}
+
+#[test]
+fn document_commands_map_unreadable_input_to_usage_exit() {
+    for args in [
+        &["check", "missing.aozora"][..],
+        &["lint", "missing.aozora"][..],
+        &["render", "missing.aozora"][..],
+        &["inspect", "nodes", "missing.aozora"][..],
+        &["pandoc", "missing.aozora"][..],
+        &["fmt", "missing.aozora"][..],
+    ] {
+        let output = common::hermetic_command()
+            .args(args)
+            .output()
+            .expect("run aozora");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?} must classify an unreadable input as a usage error: {:?}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 }
 
 #[test]

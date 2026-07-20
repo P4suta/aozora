@@ -22,20 +22,14 @@
 //! (`python/aozora/__init__.py`) wraps the compiled extension,
 //! which is nested as the PRIVATE submodule `aozora._aozora`
 //! built from this crate. The Python layer adds the idiomatic
-//! surface — `Document.diagnostics()` / `nodes()` / `pairs()` /
-//! `container_pairs()` return parsed `list[dict]`, while the raw,
-//! byte-identical JSON stays available via the `*_json()` accessors
-//! defined here.
+//! surface, while the raw, byte-identical JSON stays available via
+//! the `*_json()` accessors defined here.
 //!
 //! ## Wire format
 //!
 //! Every `*_json()` accessor delegates to [`aozora::json`], the
 //! single authority for the cross-driver wire shape. `aozora-ffi` /
-//! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
-//!
-//! ```json
-//! { "schemaVersion": 2, "data": [ … ] }
-//! ```
+//! `aozora-wasm` / `aozora-py` emit byte-identical envelopes.
 
 #![forbid(unsafe_code)]
 
@@ -45,7 +39,7 @@
     reason = "the #[pyfunction] / #[pymethods] macros expand each fn into a Python ABI wrapper that PyO3 fills with extra context args (Python token, args, kwargs, …). The warning fires on the macro-generated signature, not on user code; per-item allow doesn't reach inside the macro expansion."
 )]
 mod bindings {
-    use aozora::{Document as AozoraDoc, encoding, json};
+    use aozora::{Document as AozoraDoc, decode_auto, decode_sjis as core_decode_sjis, json};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
@@ -59,11 +53,9 @@ mod bindings {
 
     /// `PyO3`-facing handle to a parsed Aozora document.
     ///
-    /// Wraps an [`AozoraDoc`], which owns only the source buffer
-    /// (`Box<str>`) plus a `Copy` diagnostic policy and derives an owned,
-    /// lifetime-free parse tree on demand. There is no arena and no
-    /// interior-mutable state, so the wrapped document is itself
-    /// `Send + Sync`.
+    /// Wraps an [`AozoraDoc`] and its immutable parsed snapshot. There
+    /// is no arena or interior-mutable state, so the wrapped document is
+    /// itself `Send + Sync`.
     ///
     /// The `unsendable` marker below is therefore now *conservative*: it
     /// pins the `PyO3` handle to its constructing Python thread (access
@@ -81,17 +73,18 @@ mod bindings {
     impl Document {
         /// Construct from a Python `str`.
         #[new]
-        fn new(source: &str) -> Self {
-            Self {
-                inner: AozoraDoc::new(source.to_owned()),
-            }
+        fn new(source: &str) -> PyResult<Self> {
+            Ok(Self {
+                inner: aozora::parse(source)
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?,
+            })
         }
 
         /// Alternate constructor from raw bytes, decoding the source
         /// encoding automatically.
         ///
         /// Real 青空文庫 archive files are `Shift_JIS`; pre-converted
-        /// corpora are UTF-8. [`encoding::decode_auto`] sniffs the two
+        /// corpora are UTF-8. [`aozora::decode_auto`] sniffs the two
         /// (valid UTF-8 wins, else `Shift_JIS`), so this accepts both.
         /// Despite the `from_bytes` name it is encoding-agnostic — the
         /// name reflects the common case (archive files).
@@ -103,15 +96,15 @@ mod bindings {
         /// 4 GiB (`u32::MAX`) span limit.
         #[staticmethod]
         fn from_bytes(data: &[u8]) -> PyResult<Self> {
-            let text = encoding::decode_auto(data)
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            let text = decode_auto(data).map_err(|err| PyValueError::new_err(err.to_string()))?;
             if text.len() > MAX_SOURCE_BYTES {
                 return Err(PyValueError::new_err(
                     "source exceeds 4 GiB (u32::MAX) span limit",
                 ));
             }
             Ok(Self {
-                inner: AozoraDoc::new(text.into_owned()),
+                inner: aozora::parse(text.into_owned())
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?,
             })
         }
 
@@ -131,9 +124,9 @@ mod bindings {
             self.inner.snapshot().to_source()
         }
 
-        /// Diagnostics as a JSON envelope string. Empty parse →
-        /// `{"schemaVersion":2,"data":[]}`. Wire format defined in
-        /// [`aozora::json`]. The Python wrapper's `diagnostics()`
+        /// Diagnostics as a JSON envelope string. An empty parse has an empty
+        /// `data` array. Wire format defined in [`aozora::json`]. The Python
+        /// wrapper's `diagnostics()`
         /// returns the parsed `data` list; this is the raw,
         /// byte-identical accessor.
         fn diagnostics_json(&self) -> String {
@@ -161,7 +154,7 @@ mod bindings {
         }
 
         /// Container open/close pairs (indent / warichu / keigakomi /
-        /// alignEnd / …) as a JSON envelope string, in normalized
+        /// alignEnd / …) as a JSON envelope string, in original-source
         /// coordinates. See [`aozora::json::container_pairs`].
         /// Brings the Python surface to parity with the Go / Extism
         /// drivers.
@@ -175,7 +168,7 @@ mod bindings {
         /// Scans the raw source (no parse needed). See
         /// [`aozora::json::gaiji`].
         fn gaiji_json(&self) -> String {
-            json::gaiji(self.inner.source())
+            json::gaiji(&self.inner.snapshot())
         }
 
         /// Source byte length.
@@ -213,7 +206,10 @@ mod bindings {
                 "source exceeds 4 GiB (u32::MAX) span limit",
             ));
         }
-        Ok(Document::new(source).to_html())
+        Ok(aozora::parse(source)
+            .map_err(|err| PyValueError::new_err(err.to_string()))?
+            .snapshot()
+            .to_html())
     }
 
     /// Force one-time parser-table initialisation (SIMD backend
@@ -238,7 +234,7 @@ mod bindings {
     /// Raises `ValueError` on a malformed `Shift_JIS` byte sequence.
     #[pyfunction]
     fn decode_sjis(data: &[u8]) -> PyResult<String> {
-        encoding::decode_sjis(data).map_err(|err| PyValueError::new_err(err.to_string()))
+        core_decode_sjis(data).map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
     /// Canonical slug catalogue (`［＃…］` annotations) as a JSON
@@ -252,13 +248,11 @@ mod bindings {
 
     /// The parser's channel-aware **build** version.
     ///
-    /// Examples: `0.5.0` (a published wheel), `0.5.0-dev+g3672e3f` (a
-    /// local checkout), or `0.5.0-nightly.20260629+g3672e3f` (a
-    /// scheduled build). This is the parser engine's build stamp, not
-    /// the `PyPI` package version (`aozora.__version__`, from dist
-    /// metadata). Single authority: the `AOZORA_VERSION_STRING` this
-    /// crate's `build.rs` injects — never a hard-coded literal. Mirrors
-    /// the `version()` export of the WASM / Extism / Go drivers.
+    /// This is the parser engine's build stamp, not the `PyPI` package
+    /// version (`aozora.__version__`, from dist metadata). Single
+    /// authority: the `AOZORA_VERSION_STRING` this crate's `build.rs`
+    /// injects. Mirrors the `version()` export of the WASM / Extism / Go
+    /// drivers.
     #[pyfunction]
     fn version() -> String {
         env!("AOZORA_VERSION_STRING").to_owned()
@@ -280,12 +274,12 @@ mod bindings {
 
 #[cfg(test)]
 mod tests {
-    use aozora::{Document as AozoraDoc, json};
+    use aozora::json;
 
     /// Smoke: PUA collision shows up via `aozora::json`.
     #[test]
     fn diagnostics_through_wire_emits_pua_kind() {
-        let doc = AozoraDoc::new("abc\u{E001}def".to_owned());
+        let doc = aozora::parse("abc\u{E001}def").expect("source fits parser span limit");
         let json = json::diagnostics(doc.snapshot().diagnostics());
         assert!(json.contains("source_contains_pua"), "json: {json}");
     }
@@ -293,23 +287,19 @@ mod tests {
     /// Smoke: clean parse → empty envelope, identical across drivers.
     #[test]
     fn diagnostics_through_wire_is_empty_envelope_for_clean_input() {
-        let doc = AozoraDoc::new("plain text".to_owned());
+        let doc = aozora::parse("plain text").expect("source fits parser span limit");
         let json = json::diagnostics(doc.snapshot().diagnostics());
-        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
-    }
-
-    /// The `schema_version()` export must track the wire authority so
-    /// the Python surface never advertises a stale contract.
-    #[test]
-    fn schema_version_matches_wire() {
-        assert_eq!(json::SCHEMA_VERSION, 2);
+        assert_eq!(
+            json,
+            format!(r#"{{"schemaVersion":{},"data":[]}}"#, json::SCHEMA_VERSION)
+        );
     }
 
     /// Smoke: `decode_auto` round-trips a `Shift_JIS` payload that
     /// `Document::from_bytes` relies on.
     #[test]
     fn decode_auto_round_trips_shift_jis() {
-        use aozora::encoding::decode_auto;
+        use aozora::decode_auto;
         // "青空文庫" in Shift_JIS.
         let sjis = [0x90, 0xC2, 0x8B, 0xF3, 0x95, 0xB6, 0x8C, 0xC9];
         let text = decode_auto(&sjis).expect("valid Shift_JIS");

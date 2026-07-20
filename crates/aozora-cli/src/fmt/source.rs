@@ -17,9 +17,7 @@
 //!   the raw bytes fit, so [`encoding::decode`](crate::fmt::decode) re-checks the
 //!   decoded length.
 //!
-//! An oversize input is a usage error: the readers return an [`OversizeInput`]
-//! through `anyhow`, and [`is_oversize_input`] lets a frontend map it to a
-//! usage exit code (2) instead of the generic failure (1).
+//! An oversize input is a usage error returned as [`OversizeInput`].
 
 use std::error::Error;
 use std::fmt;
@@ -38,8 +36,7 @@ pub(crate) const MAX_SOURCE_BYTES: u64 = u32::MAX as u64;
 
 /// A source whose byte length exceeds [`MAX_SOURCE_BYTES`].
 ///
-/// Carried through `anyhow` so [`is_oversize_input`] can recover it from a
-/// context chain and a frontend can map it to a usage exit (2).
+/// Carried through `anyhow` so the frontend maps it to a usage exit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OversizeInput {
     /// The offending length, in bytes.
@@ -72,16 +69,6 @@ pub(crate) fn ensure_within_span_limit(byte_len: u64) -> Result<(), OversizeInpu
     } else {
         Ok(())
     }
-}
-
-/// Does `err`, or any error in its `source` chain, carry an [`OversizeInput`]?
-///
-/// The guard error may be wrapped by `anyhow` context (`decoding <path>: …`),
-/// so the whole chain is searched.
-#[must_use]
-pub(crate) fn is_oversize_input(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.downcast_ref::<OversizeInput>().is_some())
 }
 
 /// Read `path`, rejecting it up front — via its metadata size — when it exceeds
@@ -182,17 +169,6 @@ mod tests {
     }
 
     #[test]
-    fn is_oversize_input_finds_the_error_through_context() {
-        // Wrapped by `anyhow` context, as `decode` returns it (`decoding …`).
-        let err = Err::<(), _>(OversizeInput {
-            bytes: MAX_SOURCE_BYTES + 1,
-        })
-        .context("decoding <stdin>")
-        .expect_err("the guard error");
-        assert!(is_oversize_input(&err));
-    }
-
-    #[test]
     fn stdin_read_cap_is_exactly_one_byte_past_the_inclusive_limit() {
         // The stdin reader must stop one byte past the inclusive `u32::MAX`
         // bound: exactly-at-limit input is read whole, one byte over is still
@@ -206,14 +182,5 @@ mod tests {
         // …and exactly one, so an at-limit read is neither truncated nor
         // padded.
         assert_eq!(stdin_read_cap() - MAX_SOURCE_BYTES, 1);
-    }
-
-    #[test]
-    fn is_oversize_input_rejects_other_errors() {
-        let io_wrapped = Err::<(), _>(io::Error::from(io::ErrorKind::NotFound))
-            .context("reading a file")
-            .expect_err("the io error");
-        assert!(!is_oversize_input(&io_wrapped));
-        assert!(!is_oversize_input(&anyhow::anyhow!("plain non-io error")));
     }
 }

@@ -1,7 +1,7 @@
 //! Heap-allocation profile of a parse + HTML render, via dhat.
 //!
 //! Reports total allocations + bytes and peak (`At t-gmax`) resident
-//! bytes for one 2 MiB synthetic-corpus `Document::new().snapshot().to_html()`
+//! bytes for one 2 MiB synthetic-corpus `aozora::parse().expect("source fits parser span limit").snapshot().to_html()`
 //! — the memory metric that pairs with the criterion throughput
 //! (`synthetic_corpus`) and the `latency_histogram` percentiles. Most of
 //! the parser's working set lives in the bumpalo arena, so dhat shows the
@@ -15,7 +15,6 @@
 
 use std::hint::black_box;
 
-use aozora::Document;
 use aozora_bench::build_synthetic_aozora;
 
 #[global_allocator]
@@ -25,7 +24,7 @@ fn main() {
     let profiler = dhat::Profiler::new_heap();
 
     let source = build_synthetic_aozora(2 * 1024 * 1024);
-    let doc = Document::new(black_box(source.as_str()));
+    let doc = aozora::parse(black_box(source.as_str())).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let html = tree.to_html();
     black_box(html);

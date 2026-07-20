@@ -57,7 +57,7 @@ function buildInlays(view: EditorView): DecorationSet {
     if (pos < 0 || pos > docLen) continue;
     items.push({
       pos,
-      widget: new GaijiInlayWidget(r.resolved, r.codepoint, r.description),
+      widget: new GaijiInlayWidget(r.resolved, r.codepoint ?? null, r.description),
     });
   }
   items.sort((a, b) => a.pos - b.pos);

@@ -39,17 +39,22 @@
 //! stage + the normalize fold into a single terminal `.build()` call —
 //! inspection up through `Paired` works freely; the final pass is atomic.
 
+use core::ops::Range;
+use std::sync::Arc;
+
 use crate::pipeline::lexer::{
-    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
+    ClassifiedSpan, PairEvent, SpanKind, Token, classify_range, pair, sanitize, tokenize,
 };
 use crate::spec::{Diagnostic, PairLink};
 
 use crate::syntax::alloc::Allocator;
-use crate::syntax::ast::{LexOutput, Node, NodeStore, Registry};
+use crate::syntax::ast::{
+    ContainerPair, LexOutput, Node, NodeStore, RegionOutput, Registry, SanitizedText,
+};
 use crate::syntax::format::ForwardOrigin;
 use crate::syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 
-use crate::pipeline::fold::Normalizer;
+use crate::pipeline::fold::{Normalizer, Recorder};
 
 // =====================================================================
 // State markers (field-bound — each state carries the stage output it is
@@ -63,13 +68,15 @@ pub(crate) struct Source;
 /// The sanitize stage has run; the sanitized text is owned.
 #[derive(Debug, Clone)]
 pub(crate) struct Sanitized {
-    sanitized_text: String,
+    sanitized_text: SanitizedText,
+    source_unchanged: bool,
 }
 
 /// The tokenize stage has run; the token list is materialised.
 #[derive(Debug)]
 pub(crate) struct Tokenized {
-    sanitized_text: String,
+    sanitized_text: SanitizedText,
+    source_unchanged: bool,
     tokens: Vec<Token>,
 }
 
@@ -77,7 +84,8 @@ pub(crate) struct Tokenized {
 /// side-table are materialised.
 #[derive(Debug)]
 pub(crate) struct Paired {
-    sanitized_text: String,
+    sanitized_text: SanitizedText,
+    source_unchanged: bool,
     events: Vec<PairEvent>,
     links: Vec<PairLink>,
 }
@@ -90,8 +98,8 @@ pub(crate) struct Paired {
 /// materialises its stage output into the next state struct, and returns a new
 /// pipeline in the next state.
 #[derive(Debug)]
-pub(crate) struct Pipeline<'src, S> {
-    source: &'src str,
+pub(crate) struct Pipeline<S> {
+    source: Arc<str>,
     diagnostics: Vec<Diagnostic>,
     state: S,
 }
@@ -100,13 +108,13 @@ pub(crate) struct Pipeline<'src, S> {
 // Source
 // ---------------------------------------------------------------------
 
-impl<'src> Pipeline<'src, Source> {
+impl Pipeline<Source> {
     /// Wrap a source string for type-state-driven lex. The sanitize stage has
     /// not yet run; only `source` is set.
     #[must_use]
-    pub(crate) fn new(source: &'src str) -> Self {
+    pub(crate) fn new(source: impl Into<Arc<str>>) -> Self {
         Self {
-            source,
+            source: source.into(),
             diagnostics: Vec::new(),
             state: Source,
         }
@@ -115,28 +123,52 @@ impl<'src> Pipeline<'src, Source> {
     /// One-shot driver: run every stage and return the final [`LexOutput`].
     /// Equivalent to [`crate::pipeline::lex`].
     #[must_use]
-    pub(crate) fn run_to_completion(source: &'src str) -> LexOutput {
+    pub(crate) fn run_to_completion(source: impl Into<Arc<str>>) -> LexOutput {
         Self::new(source).sanitize().tokenize().pair().build()
+    }
+
+    pub(crate) fn run_region(source: &str, range: Range<usize>) -> Option<RegionOutput> {
+        let range_start = range.start;
+        let range_end = range.end;
+        let region = source.get(range)?;
+        let start = u32::try_from(range_start).ok()?;
+        let end = u32::try_from(range_end).ok()?;
+        let tokens = tokenize(region)
+            .map(|token| shift_token(&token, start))
+            .collect::<Option<Vec<_>>>()?;
+        let mut pair_stream = pair(tokens.into_iter());
+        let events = (&mut pair_stream).collect();
+        let diagnostics = pair_stream.take_diagnostics();
+        let links = pair_stream.take_links();
+        build_paired(region, Some(source), events, links, diagnostics, start, end)
+            .map(BuildOutput::into_region)
     }
 
     /// Borrow the original source text.
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn source(&self) -> &'src str {
-        self.source
+    pub(crate) fn source(&self) -> &str {
+        &self.source
     }
 
     /// Run the sanitize stage, materialising the sanitized text as an owned
     /// `String`.
     #[must_use]
-    pub(crate) fn sanitize(mut self) -> Pipeline<'src, Sanitized> {
-        let out = sanitize(self.source);
+    pub(crate) fn sanitize(mut self) -> Pipeline<Sanitized> {
+        let out = sanitize(&self.source);
         self.diagnostics.extend(out.diagnostics);
+        let source_unchanged = out.source_unchanged;
+        let sanitized_text = if source_unchanged {
+            SanitizedText::shared(Arc::clone(&self.source))
+        } else {
+            SanitizedText::owned(out.text.into_owned())
+        };
         Pipeline {
             source: self.source,
             diagnostics: self.diagnostics,
             state: Sanitized {
-                sanitized_text: out.text.into_owned(),
+                sanitized_text,
+                source_unchanged,
             },
         }
     }
@@ -146,7 +178,7 @@ impl<'src> Pipeline<'src, Source> {
 // Sanitized
 // ---------------------------------------------------------------------
 
-impl<'src> Pipeline<'src, Sanitized> {
+impl Pipeline<Sanitized> {
     /// Sanitized text.
     #[cfg(test)]
     #[must_use]
@@ -163,13 +195,14 @@ impl<'src> Pipeline<'src, Sanitized> {
 
     /// Run the tokenize stage, materialising the token list.
     #[must_use]
-    pub(crate) fn tokenize(self) -> Pipeline<'src, Tokenized> {
+    pub(crate) fn tokenize(self) -> Pipeline<Tokenized> {
         let tokens: Vec<Token> = tokenize(&self.state.sanitized_text).collect();
         Pipeline {
             source: self.source,
             diagnostics: self.diagnostics,
             state: Tokenized {
                 sanitized_text: self.state.sanitized_text,
+                source_unchanged: self.state.source_unchanged,
                 tokens,
             },
         }
@@ -180,7 +213,7 @@ impl<'src> Pipeline<'src, Sanitized> {
 // Tokenized
 // ---------------------------------------------------------------------
 
-impl<'src> Pipeline<'src, Tokenized> {
+impl Pipeline<Tokenized> {
     /// Borrow the materialised token list. Useful for instrumentation.
     #[cfg(test)]
     #[must_use]
@@ -192,9 +225,10 @@ impl<'src> Pipeline<'src, Tokenized> {
     /// link side-table. The pair stage's diagnostics are drained into the
     /// pipeline's diagnostic accumulator immediately.
     #[must_use]
-    pub(crate) fn pair(mut self) -> Pipeline<'src, Paired> {
+    pub(crate) fn pair(mut self) -> Pipeline<Paired> {
         let Tokenized {
             sanitized_text,
+            source_unchanged,
             tokens,
         } = self.state;
         let mut pair_stream = pair(tokens.into_iter());
@@ -206,6 +240,7 @@ impl<'src> Pipeline<'src, Tokenized> {
             diagnostics: self.diagnostics,
             state: Paired {
                 sanitized_text,
+                source_unchanged,
                 events,
                 links,
             },
@@ -217,7 +252,7 @@ impl<'src> Pipeline<'src, Tokenized> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
-impl Pipeline<'_, Paired> {
+impl Pipeline<Paired> {
     /// Borrow the materialised pair-event list. Useful for inspection before
     /// `.build()`.
     #[cfg(test)]
@@ -236,90 +271,198 @@ impl Pipeline<'_, Paired> {
     /// Drive the classify stage + the owned normalizer fold and return the final
     /// [`LexOutput`]. Terminal transition.
     ///
-    /// # Diagnostic order
-    ///
-    /// Sanitize stage → pair stage (unclosed/unmatched) → classify stage
-    /// (unknown annotations etc.) → normalizer (mismatched container close).
+    /// Diagnostics are returned in source-span order.
     ///
     /// # Panics
     ///
     /// Panics if the sanitized source exceeds `u32::MAX` bytes (the lexer's
     /// `Span` width contract). In practice unreachable.
     #[must_use]
-    pub(crate) fn build(mut self) -> LexOutput {
+    pub(crate) fn build(self) -> LexOutput {
         let Paired {
             sanitized_text,
+            source_unchanged,
             events,
             links,
         } = self.state;
-        let mut alloc = Allocator::new();
-
-        let (normalized, recorder, container_pairs, classify_diagnostics, norm_diagnostics, store) = {
-            let mut normalizer = Normalizer::new(&sanitized_text, sanitized_text.len() / 64);
-
-            // Drain the pair events through the streaming `classify` Iterator
-            // path; collect the classified spans and the classify diagnostics,
-            // then drop the stream so its `&mut alloc` borrow is released before
-            // the NORMALIZE (lowering) pass mints its canonical core nodes.
-            let mut events_iter = events.into_iter();
-            let mut classify_stream = classify(&mut events_iter, &sanitized_text, &mut alloc);
-            let spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
-            let mut classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
-            drop(classify_stream);
-            let (lowered, ruby_base_decorated) = lower_spans(spans, &sanitized_text, &mut alloc);
-            // Ruby-base forward emphasis (#384): a directive the lowering pass
-            // decorated onto a preceding ruby base is no longer an unstyled
-            // decline, so drop its `forward_referent_not_stylable` warning. Only
-            // the decorated directive spans are suppressed — cross-line /
-            // multi-target / prior-construct declines keep their warning.
-            if !ruby_base_decorated.is_empty() {
-                classify_diagnostics.retain(|d| {
-                    !(matches!(d, Diagnostic::ForwardReferentNotStylable { .. })
-                        && ruby_base_decorated.contains(&d.span()))
-                });
-            }
-            for span in &lowered {
-                normalizer.emit(span);
-            }
-            // Move the owned products out, ending the normalizer's borrow of
-            // `sanitized_text` so it can be moved into the output below.
-            let Normalizer {
-                out,
-                recorder,
-                container_pairs,
-                diagnostics: norm_diagnostics,
-                ..
-            } = normalizer;
-            let store = alloc.into_store();
-            (
-                out,
-                recorder,
-                container_pairs,
-                classify_diagnostics,
-                norm_diagnostics,
-                store,
-            )
+        let Ok(end) = u32::try_from(sanitized_text.len()) else {
+            panic!("sanitized source exceeds the span width");
         };
-
-        // Classify-stage diagnostics first, then the normalizer's (post-classify)
-        // set, so the final vector stays in pipeline-stage order.
-        self.diagnostics.extend(classify_diagnostics);
-        self.diagnostics.extend(norm_diagnostics);
-        // Classifier emits in source order, so the recorder's entries are already
-        // sorted by position; `from_sorted_slice` skips the redundant sort.
-        let registry = Registry::from_sorted_slice(&recorder.entries);
-
-        LexOutput::new(
-            normalized,
-            sanitized_text,
-            registry,
-            self.diagnostics,
+        let Some(output) = build_paired(
+            &sanitized_text,
+            None,
+            events,
             links,
-            recorder.source_nodes,
+            self.diagnostics,
+            0,
+            end,
+        ) else {
+            unreachable!("full parse spans stay inside the source");
+        };
+        output.into_lex(sanitized_text, source_unchanged)
+    }
+}
+
+fn shift_token(token: &Token, by: u32) -> Option<Token> {
+    let by = i64::from(by);
+    Some(match *token {
+        Token::Text { range } => Token::Text {
+            range: range.shifted(by),
+        },
+        Token::Trigger { kind, span } => Token::Trigger {
+            kind,
+            span: span.shifted(by),
+        },
+        Token::Newline { pos } => Token::Newline {
+            pos: u32::try_from(i64::from(pos) + by).ok()?,
+        },
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parsed region and its already-materialized stage products are independent inputs"
+)]
+fn build_paired(
+    sanitized_text: &str,
+    source_context: Option<&str>,
+    events: Vec<PairEvent>,
+    links: Vec<PairLink>,
+    mut diagnostics: Vec<Diagnostic>,
+    region_start: u32,
+    region_end: u32,
+) -> Option<BuildOutput> {
+    let full_source = source_context.is_none();
+    let source = source_context.unwrap_or(sanitized_text);
+    let mut alloc = Allocator::new();
+    let (normalized, recorder, container_pairs, classify_diagnostics, norm_diagnostics, store) = {
+        let mut normalizer = Normalizer::new(source, events.len());
+        let mut events_iter = events.into_iter();
+        let mut classify_stream = classify_range(&mut events_iter, source, region_end, &mut alloc);
+        let spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
+        let mut classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
+        drop(classify_stream);
+        let (lowered, ruby_base_decorated) = lower_spans(spans, source, &mut alloc);
+        if !ruby_base_decorated.is_empty() {
+            classify_diagnostics.retain(|diagnostic| {
+                !(matches!(diagnostic, Diagnostic::ForwardReferentNotStylable { .. })
+                    && ruby_base_decorated.contains(&diagnostic.span()))
+            });
+        }
+        for span in &lowered {
+            normalizer.emit(span);
+        }
+        let Normalizer {
+            out,
+            recorder,
             container_pairs,
+            diagnostics: norm_diagnostics,
+            ..
+        } = normalizer;
+        let store = alloc.into_store();
+        (
+            out,
+            recorder,
+            container_pairs,
+            classify_diagnostics,
+            norm_diagnostics,
             store,
         )
+    };
+
+    diagnostics.extend(classify_diagnostics);
+    diagnostics.extend(norm_diagnostics);
+    let output = BuildOutput {
+        normalized,
+        recorder,
+        container_pairs,
+        store,
+        links,
+        diagnostics,
+    };
+    if full_source {
+        return Some(output);
     }
+    build_region_output(output, region_start, region_end)
+}
+
+struct BuildOutput {
+    normalized: String,
+    recorder: Recorder,
+    container_pairs: Vec<ContainerPair>,
+    store: NodeStore,
+    links: Vec<PairLink>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl BuildOutput {
+    fn into_lex(self, sanitized_text: SanitizedText, source_unchanged: bool) -> LexOutput {
+        let registry = Registry::from_source_nodes(&self.recorder.source_nodes);
+        LexOutput::new(
+            self.normalized,
+            sanitized_text,
+            source_unchanged,
+            registry,
+            self.diagnostics,
+            self.links,
+            self.recorder.source_nodes,
+            self.container_pairs,
+            self.store,
+        )
+    }
+
+    fn into_region(self) -> RegionOutput {
+        RegionOutput {
+            normalized: self.normalized,
+            diagnostics: self.diagnostics,
+            pairs: self.links,
+            source_nodes: self.recorder.source_nodes,
+            container_pairs: self.container_pairs,
+            store: self.store,
+        }
+    }
+}
+
+fn build_region_output(
+    mut build: BuildOutput,
+    region_start: u32,
+    region_end: u32,
+) -> Option<BuildOutput> {
+    if build
+        .recorder
+        .source_nodes
+        .iter()
+        .any(|entry| entry.source_span.start < region_start || entry.source_span.end > region_end)
+        || build
+            .links
+            .iter()
+            .any(|pair| pair.open.start < region_start || pair.close.end > region_end)
+        || build.diagnostics.iter().any(|diagnostic| {
+            diagnostic.span().start < region_start || diagnostic.span().end > region_end
+        })
+    {
+        return None;
+    }
+
+    if region_start != 0 {
+        let shift = -i64::from(region_start);
+        for entry in &mut build.recorder.source_nodes {
+            entry.source_span = entry.source_span.shifted(shift);
+        }
+        for pair in &mut build.links {
+            *pair = PairLink::new(
+                pair.kind,
+                pair.open.shifted(shift),
+                pair.close.shifted(shift),
+            );
+        }
+        build.diagnostics = build
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.shifted(shift))
+            .collect();
+    }
+    Some(build)
 }
 
 /// NORMALIZE (lowering) pass over the materialized classified-span list.
@@ -344,34 +487,30 @@ fn lower_spans(
 ) -> (Vec<ClassifiedSpan>, Vec<Span>) {
     // Phase 0: resolve forward heading hints whose referent is the bare line
     // directly above the directive into promoted `Heading` nodes.
-    let spans = promote_headings(spans, source, alloc);
-    let mut out: Vec<ClassifiedSpan> = Vec::with_capacity(spans.len());
-    for span in spans {
-        while let Some(back) = out.last() {
+    let mut spans = promote_headings(spans, source, alloc);
+    let mut out_len = 0;
+    for read in 0..spans.len() {
+        let span = spans[read].clone();
+        while out_len != 0 {
+            let back = &spans[out_len - 1];
             let (bs, be) = (back.source_span.start, back.source_span.end);
             let back_is_plain = matches!(back.kind, SpanKind::Plain);
             let (ss, se) = (span.source_span.start, span.source_span.end);
             if ss <= bs && be <= se && (ss < bs || se > be) {
-                // Full superset: `span` reclaimed all of `back` (a promoted
-                // heading swallowing its referent line). Drop `back`.
-                out.pop();
-            } else if back_is_plain && bs < ss && ss < be {
-                // Partial overlap: `span` (a `Reclaimed` forward node) pulled its
-                // source region back into the *tail* of a committed plain run —
-                // truncate the plain so the literal is emitted once, by the node
-                // (issue #180, unbounded growth).
-                if let Some(last) = out.last_mut() {
-                    last.source_span.end = ss;
-                }
+                out_len -= 1;
+            } else if back_is_plain && bs < ss {
+                spans[out_len - 1].source_span.end = be.min(ss);
                 break;
             } else {
                 break;
             }
         }
-        out.push(span);
+        spans[out_len] = span;
+        out_len += 1;
     }
+    spans.truncate(out_len);
     // Second phase: fold S4-foldable inline-range emphasis into forward leaves.
-    let mut out = fold_inline_emphasis(out, source, alloc);
+    let mut out = fold_inline_emphasis(spans, source, alloc);
     // Third phase: apply a declined forward emphasis onto a preceding ruby base
     // it uniquely names (#384).
     let decorated = decorate_ruby_bases(&mut out, source, alloc.store());
@@ -639,11 +778,21 @@ fn fold_inline_emphasis(
 
 #[cfg(test)]
 mod tests {
-    use core::ptr;
-
     use super::*;
-    use crate::spec::Sentinel;
+    use crate::spec::{NormalizedOffset, PairKind, Sentinel};
+    use crate::syntax::ast::{NodeRef, SourceNode};
     use crate::syntax::{BoutenKind, BoutenPosition};
+
+    fn empty_region_build() -> BuildOutput {
+        BuildOutput {
+            normalized: String::new(),
+            recorder: Recorder::default(),
+            container_pairs: Vec::new(),
+            store: Allocator::new().into_store(),
+            links: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
 
     #[test]
     fn type_state_chain_compiles() {
@@ -668,6 +817,87 @@ mod tests {
             chain.registry.count_kind(Sentinel::Inline),
             oneshot.registry.count_kind(Sentinel::Inline)
         );
+    }
+
+    #[test]
+    fn run_region_rejects_each_invalid_range_shape() {
+        let source = "aあb";
+
+        let inverted = Range { start: 4, end: 1 };
+        assert!(Pipeline::run_region(source, inverted).is_none());
+        assert!(Pipeline::run_region(source, 0..source.len() + 1).is_none());
+        assert!(Pipeline::run_region(source, 2..4).is_none());
+        assert!(Pipeline::run_region(source, 1..2).is_none());
+        assert!(Pipeline::run_region(source, 1..4).is_some());
+    }
+
+    #[test]
+    fn region_output_rejects_each_out_of_bounds_product() {
+        let mut node = empty_region_build();
+        node.recorder.source_nodes.push(SourceNode {
+            source_span: Span::new(0, 1),
+            normalized_offset: NormalizedOffset::new(0),
+            node: NodeRef::Inline(Node::PageBreak),
+        });
+        assert!(build_region_output(node, 1, 2).is_none());
+
+        let mut node = empty_region_build();
+        node.recorder.source_nodes.push(SourceNode {
+            source_span: Span::new(1, 3),
+            normalized_offset: NormalizedOffset::new(0),
+            node: NodeRef::Inline(Node::PageBreak),
+        });
+        assert!(build_region_output(node, 1, 2).is_none());
+
+        let mut bounded_node = empty_region_build();
+        bounded_node.recorder.source_nodes.push(SourceNode {
+            source_span: Span::new(1, 2),
+            normalized_offset: NormalizedOffset::new(0),
+            node: NodeRef::Inline(Node::PageBreak),
+        });
+        assert!(build_region_output(bounded_node, 1, 2).is_some());
+
+        let mut link = empty_region_build();
+        link.links.push(PairLink::new(
+            PairKind::Bracket,
+            Span::new(0, 1),
+            Span::new(1, 2),
+        ));
+        assert!(build_region_output(link, 1, 2).is_none());
+
+        let mut link = empty_region_build();
+        link.links.push(PairLink::new(
+            PairKind::Bracket,
+            Span::new(1, 2),
+            Span::new(2, 3),
+        ));
+        assert!(build_region_output(link, 1, 2).is_none());
+
+        let mut bounded_link = empty_region_build();
+        bounded_link.links.push(PairLink::new(
+            PairKind::Bracket,
+            Span::new(1, 1),
+            Span::new(1, 2),
+        ));
+        assert!(build_region_output(bounded_link, 1, 2).is_some());
+
+        let mut diagnostic = empty_region_build();
+        diagnostic
+            .diagnostics
+            .push(Diagnostic::source_contains_pua(Span::new(0, 1), '\u{E001}'));
+        assert!(build_region_output(diagnostic, 1, 2).is_none());
+
+        let mut diagnostic = empty_region_build();
+        diagnostic
+            .diagnostics
+            .push(Diagnostic::source_contains_pua(Span::new(1, 3), '\u{E001}'));
+        assert!(build_region_output(diagnostic, 1, 2).is_none());
+
+        let mut bounded = empty_region_build();
+        bounded
+            .diagnostics
+            .push(Diagnostic::source_contains_pua(Span::new(1, 2), '\u{E001}'));
+        assert!(build_region_output(bounded, 1, 2).is_some());
     }
 
     #[test]
@@ -716,7 +946,7 @@ mod tests {
     fn source_accessor_returns_original() {
         let s = "the original";
         let p = Pipeline::new(s);
-        assert!(ptr::eq(p.source(), s));
+        assert_eq!(p.source(), s);
     }
 
     // -----------------------------------------------------------------

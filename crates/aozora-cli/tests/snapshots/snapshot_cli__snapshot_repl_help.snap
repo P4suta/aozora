@@ -20,7 +20,7 @@ Options:
           - html:   The rendered HTML (as `aozora render`)
           - pandoc: The Pandoc AST as JSON (as `aozora pandoc`)
           - all:    Every view at once: nodes, HTML, and Pandoc
-          
+
           [default: all]
 
   -E, --encoding <ENCODING>
@@ -33,7 +33,7 @@ Options:
             mirrors are common, and the caller should not have to know which they have
           - utf8: Force UTF-8; error if the input is not valid UTF-8
           - sjis: Force Shift_JIS decoding
-          
+
           [default: auto]
 
       --color <WHEN>

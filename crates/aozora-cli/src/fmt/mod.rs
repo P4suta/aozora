@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
-use aozora::render::SerializeOptions;
+use aozora::SerializeOptions;
 
 use crate::i18n::LanguageIdentifier;
+use crate::{
+    DiagnosticPolicy, DiagnosticReport, DocumentOutcome, diagnostics_render, report_diagnostics,
+};
 
 mod cli;
 mod discover;
@@ -26,7 +29,7 @@ pub(crate) use cli::{ColorChoice, FmtArgs};
 pub(crate) use discover::{Input, Resolved, resolve};
 pub(crate) use encoding::{Encoding, decode};
 pub(crate) use process::{read_and_format, write_back};
-pub(crate) use source::{is_oversize_input, read_file, read_stdin};
+pub(crate) use source::{read_file, read_stdin};
 // Reached only by the CLI's own oversize-input regression test.
 #[cfg(test)]
 pub(crate) use source::{MAX_SOURCE_BYTES, OversizeInput};
@@ -70,13 +73,17 @@ pub(crate) struct Presentation {
     pub quiet: bool,
     /// Message language for the localized batch summary.
     pub lang: LanguageIdentifier,
+    /// Diagnostic rendering shared with every document subcommand.
+    pub diagnostic_format: diagnostics_render::DiagFormat,
+    /// Whether any parser diagnostic makes the run fail.
+    pub strict: bool,
 }
 
 /// Constant-per-run engine context: how to decode inputs, the program name to
 /// prefix diagnostics with (`aozora fmt`), and the caller's [`Presentation`]
 /// policy unpacked into flat fields. Threaded through the engine.
 #[derive(Clone, Debug)]
-struct Ctx {
+pub(super) struct Ctx {
     encoding: Encoding,
     color: ColorChoice,
     program: &'static str,
@@ -84,11 +91,12 @@ struct Ctx {
     quiet: bool,
     /// Message language for the localized batch summary.
     lang: LanguageIdentifier,
+    diagnostic_policy: DiagnosticPolicy,
 }
 
 /// Run the formatter engine for already-parsed [`FmtArgs`] under an explicit
-/// `encoding`, `color`, and `program` label, returning the exit code
-/// (0 / 1 / 2).
+/// `encoding`, `color`, and `program` label, returning the document-command
+/// exit code.
 ///
 /// `encoding`, `program`, and the [`Presentation`] policy (colour + `--quiet` +
 /// language) are caller-injected. The `aozora` CLI's `fmt` subcommand calls it
@@ -108,6 +116,10 @@ pub(crate) fn run_engine(
         program,
         quiet: presentation.quiet,
         lang: presentation.lang.clone(),
+        diagnostic_policy: DiagnosticPolicy {
+            format: presentation.diagnostic_format,
+            strict: presentation.strict,
+        },
     };
     match dispatch(args, &ctx) {
         Ok(outcome) => outcome.exit_code(),
@@ -152,9 +164,13 @@ fn dispatch(args: &FmtArgs, ctx: &Ctx) -> Result<Outcome> {
 fn run_stdin(args: &FmtArgs, ctx: &Ctx, mode: &Mode) -> Result<Outcome> {
     let raw = read_stdin()?;
     let old = decode(&raw, ctx.encoding).context("decoding stdin")?;
-    let new = process::format_guarded(&old, args.serialize_options())?;
+    let (new, diagnostics) = process::format_with_diagnostics(&old, args.serialize_options())?;
+    let diagnostic_outcome = diagnostics_outcome(ctx, Path::new("-"), &old, &diagnostics)?;
+    if diagnostic_outcome == Outcome::Internal {
+        return Ok(diagnostic_outcome);
+    }
 
-    match mode {
+    let mode_outcome = match mode {
         Mode::Stdout => {
             io::stdout().write_all(new.as_bytes())?;
             Ok(Outcome::Ok)
@@ -167,7 +183,30 @@ fn run_stdin(args: &FmtArgs, ctx: &Ctx, mode: &Mode) -> Result<Outcome> {
             Ok(Outcome::Ok)
         }
         Mode::Check(report) => stdin_check(report, ctx, &old, &new),
-    }
+    }?;
+    Ok(diagnostic_outcome.max(mode_outcome))
+}
+
+fn diagnostics_outcome(
+    ctx: &Ctx,
+    path: &Path,
+    source: &str,
+    diagnostics: &[aozora::Diagnostic],
+) -> Result<Outcome> {
+    report_diagnostics(
+        ctx.diagnostic_policy,
+        DiagnosticReport {
+            path,
+            source,
+            diagnostics,
+            lang: &ctx.lang,
+        },
+    )
+    .map(|outcome| match outcome {
+        DocumentOutcome::Success => Outcome::Ok,
+        DocumentOutcome::Strict => Outcome::Diagnostics,
+        DocumentOutcome::Internal => Outcome::Internal,
+    })
 }
 
 fn stdin_check(report: &CheckReport, ctx: &Ctx, old: &str, new: &str) -> Result<Outcome> {
@@ -195,7 +234,7 @@ fn stdin_check(report: &CheckReport, ctx: &Ctx, old: &str, new: &str) -> Result<
             } else {
                 report::JsonFile::ok("<stdin>".to_owned())
             };
-            report::emit_json(outcome, vec![file])?;
+            report::emit_json(vec![file])?;
         }
     }
     Ok(outcome)
@@ -210,7 +249,7 @@ fn run_files(args: &FmtArgs, ctx: &Ctx, mode: &Mode, resolved: &Resolved) -> Res
             Ok(discovery_base(ctx, resolved).max(run_write(ctx, &resolved.files, *list, opts)?))
         }
         Mode::List => Ok(discovery_base(ctx, resolved).max(run_list(ctx, &resolved.files, opts)?)),
-        Mode::Check(CheckReport::Json) => report::run_check_json(ctx.encoding, resolved, opts),
+        Mode::Check(CheckReport::Json) => report::run_check_json(ctx, resolved, opts),
         Mode::Check(CheckReport::Diff) => {
             let base = discovery_base(ctx, resolved);
             Ok(base.max(run_check(ctx, &resolved.files, true, opts)?))
@@ -229,8 +268,12 @@ fn run_stdout(ctx: &Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<
         [] => Ok(base),
         [path] => {
             let fmt = read_and_format(path, opts, ctx.encoding)?;
+            let diagnostics = diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+            if diagnostics == Outcome::Internal {
+                return Ok(base.max(diagnostics));
+            }
             io::stdout().write_all(fmt.new.as_bytes())?;
-            Ok(base)
+            Ok(base.max(diagnostics))
         }
         files => bail!(
             "refusing to write {} files to stdout; use --write, --check, or --list",
@@ -240,52 +283,70 @@ fn run_stdout(ctx: &Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<
 }
 
 fn run_write(ctx: &Ctx, files: &[PathBuf], list: bool, opts: SerializeOptions) -> Result<Outcome> {
-    fold_files(ctx, files, |path, printer| {
-        let fmt = read_and_format(path, opts, ctx.encoding)?;
+    fold_files(ctx, files, opts, |path, fmt, printer| {
+        let diagnostics = diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+        if diagnostics == Outcome::Internal {
+            return Ok(FileOutcome::new(diagnostics, false));
+        }
         write_back(path, &fmt, opts)?;
         let changed = fmt.changed();
         if list && changed {
             printer.suspend(|| writeln!(io::stdout(), "{}", path.display()))?;
         }
-        Ok(FileOutcome::new(Outcome::Ok, changed))
+        Ok(FileOutcome::new(diagnostics, changed))
     })
 }
 
 fn run_list(ctx: &Ctx, files: &[PathBuf], opts: SerializeOptions) -> Result<Outcome> {
-    fold_files(ctx, files, |path, printer| {
-        let fmt = read_and_format(path, opts, ctx.encoding)?;
+    fold_files(ctx, files, opts, |path, fmt, printer| {
+        let diagnostics = diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+        if diagnostics == Outcome::Internal {
+            return Ok(FileOutcome::new(diagnostics, false));
+        }
         let changed = fmt.changed();
         if changed {
             printer.suspend(|| writeln!(io::stdout(), "{}", path.display()))?;
         }
         // gofmt -l is informational: a clean exit even when files are listed.
-        Ok(FileOutcome::new(Outcome::Ok, changed))
+        Ok(FileOutcome::new(diagnostics, changed))
     })
 }
 
 fn run_check(ctx: &Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) -> Result<Outcome> {
     if !diff {
-        return fold_files(ctx, files, |path, printer| {
-            let fmt = read_and_format(path, opts, ctx.encoding)?;
+        return fold_files(ctx, files, opts, |path, fmt, printer| {
+            let diagnostics = diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+            if diagnostics == Outcome::Internal {
+                return Ok(FileOutcome::new(diagnostics, false));
+            }
             let changed = fmt.changed();
             if changed {
                 printer.suspend(|| {
                     eprintln!("{}: {} would be reformatted", ctx.program, path.display());
                 });
             }
-            Ok(FileOutcome::new(check_outcome(changed), changed))
+            Ok(FileOutcome::new(
+                diagnostics.max(check_outcome(changed)),
+                changed,
+            ))
         });
     }
     let mut out = auto_stdout(ctx.color);
-    let outcome = fold_files(ctx, files, |path, printer| {
-        let fmt = read_and_format(path, opts, ctx.encoding)?;
+    let outcome = fold_files(ctx, files, opts, |path, fmt, printer| {
+        let diagnostics = diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+        if diagnostics == Outcome::Internal {
+            return Ok(FileOutcome::new(diagnostics, false));
+        }
         let changed = fmt.changed();
         if changed {
             printer.suspend(|| {
                 report::write_diff(&mut out, &path.display().to_string(), &fmt.old, &fmt.new)
             })?;
         }
-        Ok(FileOutcome::new(check_outcome(changed), changed))
+        Ok(FileOutcome::new(
+            diagnostics.max(check_outcome(changed)),
+            changed,
+        ))
     })?;
     out.flush()?;
     Ok(outcome)
@@ -318,34 +379,45 @@ fn check_outcome(changed: bool) -> Outcome {
 /// [`run_engine`] to turn into a quiet exit 0 rather than being logged per-file
 /// and downgraded to [`Outcome::Error`] (exit 2). See ADR-0029. On that early
 /// return neither the bar's tail nor the summary is drawn — the pipe is gone.
-fn fold_files<F>(ctx: &Ctx, files: &[PathBuf], mut per_file: F) -> Result<Outcome>
+fn fold_files<F>(
+    ctx: &Ctx,
+    files: &[PathBuf],
+    opts: SerializeOptions,
+    mut per_file: F,
+) -> Result<Outcome>
 where
-    F: FnMut(&Path, &Printer) -> Result<FileOutcome>,
+    F: FnMut(&Path, process::Formatted, &Printer) -> Result<FileOutcome>,
 {
     let bar = progress::file_bar(ctx, files.len());
     let printer = progress::printer(bar.as_ref());
     let mut outcome = Outcome::Ok;
     let mut tally = Tally::default();
-    for path in files {
-        if let Some(bar) = &bar {
-            bar.set_message(path.display().to_string());
-        }
-        let one = match per_file(path, &printer) {
-            Ok(one) => {
-                tally.record(one.changed);
-                one.outcome
+    let mut remaining = files;
+    while !remaining.is_empty() {
+        let (chunk, rest) = remaining.split_at(process::batch_len(remaining));
+        let formatted = process::read_and_format_batch(chunk, opts, ctx.encoding);
+        for (path, formatted) in chunk.iter().zip(formatted) {
+            if let Some(bar) = &bar {
+                bar.set_message(path.display().to_string());
             }
-            Err(err) if is_broken_pipe(&err) => return Err(err),
-            Err(err) => {
-                printer.suspend(|| eprintln!("{}: {err:#}", ctx.program));
-                tally.record_error();
-                Outcome::Error
+            let one = match formatted.and_then(|fmt| per_file(path, fmt, &printer)) {
+                Ok(one) => {
+                    tally.record(one.changed);
+                    one.outcome
+                }
+                Err(err) if is_broken_pipe(&err) => return Err(err),
+                Err(err) => {
+                    printer.suspend(|| eprintln!("{}: {err:#}", ctx.program));
+                    tally.record_error();
+                    Outcome::Error
+                }
+            };
+            outcome = outcome.max(one);
+            if let Some(bar) = &bar {
+                bar.inc(1);
             }
-        };
-        outcome = outcome.max(one);
-        if let Some(bar) = &bar {
-            bar.inc(1);
         }
+        remaining = rest;
     }
     if let Some(bar) = bar {
         bar.finish_and_clear();
@@ -366,8 +438,10 @@ fn discovery_base(ctx: &Ctx, resolved: &Resolved) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use aozora::DirectiveNormalization;
     use aozora::fmt::{format_source, format_source_with};
-    use aozora::render::DirectiveNormalization;
 
     use super::*;
     use crate::i18n::resolve;
@@ -486,7 +560,25 @@ mod tests {
             program: "aozora fmt",
             quiet: false,
             lang: resolve(None, None, None, None),
+            diagnostic_policy: DiagnosticPolicy {
+                format: diagnostics_render::DiagFormat::Short,
+                strict: false,
+            },
         }
+    }
+
+    fn fold_fixture_files(contents: &[&str]) -> (tempfile::TempDir, Vec<PathBuf>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = contents
+            .iter()
+            .enumerate()
+            .map(|(index, content)| {
+                let path = dir.path().join(format!("{index}.aozora"));
+                fs::write(&path, content).expect("write fixture");
+                path
+            })
+            .collect();
+        (dir, files)
     }
 
     #[test]
@@ -497,14 +589,19 @@ mod tests {
         // `Outcome::Error`. With the `is_broken_pipe` guard replaced by `false`
         // the pipe error would instead fall to the logging arm and fold into
         // `Ok(Outcome::Error)`, so pinning `Err`/broken-pipe kills that mutant.
-        let files = [PathBuf::from("first"), PathBuf::from("second")];
+        let (_dir, files) = fold_fixture_files(&["first", "second"]);
         let mut calls = 0_u32;
-        let result = fold_files(&ctx(), &files, |_path, _printer| {
-            calls += 1;
-            Err(anyhow::Error::new(io::Error::from(
-                io::ErrorKind::BrokenPipe,
-            )))
-        });
+        let result = fold_files(
+            &ctx(),
+            &files,
+            SerializeOptions::default(),
+            |_path, _formatted, _printer| {
+                calls += 1;
+                Err(anyhow::Error::new(io::Error::from(
+                    io::ErrorKind::BrokenPipe,
+                )))
+            },
+        );
         let err = result.expect_err("broken pipe must propagate as Err, not fold into an Outcome");
         assert!(
             is_broken_pipe(&err),
@@ -521,10 +618,15 @@ mod tests {
         // run — returned as `Ok(Outcome::Error)`, not `Err`. With the
         // `is_broken_pipe` guard replaced by `true` every error would propagate
         // as `Err`, so pinning the `Ok(Outcome::Error)` return kills that mutant.
-        let files = [PathBuf::from("only")];
-        let result = fold_files(&ctx(), &files, |_path, _printer| {
-            Err(anyhow::anyhow!("permission denied or parse failure"))
-        });
+        let (_dir, files) = fold_fixture_files(&["only"]);
+        let result = fold_files(
+            &ctx(),
+            &files,
+            SerializeOptions::default(),
+            |_path, _formatted, _printer| {
+                Err(anyhow::anyhow!("permission denied or parse failure"))
+            },
+        );
         let outcome = result.expect("a non-pipe error must be downgraded, not propagated");
         assert_eq!(outcome, Outcome::Error);
     }

@@ -16,12 +16,9 @@ is the cross-driver *wire* schema version stamped into every
 
 Inspection methods come in two flavours:
 
-* the parsed accessors — :meth:`Document.diagnostics`, :meth:`Document.nodes`,
-  :meth:`Document.pairs`, :meth:`Document.container_pairs` — return native
-  ``list[dict]``;
-* the ``*_json()`` accessors return the raw, byte-identical wire envelope
-  string (``{"schemaVersion": 2, "data": [...]}``) shared with the
-  WASM / FFI / Go drivers.
+* the parsed accessors return generated, typed Python dataclasses;
+* the ``*_json()`` accessors return the raw wire envelope string used by
+  CLI, FFI, Extism, and Go.
 
 The compiled extension lives in the private submodule
 ``aozora._aozora``; import from ``aozora`` directly.
@@ -32,7 +29,6 @@ from __future__ import annotations
 import json
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
-from typing import Any
 
 from . import _aozora
 from ._aozora import (
@@ -43,9 +39,33 @@ from ._aozora import (
     slugs_json,
     version,
 )
+from .wire_types import (
+    ContainerPair,
+    Diagnostic,
+    GaijiResolution,
+    Node,
+    Pair,
+    Slug,
+    Span,
+)
+from .wire_types import (
+    AozoraContainerPairsEnvelope as _ContainerPairsEnvelope,
+)
+from .wire_types import AozoraDiagnosticsEnvelope as _DiagnosticsEnvelope
+from .wire_types import AozoraGaijiEnvelope as _GaijiEnvelope
+from .wire_types import AozoraNodesEnvelope as _NodesEnvelope
+from .wire_types import AozoraPairsEnvelope as _PairsEnvelope
+from .wire_types import AozoraSlugsEnvelope as _SlugsEnvelope
 
 __all__ = [
     "Document",
+    "ContainerPair",
+    "Diagnostic",
+    "GaijiResolution",
+    "Node",
+    "Pair",
+    "Slug",
+    "Span",
     "decode_sjis",
     "parse_to_html",
     "prewarm",
@@ -62,20 +82,9 @@ except PackageNotFoundError:  # source tree / editable build without dist metada
     __version__ = "0.0.0+unknown"
 
 
-def _envelope_data(envelope_json: str) -> list[dict[str, Any]]:
-    """Parse a ``{"schemaVersion", "data"}`` wire string to its ``data`` list."""
-    data: list[dict[str, Any]] = json.loads(envelope_json)["data"]
-    return data
-
-
-def slugs() -> list[dict[str, Any]]:
-    """The canonical ``［＃…］`` slug catalogue as a list of dicts.
-
-    Static — independent of any document. Each entry is
-    ``{canonical, family, accepts_param, doc, partner}``. Use
-    :func:`slugs_json` for the raw wire string.
-    """
-    return _envelope_data(slugs_json())
+def slugs() -> list[Slug]:
+    """The canonical ``［＃…］`` completion catalogue."""
+    return _SlugsEnvelope.from_dict(json.loads(slugs_json())).data
 
 
 class Document:
@@ -136,30 +145,30 @@ class Document:
         """
         return self._native.diagnostics_text()
 
-    # ── parsed accessors (native list[dict]) ──────────────────────────
-    def diagnostics(self) -> list[dict[str, Any]]:
-        """Diagnostics as a list of dicts (the parsed wire ``data`` array)."""
-        return _envelope_data(self._native.diagnostics_json())
+    # ── parsed accessors ──────────────────────────────────────────────
+    def diagnostics(self) -> list[Diagnostic]:
+        """Diagnostics as typed native values."""
+        return _DiagnosticsEnvelope.from_dict(
+            json.loads(self._native.diagnostics_json())
+        ).data
 
-    def nodes(self) -> list[dict[str, Any]]:
-        """Classified Aozora-node spans as a list of dicts."""
-        return _envelope_data(self._native.nodes_json())
+    def nodes(self) -> list[Node]:
+        """Classified Aozora-node spans as typed native values."""
+        return _NodesEnvelope.from_dict(json.loads(self._native.nodes_json())).data
 
-    def pairs(self) -> list[dict[str, Any]]:
-        """Matched open/close pair links as a list of dicts."""
-        return _envelope_data(self._native.pairs_json())
+    def pairs(self) -> list[Pair]:
+        """Matched open/close pair links as typed native values."""
+        return _PairsEnvelope.from_dict(json.loads(self._native.pairs_json())).data
 
-    def container_pairs(self) -> list[dict[str, Any]]:
-        """Container open/close pairs (indent / warichu / …) as a list of dicts."""
-        return _envelope_data(self._native.container_pairs_json())
+    def container_pairs(self) -> list[ContainerPair]:
+        """Container open/close pairs as typed native values."""
+        return _ContainerPairsEnvelope.from_dict(
+            json.loads(self._native.container_pairs_json())
+        ).data
 
-    def gaiji(self) -> list[dict[str, Any]]:
-        """Resolved gaiji references (``※［＃…］``) as a list of dicts.
-
-        Each entry is ``{span, description, mencode, codepoint, resolved}``;
-        ``resolved`` is ``None`` when the reference can't be mapped to a glyph.
-        """
-        return _envelope_data(self._native.gaiji_json())
+    def gaiji(self) -> list[GaijiResolution]:
+        """Resolved gaiji references as typed native values."""
+        return _GaijiEnvelope.from_dict(json.loads(self._native.gaiji_json())).data
 
     # ── raw wire accessors (byte-identical envelope strings) ──────────
     def diagnostics_json(self) -> str:

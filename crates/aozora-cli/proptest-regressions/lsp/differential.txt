@@ -1,0 +1,14 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 27f8116f81f9f1c40c48f38cac76d8371dbcd49c9a89079302d350995eefe04e # shrinks to text = "《《重要》》［＃改ページ］"
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 245fd12723e8eea3558768e741a53c07c56dd7d6ec9c859d757667e4464a6ca1 # shrinks to text = "《《重要》》\r\n"

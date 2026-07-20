@@ -9,8 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# The encoding crate folded into `aozora`; `decode_sjis` is reachable at the
-# `aozora::encoding` facade.
+# The encoding crate folded into `aozora`; `decode_sjis` is re-exported at the
+# crate root.
 aozora = { path = "../.." }
 
 [workspace]

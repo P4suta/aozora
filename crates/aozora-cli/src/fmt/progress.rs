@@ -186,10 +186,7 @@ fn summary_line(lang: &LanguageIdentifier, tally: &Tally) -> String {
 /// Print the localized one-line batch summary to stderr, gated exactly like the
 /// bar. Silent when gated out, so a piped run emits nothing extra.
 ///
-/// The terminal-gated write shell around the pure [`summary_line`]: skipped by
-/// the sweep because the headless host gates it out (nothing to observe), while
-/// [`summary_line`] carries the count-to-message assertions below.
-#[cfg_attr(test, mutants::skip)]
+/// The pseudo-terminal integration test observes this live write path.
 pub(crate) fn summary(ctx: &Ctx, tally: &Tally) {
     if !enabled(ctx) {
         return;

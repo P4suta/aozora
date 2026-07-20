@@ -10,12 +10,14 @@ use std::borrow::Cow;
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 
-use aozora::encoding::{decode_auto, decode_sjis};
+use aozora::{decode_auto, decode_sjis};
 
 use crate::fmt::source;
 
 /// How to decode source bytes into text.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Encoding {
     /// Detect the source encoding: valid UTF-8 is used as-is, otherwise the

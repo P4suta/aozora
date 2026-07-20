@@ -43,7 +43,7 @@ impl FontShift {
     /// `true` when the shift enlarges (大きな); `false` when it shrinks (小さな).
     #[must_use]
     pub const fn larger(self) -> bool {
-        self.0.get() > 0
+        self.0.get().is_positive()
     }
 
     /// The unsigned stage count.
@@ -134,7 +134,7 @@ pub enum EnclosureKind {
 /// [`Format::AccentDot`] is the sibling combining-dot facility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
-pub enum AccentMark {
+pub(crate) enum AccentMark {
     /// アクサン（´） — acute accent (`e` → é). Accent-table marker byte `'`.
     Acute,
     /// ウムラウト（¨） — umlaut / diaeresis (`o` → ö). Marker byte `:`.
@@ -411,7 +411,7 @@ impl Format {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum ForwardAttr {
+pub(crate) enum ForwardAttr {
     /// 太字.
     Bold,
     /// ゴシック体 — gothic typeface (distinct from 太字, see [`Format::Gothic`]).
@@ -449,7 +449,8 @@ pub enum ForwardAttr {
     /// ドット付き (#331). Composes a combining dot onto an addressed Latin letter
     /// in the reclaimed run (`Sam` + `mは上ドット付き` → `Saṁ`). The selector
     /// grammar lives in the raw directive body, interned on the owned leaf's
-    /// `accent_body` (this attribute stays a `Copy` unit, arena-free).
+    /// [`ForwardPayload::AccentBody`](crate::syntax::ast::ForwardPayload::AccentBody)
+    /// (this attribute stays a `Copy` unit, arena-free).
     AccentDot,
     /// アクサン / ウムラウト — map a single quoted Latin letter to its precomposed
     /// accented glyph (`「e」はアクサン（´）付き` → é, `「o」はウムラウト（¨）付き` → ö).
@@ -501,7 +502,7 @@ pub enum ForwardAttr {
 /// cured by the lowering pass's overlap-truncate.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
-pub enum ForwardOrigin {
+pub(crate) enum ForwardOrigin {
     /// The classifier pulled the literal out of the immediately-preceding
     /// source (`青空［＃「青空」に傍点］`): the surrounding plain run was truncated,
     /// so the decorated run is the *sole* visible copy and the serializer
@@ -547,7 +548,7 @@ impl ForwardOrigin {
     /// before the directive's `［` at `bracket_start`, otherwise
     /// [`Referenced`](Self::Referenced).
     #[must_use]
-    pub const fn from_consume(consume_start: u32, bracket_start: u32) -> Self {
+    pub(crate) const fn from_consume(consume_start: u32, bracket_start: u32) -> Self {
         if consume_start < bracket_start {
             Self::Reclaimed
         } else {
@@ -559,7 +560,8 @@ impl ForwardOrigin {
 impl ForwardAttr {
     /// Project to the scope-independent [`Format`] attribute.
     #[must_use]
-    pub const fn format(self) -> Format {
+    #[cfg(test)]
+    pub(crate) const fn format(self) -> Format {
         match self {
             Self::Bold => Format::Bold,
             Self::Gothic => Format::Gothic,
@@ -588,7 +590,7 @@ impl ForwardAttr {
     /// it falls through to the 太字 default here (the serializer never calls
     /// this for it).
     #[must_use]
-    pub const fn keyword(self) -> &'static str {
+    pub(crate) const fn keyword(self) -> &'static str {
         match self {
             Self::Gothic => "ゴシック体",
             Self::Italic => "斜体",
@@ -626,7 +628,7 @@ impl ForwardAttr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum LineFormat {
+pub(crate) enum LineFormat {
     /// `［＃天から N字下げ］` — indent the line by `amount` full-width chars.
     ///
     /// `end_offset` carries the *both-margin* compound
@@ -671,7 +673,8 @@ pub enum LineFormat {
 impl LineFormat {
     /// Project to the scope-independent [`Format`] attribute.
     #[must_use]
-    pub const fn format(self) -> Format {
+    #[cfg(test)]
+    pub(crate) const fn format(self) -> Format {
         match self {
             Self::Indent { .. } => Format::Indent,
             Self::AlignEnd { .. } => Format::AlignEnd,
@@ -919,7 +922,7 @@ impl RegionFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum RegionClose {
+pub(crate) enum RegionClose {
     /// `字下げ終わり`, or the `字下げ、{W}字組み終わり` compound (the close
     /// carries `W`, so the marker round-trips byte-exact).
     Indent {
@@ -999,7 +1002,7 @@ impl RegionClose {
     /// the *close* marker (so it carries the close's own data); and in the
     /// pairing-mismatch check, on the *open* (to derive the expected close).
     #[must_use]
-    pub const fn of(region: RegionFormat) -> Self {
+    pub(crate) const fn of(region: RegionFormat) -> Self {
         match region {
             RegionFormat::Indent(block) => Self::Indent {
                 kumi_width: match block.layout {
@@ -1041,7 +1044,7 @@ impl RegionClose {
     /// [`RegionFormat::kind_str`] so an open/close mismatch names both sides
     /// consistently).
     #[must_use]
-    pub const fn kind_str(self) -> &'static str {
+    pub(crate) const fn kind_str(self) -> &'static str {
         match self {
             Self::Indent { .. } => "indent",
             Self::Warichu => "warichu",
@@ -1065,7 +1068,7 @@ impl RegionClose {
     /// Whether the close renders inline (mirrors [`RegionFormat::is_inline`] so
     /// the close marker's `\n\n` padding / `<p>` handling matches the open).
     #[must_use]
-    pub const fn is_inline(self) -> bool {
+    pub(crate) const fn is_inline(self) -> bool {
         matches!(
             self,
             Self::Bouten { .. }
@@ -1079,7 +1082,8 @@ impl RegionClose {
 
     /// Whether the close's content was *phrasing* — only [`Self::Heading`].
     #[must_use]
-    pub const fn content_is_phrasing(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn content_is_phrasing(self) -> bool {
         matches!(self, Self::Heading { .. })
     }
 }
@@ -1101,8 +1105,8 @@ mod tests {
         assert!(size_of::<RegionFormat>() <= 12);
     }
 
-    /// The container-pairs wire tags are pinned: an accidental rename breaks
-    /// this test instead of silently shifting the `SCHEMA_VERSION=1` wire.
+    /// The container-pairs wire tags are pinned so a rename requires a schema
+    /// bump.
     #[test]
     fn region_format_wire_tags_are_stable() {
         assert_eq!(

@@ -30,7 +30,7 @@
 
 #![cfg(feature = "json")]
 
-use aozora::{Document, json};
+use aozora::json;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use proptest::prelude::*;
@@ -81,7 +81,7 @@ fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
 }
 
 fn assert_json_round_trip(source: &str) {
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     // (1) and (2) for each of the four envelope flavours.

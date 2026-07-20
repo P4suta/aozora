@@ -9,7 +9,6 @@
 
 use std::hint::black_box;
 
-use aozora::Document;
 use aozora_bench::build_synthetic_aozora;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -25,7 +24,8 @@ fn bench_synthetic_corpus(c: &mut Criterion) {
         g.throughput(Throughput::Bytes(buf.len() as u64));
         g.bench_with_input(BenchmarkId::from_parameter(buf.len()), &buf, |b, sample| {
             b.iter(|| {
-                let doc = Document::new(black_box(sample.as_str()));
+                let doc = aozora::parse(black_box(sample.as_str()))
+                    .expect("source fits parser span limit");
                 let tree = doc.snapshot();
                 black_box(tree);
             });

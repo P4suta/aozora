@@ -1,27 +1,11 @@
-//! Coordinate-system newtypes for byte offsets.
+//! Private coordinate-system newtypes for byte offsets.
 //!
-//! The lex pipeline operates over **three** distinct coordinate
-//! spaces that all happen to use `u32` byte offsets:
-//!
-//! 1. **Source** — bytes of the original input string the caller
-//!    handed to [`Document::new`](`crate`)<!-- doc-link via meta crate -->.
-//!    BOM, CRLF and decorative-rule positions are still in their
-//!    original positions.
-//! 2. **Sanitized source** — bytes of the sanitize-stage output.
-//!    BOM-stripped, CR/LF-normalised, accent-decomposed,
-//!    decorative-rule-isolated. For the typical document
-//!    (no BOM, only LF, no `〔...〕` accent spans, no long
-//!    decorative rule lines) sanitized == source byte-for-byte;
-//!    [`Span`](crate::spec::Span) values are quoted in this coordinate
-//!    space throughout the public API.
-//! 3. **Normalized** — bytes of the PUA-sentinel-rewritten text
-//!    that the placeholder registry indexes. Each Aozora construct
-//!    occupies one PUA codepoint here regardless of its source
-//!    width.
+//! The pipeline uses sanitized and placeholder-normalized coordinates
+//! internally. [`crate::Snapshot`] maps every public span back to UTF-8 byte
+//! offsets in the original source before exposing it.
 //!
 //! The newtypes [`SourceOffset`] and [`NormalizedOffset`] make
-//! cross-space mismatches ("I passed a normalized offset where the
-//! API expected a source offset") a build error without paying any
+//! cross-space mismatches a build error without paying any
 //! runtime cost — both compile to a `u32` field access.
 //!
 //! # Conversion policy
@@ -49,20 +33,20 @@
 /// Editor surfaces and LSP-style queries that hold a byte offset into
 /// a buffer the user is editing produce values in this space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SourceOffset(pub u32);
+pub(crate) struct SourceOffset(pub u32);
 
 impl SourceOffset {
     /// Construct from a raw byte index. The caller is asserting that
     /// `v` names a position in the sanitized-source coordinate space.
     #[must_use]
-    pub const fn new(v: u32) -> Self {
+    pub(crate) const fn new(v: u32) -> Self {
         Self(v)
     }
 
     /// Underlying byte index. Useful for arithmetic and comparison
     /// against existing `u32` data.
     #[must_use]
-    pub const fn get(self) -> u32 {
+    pub(crate) const fn get(self) -> u32 {
         self.0
     }
 }
@@ -83,20 +67,20 @@ impl From<u32> for SourceOffset {
 /// the normalized text and dispatch on sentinel hits operate in this
 /// coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NormalizedOffset(pub u32);
+pub(crate) struct NormalizedOffset(pub u32);
 
 impl NormalizedOffset {
     /// Construct from a raw byte index. The caller is asserting that
     /// `v` names a position in the normalized-text coordinate space.
     #[must_use]
-    pub const fn new(v: u32) -> Self {
+    pub(crate) const fn new(v: u32) -> Self {
         Self(v)
     }
 
     /// Underlying byte index. Useful for arithmetic and comparison
     /// against existing `u32` data.
     #[must_use]
-    pub const fn get(self) -> u32 {
+    pub(crate) const fn get(self) -> u32 {
         self.0
     }
 }

@@ -1,6 +1,7 @@
 package aozora
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -19,7 +20,10 @@ import (
 // are byte-exact: every plugin export returns the shared aozora::json bytes
 // (and to_html / to_source output) with no framing.
 func TestFixtureParity(t *testing.T) {
-	root := filepath.Join("..", "aozora-conformance", "fixtures", "render")
+	root := filepath.Join("testdata", "render")
+	if _, err := os.Stat(root); err != nil {
+		root = filepath.Join("..", "aozora-conformance", "fixtures", "render")
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read fixtures root %s: %v", root, err)
@@ -57,6 +61,9 @@ func TestFixtureParity(t *testing.T) {
 			golden, err := os.ReadFile(filepath.Join(dir, s.file))
 			if err != nil {
 				t.Fatalf("%s: read golden %s: %v", e.Name(), s.file, err)
+			}
+			if filepath.Ext(s.file) == ".json" {
+				golden = bytes.TrimSuffix(golden, []byte{'\n'})
 			}
 			got, err := p.call(s.export, string(src))
 			if err != nil {

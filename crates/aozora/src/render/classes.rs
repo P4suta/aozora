@@ -270,16 +270,9 @@ mod tests {
         nodes.push(node);
     }
 
-    /// Render one collected node, routing containers through the lifetime-free
-    /// container tag writer and every other node through the owned renderer.
     fn render_collected(node: Node, store: &NodeStore, set: &mut BTreeSet<String>) {
         let mut s = String::new();
-        if let Node::Container(c) = node {
-            render_container(c, true, &mut s).expect("render into String is infallible");
-            render_container(c, false, &mut s).expect("render into String is infallible");
-        } else {
-            render(node, store, &mut s).expect("render into String is infallible");
-        }
+        render(node, store, &mut s).expect("render into String is infallible");
         collect_classes(&s, set);
     }
 
@@ -362,7 +355,8 @@ mod tests {
         for kind in [
             DirectiveKind::WarichuOpen,
             DirectiveKind::WarichuClose,
-            DirectiveKind::Unknown,
+            DirectiveKind::NonCanonical,
+            DirectiveKind::Editorial,
         ] {
             let p = a.make_directive("［＃注］", kind);
             render_into(a.annotation(p), &mut nodes);
@@ -579,15 +573,18 @@ mod tests {
                 });
             }
         }
-        for kind in containers {
-            render_into(a.container(Container { kind }), &mut nodes);
-        }
-
-        // The build is done; take the store and render every collected node.
         let store = a.into_store();
         let mut emitted: BTreeSet<String> = BTreeSet::new();
         for node in nodes {
             render_collected(node, &store, &mut emitted);
+        }
+        for kind in containers {
+            let mut html = String::new();
+            let container = Container { kind };
+            render_container(container, true, &mut html).expect("render into String is infallible");
+            render_container(container, false, &mut html)
+                .expect("render into String is infallible");
+            collect_classes(&html, &mut emitted);
         }
         emitted
     }

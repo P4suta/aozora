@@ -4,12 +4,12 @@
     "feature": "ruby",
     "level": "should",
     "spec_section": "6.1",
-    "note": "[provenance:hand-derived §6.1 + AOZORA-ANNOTATION 2026-06-17] A second ruby opener 《 inside a ruby reading ｜漢《か《ん》じ》 is ill-formed and raises nested-ruby (error, §9). Offsets from the §3 byte model; not read back from a processor. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
+    "note": "[provenance:hand-derived §6.1 + AOZORA-ANNOTATION 2026-06-17] A second ruby opener 《 inside a ruby reading ｜漢《か《ん》じ》 is ill-formed and raises nested-ruby (error, §9). Offsets from the §3 byte model; not read back from a processor. Recovery retains the explicit ｜ so malformed source round-trips byte-identically."
   },
   "source": "｜漢《か《ん》じ》",
   "expected": {
     "html": "<p><ruby>漢<rp>(</rp><rt>か《ん》じ</rt><rp>)</rp></ruby></p>\n",
-    "serialize": "漢《か《ん》じ》",
+    "serialize": "｜漢《か《ん》じ》",
     "nodes": [
       {
         "kind": "ruby",

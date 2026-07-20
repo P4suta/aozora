@@ -439,7 +439,7 @@ pub enum Diagnostic {
     },
 
     /// A `［＃…］` body spelled as a verified near-miss of a recognized
-    /// directive — kept as `DirectiveKind::Unknown`; the canonical spelling
+    /// directive — kept as `DirectiveKind::Editorial`; the canonical spelling
     /// is offered as a fix. Advisory only, so it never blocks (exit 0 unless
     /// `--strict`).
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
@@ -1312,6 +1312,34 @@ impl Diagnostic {
         };
         *span = span.shifted(by);
         let (offset, length) = span_to_miette_parts(*span);
+        *at = miette::SourceSpan::new(offset.into(), length);
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_span(mut self, mapped: Span) -> Self {
+        let (at, span): (&mut miette::SourceSpan, &mut Span) = match &mut self {
+            Self::SourceContainsPua { at, span, .. }
+            | Self::UnclosedBracket { at, span, .. }
+            | Self::UnmatchedClose { at, span, .. }
+            | Self::AccentDecompositionApplied { at, span, .. }
+            | Self::UnresolvedGaiji { at, span, .. }
+            | Self::MismatchedContainerClose { at, span, .. }
+            | Self::EmptyRubyReading { at, span, .. }
+            | Self::NestedRuby { at, span, .. }
+            | Self::UnrecognisedContainerDirective { at, span, .. }
+            | Self::TcyTargetNotFound { at, span, .. }
+            | Self::BoutenTargetAmbiguous { at, span, .. }
+            | Self::ForwardReferentNotStylable { at, span, .. }
+            | Self::BreakInSingleLineContainer { at, span, .. }
+            | Self::BracketedKaeritenNoPair { at, span, .. }
+            | Self::KaeritenOutsideKanbun { at, span, .. }
+            | Self::MismatchedBoutenContainer { at, span, .. }
+            | Self::NonCanonicalDirective { at, span, .. }
+            | Self::Internal { at, span, .. } => (at, span),
+        };
+        *span = mapped;
+        let (offset, length) = span_to_miette_parts(mapped);
         *at = miette::SourceSpan::new(offset.into(), length);
         self
     }

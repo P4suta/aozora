@@ -138,10 +138,7 @@ redundant_pub_crate = "allow"
 large_enum_variant = "allow"
 
 [workspace.dependencies]
-# Published crates — carry a `version` so they can depend on each other on
-# crates.io. `aozora-cli` depends on `aozora` + `tree-sitter-aozora` (all three
-# published), so the published set is closed. The former building-block crates
-# are folded into `aozora`, so they no longer appear here.
+# Published crates carry a registry version alongside the workspace path.
 aozora = { version = "0.4.1", path = "crates/aozora" }
 tree-sitter-aozora = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
 # publish=false → path-only (no crates.io version): a version pin here would go
@@ -240,14 +237,6 @@ ropey = { version = "1.6", default-features = false, features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 hdrhistogram = { version = "7.5", default-features = false } # constant-memory percentile metrics
-
-# Lossless syntax tree backbone for `aozora`'s `cst` feature (Phase N1).
-# rowan over cstree: 86 reverse deps vs ~3, maintained by the
-# rust-analyzer team, established as the rust-language-tooling
-# default. The bumpalo-arena vs Arc-tree dual-allocator overhead is
-# acceptable: the AST stays the perf-critical path; the CST is the
-# editor-grade lossless surface.
-rowan = "0.16"
 
 # Pandoc AST serde for `aozora`'s `pandoc` feature (Phase M1).
 # `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs
@@ -416,15 +405,11 @@ strip = "symbols"
 panic = "abort"
 opt-level = 3
 
-# Distribution profile for the binary bundled in the VS Code extension's .vsix
-# (the `aozora` CLI binary's in-process LSP, built by `release-vscode.yml`). Optimises for size over speed.
-# Overrides `panic = "unwind"`: a language server is a long-lived daemon, so a
-# panic in one request handler should unwind (tower-lsp keeps serving) rather
-# than abort the whole process and drop the editor's language features.
+# Distribution profile for published native artifacts.
 [profile.dist]
 inherits = "release"
 opt-level = "z"
-panic = "unwind"
+panic = "abort"
 strip = "symbols"
 
 [profile.bench]

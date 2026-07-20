@@ -23,37 +23,28 @@
 
 #![forbid(unsafe_code)]
 
-use miette::Diagnostic;
-use thiserror::Error;
-
-pub mod accent;
+pub(crate) mod accent;
 pub(crate) mod alloc;
-pub mod ast;
-pub mod degraded;
-pub mod format;
-pub mod lint;
-pub mod node_kind;
+pub(crate) mod ast;
+pub(crate) mod degraded;
+pub(crate) mod format;
+pub(crate) mod lint;
+pub(crate) mod node_kind;
 
-pub use format::{
-    AbsoluteSize, AccentMark, BlockStyles, ColumnCount, EnclosureKind, FontShift, Format,
-    ForwardAttr, ForwardOrigin, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth,
-    RegionClose, RegionFormat,
+pub(crate) use format::{
+    AbsoluteSize, AccentMark, BlockStyles, ColumnCount, EnclosureKind, FontShift, ForwardAttr,
+    ForwardOrigin, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
+    RegionFormat,
 };
 pub use node_kind::NodeKind;
 
-/// The typed canonical value of a gaiji reference and its building
-/// blocks, re-exported from [`crate::encoding::gaiji`].
-///
-/// [`GaijiCanonical`] is the structured replacement for the former
-/// `(ucs, mencode)` pair on the gaiji node; [`MenKuTen`] is its
-/// `第N水準P-K-T` payload and [`Resolved`] the resolved-glyph result.
-pub use crate::encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
+pub(crate) use crate::encoding::gaiji::GaijiCanonical;
 
 /// Byte-range span into the original source document.
 ///
 /// Re-exported from [`crate::spec::Span`] — see that module for the
 /// canonical definition.
-pub use crate::spec::Span;
+pub(crate) use crate::spec::Span;
 
 /// Paired block container payload: carries only the kind descriptor.
 ///
@@ -61,7 +52,7 @@ pub use crate::spec::Span;
 /// (the `post_process` paired-container splice reparents them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
-pub struct Container {
+pub(crate) struct Container {
     /// Which container family this open marker begins. The open
     /// [`RegionFormat`] payload is authoritative when the pair round-trips.
     pub kind: RegionFormat,
@@ -143,7 +134,7 @@ impl BoutenKind {
 /// and the render / spec slug tables are drift-checked against it. Adding
 /// a bouten mark therefore means a new variant + its `keyword` arm + one
 /// row here — nothing else can silently fall out of sync.
-pub const BOUTEN_KINDS: &[BoutenKind] = &[
+pub(crate) const BOUTEN_KINDS: &[BoutenKind] = &[
     BoutenKind::Goma,
     BoutenKind::WhiteSesame,
     BoutenKind::Circle,
@@ -197,7 +188,7 @@ pub enum RubySide {
 /// starts on re-parse, so a run stays within one class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum RubyBaseClass {
+pub(crate) enum RubyBaseClass {
     /// CJK ideographs (main block + Ext A/B..F + compatibility) plus the
     /// iteration marks `々` / `〆` — the historical base set.
     Kanji,
@@ -210,6 +201,8 @@ pub enum RubyBaseClass {
     Latin,
     /// Greek letters.
     Greek,
+    /// Plus signs used as an implicit symbolic ruby base.
+    Symbol,
 }
 
 /// Classify a character for implicit-ruby base attachment, or `None` when
@@ -227,7 +220,7 @@ pub enum RubyBaseClass {
 /// treating them as `Katakana` would put the base on the `ヶ` itself — so
 /// `六ヶ《むつか》` correctly *declines* instead of guessing.
 #[must_use]
-pub const fn ruby_base_class(ch: char) -> Option<RubyBaseClass> {
+pub(crate) const fn ruby_base_class(ch: char) -> Option<RubyBaseClass> {
     Some(match ch {
         '\u{3400}'..='\u{4DBF}'
         | '\u{4E00}'..='\u{9FFF}'
@@ -241,8 +234,19 @@ pub const fn ruby_base_class(ch: char) -> Option<RubyBaseClass> {
         '\u{30A1}'..='\u{30F4}' | '\u{30F7}'..='\u{30FA}' | '\u{30FC}'..='\u{30FE}' => {
             RubyBaseClass::Katakana
         }
-        'A'..='Z' | 'a'..='z' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' => RubyBaseClass::Latin,
+        'A'..='Z'
+        | 'a'..='z'
+        | 'Ａ'..='Ｚ'
+        | 'ａ'..='ｚ'
+        | '\u{00C0}'..='\u{00D6}'
+        | '\u{00D8}'..='\u{00F6}'
+        | '\u{00F8}'..='\u{02AF}'
+        | '\u{1E00}'..='\u{1EFF}'
+        | '\u{A720}'..='\u{A7FF}'
+        | '\u{AB30}'..='\u{AB6F}'
+        | '\u{FB00}'..='\u{FB06}' => RubyBaseClass::Latin,
         '\u{0391}'..='\u{03A9}' | '\u{03B1}'..='\u{03C9}' => RubyBaseClass::Greek,
+        '+' | '＋' => RubyBaseClass::Symbol,
         _ => return None,
     })
 }
@@ -251,7 +255,8 @@ pub const fn ruby_base_class(ch: char) -> Option<RubyBaseClass> {
 /// the historical predicate, now expressed via [`ruby_base_class`]. Byte
 /// for byte identical to the pre-`RubyBaseClass` definition.
 #[must_use]
-pub const fn is_ruby_base_char(ch: char) -> bool {
+#[cfg(test)]
+pub(crate) const fn is_ruby_base_char(ch: char) -> bool {
     matches!(ruby_base_class(ch), Some(RubyBaseClass::Kanji))
 }
 
@@ -263,7 +268,7 @@ pub const fn is_ruby_base_char(ch: char) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum MarginNoteKind {
+pub(crate) enum MarginNoteKind {
     /// 注記 — `［＃「X」の左に「Y」の注記］`, a left-side editorial gloss.
     #[default]
     Gloss,
@@ -281,7 +286,7 @@ impl MarginNoteKind {
     /// variants, so a future flavour must add its affixes here — keeping
     /// the round-trip vocabulary beside the variant definition.
     #[must_use]
-    pub const fn serialize_affixes(self) -> (&'static str, &'static str) {
+    pub(crate) const fn serialize_affixes(self) -> (&'static str, &'static str) {
         match self {
             // 注記 normalises bare `に` input to the canonical `の左に…の注記`.
             Self::Gloss => ("」の左に「", "」の注記］"),
@@ -300,7 +305,7 @@ impl MarginNoteKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum SectionKind {
+pub(crate) enum SectionKind {
     /// `［＃改丁］`
     Kaicho,
     /// `［＃改段］`
@@ -366,7 +371,8 @@ pub enum HeadingStyle {
 /// Drives the renderer's class-list derivation (and any codegen) so a new
 /// section break flows in without a hand-maintained parallel — mirrors
 /// [`BOUTEN_KINDS`].
-pub const SECTION_KINDS: &[SectionKind] = &[
+#[cfg(test)]
+pub(crate) const SECTION_KINDS: &[SectionKind] = &[
     SectionKind::Kaicho,
     SectionKind::Kaidan,
     SectionKind::Kaimihiraki,
@@ -374,11 +380,13 @@ pub const SECTION_KINDS: &[SectionKind] = &[
 
 /// Every [`HeadingKind`] outline level in declaration order. See
 /// [`BOUTEN_KINDS`].
-pub const HEADING_KINDS: &[HeadingKind] =
+#[cfg(test)]
+pub(crate) const HEADING_KINDS: &[HeadingKind] =
     &[HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small];
 
 /// Every [`HeadingStyle`] in declaration order. See [`BOUTEN_KINDS`].
-pub const HEADING_STYLES: &[HeadingStyle] = &[
+#[cfg(test)]
+pub(crate) const HEADING_STYLES: &[HeadingStyle] = &[
     HeadingStyle::Standard,
     HeadingStyle::SameLine,
     HeadingStyle::Window,
@@ -422,7 +430,7 @@ impl SectionKind {
     /// keyword is supplied, rather than silently falling through a
     /// `#[non_exhaustive]` `_` arm.
     #[must_use]
-    pub const fn keyword(self) -> &'static str {
+    pub(crate) const fn keyword(self) -> &'static str {
         match self {
             Self::Kaicho => "改丁",
             Self::Kaidan => "改段",
@@ -431,20 +439,15 @@ impl SectionKind {
     }
 }
 
-/// Classifies a generic `ast::Directive` annotation that no more
-/// specific node recogniser claimed.
-///
-/// [`Unknown`](Self::Unknown) is the catch-all for Aozora-shaped `［＃…］`
-/// notation the parser does not model; the remaining variants tag the
-/// handful of annotations kept as raw `Directive`s (sic markers, warichu
-/// delimiters, the header 凡例 `［＃］`, …) so consumers can act on them
-/// without re-parsing the raw bytes.
+/// Classifies literal and editorial `［＃…］` annotations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum DirectiveKind {
-    /// The parser recognised the notation as Aozora-shaped but not registered.
-    Unknown,
+    /// A known non-canonical spelling retained byte-for-byte.
+    NonCanonical,
+    /// An editorial annotation with no parser semantics.
+    Editorial,
     /// `［＃「」」はママ］`-style editorial *sic* marker (text reproduced as in the source).
     Sic,
     /// Source-text divergence note (`［＃「X」は底本では「Y」］`).
@@ -494,22 +497,6 @@ pub enum DirectiveKind {
     MarginNotePairClose,
 }
 
-/// Parse- and render-time error surface for syntax-layer consumers.
-#[derive(Debug, Error, Diagnostic)]
-#[non_exhaustive]
-pub enum SyntaxError {
-    /// A node-kind tag string did not resolve to a known node kind. The
-    /// offending tag is carried verbatim in [`kind`](Self::UnknownKind::kind)
-    /// and echoed in the `未知のノード種別です` message; the diagnostic code is
-    /// `aozora::syntax::unknown_kind`.
-    #[error("未知のノード種別です: {kind}")]
-    #[diagnostic(code(aozora::syntax::unknown_kind))]
-    UnknownKind {
-        /// The unrecognised tag string, as received.
-        kind: Box<str>,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,7 +529,7 @@ mod tests {
 
     #[test]
     fn ruby_base_class_maps_each_class_and_its_range_boundaries() {
-        use RubyBaseClass::{Greek, Hiragana, Kanji, Katakana, Latin};
+        use RubyBaseClass::{Greek, Hiragana, Kanji, Katakana, Latin, Symbol};
         // Table-driven: every class plus the *endpoint* char of each Unicode
         // range it unions, so a shrunk/dropped range arm (or a `-> None`) is
         // caught. Endpoints are written as `\u{..}` to pin the exact bounds.
@@ -582,11 +569,16 @@ mod tests {
             ('Ｚ', Latin),
             ('ａ', Latin),
             ('ｚ', Latin),
+            ('é', Latin),
+            ('É', Latin),
+            ('Œ', Latin),
             // Greek — upper Α..Ω and lower α..ω.
             ('\u{0391}', Greek),
             ('\u{03A9}', Greek),
             ('\u{03B1}', Greek),
             ('\u{03C9}', Greek),
+            ('+', Symbol),
+            ('＋', Symbol),
         ];
         for &(ch, class) in cases {
             assert_eq!(
@@ -763,7 +755,7 @@ mod tests {
                 "太字",
             ),
             // AccentDot's body is the selector grammar (serialized from the
-            // interned `accent_body`, never `keyword()`), so it rides the 太字
+            // `ForwardPayload::AccentBody`, never `keyword()`), so it rides the 太字
             // default too — `keyword()` is never called for it.
             (ForwardAttr::AccentDot, "太字"),
             // Accent's suffix carries the bracketed mark symbol (serialized in a

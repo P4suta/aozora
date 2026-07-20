@@ -53,6 +53,7 @@ encoding_rs = { workspace = true }
 # macro, so the `macros` feature (from the workspace pin) is required — the
 # encoding crate's old `default-features = false` override cannot carry over.
 phf = { workspace = true }
+ropey = { workspace = true }
 
 # Driver-shared wire format (see `aozora::json`). Optional so library
 # consumers that only use the owned-AST surface do not have to
@@ -68,12 +69,6 @@ schemars = { workspace = true, optional = true }
 # Pandoc AST projection (`aozora::pandoc`). Optional, enabled by the
 # `pandoc` feature so library-only consumers don't pull pandoc_ast in.
 pandoc_ast = { workspace = true, optional = true }
-# rowan — the lossless concrete syntax tree (`aozora::cst`) and the
-# query DSL (`aozora::query`) that walks it. Optional, enabled by the
-# `cst` feature so library-only consumers don't pull rowan into their
-# dep tree unless they want the editor-grade surface.
-rowan = { workspace = true, optional = true }
-
 [features]
 default = []
 # JSON wire format projection used by FFI / WASM / PyO3 drivers.
@@ -103,14 +98,6 @@ fmt = []
 # Pandoc AST projection (`aozora::pandoc::to_pandoc`). Emits a
 # `pandoc_ast::Pandoc` document consumable by every Pandoc output format.
 pandoc = ["dep:pandoc_ast"]
-# Lossless concrete syntax tree (`aozora::cst::*`). Editor-grade surface for
-# source-faithful refactoring / formatters / LSP servers. Pulls rowan into
-# the dep tree.
-cst = ["dep:rowan"]
-# Tree-sitter-flavoured query DSL (`aozora::query::*`) over the CST. Implies
-# `cst`; names rowan directly, so it enables `dep:rowan` too.
-query = ["cst", "dep:rowan"]
-
 [build-dependencies]
 # Codegen-time PHF builder — runs in `build.rs` to emit the gaiji /
 # JIS X 0213 tables as a Rust source fragment included via `include!()`.

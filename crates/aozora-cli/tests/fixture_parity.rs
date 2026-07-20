@@ -20,9 +20,10 @@
 //!
 //! Framing: `render` / `fmt` `write_all` their payload verbatim, so the
 //! bytes equal the golden exactly. `inspect` is line-oriented — it frames
-//! its JSON with `writeln!`, appending exactly one `\n` the golden file
-//! does not carry — so the four `inspect` surfaces are compared against
-//! `golden + "\n"`. The trailing newline is asserted, not trimmed: a
+//! its JSON with `writeln!`, appending exactly one `\n` after the
+//! conformance loader removes an optional storage line ending — so the four
+//! `inspect` surfaces are compared against `golden + "\n"`. The trailing
+//! newline is asserted, not trimmed: a
 //! *second* stray newline (or a missing one) still fails the gate.
 
 use aozora_conformance::{RenderFixture, fixtures_root};

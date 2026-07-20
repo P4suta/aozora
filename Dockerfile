@@ -41,6 +41,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl \
         git \
         ca-certificates \
+        jq \
         unzip \
         xz-utils \
         locales \
@@ -148,6 +149,7 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         cargo-audit \
         cargo-shear \
         cargo-semver-checks \
+        cargo-cyclonedx \
         cargo-insta \
         cargo-release \
         cargo-edit \
@@ -234,7 +236,7 @@ COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 # invalidating the base and re-triggering the heavy cargo-tools binstall
 # layer on a valgrind bump.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends valgrind \
+    && apt-get install -y --no-install-recommends python3-venv valgrind \
     && rm -rf /var/lib/apt/lists/*
 
 # The stable toolchain is fully provisioned in the `toolchain` stage:

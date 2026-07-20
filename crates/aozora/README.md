@@ -4,9 +4,9 @@ A parser for **青空文庫記法** (Aozora Bunko notation). Reads Shift_JIS or
 UTF-8; emits HTML, JSON, or canonical source.
 
 ```rust
-use aozora::Document;
+use aozora::parse;
 
-let doc = Document::new("｜青梅《おうめ》".to_owned());
+let doc = parse("｜青梅《おうめ》").expect("source fits parser limits");
 let snapshot = doc.snapshot();
 
 let html = snapshot.to_html();

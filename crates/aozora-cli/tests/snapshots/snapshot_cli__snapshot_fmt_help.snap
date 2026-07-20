@@ -28,9 +28,15 @@ Options:
       --json
           Emit the --check result as machine-readable JSON. Implies --check
 
+      --fix
+          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
+          → `［＃ここで字下げ終わり］`), the fixes flagged by the `aozora::lint::non_canonical_directive`
+          warnings. Opt-in: without it every directive round-trips its raw bytes verbatim.
+          Idempotent, so it composes with every mode
+
   -E, --encoding <ENCODING>
-          Source encoding. Falls back to `AOZORA_ENCODING`, then auto-detection (valid UTF-8 as-is,
-          otherwise Shift_JIS — the Aozora Bunko default)
+          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
+          `.aozora.toml`, then auto-detection
 
           Possible values:
           - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
@@ -38,14 +44,29 @@ Options:
             mirrors are common, and the caller should not have to know which they have
           - utf8: Force UTF-8; error if the input is not valid UTF-8
           - sjis: Force Shift_JIS decoding
-          
+
           [env: AOZORA_ENCODING=]
 
-      --fix
-          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
-          → `［＃ここで字下げ終わり］`), the fixes flagged by the `aozora::lint::non_canonical_directive`
-          warnings. Opt-in: without it every directive round-trips its raw bytes verbatim.
-          Idempotent, so it composes with every mode
+      --format <FORMAT>
+          How to render diagnostics: `human`, `json`, or `short`.
+
+          Defaults to `human` on a terminal and `json` when piped. Falls back to `AOZORA_FORMAT`,
+          then `.aozora.toml`.
+
+          Possible values:
+          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
+          - human: miette graphical report — source snippet + caret + label + help
+          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
+          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
+
+          [env: AOZORA_FORMAT=]
+
+  -s, --strict
+          Exit non-zero when parsing emits a diagnostic.
+
+          Also settable via `AOZORA_STRICT` or `.aozora.toml`.
+
+          [env: AOZORA_STRICT=]
 
       --config <PATH>
           Read settings from this `.aozora.toml` instead of searching upward from the working
@@ -55,7 +76,7 @@ Options:
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
           stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline. The report
           auto-selects its view like `check`'s diagnostics: aligned `human` lines when stderr is a
-          terminal, the `{schemaVersion:1,data:{phases,totalNanos}}` envelope when it is piped
+          terminal, a versioned `{schemaVersion,data:{phases,totalNanos}}` envelope when it is piped
 
       --watch
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file

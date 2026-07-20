@@ -156,8 +156,7 @@ test.describe('playground smoke', () => {
   test('フッターにパーサのビルドバージョンが表示される', async ({ page }) => {
     // The footer version is read from the wasm engine (`version()` → the
     // aozora-buildstamp stamp), so it only appears once `wasmReady()`. The
-    // stamp is a semver triple with an optional channel/sha suffix, e.g.
-    // `aozora 0.5.0` or `aozora 0.5.0-dev+g3672e3f`.
+    // stamp is a semver triple with an optional channel/sha suffix.
     await ready(page);
     await expect(page.locator('.app-version')).toHaveText(/aozora \d+\.\d+\.\d+/);
   });

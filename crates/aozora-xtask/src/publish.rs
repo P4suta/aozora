@@ -62,6 +62,11 @@ struct PackageTable {
     publish: Option<toml::Value>,
 }
 
+#[derive(Deserialize)]
+struct JsonPackage {
+    version: String,
+}
+
 /// `release-plz.toml`. `[[package]]` overrides plus whatever else the
 /// file carries (`[workspace]`, `[changelog]`) — serde ignores those.
 #[derive(Deserialize)]
@@ -101,6 +106,7 @@ struct Ledger {
     /// `[workspace.dependencies]` entries that carry a `version` while
     /// pointing at a `publish = false` member.
     versioned_unpublishable_workspace_deps: Vec<String>,
+    non_placeholder_package_versions: Vec<(String, String)>,
 }
 
 pub(crate) fn dispatch(args: &PublishArgs) -> Result<(), String> {
@@ -126,6 +132,11 @@ fn workspace_root() -> Result<PathBuf, String> {
 fn read_toml<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
+}
+
+fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
+    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
 }
 
 /// Whether a `publish` value means "do not publish". `false` and an
@@ -241,6 +252,23 @@ fn load(root: &Path) -> Result<Ledger, String> {
         .find_map(|pkg| pkg.changelog_include.clone())
         .unwrap_or_default();
 
+    let package_paths = [
+        "crates/tree-sitter-aozora/package.json",
+        "editors/vscode/package.json",
+        "playground/package.json",
+    ];
+    let non_placeholder_package_versions = package_paths
+        .iter()
+        .map(|rel| {
+            let package: JsonPackage = read_json(&root.join(rel))?;
+            Ok((*rel, package.version))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .filter(|(_, version)| version != "0.0.0")
+        .map(|(path, version)| (path.to_owned(), version))
+        .collect();
+
     Ok(Ledger {
         publishable,
         unpublishable,
@@ -248,6 +276,7 @@ fn load(root: &Path) -> Result<Ledger, String> {
         changelog_include,
         versioned_internal_dev_deps,
         versioned_unpublishable_workspace_deps,
+        non_placeholder_package_versions,
     })
 }
 
@@ -263,12 +292,28 @@ fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
     let identity = release_identity(ledger, &mut violations);
     check_changelog_include(ledger, identity, &mut violations);
     check_manifest_hygiene(ledger, &mut violations);
+    check_distribution_versions(ledger, &mut violations);
 
     if violations.is_empty() {
         Ok(())
     } else {
         Err(violations)
     }
+}
+
+fn check_distribution_versions(ledger: &Ledger, violations: &mut Vec<String>) {
+    if ledger.non_placeholder_package_versions.is_empty() {
+        return;
+    }
+    let entries = ledger
+        .non_placeholder_package_versions
+        .iter()
+        .map(|(path, version)| format!("{path}: {version}"))
+        .collect::<Vec<_>>();
+    violations.push(format!(
+        "source package manifests must use the release-injected `0.0.0` placeholder:\n    {}",
+        entries.join("\n    ")
+    ));
 }
 
 fn check_public_packages(ledger: &Ledger, violations: &mut Vec<String>) {
@@ -466,6 +511,7 @@ mod tests {
             changelog_include: vec!["aozora-cli".to_owned(), "tree-sitter-aozora".to_owned()],
             versioned_internal_dev_deps: Vec::new(),
             versioned_unpublishable_workspace_deps: Vec::new(),
+            non_placeholder_package_versions: Vec::new(),
         }
     }
 
@@ -609,6 +655,16 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_a_handwritten_distribution_version() {
+        let mut ledger = healthy();
+        ledger
+            .non_placeholder_package_versions
+            .push(("editors/vscode/package.json".to_owned(), "1.2.3".to_owned()));
+        let err = verify(&ledger).expect_err("handwritten distribution version must be flagged");
+        assert!(err.iter().any(|v| v.contains("0.0.0")), "{err:?}");
+    }
+
+    #[test]
     fn publish_is_disabled_reads_both_spellings() {
         assert!(
             publish_is_disabled(Some(&table("v = false")["v"])),
@@ -653,7 +709,7 @@ mod tests {
         let mut workspace_deps = BTreeMap::new();
         workspace_deps.insert(
             "aozora-fmt".to_owned(),
-            table(r#"d = { version = "0.4.1", path = "crates/aozora-fmt" }"#)["d"].clone(),
+            table(r#"d = { version = "1.2.3", path = "crates/aozora-fmt" }"#)["d"].clone(),
         );
         // `aozora-corpus` is publish=false and therefore path-only at
         // the workspace level — inheriting it is legal.

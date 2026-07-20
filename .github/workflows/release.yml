@@ -1,292 +1,143 @@
-# Release workflow for aozora.
-#
-# Trigger on: annotated tags matching `v*`, plus manual `workflow_dispatch`
-# for dry runs. Builds the `aozora` CLI on three target triples
-# (linux-gnu x86_64, macos arm64, windows-msvc x86_64) and uploads the
-# archives + SHA256SUMS + per-target CycloneDX SBOMs to the GitHub Release.
-#
-# Supply chain: release binaries are compiled with `cargo auditable build`,
-# which embeds the exact dependency tree into the artefact so a downloaded
-# `aozora` answers `cargo audit bin`. A CycloneDX SBOM (`.cdx.json`) is
-# emitted per target from Cargo.lock and is itself provenance-attested
-# alongside the archives — the bill of materials carries its own provenance.
-#
-# Release builds run on native GitHub Actions runners with the
-# matching stable rustc, *not* inside the dev Docker image. The
-# Docker-only rule applies to development and CI; release artefacts
-# need to match each runner OS exactly, so we use the native toolchain
-# here.
-#
-# Action pinning: every third-party action below is pinned to a full
-# commit SHA (the `# vX.Y.Z` trailer is the human-readable tag it
-# resolved to) so a re-pointed tag can't silently change what runs in a
-# release. Dependabot's github-actions ecosystem bumps these SHAs weekly.
-# `dtolnay/rust-toolchain` is pinned the same way (to a `master` commit
-# SHA) and given an explicit `toolchain: stable` input: pinning the SHA
-# freezes the action *code* against a re-pointed branch, while the input
-# still resolves the latest stable rustc at run time for release artefacts.
-
 name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      commit:
+        description: "Qualified release commit SHA to retry"
+        type: string
+        required: true
+      tag:
+        description: "Release tag matching the qualified version"
+        type: string
+        required: true
+      dry_run:
+        description: "Verify qualified native distributions without publishing"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: build (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-            archive: tar.gz
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            archive: tar.gz
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
-            archive: zip
+  qualify:
+    runs-on: ubuntu-latest
+    env:
+      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          toolchain: stable
-
-      # Explicit `rustup target add` is more reliable than the action's
-      # `targets:` input across stable channel updates — `rustup target
-      # add` is idempotent and unambiguous on every cache state.
-      - run: rustup target add ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: release-${{ matrix.target }}
-
-      # cargo-auditable makes `cargo build` embed the dependency tree into
-      # the binary; cargo-cyclonedx emits the CycloneDX SBOM. Both install
-      # as prebuilt binaries (SHA-pinned action, Dependabot-bumped).
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853  # v2.83.2
-        with:
-          tool: cargo-auditable,cargo-cyclonedx
-
-      # Stamp the binary's `--version` (aozora-buildstamp build.rs reads
-      # AOZORA_BUILD_VERSION, set here once into $GITHUB_ENV so it reaches the
-      # build step). On a tag push → the clean stable triple `${tag#v}` (==
-      # `xtask version --channel stable`). On manual dispatch we leave it unset,
-      # so the build.rs falls back to its `-dev+g<sha>` checkout stamp — a
-      # dispatch build is never a real release.
-      - name: Resolve build-version stamp
-        shell: bash
+          ref: ${{ env.QUALIFIED_SHA }}
+          fetch-depth: 0
+      - name: Download qualified native distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            echo "AOZORA_BUILD_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          fi
-
-      - name: Build aozora CLI
-        run: cargo auditable build --release --target ${{ matrix.target }} --package aozora-cli
-
-      # Phase P4 — C ABI shared library + auto-generated header.
-      # `aozora-ffi`'s `build.rs` writes `aozora.h` into
-      # `target/<profile>/aozora.h` via cbindgen, alongside the
-      # cdylib `libaozora.{so,dylib}` / `aozora.dll`. Both ship in
-      # the Release archive so C/C++ consumers can link without
-      # building from source.
-      - name: Build aozora-ffi (C ABI)
-        run: cargo auditable build --release --target ${{ matrix.target }} --package aozora-ffi
-
-      - name: Assemble archive
-        id: archive
-        shell: bash
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-apple-darwin \
+            x86_64-pc-windows-msvc
+          do
+            scripts/download-release-ready-artifact.sh \
+              "release-native-$QUALIFIED_SHA-$target" artefacts "$QUALIFIED_SHA"
+          done
+          scripts/download-release-ready-artifact.sh \
+            "release-ready-$QUALIFIED_SHA" combined "$QUALIFIED_SHA"
+          test "$(jq -er .commit combined/manifest.json)" = "$QUALIFIED_SHA"
+          test "v$(jq -er .version combined/manifest.json)" = "$RELEASE_TAG"
+          (cd combined && sha256sum --check SHA256SUMS)
+          cp combined/aozora-go.tar.gz combined/aozora-go.cdx.json artefacts/
+          (
+            cd artefacts
+            sha256sum aozora-go.tar.gz > aozora-go.tar.gz.sha256
+            sha256sum aozora-go.cdx.json > aozora-go.cdx.json.sha256
+          )
+      - name: Verify immutable native identity
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$QUALIFIED_SHA"
+          test "$(find artefacts -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -type f | wc -l)" -eq 3
+          test "$(find artefacts -maxdepth 1 -name '*.sha256' -type f | wc -l)" -eq 5
+          test "$(find artefacts -maxdepth 1 -name '*.cdx.json' -type f | wc -l)" -eq 7
+          (cd artefacts && sha256sum --check ./*.sha256)
 
-          # On tag push, use the tag directly; on manual dispatch, tag
-          # the artefact as a dispatch dry-run so it never collides with
-          # a real release.
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-              tag="v0.0.0-dispatch.$(date -u +%Y%m%d%H%M%S)"
-          else
-              tag="${GITHUB_REF_NAME}"
-          fi
-
-          name="aozora-${tag}-${{ matrix.target }}"
-          staging="${RUNNER_TEMP}/${name}"
-          mkdir -p "${staging}"
-
-          bin_suffix=""
-          [[ "${{ matrix.archive }}" == "zip" ]] && bin_suffix=".exe"
-          bin="target/${{ matrix.target }}/release/aozora${bin_suffix}"
-          cp "${bin}" "${staging}/"
-
-          # Shell completion scripts, generated by the just-built binary
-          # (each matrix leg builds for its own runner OS, so the binary
-          # runs here). Generated at release time, never committed — see
-          # docs/adr/0012-release-time-generated-cli-artefacts.md.
-          mkdir -p "${staging}/completions"
-          "${bin}" completions bash       > "${staging}/completions/aozora.bash"
-          "${bin}" completions zsh        > "${staging}/completions/_aozora"
-          "${bin}" completions fish       > "${staging}/completions/aozora.fish"
-          "${bin}" completions powershell > "${staging}/completions/_aozora.ps1"
-          "${bin}" completions elvish     > "${staging}/completions/aozora.elv"
-          "${bin}" completions nushell    > "${staging}/completions/aozora.nu"
-
-          # Man pages (clap_mangen) — same release-time, never-committed
-          # policy as completions (ADR-0012): the top-level page plus one
-          # per subcommand.
-          mkdir -p "${staging}/man/man1"
-          "${bin}" man > "${staging}/man/man1/aozora.1"
-          for sub in check lint fmt render inspect pandoc explain repl tui doctor init spec lsp completions; do
-              "${bin}" man "${sub}" > "${staging}/man/man1/aozora-${sub}.1"
-          done
-
-          # C ABI shared library + header. The library file extension
-          # varies per platform; collect all candidate names and copy
-          # whatever cargo produced.
-          target_dir="target/${{ matrix.target }}/release"
-          for libname in libaozora.so libaozora.dylib aozora.dll; do
-              if [[ -f "${target_dir}/${libname}" ]]; then
-                  cp "${target_dir}/${libname}" "${staging}/"
-              fi
-          done
-          if [[ -f "${target_dir}/aozora.h" ]]; then
-              cp "${target_dir}/aozora.h" "${staging}/"
-          fi
-
-          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "${staging}/"
-
-          cd "${RUNNER_TEMP}"
-          case "${{ matrix.archive }}" in
-              zip)
-                  7z a "${name}.zip" "${name}" > /dev/null
-                  artefact="${name}.zip"
-                  ;;
-              tar.gz)
-                  tar czf "${name}.tar.gz" "${name}"
-                  artefact="${name}.tar.gz"
-                  ;;
-          esac
-
-          # sha256 tool varies by OS: shasum exists on macOS + Linux;
-          # sha256sum exists on Linux + Git-for-Windows but not macOS.
-          if command -v shasum >/dev/null 2>&1; then
-              shasum -a 256 "${artefact}" > "${artefact}.sha256"
-          else
-              sha256sum "${artefact}" > "${artefact}.sha256"
-          fi
-
-          {
-            echo "archive=${RUNNER_TEMP}/${artefact}"
-            echo "checksum=${RUNNER_TEMP}/${artefact}.sha256"
-            echo "name=${name}"
-          } >> "$GITHUB_OUTPUT"
-
-      # CycloneDX SBOM for the CLI's resolved dependency graph on this target
-      # triple (platform-specific deps differ per triple, so it is emitted per
-      # artefact). cargo-cyclonedx reads Cargo.lock; `--manifest-path` scopes it
-      # to the aozora-cli crate and it writes the file adjacent to that manifest,
-      # which we rename to match the archive. Attested in the publish job.
-      - name: Generate CycloneDX SBOM
-        id: sbom
-        shell: bash
+          version=
+          while IFS= read -r archive; do
+            case "$archive" in
+              *.zip) manifest="$(unzip -p "$archive" '*/manifest.json')" ;;
+              *) manifest="$(tar -xOf "$archive" --wildcards '*/manifest.json')" ;;
+            esac
+            test "$(jq -er .commit <<<"$manifest")" = "$QUALIFIED_SHA"
+            candidate="$(jq -er .version <<<"$manifest")"
+            if [[ -z "$version" ]]; then
+              version="$candidate"
+            else
+              test "$candidate" = "$version"
+            fi
+          done < <(find artefacts -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -type f | sort)
+          test "v${version}" = "$RELEASE_TAG"
+      - name: Aggregate checksums
         run: |
-          set -euo pipefail
-          cargo cyclonedx \
-            --manifest-path crates/aozora-cli/Cargo.toml \
-            --target ${{ matrix.target }} \
-            --format json --all --override-filename sbom
-          # The forced base name is `sbom`; the version-dependent suffix
-          # (`sbom.json` vs `sbom.cdx.json`) is matched leniently — content is
-          # JSON either way (--format json), and we rename it to `.cdx.json`.
-          src="$(find crates/aozora-cli -maxdepth 1 -type f -name 'sbom*' -print -quit)"
-          [[ -n "${src}" ]] || { echo "::error::cargo-cyclonedx produced no SBOM"; exit 1; }
-          sbom="${RUNNER_TEMP}/${{ steps.archive.outputs.name }}.cdx.json"
-          mv "${src}" "${sbom}"
-          echo "sbom=${sbom}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload build artefacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+          cd artefacts
+          sha256sum aozora-*.tar.gz aozora-*.zip aozora-*.cdx.json |
+            sort > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ steps.archive.outputs.name }}
-          path: |
-            ${{ steps.archive.outputs.archive }}
-            ${{ steps.archive.outputs.checksum }}
-            ${{ steps.sbom.outputs.sbom }}
-          retention-days: 7
+          name: qualified-native
+          path: artefacts
+          retention-days: 90
+          if-no-files-found: error
 
   publish:
-    name: publish release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: qualify
+    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-latest
-    # Gated behind the `release` GitHub Environment: a pushed tag pauses
-    # for required-reviewer approval before the GitHub Release is created
-    # and build-provenance attestations are minted. The `build` matrix
-    # runs ungated (no credentials), and a `workflow_dispatch` run only
-    # builds artefacts (this job is skipped), so it is an implicit dry-run.
     environment: release
     permissions:
+      actions: read
       contents: write
       id-token: write
       attestations: write
+    env:
+      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          pattern: aozora-*
-          merge-multiple: true
+          ref: ${{ env.QUALIFIED_SHA }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qualified-native
           path: artefacts
-
-      - name: Aggregate checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd artefacts
-          # Produce a single SHA256SUMS file for the whole release so
-          # users can `sha256sum --check SHA256SUMS` in one go.
-          sha256sum aozora-*.tar.gz aozora-*.zip 2>/dev/null | sort > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             artefacts/aozora-*.tar.gz
             artefacts/aozora-*.zip
             artefacts/aozora-*.cdx.json
-
-      # release-plz owns the single root CHANGELOG.md; the tag points at the
-      # merge commit that added this version's section, so the notes are just
-      # that section's body. (One changelog source — no cliff.toml to drift.)
-      - name: Extract release notes from CHANGELOG.md
-        shell: bash
+      - name: Extract release notes
         run: |
-          set -euo pipefail
-          # Print the body between `## [X.Y.Z]` and the next `## [` header; the
-          # version header line is omitted (the Release title already shows it).
-          ver="${GITHUB_REF_NAME#v}"
-          awk -v ver="$ver" '
-            $0 ~ "^## \\[" ver "\\]" { flag = 1; next }
-            flag && /^## \[/ { exit }
-            flag { print }
+          version="${RELEASE_TAG#v}"
+          awk -v version="$version" '
+            $0 ~ "^## \\[" version "\\]" { emit = 1; next }
+            emit && /^## \[/ { exit }
+            emit { print }
           ' CHANGELOG.md > CHANGES.md
-          echo "----- release notes (v${ver}) -----"
-          cat CHANGES.md
-
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
+          test -s CHANGES.md
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ env.QUALIFIED_SHA }}
           files: |
             artefacts/aozora-*.tar.gz
             artefacts/aozora-*.zip
@@ -297,3 +148,4 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
+          overwrite_files: true

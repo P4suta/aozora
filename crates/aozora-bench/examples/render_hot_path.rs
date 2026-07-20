@@ -146,7 +146,9 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             // Parse once (timed for the parse-vs-render ratio summary
             // line below; not on the render hot path itself).
             let t = Instant::now();
-            let out = aozora::parse(text.as_str()).snapshot();
+            let out = aozora::parse(text.as_str())
+                .expect("source fits parser span limit")
+                .snapshot();
             parse_ns.push(t.elapsed().as_nanos() as u64);
 
             // Render `repeat` times, keep the median ns.

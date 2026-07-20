@@ -79,16 +79,16 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Gaiji: %v", err)
 	}
-	if !strings.Contains(gaiji, "mencode") {
-		t.Errorf("Gaiji: expected a resolved gaiji record, got %q", gaiji)
+	if len(gaiji.Data) == 0 || gaiji.Data[0].Mencode == nil {
+		t.Errorf("Gaiji: expected a resolved gaiji record, got %+v", gaiji.Data)
 	}
 
 	slugs, err := p.Slugs()
 	if err != nil {
 		t.Fatalf("Slugs: %v", err)
 	}
-	if !strings.Contains(slugs, "schemaVersion") {
-		t.Errorf("Slugs: expected a wire envelope, got %q", slugs)
+	if slugs.SchemaVersion != SchemaVersion || len(slugs.Data) == 0 {
+		t.Errorf("Slugs: expected the typed catalogue, got %+v", slugs)
 	}
 
 	version, err := p.Version()

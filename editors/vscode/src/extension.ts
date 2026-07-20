@@ -178,7 +178,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // `Aozora: Export HTML…` renders the document to a standalone HTML file via
   // the LSP, and `Aozora: Lint workspace` runs the `aozora` CLI's batch linter
   // — bringing the new CLI surfaces (render / lint) into the editor.
-  registerCliCommands(context, client);
+  registerCliCommands(context, client, lspPath);
 
   try {
     await client.start();

@@ -7,34 +7,42 @@ use std::process::ExitCode;
 use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
-use aozora::render::SerializeOptions;
+use aozora::SerializeOptions;
 use serde::Serialize;
 use similar::{ChangeTag, DiffOp, TextDiff};
 
+use crate::fmt::Ctx;
 use crate::fmt::cli::ColorChoice;
 use crate::fmt::discover::Resolved;
-use crate::fmt::encoding::Encoding;
 use crate::fmt::process;
+use crate::wire::Envelope;
+#[cfg(test)]
+use aozora::json::SCHEMA_VERSION;
 
 /// The aggregate result of a run. Ordered so folding with `max` keeps the
-/// most severe outcome: `Error` > `WouldReformat` > `Ok`.
+/// documented exit-code severity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Outcome {
     /// Everything was already formatted (or written / listed) without error.
     Ok,
     /// `--check` found at least one input that would change.
     WouldReformat,
+    /// Strict mode rejected one or more parser diagnostics.
+    Diagnostics,
     /// An I/O error, missing path, parser panic, or guard failure occurred.
     Error,
+    /// The parser reported an internal invariant failure.
+    Internal,
 }
 
 impl Outcome {
-    /// Map to the documented process exit code (0 / 1 / 2).
+    /// Map to the documented document-command exit code.
     pub(crate) fn exit_code(self) -> ExitCode {
         match self {
             Self::Ok => ExitCode::SUCCESS,
-            Self::WouldReformat => ExitCode::from(1),
+            Self::WouldReformat | Self::Diagnostics => ExitCode::from(1),
             Self::Error => ExitCode::from(2),
+            Self::Internal => ExitCode::from(3),
         }
     }
 }
@@ -159,17 +167,6 @@ impl JsonFile {
     }
 }
 
-/// The `--json` report envelope: the two-key `{ schemaVersion, data }` shape
-/// the CLI-local JSON outputs share (matching the wire envelopes' key names and
-/// camelCase). `schemaVersion` is a CLI-side counter, distinct from the
-/// `aozora::json` wire `SCHEMA_VERSION`.
-#[derive(Serialize)]
-struct JsonReport {
-    #[serde(rename = "schemaVersion")]
-    schema_version: u32,
-    data: JsonReportData,
-}
-
 /// The `data` payload of the `--json` report: the aggregate `formatted` flag
 /// and the per-file statuses.
 #[derive(Serialize)]
@@ -180,14 +177,9 @@ struct JsonReportData {
 
 /// Print the JSON report to stdout. `formatted` is true only when every
 /// input was already canonical.
-pub(crate) fn emit_json(outcome: Outcome, files: Vec<JsonFile>) -> io::Result<()> {
-    let report = JsonReport {
-        schema_version: 1,
-        data: JsonReportData {
-            formatted: outcome == Outcome::Ok,
-            files,
-        },
-    };
+pub(crate) fn emit_json(files: Vec<JsonFile>) -> io::Result<()> {
+    let formatted = files.iter().all(|file| file.status == "ok");
+    let report = Envelope::new(JsonReportData { formatted, files });
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &report)?;
     out.write_all(b"\n")
@@ -196,7 +188,7 @@ pub(crate) fn emit_json(outcome: Outcome, files: Vec<JsonFile>) -> io::Result<()
 /// `--check --json` over a resolved file set: collect every file's status
 /// (including discovery errors) into one JSON object and return the outcome.
 pub(crate) fn run_check_json(
-    encoding: Encoding,
+    ctx: &Ctx,
     resolved: &Resolved,
     opts: SerializeOptions,
 ) -> Result<Outcome> {
@@ -206,21 +198,33 @@ pub(crate) fn run_check_json(
         files.push(JsonFile::error("<discovery>".to_owned(), err.clone()));
         outcome = Outcome::Error;
     }
-    for path in &resolved.files {
-        let label = path.display().to_string();
-        match process::read_and_format(path, opts, encoding) {
-            Ok(fmt) if fmt.changed() => {
-                files.push(JsonFile::would_reformat(label));
-                outcome = outcome.max(Outcome::WouldReformat);
-            }
-            Ok(_) => files.push(JsonFile::ok(label)),
-            Err(err) => {
-                files.push(JsonFile::error(label, format!("{err:#}")));
-                outcome = outcome.max(Outcome::Error);
+    let mut remaining = resolved.files.as_slice();
+    while !remaining.is_empty() {
+        let (chunk, rest) = remaining.split_at(process::batch_len(remaining));
+        let formatted = process::read_and_format_batch(chunk, opts, ctx.encoding);
+        for (path, formatted) in chunk.iter().zip(formatted) {
+            let label = path.display().to_string();
+            match formatted {
+                Ok(fmt) => {
+                    let diagnostics =
+                        super::diagnostics_outcome(ctx, path, &fmt.old, &fmt.diagnostics)?;
+                    if fmt.changed() {
+                        files.push(JsonFile::would_reformat(label));
+                        outcome = outcome.max(Outcome::WouldReformat).max(diagnostics);
+                    } else {
+                        files.push(JsonFile::ok(label));
+                        outcome = outcome.max(diagnostics);
+                    }
+                }
+                Err(err) => {
+                    files.push(JsonFile::error(label, format!("{err:#}")));
+                    outcome = outcome.max(Outcome::Error);
+                }
             }
         }
+        remaining = rest;
     }
-    emit_json(outcome, files)?;
+    emit_json(files)?;
     Ok(outcome)
 }
 
@@ -233,10 +237,12 @@ mod tests {
     #[test]
     fn outcome_orders_by_severity() {
         assert!(Outcome::Ok < Outcome::WouldReformat);
-        assert!(Outcome::WouldReformat < Outcome::Error);
+        assert!(Outcome::WouldReformat < Outcome::Diagnostics);
+        assert!(Outcome::Diagnostics < Outcome::Error);
+        assert!(Outcome::Error < Outcome::Internal);
         assert_eq!(
-            Outcome::Ok.max(Outcome::Error).max(Outcome::WouldReformat),
-            Outcome::Error,
+            Outcome::Ok.max(Outcome::Error).max(Outcome::Internal),
+            Outcome::Internal,
         );
     }
 
@@ -305,18 +311,12 @@ mod tests {
 
     #[test]
     fn json_report_uses_the_two_key_data_envelope() {
-        // `{ schemaVersion, data:{ formatted, files } }` — the CLI-local shape:
-        // `formatted`/`files` live UNDER `data`, and `schemaVersion` is the
-        // CLI-side counter `1` (distinct from the wire `SCHEMA_VERSION`).
-        let report = JsonReport {
-            schema_version: 1,
-            data: JsonReportData {
-                formatted: false,
-                files: vec![JsonFile::would_reformat("a.afm".to_owned())],
-            },
-        };
+        let report = Envelope::new(JsonReportData {
+            formatted: false,
+            files: vec![JsonFile::would_reformat("a.afm".to_owned())],
+        });
         let v = serde_json::to_value(&report).unwrap();
-        assert_eq!(v["schemaVersion"], 1, "cli-local counter: {v}");
+        assert_eq!(v["schemaVersion"], SCHEMA_VERSION, "wire version: {v}");
         assert_eq!(v["data"]["formatted"], false, "formatted nested: {v}");
         assert_eq!(v["data"]["files"][0]["status"], "would_reformat", "{v}");
         // The payload must not leak to the top level.

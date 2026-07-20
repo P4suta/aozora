@@ -1,1 +1,1 @@
-(document (gaiji (gaiji_marker) (slug body: (slug_body))) (gaiji (gaiji_marker) (slug body: (slug_body))) (ERROR) (text) (text) (text) (newline))
+(document (gaiji) (gaiji) (literal_markup) (text) (text) (text) (newline))

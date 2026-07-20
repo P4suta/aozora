@@ -86,8 +86,7 @@ impl RenderState {
     pub(crate) fn close_paragraph<W: Write>(&mut self, out: &mut W) -> fmt::Result {
         // A warichu span is phrasing content that must close before the
         // enclosing paragraph (#415, Case 2): drain any still-open span here,
-        // the single choke-point every block-leaf / container / finish path
-        // routes through (via `before_block_emit` and `drain_open_containers`).
+        // the single choke-point every block-leaf and container path uses.
         self.drain_open_warichu(out)?;
         if self.in_paragraph {
             // An inline container is phrasing content and sits at the TOP of
@@ -186,19 +185,6 @@ impl RenderState {
         Ok(())
     }
 
-    /// Close every container left open at end-of-input. A source may open a
-    /// region (`［＃ここから字下げ］`) without a matching close; the AST and
-    /// `to_source` preserve that imbalance verbatim, but `to_html` must still
-    /// emit valid, balanced markup — the unclosed region renders as extending
-    /// to the end of the document. Mirrors the per-marker [`Self::close_container`].
-    pub(crate) fn drain_open_containers<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        while !self.open_stack.is_empty() {
-            // EOF drain: no close marker, so pop the stack open-authoritatively.
-            self.close_container(false, out)?;
-        }
-        Ok(())
-    }
-
     /// Open an inline-warichu span (`［＃割り注］`), emitting its
     /// `<span class="aozora-warichu">` and recording the open so its close is
     /// balanced. The byte spelling matches the per-node fallback in
@@ -214,22 +200,37 @@ impl RenderState {
     /// forms (#415, Case 1) — is absorbed as a no-op rather than emitting a stray
     /// `</span>`.
     pub(crate) fn close_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        if self.warichu_depth > 0 {
+        if let Some(depth) = self.warichu_depth.checked_sub(1) {
             out.write_str("</span>")?;
-            self.warichu_depth -= 1;
+            self.warichu_depth = depth;
         }
         Ok(())
     }
 
     /// Close every warichu span left open when the paragraph / document ends —
     /// an inline `［＃割り注］` with no matching inline close (#415, Case 2). The
-    /// span renders as extending to the paragraph boundary, mirroring
-    /// [`Self::drain_open_containers`] for unclosed regions.
+    /// span renders as extending to the paragraph boundary.
     pub(crate) fn drain_open_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        while self.warichu_depth > 0 {
+        while let Some(depth) = self.warichu_depth.checked_sub(1) {
             out.write_str("</span>")?;
-            self.warichu_depth -= 1;
+            self.warichu_depth = depth;
         }
+        Ok(())
+    }
+
+    pub(crate) fn finish<W: Write>(&mut self, out: &mut W) -> fmt::Result {
+        self.close_paragraph(out)?;
+        self.reopen_after_para.clear();
+        let mut closed = false;
+        while let Some(kind) = self.open_stack.pop() {
+            render_container(Container { kind }, false, out)?;
+            closed = true;
+        }
+        if closed {
+            out.write_char('\n')?;
+        }
+        self.in_heading = false;
+        self.pending_block_separator = false;
         Ok(())
     }
 }
@@ -269,17 +270,30 @@ pub(crate) fn escape_text_chunk<W: Write>(chunk: &str, out: &mut W) -> fmt::Resu
             .min();
         let Some(pos) = pos else { break };
 
-        if cursor < pos {
-            out.write_str(&chunk[cursor..pos])?;
-        }
+        out.write_str(&chunk[cursor..pos])?;
         let entity = match bytes[pos] {
-            b'<' => "&lt;",
-            b'>' => "&gt;",
-            b'&' => "&amp;",
-            b'"' => "&quot;",
+            b'<' => {
+                next_lt_gt_amp = iter_lt_gt_amp.next();
+                "&lt;"
+            }
+            b'>' => {
+                next_lt_gt_amp = iter_lt_gt_amp.next();
+                "&gt;"
+            }
+            b'&' => {
+                next_lt_gt_amp = iter_lt_gt_amp.next();
+                "&amp;"
+            }
+            b'"' => {
+                next_quote = iter_quote.next();
+                "&quot;"
+            }
             // Hex form `&#x27;` matches `escape_text` so the
             // streaming and per-node renderers produce byte-identical output.
-            b'\'' => "&#x27;",
+            b'\'' => {
+                next_apos = iter_apos.next();
+                "&#x27;"
+            }
             // INVARIANT(escape): `pos` only ever indexes one of the five needle
             // bytes — established by escape_text_chunk's memchr3/memchr scans,
             // which yield positions of exactly `< > & " '`; exercised by the
@@ -287,17 +301,7 @@ pub(crate) fn escape_text_chunk<W: Write>(chunk: &str, out: &mut W) -> fmt::Resu
             _ => unreachable!("escape iterator yielded non-needle byte"),
         };
         out.write_str(entity)?;
-        cursor = pos + 1;
-
-        if next_lt_gt_amp == Some(pos) {
-            next_lt_gt_amp = iter_lt_gt_amp.next();
-        }
-        if next_quote == Some(pos) {
-            next_quote = iter_quote.next();
-        }
-        if next_apos == Some(pos) {
-            next_apos = iter_apos.next();
-        }
+        cursor = pos.checked_add(1).expect("escape offset fits usize");
     }
     out.write_str(&chunk[cursor..])
 }
@@ -687,6 +691,17 @@ mod tests {
         assert_eq!(render("Hello."), "<p>Hello.</p>\n");
     }
 
+    #[test]
+    fn pending_block_separator_is_emitted_before_paragraph() {
+        let mut state = RenderState::default();
+        let mut out = String::new();
+        state.after_block_emit();
+        state
+            .ensure_in_paragraph(&mut out)
+            .expect("render into String is infallible");
+        assert_eq!(out, "\n<p>");
+    }
+
     /// A well-formed inline warichu pair emits the same balanced span it always
     /// did — a byte-identity guard that the `RenderState`-owned depth machinery
     /// (#415) does not perturb the correct case.
@@ -718,8 +733,8 @@ mod tests {
             !html.contains("</span>"),
             "no warichu span was opened, so no </span> should appear: {html}",
         );
-        // The block warichu container is still balanced.
-        assert_eq!(html.matches("<div").count(), html.matches("</div>").count());
+        assert_eq!(html.matches("<div").count(), 1);
+        assert_eq!(html.matches("</div>").count(), 1);
     }
 
     /// #415 Case 2: an inline-form warichu open (`［＃割り注］`) paired with a
@@ -763,6 +778,12 @@ mod tests {
         let html = render("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
         assert!(html.contains("aozora-container-indent aozora-container-indent-2"));
         assert!(html.contains("</div>"));
+    }
+
+    #[test]
+    fn unclosed_block_container_closes_at_eof() {
+        let html = render("［＃ここから2字下げ］\n本文");
+        assert_eq!(html.matches("<div").count(), html.matches("</div>").count());
     }
 
     #[test]

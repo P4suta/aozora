@@ -20,10 +20,9 @@
 //! # Newlines
 //!
 //! The HTML renderer also reacts to `\n` (paragraph / `<br />` control);
-//! the serializer copies newlines verbatim as plain text. A sink opts in
-//! with [`WalkSink::WANTS_NEWLINES`], which selects `memchr2(0xEE, '\n')`
-//! vs `memchr(0xEE)` at compile time so the serializer pays nothing for a
-//! needle it does not use.
+//! the serializer copies newlines verbatim as plain text. [`walk`] scans only
+//! sentinels, while [`walk_with_newlines`] surfaces both event kinds to a
+//! [`NewlineSink`].
 
 use core::fmt;
 
@@ -74,30 +73,20 @@ const fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
 /// The sink [`walk`] drives over an [`LexOutput`]: `on_text` for
 /// each plain run and `on_node` for each PUA sentinel (with the owned
 /// [`NodeRef`] resolved against the output's `Registry`), plus the
-/// `on_newline` / `finish` hooks. Both renderers ([`crate::render::html`]
-/// and `serialize`) implement it, so they share this single scan scaffold.
+/// renderers ([`crate::render::html`] and `serialize`) implement it, so they
+/// share this scan scaffold.
 pub(crate) trait WalkSink {
-    /// Whether [`walk`] should surface `\n` as [`Self::on_newline`].
-    const WANTS_NEWLINES: bool;
-
     /// Emit a plain-text run. Never called with an empty slice.
     fn on_text(&mut self, text: &str) -> fmt::Result;
-
-    /// React to a `\n`. Only called when `Self::WANTS_NEWLINES`; default
-    /// no-op (the serializer copies newlines verbatim through `on_text`).
-    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
-        let _ = next;
-        Ok(())
-    }
 
     /// Render a validated sentinel. `kind` is the sentinel's role; `node` is
     /// the owned registry entry at its offset.
     fn on_node(&mut self, kind: SentinelKind, node: NodeRef) -> fmt::Result;
+}
 
-    /// Finalise after the last run. Default no-op.
-    fn finish(&mut self) -> fmt::Result {
-        Ok(())
-    }
+pub(crate) trait NewlineSink: WalkSink {
+    /// React to a `\n`, with the following byte when one exists.
+    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result;
 }
 
 /// Validate the candidate sentinel at `cand`, flush the pending plain run, and
@@ -146,20 +135,29 @@ pub(crate) fn walk<S: WalkSink>(out: &LexOutput, sink: &mut S) -> fmt::Result {
     let bytes = normalized.as_bytes();
     let mut cursor = 0usize;
 
-    if S::WANTS_NEWLINES {
-        for cand in memchr::memchr2_iter(SENTINEL_LEAD_BYTE, b'\n', bytes) {
-            if bytes[cand] == b'\n' {
-                if cursor < cand {
-                    sink.on_text(&normalized[cursor..cand])?;
-                }
-                sink.on_newline(bytes.get(cand + 1).copied())?;
-                cursor = cand + 1;
-            } else {
-                handle_sentinel(out, cand, &mut cursor, sink)?;
+    for cand in memchr::memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
+        handle_sentinel(out, cand, &mut cursor, sink)?;
+    }
+
+    if cursor < normalized.len() {
+        sink.on_text(&normalized[cursor..])?;
+    }
+    Ok(())
+}
+
+pub(crate) fn walk_with_newlines<S: NewlineSink>(out: &LexOutput, sink: &mut S) -> fmt::Result {
+    let normalized = out.normalized.as_str();
+    let bytes = normalized.as_bytes();
+    let mut cursor = 0usize;
+
+    for cand in memchr::memchr2_iter(SENTINEL_LEAD_BYTE, b'\n', bytes) {
+        if bytes[cand] == b'\n' {
+            if cursor < cand {
+                sink.on_text(&normalized[cursor..cand])?;
             }
-        }
-    } else {
-        for cand in memchr::memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
+            sink.on_newline(bytes.get(cand + 1).copied())?;
+            cursor = cand + 1;
+        } else {
             handle_sentinel(out, cand, &mut cursor, sink)?;
         }
     }
@@ -167,7 +165,7 @@ pub(crate) fn walk<S: WalkSink>(out: &LexOutput, sink: &mut S) -> fmt::Result {
     if cursor < normalized.len() {
         sink.on_text(&normalized[cursor..])?;
     }
-    sink.finish()
+    Ok(())
 }
 
 #[cfg(test)]
@@ -182,12 +180,10 @@ mod tests {
     struct CollectSink {
         text: String,
         nodes: usize,
-        finished: usize,
+        newlines: usize,
     }
 
     impl WalkSink for CollectSink {
-        const WANTS_NEWLINES: bool = false;
-
         fn on_text(&mut self, text: &str) -> fmt::Result {
             assert!(
                 !text.is_empty(),
@@ -201,9 +197,11 @@ mod tests {
             self.nodes += 1;
             Ok(())
         }
+    }
 
-        fn finish(&mut self) -> fmt::Result {
-            self.finished += 1;
+    impl NewlineSink for CollectSink {
+        fn on_newline(&mut self, _next: Option<u8>) -> fmt::Result {
+            self.newlines += 1;
             Ok(())
         }
     }
@@ -214,6 +212,7 @@ mod tests {
         LexOutput::new(
             normalized.to_owned(),
             String::new(),
+            true,
             registry,
             Vec::new(),
             Vec::new(),
@@ -267,15 +266,34 @@ mod tests {
         assert_eq!(sink.nodes, 1, "exactly one inline node is dispatched");
     }
 
-    /// Plain text with no `0xEE` byte is copied whole through the single final
-    /// flush, and `finish` runs exactly once at the end.
     #[test]
-    fn plain_text_is_copied_verbatim_and_finished_once() {
+    fn sentinel_at_end_does_not_emit_empty_text() {
+        let normalized = "\u{E001}";
+        let registry = Registry::from_sorted_slice(&[(0, NodeRef::Inline(Node::PageBreak))]);
+        let out = output_with(normalized, registry);
+        let mut sink = CollectSink::default();
+        walk(&out, &mut sink).expect("walk into a collector is infallible");
+        assert!(sink.text.is_empty());
+        assert_eq!(sink.nodes, 1);
+    }
+
+    /// Plain text with no `0xEE` byte is copied whole through the single final
+    /// flush.
+    #[test]
+    fn plain_text_is_copied_verbatim() {
         let out = output_with("hello world", Registry::empty());
         let mut sink = CollectSink::default();
         walk(&out, &mut sink).expect("walk into a collector is infallible");
         assert_eq!(sink.text, "hello world");
         assert_eq!(sink.nodes, 0);
-        assert_eq!(sink.finished, 1, "finish fires exactly once");
+    }
+
+    #[test]
+    fn newline_walk_surfaces_each_newline() {
+        let out = output_with("a\nb\n", Registry::empty());
+        let mut sink = CollectSink::default();
+        walk_with_newlines(&out, &mut sink).expect("walk into a collector is infallible");
+        assert_eq!(sink.text, "ab");
+        assert_eq!(sink.newlines, 2);
     }
 }

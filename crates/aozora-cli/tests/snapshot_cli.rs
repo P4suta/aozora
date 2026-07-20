@@ -38,13 +38,26 @@ fn run(args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("failed to spawn aozora CLI");
-    let stdout = String::from_utf8(output.stdout).expect("CLI stdout is UTF-8");
-    let stderr = String::from_utf8(output.stderr).expect("CLI stderr is UTF-8");
+    let stdout = normalize(&String::from_utf8(output.stdout).expect("CLI stdout is UTF-8"));
+    let stderr = normalize(&String::from_utf8(output.stderr).expect("CLI stderr is UTF-8"));
     if stderr.is_empty() {
         stdout
     } else {
         format!("{stdout}\n----- STDERR -----\n{stderr}")
     }
+}
+
+fn normalize(text: &str) -> String {
+    let final_newline = text.ends_with('\n');
+    let mut normalized = text
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if final_newline {
+        normalized.push('\n');
+    }
+    normalized
 }
 
 #[test]
@@ -93,6 +106,13 @@ fn snapshot_render_help() {
 fn snapshot_inspect_help() {
     insta::with_settings!({ filters => cli_filters() }, {
         insta::assert_snapshot!(run(&["inspect", "--help"]));
+    });
+}
+
+#[test]
+fn snapshot_pandoc_help() {
+    insta::with_settings!({ filters => cli_filters() }, {
+        insta::assert_snapshot!(run(&["pandoc", "--help"]));
     });
 }
 

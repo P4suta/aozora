@@ -5,7 +5,7 @@ import PreviewPane from './components/PreviewPane';
 import SampleLoader from './components/SampleLoader';
 import PerfBadge from './components/PerfBadge';
 import { ensureWasmReady, version as wasmParserVersion } from './wasm-loader';
-import type { HeadingEntry, ParserState, ProfilePhaseEntry } from './editor';
+import type { DiagnosticEntry, HeadingEntry, ParserState } from './editor';
 import { buildShareUrl, readShareTextFromUrl, syncTextToUrl } from './share';
 import { clearStoredSource, loadStoredSource, saveSource } from './storage';
 import { SAMPLES, DEFAULT_SAMPLE_ID } from './samples';
@@ -14,15 +14,12 @@ import SettingsPanel from './components/SettingsPanel';
 import { error as logError } from './logger';
 import { t, tf } from './i18n';
 
-const EMPTY_ENVELOPE = '{"schemaVersion":2,"data":[]}';
-
 interface ParsePayload {
   html: string;
   serialized: string;
-  diagJson: string;
+  diagnostics: DiagnosticEntry[];
   nodesJson: string;
   headings: HeadingEntry[];
-  profile: ProfilePhaseEntry[];
   parseDurationMs: number;
   byteLen: number;
 }
@@ -30,10 +27,9 @@ interface ParsePayload {
 const EMPTY_PAYLOAD: ParsePayload = {
   html: '',
   serialized: '',
-  diagJson: EMPTY_ENVELOPE,
-  nodesJson: EMPTY_ENVELOPE,
+  diagnostics: [],
+  nodesJson: '',
   headings: [],
-  profile: [],
   parseDurationMs: 0,
   byteLen: 0,
 };
@@ -125,10 +121,9 @@ export default function App() {
     setParsePayload({
       html: ps.html,
       serialized: ps.serialized,
-      diagJson: ps.diagJson,
+      diagnostics: ps.diagnostics,
       nodesJson: ps.nodesJson,
       headings: ps.headings,
-      profile: ps.profile,
       parseDurationMs: ps.parseDurationMs,
       byteLen: ps.byteLen,
     });
@@ -285,13 +280,12 @@ export default function App() {
             <PerfBadge
               parseDurationMs={parsePayload().parseDurationMs}
               byteLen={parsePayload().byteLen}
-              profile={parsePayload().profile}
             />
           </div>
           <PreviewPane
             html={parsePayload().html}
             serialized={parsePayload().serialized}
-            diagJson={parsePayload().diagJson}
+            diagnostics={parsePayload().diagnostics}
             nodesJson={parsePayload().nodesJson}
             headings={parsePayload().headings}
             view={editorView()}

@@ -26,6 +26,9 @@ rayon = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 dhat = { workspace = true }
+iai-callgrind = { version = "0.16.1", default-features = false, features = [
+  "client_requests",
+] }
 serde_json = { workspace = true }
 
 [[bench]]

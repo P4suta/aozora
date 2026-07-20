@@ -1,27 +1,7 @@
-//! Tree-sitter binding for aozora-flavored markdown.
+//! Tree-sitter binding for Aozora Bunko notation.
 //!
-//! Exposes [`LANGUAGE`] — a [`tree_sitter_language::LanguageFn`] —
-//! that the consuming crate (today: `aozora-cli`'s in-process LSP) feeds into a
-//! `tree_sitter::Parser` to incrementally parse aozora source.
-//! (We don't intra-doc-link `tree_sitter` because this crate doesn't
-//! depend on it directly — only consumers do.)
-//!
-//! ## Why this crate exists
-//!
-//! The in-process LSP needs **size-independent** request latency. The
-//! semantic Rust parser (`aozora`) re-parses the entire
-//! document on every call — fine for KB-sized docs, painful for
-//! 40-100 KB docs (414 ms per parse, multiple handlers per
-//! keystroke). Tree-sitter's incremental algorithm reuses
-//! unchanged sub-trees so the second-and-onward edit costs
-//! O(edit_size) instead of O(doc_size).
-//!
-//! The semantic parser stays the source of truth for HTML
-//! rendering, formatting, and diagnostics — operations where the
-//! tree-sitter syntax skeleton is too thin. The LSP runs both
-//! parsers in parallel; the responsiveness gain comes from moving
-//! the high-frequency handlers (hover, inlay, codeAction,
-//! completion) onto the tree-sitter side.
+//! [`LANGUAGE`] provides a lossless editing projection of the source language.
+//! The `aozora` crate remains the semantic authority.
 
 // FFI binding to the generated tree-sitter C parser. The unsafe here is the
 // standard `tree-sitter-language` pattern (and is exempt in the strict-code
@@ -60,9 +40,6 @@ pub mod kind {
     pub const SLUG_BODY: &str = "slug_body";
     pub const EXPLICIT_RUBY: &str = "explicit_ruby";
     pub const IMPLICIT_RUBY: &str = "implicit_ruby";
-    pub const RUBY_BASE_EXPLICIT: &str = "ruby_base_explicit";
-    pub const RUBY_BASE_IMPLICIT: &str = "ruby_base_implicit";
-    pub const RUBY_READING: &str = "ruby_reading";
     pub const TEXT: &str = "text";
     pub const NEWLINE: &str = "newline";
 }
@@ -113,18 +90,10 @@ mod tests {
         for child in root.named_children(&mut cursor) {
             if child.kind() == super::kind::GAIJI {
                 found_gaiji = true;
-                let mut inner = child.walk();
-                let slug = child
-                    .named_children(&mut inner)
-                    .find(|c| c.kind() == super::kind::SLUG)
-                    .expect("gaiji always wraps a slug");
-                let body = slug
-                    .child_by_field_name("body")
-                    .expect("slug carries a body field");
-                let body_text = body.utf8_text(src.as_bytes()).expect("UTF-8");
+                let body_text = child.utf8_text(src.as_bytes()).expect("UTF-8");
                 assert!(
                     body_text.contains("木＋吶のつくり"),
-                    "slug body should carry the description: {body_text}",
+                    "gaiji should carry the description: {body_text}",
                 );
             }
         }
@@ -137,36 +106,30 @@ mod tests {
 
     #[test]
     fn detects_explicit_ruby() {
-        let tree = parse("｜青空《あおぞら》");
+        let source = "｜青空《あおぞら》";
+        let tree = parse(source);
         let root = tree.root_node();
         let mut cursor = root.walk();
         let ruby = root
             .named_children(&mut cursor)
             .find(|c| c.kind() == super::kind::EXPLICIT_RUBY)
             .expect("expected one explicit_ruby span");
-        let base = ruby
-            .child_by_field_name("base")
-            .expect("ruby carries a base field");
-        let reading = ruby
-            .child_by_field_name("reading")
-            .expect("ruby carries a reading field");
-        assert_eq!(base.kind(), super::kind::RUBY_BASE_EXPLICIT);
-        assert_eq!(reading.kind(), super::kind::RUBY_READING);
+        assert_eq!(ruby.utf8_text(source.as_bytes()).expect("UTF-8"), source);
+        assert_eq!(ruby.child_count(), 0);
     }
 
     #[test]
     fn detects_implicit_ruby_after_kanji_run() {
-        let tree = parse("青空《あおぞら》");
+        let source = "青空《あおぞら》";
+        let tree = parse(source);
         let root = tree.root_node();
         let mut cursor = root.walk();
         let ruby = root
             .named_children(&mut cursor)
             .find(|c| c.kind() == super::kind::IMPLICIT_RUBY)
             .expect("expected implicit_ruby for kanji+《》 sequence");
-        assert_eq!(
-            ruby.child_by_field_name("base").unwrap().kind(),
-            super::kind::RUBY_BASE_IMPLICIT,
-        );
+        assert_eq!(ruby.utf8_text(source.as_bytes()).expect("UTF-8"), source);
+        assert_eq!(ruby.child_count(), 0);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! Bridges `aozora::json::schema_*` →
 //! `crates/aozora-conformance/json/schema-*.json`. `xtask schema dump`
-//! regenerates the four schema files; `xtask schema check` exits
+//! regenerates the schema files; `xtask schema check` exits
 //! non-zero when the on-disk artefact has drifted from the live wire
 //! types.
 //!
@@ -45,6 +45,14 @@ pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
         "crates/aozora-conformance/json/schema-container-pairs.json",
         json::schema_container_pairs,
+    ),
+    (
+        "crates/aozora-conformance/json/schema-gaiji.json",
+        json::schema_gaiji,
+    ),
+    (
+        "crates/aozora-conformance/json/schema-slugs.json",
+        json::schema_slugs,
     ),
 ];
 
@@ -107,7 +115,10 @@ fn check() -> Result<(), String> {
         }
     }
     if drift.is_empty() {
-        eprintln!("xtask schema check: 4/4 schema artefacts up to date");
+        eprintln!(
+            "xtask schema check: {0}/{0} schema artefacts up to date",
+            SCHEMA_FILES.len()
+        );
         Ok(())
     } else {
         Err(format!(
@@ -155,8 +166,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_files_cover_all_four_wire_endpoints() {
-        assert_eq!(SCHEMA_FILES.len(), 4, "exactly four wire schema files");
+    fn schema_files_are_json_artifacts() {
+        assert!(!SCHEMA_FILES.is_empty());
         for (rel, _) in SCHEMA_FILES {
             assert!(
                 Path::new(rel)

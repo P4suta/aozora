@@ -1,1 +1,1 @@
-{"schemaVersion":2,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":""}]}
+{"schemaVersion":3,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":57345}]}

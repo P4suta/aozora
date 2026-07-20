@@ -8,13 +8,14 @@
 //!
 //! ## Tier model
 //!
-//! Three tiers, mirroring W3C-style conformance levels:
+//! The fixture metadata retains the specification's three requirement levels,
+//! but the product gate treats every pinned projection as release-blocking:
 //!
 //! | Level   | Meaning                                          | Effect on `xtask conformance run` |
 //! | ------- | ------------------------------------------------ | --------------------------------- |
-//! | `must`  | Required for any conforming implementation.      | A failure here exits non-zero. |
-//! | `should`| Recommended but not strictly required.           | A failure here logs a warning. |
-//! | `may`   | Optional; implementations decide.                | Pure information, never fails. |
+//! | `must`  | Required for any conforming implementation.      | A failure exits non-zero. |
+//! | `should`| Recommended by the specification.                | A failure exits non-zero. |
+//! | `may`   | Optional in the specification.                   | A failure exits non-zero. |
 //!
 //! The canonical implementation under test is the Rust parser
 //! itself; the runner emits a `results.json` file so other
@@ -53,186 +54,7 @@ const TS_RESULTS_REL: &str = "crates/aozora-conformance/conformance-results-tree
 /// rewrite and diff — so it survives a re-sync untouched.
 const TS_VECTORS_SNAPSHOT_REL: &str =
     "crates/aozora-conformance/spec-vectors/tree-sitter-snapshot.json";
-
-/// Ratchet floor (G2c) for how many fixtures / spec vectors the reference
-/// grammar parses with NO ERROR / MISSING nodes, bucketed by tier. Sits
-/// next to the sexp snapshots. Unlike those snapshots — which pin exact
-/// structure and are refreshed wholesale by `--update` — this records the
-/// *count* of clean parses per tier as a floor: a routine grammar change
-/// that quietly turns a must-tier fixture or a spec vector from clean to
-/// ERROR drops the count and fails the run, so the loss can't hide inside a
-/// large sexp diff. `--update` re-records the floor from the current run,
-/// making any drop a reviewable number in the committed diff.
-const ERROR_FREE_BASELINE_REL: &str =
-    "crates/aozora-conformance/spec-vectors/error-free-baseline.json";
-const ERROR_FREE_SCHEMA_VERSION: u32 = 1;
-
-/// Which section of [`ERROR_FREE_BASELINE_REL`] a run owns: the fixture
-/// runner writes `fixtures`, the spec-vector runner writes `vectors`.
-#[derive(Debug, Clone, Copy)]
-enum BaselineWhich {
-    Fixtures,
-    Vectors,
-}
-
-impl BaselineWhich {
-    /// `(unit label, the `--update` command that re-records this section)`.
-    fn labels(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Fixtures => (
-                "fixtures",
-                "xtask conformance run --implementation tree-sitter --update",
-            ),
-            Self::Vectors => (
-                "vectors",
-                "xtask conformance vectors --implementation tree-sitter --update",
-            ),
-        }
-    }
-
-    /// Borrow this run's section out of a loaded baseline.
-    fn section(self, baseline: &ErrorFreeBaseline) -> Option<&ErrorFreeSection> {
-        match self {
-            Self::Fixtures => baseline.fixtures.as_ref(),
-            Self::Vectors => baseline.vectors.as_ref(),
-        }
-    }
-}
-
-/// The committed ERROR-free ratchet floor. Both sections are optional so
-/// the file can be bootstrapped one runner at a time (each `--update`
-/// preserves the other section).
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct ErrorFreeBaseline {
-    #[serde(rename = "schemaVersion")]
-    schema_version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    fixtures: Option<ErrorFreeSection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    vectors: Option<ErrorFreeSection>,
-}
-
-/// Per-tier ERROR-free counts for one corpus (fixtures or spec vectors).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ErrorFreeSection {
-    total: usize,
-    #[serde(rename = "errorFree")]
-    error_free: usize,
-    #[serde(rename = "byLevel")]
-    by_level: BTreeMap<String, usize>,
-}
-
-/// Project a tree-sitter [`Summary`] (whose `passed` field counts ERROR-free
-/// parses) into the ratchet section.
-fn error_free_section(summary: &Summary) -> ErrorFreeSection {
-    ErrorFreeSection {
-        total: summary.total,
-        error_free: summary.passed,
-        by_level: summary
-            .by_level
-            .iter()
-            .map(|(level, ls)| (level.clone(), ls.passed))
-            .collect(),
-    }
-}
-
-/// Read the committed ratchet floor. A missing file is a hard error in
-/// check mode — the baseline must be committed.
-fn load_error_free_baseline(root: &Path) -> Result<ErrorFreeBaseline, String> {
-    let path = root.join(ERROR_FREE_BASELINE_REL);
-    match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|err| format!("parse {ERROR_FREE_BASELINE_REL}: {err}")),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Err(format!(
-            "conformance (tree-sitter): missing {ERROR_FREE_BASELINE_REL}; run \
-             `xtask conformance run --implementation tree-sitter --update` and \
-             `xtask conformance vectors --implementation tree-sitter --update` to create it"
-        )),
-        Err(err) => Err(format!("read {ERROR_FREE_BASELINE_REL}: {err}")),
-    }
-}
-
-/// Rewrite one section of the ratchet floor from the current run, preserving
-/// the other section (the two runners update independently).
-fn write_error_free_section(
-    root: &Path,
-    which: BaselineWhich,
-    section: ErrorFreeSection,
-) -> Result<(), String> {
-    let path = root.join(ERROR_FREE_BASELINE_REL);
-    let mut baseline = match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|err| format!("parse {ERROR_FREE_BASELINE_REL}: {err}"))?,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => ErrorFreeBaseline::default(),
-        Err(err) => return Err(format!("read {ERROR_FREE_BASELINE_REL}: {err}")),
-    };
-    baseline.schema_version = ERROR_FREE_SCHEMA_VERSION;
-    match which {
-        BaselineWhich::Fixtures => baseline.fixtures = Some(section),
-        BaselineWhich::Vectors => baseline.vectors = Some(section),
-    }
-    let json = serde_json::to_string_pretty(&baseline)
-        .map_err(|err| format!("serialize {ERROR_FREE_BASELINE_REL}: {err}"))?;
-    fs::write(&path, format!("{json}\n")).map_err(|err| format!("write {}: {err}", path.display()))
-}
-
-/// Enforce the ratchet: every tier's ERROR-free count (and the total) must
-/// be at least the committed floor. A drop fails the run; an improvement
-/// passes but nudges toward re-baselining.
-fn check_error_free_ratchet(
-    root: &Path,
-    which: BaselineWhich,
-    summary: &Summary,
-) -> Result<(), String> {
-    let (unit, update_cmd) = which.labels();
-    let current = error_free_section(summary);
-    let file = load_error_free_baseline(root)?;
-    let Some(baseline) = which.section(&file) else {
-        return Err(format!(
-            "conformance (tree-sitter): {ERROR_FREE_BASELINE_REL} has no `{unit}` section; \
-             run `{update_cmd}` to record the ERROR-free ratchet baseline"
-        ));
-    };
-    let regressions = error_free_regressions(&current, baseline);
-    if !regressions.is_empty() {
-        return Err(format!(
-            "conformance (tree-sitter): {unit} ERROR-free ratchet regressed ({}); a construct \
-             that used to parse without ERROR / MISSING nodes no longer does. Fix the grammar so \
-             it parses cleanly again, or — if the loss is intentional — re-baseline with \
-             `{update_cmd}` (the count drop is then reviewable in the committed diff).",
-            regressions.join(", "),
-        ));
-    }
-    if current.error_free > baseline.error_free {
-        eprintln!(
-            "  NOTE: {unit} ERROR-free improved {} -> {}; run `{update_cmd}` to ratchet the floor up.",
-            baseline.error_free, current.error_free,
-        );
-    }
-    Ok(())
-}
-
-/// Pure ratchet comparison. Returns the labels of the tiers (and/or the
-/// aggregate `total`) whose ERROR-free count fell below the committed floor;
-/// an empty vector means no regression. A tier the baseline records but the
-/// current run does not is treated as `0` (a regression against any positive
-/// floor).
-fn error_free_regressions(current: &ErrorFreeSection, baseline: &ErrorFreeSection) -> Vec<String> {
-    let mut regressions = Vec::new();
-    for (level, &floor) in &baseline.by_level {
-        let cur = current.by_level.get(level).copied().unwrap_or(0);
-        if cur < floor {
-            regressions.push(format!("{level} {cur} < {floor}"));
-        }
-    }
-    if current.error_free < baseline.error_free {
-        regressions.push(format!(
-            "total {} < {}",
-            current.error_free, baseline.error_free
-        ));
-    }
-    regressions
-}
+const TS_VECTORS_SNAPSHOT_FORMAT_VERSION: u32 = 1;
 
 pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
     match &args.op {
@@ -326,11 +148,11 @@ fn run() -> Result<(), String> {
     print_summary(&summary);
     write_results(&root, &summary, RESULTS_REL)?;
 
-    let must_failed = summary.by_level.get("must").map_or(0, |s| s.failed);
-    if must_failed > 0 {
+    if summary.failed > 0 {
         let results_path = root.join(RESULTS_REL);
         return Err(format!(
-            "conformance: {must_failed} `must`-tier case(s) failed (see {} for detail)",
+            "conformance: {} fixture(s) failed (see {} for detail)",
+            summary.failed,
             results_path.display()
         ));
     }
@@ -442,7 +264,7 @@ fn run_case(dir: &Path) -> Result<(), String> {
     let source_path = dir.join("source.txt");
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("read {}: {err}", source_path.display()))?;
-    let doc = aozora::Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     let actual_html = tree.to_html();
@@ -497,24 +319,19 @@ fn print_summary(summary: &Summary) {
 // from its `grammar.js` into the committed `src/parser.c`). It is a
 // *syntactic skeleton* — it classifies bracket structure but cannot
 // render HTML, so the byte-equality comparison the Rust path uses does
-// not apply. Two orthogonal signals replace it:
+// not apply. Two strict signals replace it:
 //
 //   1. A **per-tier pass rate** (issue #82's ask): a fixture "passes"
 //      when the grammar parses it without ERROR / MISSING nodes. This
-//      is a coverage measurement, printed per level — it never fails
-//      the gate. Constructs the grammar does not model (stateful
-//      container pairing, forward bouten, unclosed brackets) honestly
-//      count as non-passing.
+//      is a coverage measurement, printed per level. Any ERROR or MISSING
+//      node fails the gate.
 //   2. A **snapshot drift gate**: each fixture's `root.to_sexp()` is
 //      pinned to `expected.tree-sitter.txt`. `to_sexp()` carries node
 //      kinds / fields with no byte offsets, so it is deterministic and
 //      only changes when the grammar's structure changes — exactly the
 //      drift we want surfaced. ANY mismatch fails, tier-independent: a
-//      snapshot is a fingerprint, and the rust path's must/should/may
-//      leniency (which models *partial conformance*) does not apply to
-//      a fingerprint, where every change is a regression-or-intentional
-//      -update worth a human's eyes. `--update` regenerates the
-//      snapshots after an intentional grammar change.
+//      snapshot is a fingerprint. `--update` regenerates the snapshots
+//      after an intentional grammar change.
 
 /// Parse `source` with the reference grammar, returning its
 /// S-expression and whether the parse contains any ERROR / MISSING
@@ -531,12 +348,6 @@ fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
     Ok((root.to_sexp(), root.has_error()))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear pass: read fixtures, parse each, then either refresh \
-              the sexp goldens + ERROR-free baseline or gate on drift + the \
-              ratchet — splitting the flow would fragment a single narrative"
-)]
 fn run_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let fixtures_dir = root.join(FIXTURE_REL);
@@ -607,12 +418,8 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
 
     if update {
         write_results(&root, &summary, TS_RESULTS_REL)?;
-        write_error_free_section(&root, BaselineWhich::Fixtures, error_free_section(&summary))?;
-        eprintln!(
-            "xtask conformance run (tree-sitter): wrote {written} snapshot(s) + results + \
-             ERROR-free baseline"
-        );
-        return Ok(());
+        eprintln!("xtask conformance run (tree-sitter): wrote {written} snapshot(s) + results");
+        return require_error_free(&summary, "fixtures");
     }
 
     if !missing.is_empty() {
@@ -632,8 +439,7 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
             cases = drifts.join(", "),
         ));
     }
-    check_error_free_ratchet(&root, BaselineWhich::Fixtures, &summary)?;
-    Ok(())
+    require_error_free(&summary, "fixtures")
 }
 
 /// Print the per-tier pass rate (coverage) and any snapshot drift (the
@@ -673,8 +479,8 @@ struct TsVectorEntry {
 /// The committed tree-sitter snapshot over the whole spec-vector corpus.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct TsVectorSnapshot {
-    #[serde(rename = "schemaVersion")]
-    schema_version: u32,
+    #[serde(rename = "formatVersion")]
+    format_version: u32,
     implementation: String,
     vectors: Vec<TsVectorEntry>,
 }
@@ -725,7 +531,7 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     // Stable order regardless of read_dir: sort the snapshot by name.
     snapshot_vectors.sort_by(|a, b| a.name.cmp(&b.name));
     let snapshot = TsVectorSnapshot {
-        schema_version: 1,
+        format_version: TS_VECTORS_SNAPSHOT_FORMAT_VERSION,
         implementation: "tree-sitter".to_owned(),
         vectors: snapshot_vectors,
     };
@@ -737,15 +543,13 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
             .map_err(|err| format!("serialize snapshot: {err}"))?;
         fs::write(&snapshot_path, format!("{json}\n"))
             .map_err(|err| format!("write {}: {err}", snapshot_path.display()))?;
-        write_error_free_section(&root, BaselineWhich::Vectors, error_free_section(&summary))?;
         print_ts_summary(&summary, &[], "spec vectors");
         eprintln!(
-            "xtask conformance vectors (tree-sitter): wrote {} vector snapshot to {} + \
-             ERROR-free baseline",
+            "xtask conformance vectors (tree-sitter): wrote {} vector snapshot to {}",
             snapshot.vectors.len(),
             snapshot_path.display()
         );
-        return Ok(());
+        return require_error_free(&summary, "spec vectors");
     }
 
     let committed = match fs::read_to_string(&snapshot_path) {
@@ -772,8 +576,18 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
             cases = drifts.join(", "),
         ));
     }
-    check_error_free_ratchet(&root, BaselineWhich::Vectors, &summary)?;
-    Ok(())
+    require_error_free(&summary, "spec vectors")
+}
+
+fn require_error_free(summary: &Summary, unit: &str) -> Result<(), String> {
+    if summary.failed == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "conformance (tree-sitter): {} {unit} produced ERROR / MISSING nodes",
+            summary.failed
+        ))
+    }
 }
 
 /// Names whose tree-sitter parse changed between the committed snapshot
@@ -817,9 +631,9 @@ fn snapshot_drifts(prev: &TsVectorSnapshot, current: &TsVectorSnapshot) -> Vec<S
 // OWN golden output), this runner holds the parser to the
 // SPECIFICATION's expectations: it parses each vector's `source` and
 // diffs the projections the spec pins in `expected`, governed by
-// `meta.level` per `spec-vectors/RUNNER.md` (`must` fails, `should` /
-// `may` warn). The `html` projection is a reference rendering (spec §8,
-// informative) and only ever warns.
+// `meta.level` remains in reports for traceability. The release gate is
+// intentionally stricter than the language-agnostic runner contract: every
+// supplied projection, including HTML, must match.
 
 #[derive(Deserialize)]
 struct Vector {
@@ -880,9 +694,7 @@ fn run_vectors() -> Result<(), String> {
     entries.sort_by_key(fs::DirEntry::file_name);
 
     let mut total = 0usize;
-    let mut must_failed = 0usize;
-    let mut should_warned = 0usize;
-    let mut html_warned = 0usize;
+    let mut failed = 0usize;
 
     for entry in &entries {
         let vector_path = entry.path().join("vector.json");
@@ -893,56 +705,24 @@ fn run_vectors() -> Result<(), String> {
         let level = Level::parse(&vector.meta.level)?;
         total += 1;
 
-        let (normative, html) = compare_vector(&vector)?;
-
-        // Informative reference rendering (spec §8): a mismatch never
-        // fails the gate, regardless of level.
-        if html.is_some() {
-            html_warned += 1;
-            eprintln!(
-                "  WARN  [html   {feature}] {name}: html diverges from the spec example",
-                feature = vector.meta.feature,
-                name = vector.name,
-            );
-        }
-
-        if normative.is_empty() {
+        let mismatches = compare_vector(&vector)?;
+        if mismatches.is_empty() {
             continue;
         }
-        let detail = normative.join(", ");
-        match level {
-            Level::Must => {
-                must_failed += 1;
-                eprintln!(
-                    "  FAIL  [must   {feature}] {name}: {detail}",
-                    feature = vector.meta.feature,
-                    name = vector.name,
-                );
-            }
-            Level::Should => {
-                should_warned += 1;
-                eprintln!(
-                    "  WARN  [should {feature}] {name}: {detail}",
-                    feature = vector.meta.feature,
-                    name = vector.name,
-                );
-            }
-            Level::May => eprintln!(
-                "  INFO  [may    {feature}] {name}: {detail}",
-                feature = vector.meta.feature,
-                name = vector.name,
-            ),
-        }
+        let detail = mismatches.join(", ");
+        failed += 1;
+        eprintln!(
+            "  FAIL  [{level:?} {feature}] {name}: {detail}",
+            feature = vector.meta.feature,
+            name = vector.name,
+        );
     }
 
-    eprintln!(
-        "xtask conformance vectors: {total} vector(s) — {must_failed} must-fail, \
-         {should_warned} should-warn, {html_warned} html-warn"
-    );
+    eprintln!("xtask conformance vectors: {total} vector(s) — {failed} failure(s)");
 
-    if must_failed > 0 {
+    if failed > 0 {
         return Err(format!(
-            "conformance vectors: {must_failed} `must`-tier vector(s) diverge from the specification"
+            "conformance vectors: {failed} vector projection(s) diverge from the specification"
         ));
     }
     Ok(())
@@ -950,10 +730,8 @@ fn run_vectors() -> Result<(), String> {
 
 /// Parse one vector's source and diff each projection the spec pins.
 ///
-/// Returns `(normative_mismatches, html_mismatch)`: the first drives
-/// pass / fail by level, the second is always informative.
-fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), String> {
-    let doc = aozora::Document::new(vector.source.clone());
+fn compare_vector(vector: &Vector) -> Result<Vec<String>, String> {
+    let doc = aozora::parse(vector.source.clone()).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let mut mismatches = Vec::new();
 
@@ -967,7 +745,8 @@ fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), Stri
         // "source-exact" check into the single canonical-idempotence
         // invariant, so a golden that is idempotent yet differs from the
         // canonical form of its source is unrepresentable.
-        if aozora::Document::new(expected.clone())
+        if aozora::parse(expected.clone())
+            .expect("source fits parser span limit")
             .snapshot()
             .to_source()
             != *expected
@@ -989,16 +768,14 @@ fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), Stri
             .extend((!diagnostics_match(expected, &actual)).then(|| "diagnostics".to_owned()));
     }
 
-    let html = vector
-        .expected
-        .html
-        .as_ref()
-        .and_then(|expected| (tree.to_html() != *expected).then(|| "html".to_owned()));
+    if let Some(expected) = vector.expected.html.as_ref() {
+        mismatches.extend((tree.to_html() != *expected).then(|| "html".to_owned()));
+    }
 
-    Ok((mismatches, html))
+    Ok(mismatches)
 }
 
-/// Pull the `data` array out of a `{ schema_version, data }` wire
+/// Pull the `data` array out of a `{ schemaVersion, data }` wire
 /// envelope, taking ownership of the items.
 fn wire_data(json: &str) -> Result<Vec<Value>, String> {
     let mut value: Value =
@@ -1068,6 +845,7 @@ fn diagnostics_match(expected: &[ExpectedDiagnostic], actual: &[ActualDiagnostic
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora::json::SCHEMA_VERSION;
 
     fn case(level: Level, passed: bool) -> CaseResult {
         CaseResult {
@@ -1156,124 +934,22 @@ mod tests {
         assert!(summary.by_level.is_empty(), "no level buckets");
     }
 
-    // ── ERROR-free ratchet (G2c) ────────────────────────────────────
-
-    fn efree(total: usize, must: usize, should: usize, may: usize) -> ErrorFreeSection {
-        let by_level = [("must", must), ("should", should), ("may", may)]
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v))
-            .collect();
-        ErrorFreeSection {
-            total,
-            error_free: must + should + may,
-            by_level,
-        }
-    }
-
-    #[test]
-    fn error_free_section_projects_summary_clean_counts() {
-        // A tree-sitter summary's `passed` field IS its ERROR-free count.
-        let summary = build_summary(
-            vec![
-                case(Level::Must, true),
-                case(Level::Must, false),
-                case(Level::Should, true),
-            ],
-            "tree-sitter",
-        );
-        let sec = error_free_section(&summary);
-        assert_eq!(sec.total, 3, "total cases");
-        assert_eq!(sec.error_free, 2, "two parsed clean");
-        assert_eq!(sec.by_level.get("must").copied(), Some(1), "one must clean");
-        assert_eq!(
-            sec.by_level.get("should").copied(),
-            Some(1),
-            "one should clean"
-        );
-    }
-
-    #[test]
-    fn ratchet_passes_when_counts_hold_or_improve() {
-        let floor = efree(127, 21, 36, 3);
-        assert!(
-            error_free_regressions(&efree(127, 21, 36, 3), &floor).is_empty(),
-            "equal to the floor is not a regression"
-        );
-        assert!(
-            error_free_regressions(&efree(127, 25, 40, 3), &floor).is_empty(),
-            "improving every tier is not a regression (the floor is a minimum)"
-        );
-    }
-
-    #[test]
-    fn ratchet_flags_a_dropped_tier() {
-        let floor = efree(127, 21, 36, 3);
-        // One must-tier fixture went from clean to ERROR.
-        let regressions = error_free_regressions(&efree(127, 20, 36, 3), &floor);
-        assert!(
-            regressions.iter().any(|m| m.contains("must 20 < 21")),
-            "names the tier and the drop: {regressions:?}"
-        );
-    }
-
-    #[test]
-    fn ratchet_flags_dropped_total_and_missing_tier() {
-        let floor = efree(127, 21, 36, 3); // error_free == 60
-        // A run that lost the whole `must` tier: absent tier counts as 0.
-        let by_level = [("should", 36), ("may", 3)]
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v))
-            .collect();
-        let current = ErrorFreeSection {
-            total: 127,
-            error_free: 39,
-            by_level,
-        };
-        let regressions = error_free_regressions(&current, &floor);
-        assert!(
-            regressions.iter().any(|m| m.contains("must 0 < 21")),
-            "an absent baseline tier is a regression: {regressions:?}"
-        );
-        assert!(
-            regressions.iter().any(|m| m.contains("total 39 < 60")),
-            "the aggregate drop is flagged too: {regressions:?}"
-        );
-    }
-
-    #[test]
-    fn baseline_which_selects_section_and_labels() {
-        let file = ErrorFreeBaseline {
-            schema_version: ERROR_FREE_SCHEMA_VERSION,
-            fixtures: Some(efree(1, 1, 0, 0)),
-            vectors: None,
-        };
-        assert!(
-            BaselineWhich::Fixtures.section(&file).is_some(),
-            "fixtures section present"
-        );
-        assert!(
-            BaselineWhich::Vectors.section(&file).is_none(),
-            "vectors section absent"
-        );
-        let (unit, cmd) = BaselineWhich::Vectors.labels();
-        assert_eq!(unit, "vectors", "vectors unit label");
-        assert!(
-            cmd.contains("conformance vectors"),
-            "update command targets the vectors runner: {cmd}"
-        );
-    }
-
     #[test]
     fn wire_data_extracts_data_array() {
-        let json = r#"{ "schemaVersion": 2, "data": [1, 2, 3] }"#;
-        let items = wire_data(json).expect("valid envelope");
+        let json = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
+            "data": [1, 2, 3]
+        })
+        .to_string();
+        let items = wire_data(&json).expect("valid envelope");
         assert_eq!(items.len(), 3, "three data items");
         assert_eq!(items[0], Value::from(1), "first item preserved");
     }
 
     #[test]
     fn wire_data_rejects_missing_data() {
-        let err = wire_data(r#"{ "schemaVersion": 2 }"#).expect_err("no data array");
+        let json = serde_json::json!({ "schemaVersion": SCHEMA_VERSION }).to_string();
+        let err = wire_data(&json).expect_err("no data array");
         assert!(err.contains("data"), "error mentions missing data: {err}");
     }
 
@@ -1315,14 +991,15 @@ mod tests {
 
     #[test]
     fn normalized_actual_diagnostics_kebabs_kind_and_drops_internal() {
-        let wire = r#"{
-            "schemaVersion": 2,
+        let wire = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
             "data": [
                 { "kind": "source_contains_pua", "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } },
                 { "kind": "self_check", "severity": "error", "source": "internal", "span": { "start": 2, "end": 3 } }
             ]
-        }"#;
-        let out = normalized_actual_diagnostics(wire).unwrap_or_else(|_| panic!("valid wire"));
+        })
+        .to_string();
+        let out = normalized_actual_diagnostics(&wire).unwrap_or_else(|_| panic!("valid wire"));
         assert_eq!(out.len(), 1, "internal-source diagnostic stripped");
         assert_eq!(
             out[0].code, "source-contains-pua",
@@ -1335,11 +1012,12 @@ mod tests {
 
     #[test]
     fn normalized_actual_diagnostics_requires_kind() {
-        let wire = r#"{
-            "schemaVersion": 2,
+        let wire = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
             "data": [ { "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } } ]
-        }"#;
-        let err = err_of(normalized_actual_diagnostics(wire));
+        })
+        .to_string();
+        let err = err_of(normalized_actual_diagnostics(&wire));
         assert!(err.contains("kind"), "error names missing kind: {err}");
     }
 
@@ -1445,23 +1123,22 @@ mod tests {
     #[test]
     fn compare_vector_no_expectations_is_no_mismatch() {
         let v = vector("plain text", empty_expected());
-        let (normative, html) = compare_vector(&v).expect("compare runs");
-        assert!(normative.is_empty(), "nothing pinned → no normative diff");
-        assert!(html.is_none(), "no html pinned → no html diff");
+        let mismatches = compare_vector(&v).expect("compare runs");
+        assert!(mismatches.is_empty(), "nothing pinned → no diff");
     }
 
     #[test]
     fn compare_vector_matching_serialize_passes() {
         // Parse once to learn the parser's own serialize output, then pin it.
-        let doc = aozora::Document::new("plain text".to_owned());
+        let doc = aozora::parse("plain text".to_owned()).expect("source fits parser span limit");
         let expected_serialize = doc.snapshot().to_source();
         let mut exp = empty_expected();
         exp.serialize = Some(expected_serialize);
         let v = vector("plain text", exp);
-        let (normative, _) = compare_vector(&v).expect("compare runs");
+        let mismatches = compare_vector(&v).expect("compare runs");
         assert!(
-            normative.is_empty(),
-            "pinned serialize equals parser output: {normative:?}"
+            mismatches.is_empty(),
+            "pinned serialize equals parser output: {mismatches:?}"
         );
     }
 
@@ -1470,25 +1147,20 @@ mod tests {
         let mut exp = empty_expected();
         exp.serialize = Some("definitely-not-the-real-serialization".to_owned());
         let v = vector("plain text", exp);
-        let (normative, _) = compare_vector(&v).expect("compare runs");
+        let mismatches = compare_vector(&v).expect("compare runs");
         assert!(
-            normative.contains(&"serialize".to_owned()),
-            "serialize drift flagged: {normative:?}"
+            mismatches.contains(&"serialize".to_owned()),
+            "serialize drift flagged: {mismatches:?}"
         );
     }
 
     #[test]
-    fn compare_vector_html_drift_is_informative_only() {
+    fn compare_vector_html_drift_is_reported() {
         let mut exp = empty_expected();
         exp.html = Some("<not-the-real-html/>".to_owned());
         let v = vector("plain text", exp);
-        let (normative, html) = compare_vector(&v).expect("compare runs");
-        assert!(normative.is_empty(), "html is not normative: {normative:?}");
-        assert_eq!(
-            html,
-            Some("html".to_owned()),
-            "html mismatch surfaces as an informative diff"
-        );
+        let mismatches = compare_vector(&v).expect("compare runs");
+        assert!(mismatches.contains(&"html".to_owned()));
     }
 
     #[test]
@@ -1509,14 +1181,10 @@ mod tests {
     }
 
     #[test]
-    fn tree_sitter_parse_flags_unmatched_opener() {
-        // `※` opens a gaiji marker that must be followed by a `［＃…］`
-        // slug; bare text after it leaves the grammar in an error state.
+    fn tree_sitter_parse_preserves_unmatched_opener_as_literal() {
         let (sexp, has_error) = tree_sitter_parse("※ただの文字").expect("grammar compiled in");
-        assert!(
-            has_error,
-            "an unmatched gaiji opener is an honest non-pass: {sexp}"
-        );
+        assert!(!has_error, "literal markup parses without error: {sexp}");
+        assert!(sexp.contains("literal_markup"));
     }
 
     #[test]
@@ -1546,7 +1214,7 @@ mod tests {
 
     fn ts_snapshot(vectors: Vec<TsVectorEntry>) -> TsVectorSnapshot {
         TsVectorSnapshot {
-            schema_version: 1,
+            format_version: TS_VECTORS_SNAPSHOT_FORMAT_VERSION,
             implementation: "tree-sitter".to_owned(),
             vectors,
         }

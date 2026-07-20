@@ -150,7 +150,6 @@ export type {
   DiagnosticEntry,
   PairEntry,
   GaijiResolutionEntry,
-  ProfilePhaseEntry,
 } from './parserState';
 export { parserStateField, utf16ToByte, byteToUtf16 } from './parserState';
 export { WRAP_PALETTE, getWrapCommand, WRAP_SHAPES } from './wrapCommands';

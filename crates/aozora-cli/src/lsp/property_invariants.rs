@@ -33,7 +33,7 @@ use super::doc_line_view::DocLineView;
 use super::line_index::LineIndex;
 use super::position::{byte_offset_to_position, position_to_byte_offset};
 use super::state::OpenDocument;
-use super::text_edit::{ByteEdit, apply_edits};
+use super::text_edit::ByteEdit;
 
 /// Generate a string biased toward content the LSP actually sees:
 /// kanji/hiragana, latin, newlines, and aozora notation triggers.
@@ -120,8 +120,9 @@ proptest! {
     /// canonical".
     #[test]
     fn apply_empty_edits_returns_source(text in realistic_text_strategy()) {
-        let out = apply_edits(&text, &[]).expect("empty edits never fail");
-        prop_assert_eq!(out, text);
+        let mut document = aozora::parse(text.clone()).expect("generated source fits");
+        document.edit([]).expect("empty edits never fail");
+        prop_assert_eq!(document.source(), text);
     }
 
     /// A single in-bounds, char-boundary-aligned replacement edit
@@ -140,17 +141,23 @@ proptest! {
         if len == 0 {
             // Insertion-only at byte 0 of empty text.
             let edit = ByteEdit::new(0..0, replacement.clone());
-            let out = apply_edits(&text, &[edit]).expect("valid edit");
-            prop_assert_eq!(out, replacement);
+            let mut document = aozora::parse(text).expect("generated source fits");
+            document
+                .edit([aozora::TextEdit::new(edit.range, edit.new_text)])
+                .expect("valid edit");
+            prop_assert_eq!(document.source(), replacement);
             return Ok(());
         }
         // Find a small char-boundary range somewhere in the middle.
         let start = next_char_boundary(&text, len / 4);
         let end = next_char_boundary(&text, len / 2);
         let edit = ByteEdit::new(start..end, replacement.clone());
-        let out = apply_edits(&text, &[edit]).expect("valid edit");
+        let mut document = aozora::parse(text.clone()).expect("generated source fits");
+        document
+            .edit([aozora::TextEdit::new(edit.range, edit.new_text)])
+            .expect("valid edit");
         let expected = format!("{}{}{}", &text[..start], replacement, &text[end..]);
-        prop_assert_eq!(out, expected);
+        prop_assert_eq!(document.source(), expected);
     }
 
     /// **Mechanism A byte-identity pin (#237 Tier-2).** The rope-backed
@@ -185,7 +192,7 @@ proptest! {
     fn doc_state_round_trips_arbitrary_text(text in realistic_text_strategy()) {
         let state = OpenDocument::new(text.clone());
         let snap = state.snapshot();
-        prop_assert_eq!(&**snap.doc_text(), text.as_str());
+        prop_assert_eq!(snap.doc_text(), text.as_str());
     }
 }
 

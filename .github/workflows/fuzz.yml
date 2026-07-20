@@ -1,14 +1,11 @@
 # Scheduled fuzz soak (G3).
 #
-# The nightly cargo-fuzz harnesses (see the Justfile's fuzz recipes) have
-# a LOCAL release-preflight gate — `just fuzz-all-deep`, a 5-minute
-# soak per target a developer runs before cutting a release — plus a
-# `tests/fuzz_regressions.rs` replay of every promoted crash that rides
-# `just test` on every push. This workflow is the CONTINUOUS complement to
-# both: an unattended weekly soak against the tip of main, so drift that no
-# single PR introduces (and that nobody happens to fuzz by hand between
-# releases) still gets caught. It mirrors the continuous-fuzzing model of
-# OSS-Fuzz — periodic runs over a persisted, ever-growing corpus.
+# The nightly cargo-fuzz harnesses (see the Justfile's fuzz recipes) run a
+# 5-minute soak per target in `release-ready`, while `tests/fuzz_regressions.rs`
+# replays every promoted crash in `just test` on every push. This workflow is
+# the continuous complement: an unattended weekly soak against the tip of main,
+# so accumulated corpus coverage also exercises changes between release-ready
+# runs.
 #
 #   rust-fuzz book (cargo-fuzz):  https://rust-fuzz.github.io/book/cargo-fuzz.html
 #   cargo-fuzz:                   https://github.com/rust-fuzz/cargo-fuzz
@@ -16,7 +13,7 @@
 #   OSS-Fuzz (continuous model):  https://google.github.io/oss-fuzz/
 #   OpenSSF Scorecard "Fuzzing":  https://github.com/ossf/scorecard/blob/main/docs/checks.md#fuzzing
 #
-# Each of the seven targets soaks for 600 s in its own matrix job
+# Each target soaks for 600 s in its own matrix job
 # (`fail-fast: false`, so one target's crash never masks the others). The
 # soak runs INSIDE the dev image via the same `docker compose run --rm dev
 # … cargo +nightly fuzz run --target x86_64-unknown-linux-gnu …` incantation
@@ -34,10 +31,8 @@
 # a visible red — a fuzz crash is a genuine defect, unlike link-audit's
 # non-blocking external-host probe.
 #
-# CI-ONLY BY NATURE (the ci-parallel exception): the local mirror of this
-# soak is `just fuzz-all-deep` (release checklist) plus the
-# `fuzz_regressions` replay on `just test`. A weekly nightly-toolchain soak
-# is not a per-push gate, so it does not join `ci-parallel`.
+# A weekly nightly-toolchain soak is not a per-push gate, so it does not join
+# `ci-parallel`; the non-skippable release proof lives in `release-ready`.
 #
 # Action SHAs are pinned to match the other workflows; Dependabot bumps them.
 name: fuzz

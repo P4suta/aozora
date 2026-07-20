@@ -634,21 +634,35 @@ pub(crate) fn canonicalise_slug(input: &str) -> Option<&'static str> {
 /// spelling once shipped — cannot reappear.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
-pub struct RenderSlug {
+pub(crate) struct RenderSlug {
     /// Canonical Japanese keyword (matches the enum→keyword tables in
     /// the syntax layer), used as the lookup key.
     pub canonical: &'static str,
     /// Kana the slug romanises, or `None` for an English loanword slug.
+    #[cfg_attr(
+        all(not(test), not(feature = "json")),
+        expect(
+            dead_code,
+            reason = "reading metadata is consumed by wire generation and catalogue validation"
+        )
+    )]
     pub reading: Option<&'static str>,
     /// Stable kebab-case CSS slug.
     pub roman: &'static str,
     /// JIS Z 8125:2004 clause, where the term is standardised.
+    #[cfg_attr(
+        all(not(test), not(feature = "json")),
+        expect(
+            dead_code,
+            reason = "standards metadata is consumed by wire generation and catalogue validation"
+        )
+    )]
     pub jis: Option<&'static str>,
 }
 
 /// The render slug catalogue — the single source of truth for romaji
 /// CSS slugs. See [`RenderSlug`].
-pub const RENDER_SLUGS: &[RenderSlug] = &[
+pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
     // --- Section / page break (JIS Z 8125:2004 §07.24) ---------------------
     RenderSlug {
         canonical: "改丁",
@@ -1103,6 +1117,19 @@ mod tests {
                 "render slug {:?} (canonical {}) inconsistent with reading {reading} → hepburn {h}",
                 e.roman, e.canonical
             );
+        }
+    }
+
+    #[test]
+    fn render_slug_jis_clauses_are_numeric() {
+        for entry in RENDER_SLUGS {
+            if let Some(clause) = entry.jis {
+                assert!(
+                    clause.split('.').all(|component| !component.is_empty()
+                        && component.bytes().all(|b| b.is_ascii_digit())),
+                    "invalid JIS clause: {clause}"
+                );
+            }
         }
     }
 

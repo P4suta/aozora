@@ -75,7 +75,7 @@ impl Span {
     /// the clamp keeps a negative shift from underflowing the `u32`
     /// endpoints.
     #[must_use]
-    pub const fn shifted(self, by: i64) -> Self {
+    pub fn shifted(self, by: i64) -> Self {
         Self {
             start: shift_clamp(self.start, by),
             end: shift_clamp(self.end, by),
@@ -83,32 +83,15 @@ impl Span {
     }
 }
 
-/// Add `by` to `endpoint`, saturating into the `u32` range. `const`-safe
-/// (no `Ord::clamp`, which is not yet const-stable).
-///
-/// Mutation note: the two boundary comparisons carry a pair of *equivalent*
-/// mutants that no test can distinguish, so they are documented here rather
-/// than chased. `<` → `<=` on the lower guard differs only at `shifted == 0`,
-/// where both the `<= 0` branch (`0`) and the fall-through (`0 as u32`) yield
-/// `0`; `>` → `>=` on the upper guard differs only at `shifted == u32::MAX`,
-/// where both the `>=` branch and the fall-through (`u32::MAX as u32`) yield
-/// `u32::MAX`. The killable `>` → `==` variant (which would truncate instead of
-/// saturating past the top of the range) is pinned by
-/// `tests::shifted_clamps_at_u32_max_on_overflow`.
+/// Add `by` to `endpoint`, saturating into the `u32` range.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "the bounds check guarantees 0 <= shifted <= u32::MAX before the cast"
+    reason = "clamp guarantees the value is inside the u32 range before the cast"
 )]
-const fn shift_clamp(endpoint: u32, by: i64) -> u32 {
-    let shifted = endpoint as i64 + by;
-    if shifted < 0 {
-        0
-    } else if shifted > u32::MAX as i64 {
-        u32::MAX
-    } else {
-        shifted as u32
-    }
+fn shift_clamp(endpoint: u32, by: i64) -> u32 {
+    by.saturating_add(i64::from(endpoint))
+        .clamp(0, i64::from(u32::MAX)) as u32
 }
 
 #[cfg(test)]
@@ -170,6 +153,9 @@ mod tests {
         // A negative shift larger than `start` clamps both endpoints at 0
         // rather than wrapping the `u32`.
         assert_eq!(Span::new(2, 5).shifted(-100), Span::new(0, 0));
+        assert_eq!(shift_clamp(7, -7), 0);
+        assert_eq!(shift_clamp(7, -8), 0);
+        assert_eq!(shift_clamp(u32::MAX, i64::MIN), 0);
     }
 
     #[test]
@@ -181,6 +167,9 @@ mod tests {
             Span::new(u32::MAX - 1, u32::MAX).shifted(100),
             Span::new(u32::MAX, u32::MAX)
         );
+        assert_eq!(shift_clamp(u32::MAX - 1, 1), u32::MAX);
+        assert_eq!(shift_clamp(u32::MAX - 1, 2), u32::MAX);
+        assert_eq!(shift_clamp(u32::MAX, i64::MAX), u32::MAX);
     }
 
     #[test]

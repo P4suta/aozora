@@ -18,8 +18,8 @@
           "end": 6
         },
         "close": {
-          "start": 10,
-          "end": 13
+          "start": 11,
+          "end": 14
         }
       }
     ],
@@ -29,7 +29,7 @@
         "severity": "note",
         "span": {
           "start": 3,
-          "end": 13
+          "end": 14
         }
       }
     ]

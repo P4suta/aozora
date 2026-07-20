@@ -1,10 +1,9 @@
 //! Aozora Bunko ships its corpus as Shift_JIS. The parser itself is
 //! strictly UTF-8, so decode first through
-//! [`aozora::encoding::decode_sjis`], then parse + serialize the
+//! [`aozora::decode_sjis`], then parse + serialize the
 //! resulting UTF-8 text.
 //!
-//! `aozora::encoding` re-exports the decode entry points, so this needs
-//! nothing beyond the umbrella crate.
+//! The decode entry points live at the crate root.
 //!
 //! Run with:
 //!
@@ -12,8 +11,7 @@
 //! cargo run --example sjis
 //! ```
 
-use aozora::Document;
-use aozora::encoding::decode_sjis;
+use aozora::decode_sjis;
 
 fn main() {
     // 「青空文庫」 encoded as Shift_JIS (two bytes per kanji).
@@ -27,7 +25,7 @@ fn main() {
 
     // From here it is the ordinary UTF-8 path: hand the decoded string
     // to `Document` and parse as usual.
-    let doc = Document::new(utf8);
+    let doc = aozora::parse(utf8).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     println!("--- to_html ---");

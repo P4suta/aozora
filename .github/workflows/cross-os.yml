@@ -17,11 +17,8 @@
 # the one documented exception to that policy and invokes cargo on the
 # runner host directly, with no `just` / Docker wrapper.
 #
-# Weekly + manual dispatch (not per-PR): a full native macOS/Windows
-# compile-and-test is slow and the platform-specific surface changes
-# rarely, so this is a scheduled backstop plus an on-demand
-# `workflow_dispatch`. The release checklist (contrib/release.md) requires
-# one green dispatch of this workflow before cutting a release.
+# Weekly + manual dispatch provide early warning. The release-ready workflow
+# runs the same native matrix on the release commit and is the publish gate.
 #
 # Corpus gates need no special handling: every `AOZORA_CORPUS_ROOT`-gated
 # test returns a vacuous pass when that variable is unset (it is never set

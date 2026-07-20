@@ -11,7 +11,7 @@
 //! 上付き / 下付き小文字 → [`pandoc_ast::Inline::Superscript`] /
 //! [`pandoc_ast::Inline::Subscript`]. The rest of Aozora's semantic markup has
 //! no single native construct (ruby, bouten, tate-chu-yoko, gaiji, font size,
-//! 囲み, …); the projection maps each such [`Node`](crate::Node) variant to a
+//! 囲み, …); the projection maps each semantic construct to a
 //! Pandoc [`pandoc_ast::Inline::Span`] / [`pandoc_ast::Block::Div`] with a
 //! stable CSS class (e.g. `aozora-ruby`, `aozora-bouten`) plus attribute
 //! key/value pairs carrying the structured data (e.g. ruby base + reading,
@@ -30,9 +30,9 @@
 //! ## Usage
 //!
 //! ```
-//! use aozora::Document;
+//! use aozora::parse;
 //!
-//! let doc = Document::new("｜青梅《おうめ》");
+//! let doc = parse("｜青梅《おうめ》").expect("source fits parser limits");
 //! let snapshot = doc.snapshot();
 //! let pandoc = aozora::pandoc::to_pandoc(&snapshot);
 //! // The ruby base lands in the Pandoc AST.

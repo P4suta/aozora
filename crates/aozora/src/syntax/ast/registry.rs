@@ -13,6 +13,7 @@ use crate::spec::Sentinel;
 use crate::syntax::NodeKind;
 use crate::syntax::format::{RegionClose, RegionFormat};
 
+use super::output::SourceNode;
 use super::payload::Node;
 
 /// Unified view over a registry hit.
@@ -26,7 +27,7 @@ use super::payload::Node;
 /// `&str`/list payloads to `StrId`/ranges). No `Eq`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
-pub enum NodeRef {
+pub(crate) enum NodeRef {
     /// Hit on an inline-sentinel position.
     Inline(Node),
     /// Hit on a block-leaf-sentinel position.
@@ -54,7 +55,7 @@ impl NodeRef {
 
     /// Cross-cutting [`crate::syntax::NodeKind`] tag for this entry.
     #[must_use]
-    pub const fn kind(self) -> NodeKind {
+    pub(crate) const fn kind(self) -> NodeKind {
         match self {
             Self::Inline(node) | Self::BlockLeaf(node) => node.kind(),
             Self::BlockOpen(_) => NodeKind::ContainerOpen,
@@ -85,6 +86,14 @@ impl Registry {
     pub(crate) fn from_sorted_slice(entries: &[(u32, NodeRef)]) -> Self {
         Self {
             table: EytzingerMap::from_sorted_slice(entries),
+        }
+    }
+
+    pub(crate) fn from_source_nodes(entries: &[SourceNode]) -> Self {
+        Self {
+            table: EytzingerMap::from_sorted_by(entries, |entry| {
+                (entry.normalized_offset.get(), entry.node)
+            }),
         }
     }
 
@@ -151,7 +160,7 @@ impl Default for Registry {
 /// this directly instead of re-deriving the pairing from independent open /
 /// close registry entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerPair {
+pub(crate) struct ContainerPair {
     /// The open container format. The builder constructs the pair from the
     /// open-stack pop, so `kind` reflects the open marker authoritatively
     /// (the close side is a discriminant; see [`RegionClose`]).
@@ -160,15 +169,6 @@ pub struct ContainerPair {
     pub open: NormalizedOffset,
     /// Normalized byte offset of the close sentinel (`U+E004`).
     pub close: NormalizedOffset,
-}
-
-impl ContainerPair {
-    /// Construct a pair. Helper for builder tests; in production the pipeline
-    /// emits these directly.
-    #[must_use]
-    pub const fn new(kind: RegionFormat, open: NormalizedOffset, close: NormalizedOffset) -> Self {
-        Self { kind, open, close }
-    }
 }
 
 #[cfg(test)]

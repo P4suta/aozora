@@ -1,4 +1,4 @@
-"""Parsed accessors return native ``list[dict]`` equal to the wire ``data``."""
+"""Parsed accessors return generated dataclasses equal to the wire data."""
 
 import json
 
@@ -15,17 +15,17 @@ def test_parsed_accessors_match_json_data():
     ]
     for parsed, raw in pairs:
         assert isinstance(parsed, list)
-        assert parsed == json.loads(raw)["data"]
+        assert [entry.to_dict() for entry in parsed] == json.loads(raw)["data"]
 
 
-def test_parsed_entries_are_dicts_with_kind_and_span():
+def test_parsed_entries_are_typed_values_with_kind_and_span():
     d = aozora.Document("｜青梅《おうめ》")
     nodes = d.nodes()
     assert nodes, "ruby source should classify at least one node"
     for entry in nodes:
-        assert isinstance(entry, dict)
-        assert "kind" in entry
-        assert "span" in entry
+        assert isinstance(entry, aozora.Node)
+        assert entry.kind
+        assert entry.span.end >= entry.span.start
 
 
 def test_clean_input_returns_empty_lists():

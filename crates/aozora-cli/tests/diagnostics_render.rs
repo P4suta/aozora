@@ -8,13 +8,12 @@
 //! rendered output so a regression in the formatter lands as a
 //! review diff, not a silent drift.
 //!
-//! Diagnostic spans live in SANITIZED coordinates; the inputs here use
-//! only LF and no BOM so source / sanitized byte offsets coincide and
-//! the assertions stay deterministic.
+//! Diagnostic spans live in original-source UTF-8 byte coordinates.
 
 use std::io::Write;
 use std::process::Stdio;
 
+use aozora::json::SCHEMA_VERSION;
 use tempfile::Builder;
 
 mod common;
@@ -136,8 +135,8 @@ fn json_format_emits_wire_envelope() {
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("json diagnostics envelope parses");
     assert_eq!(
-        value["schemaVersion"], 2,
-        "wire envelope carries schema_version 2: {stderr:?}"
+        value["schemaVersion"], SCHEMA_VERSION,
+        "wire envelope carries the core schema version: {stderr:?}"
     );
     let data = value["data"]
         .as_array()
@@ -169,7 +168,7 @@ fn auto_format_resolves_to_json_when_stderr_is_piped() {
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("auto → json envelope parses");
     assert_eq!(
-        value["schemaVersion"], 2,
+        value["schemaVersion"], SCHEMA_VERSION,
         "auto resolves to the json envelope off a TTY: {stderr:?}"
     );
 }
@@ -194,6 +193,23 @@ fn human_format_renders_graphical_report() {
     assert!(
         stderr.contains("here"),
         "human report draws the caret label: {stderr:?}"
+    );
+}
+
+#[test]
+fn human_format_uses_original_source_coordinates() {
+    let source = "\u{FEFF}first\r\nabc\u{E001}def";
+    let (_, stderr) = run(
+        &["check", "--format", "human", "--encoding", "utf8"],
+        source.as_bytes(),
+    );
+    assert!(
+        stderr.contains("abc\u{E001}def"),
+        "human report must attach the original CRLF/BOM source: {stderr:?}",
+    );
+    assert!(
+        stderr.contains("source_contains_pua"),
+        "the source-coordinate diagnostic must render: {stderr:?}",
     );
 }
 

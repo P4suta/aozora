@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::position::{byte_offset_to_position, position_to_byte_offset};
-use super::text_edit::{ByteEdit, apply_edits};
+use super::text_edit::ByteEdit;
 
 #[test]
 fn promoted_fuzz_artifacts_replay_cleanly() {
@@ -43,9 +43,9 @@ fn replay_edit_pipeline(data: &[u8]) {
         let a = u16::from_le_bytes([data[0], data[1]]) as usize;
         let b = u16::from_le_bytes([data[2], data[3]]) as usize;
         let repl = String::from_utf8_lossy(&data[4..data.len().min(16)]).into_owned();
-        let edits = [ByteEdit::new(a..b, repl)];
-        // Either Ok or a validation Err — never a panic.
-        drop(apply_edits(&text, &edits));
+        let edit = ByteEdit::new(a..b, repl);
+        let mut document = aozora::parse(text.clone()).expect("fuzz source fits");
+        drop(document.edit([aozora::TextEdit::new(edit.range, edit.new_text)]));
     }
 
     if text.len() <= 8192 {

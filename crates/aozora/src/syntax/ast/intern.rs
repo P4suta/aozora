@@ -79,7 +79,7 @@ const INITIAL_CAPACITY: usize = 256;
 /// `Hash`/`Ord` are derived so a `StrId` can key the owned node store's
 /// auxiliary maps and sort deterministically; both are zero-cost on a `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct StrId(pub(crate) u32);
+pub(crate) struct StrId(pub(crate) u32);
 
 /// Owned, lifetime-free string interner.
 ///
@@ -167,8 +167,15 @@ impl StrInterner {
         // no division).
         if self.table.is_empty() {
             self.table = vec![None; INITIAL_CAPACITY];
-            self.mask = INITIAL_CAPACITY - 1;
-        } else if self.occupied.saturating_mul(8) >= self.table.len().saturating_mul(7) {
+            self.mask = INITIAL_CAPACITY
+                .checked_sub(1)
+                .expect("initial interner capacity is nonzero");
+        } else if self
+            .occupied
+            .saturating_mul(8)
+            .cmp(&self.table.len().saturating_mul(7))
+            .is_ge()
+        {
             self.grow();
         }
 
@@ -178,8 +185,12 @@ impl StrInterner {
             reason = "low bits of u64 hash extracted as usize on purpose"
         )]
         let mut idx = (hash as usize) & self.mask;
-        loop {
-            self.stats.probe_steps += 1;
+        for _ in 0..self.table.len() {
+            self.stats.probe_steps = self
+                .stats
+                .probe_steps
+                .checked_add(1)
+                .expect("interner probe count fits u64");
             match self.table[idx] {
                 Some(existing) if self.resolve(existing) == s => {
                     self.stats.table_hits += 1;
@@ -194,9 +205,10 @@ impl StrInterner {
                     self.last = Some(id);
                     return id;
                 }
-                Some(_) => idx = (idx + 1) & self.mask,
+                Some(_) => idx = idx.wrapping_add(1) & self.mask,
             }
         }
+        panic!("interner probe table has no empty slot");
     }
 
     /// Append `s`'s bytes to `buf`, record its span, and mint a fresh
@@ -219,7 +231,9 @@ impl StrInterner {
     /// `buf` / `spans` are untouched, so live [`StrId`]s stay valid.
     fn grow(&mut self) {
         let new_cap = self.table.len().saturating_mul(2);
-        let new_mask = new_cap - 1;
+        let new_mask = new_cap
+            .checked_sub(1)
+            .expect("grown interner capacity is nonzero");
         let mut new_table: Vec<Option<StrId>> = vec![None; new_cap];
         // Collect occupied ids up front so the re-probe below can resolve each
         // against `buf` without overlapping a borrow of `table`.
@@ -231,9 +245,16 @@ impl StrInterner {
                 reason = "low bits of u64 hash extracted as usize on purpose"
             )]
             let mut idx = (h as usize) & new_mask;
-            while new_table[idx].is_some() {
-                idx = (idx + 1) & new_mask;
+            for _ in 0..new_table.len() {
+                if new_table[idx].is_none() {
+                    break;
+                }
+                idx = idx.wrapping_add(1) & new_mask;
             }
+            assert!(
+                new_table[idx].is_none(),
+                "grown interner table must have an empty slot"
+            );
             new_table[idx] = Some(id);
         }
         self.table = new_table;
@@ -256,7 +277,6 @@ impl StrInterner {
     /// (`StrId(0)..StrId(len)`). Counts every interned string, short and long,
     /// including table-bypassed long strings, which the owned tree must still
     /// address by id.
-    #[cfg(test)]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.spans.len()
@@ -426,6 +446,17 @@ mod tests {
         assert_eq!(i.len(), 300);
         assert!(i.capacity() >= 512, "table grew past initial capacity");
         assert!(i.stats.resizes >= 1, "at least one resize occurred");
+    }
+
+    #[test]
+    fn resize_begins_at_the_load_factor_boundary() {
+        let mut i = StrInterner::new();
+        for k in 0..224 {
+            i.intern(&format!("load-boundary-{k}"));
+        }
+        assert_eq!(i.capacity(), INITIAL_CAPACITY);
+        i.intern("load-boundary-trigger");
+        assert_eq!(i.capacity(), INITIAL_CAPACITY * 2);
     }
 
     #[test]

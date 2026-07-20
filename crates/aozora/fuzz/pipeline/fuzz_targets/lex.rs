@@ -17,7 +17,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(src) = core::str::from_utf8(data) else {
         return;
     };
-    let out = aozora::parse(src).snapshot();
+    let out = aozora::parse(src).expect("fuzz input fits parser spans").snapshot();
     for diag in out.diagnostics() {
         let span = diag.span();
         assert!(

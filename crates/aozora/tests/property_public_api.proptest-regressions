@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 95c05976f3752087c442f52c7098acf244f91b00b5557a61b865a755ab7918b8 # shrinks to s = "≪］］"
+cc bbe7c10b295b4b840af9d3ce1d6b2100edc6b0da400e36de27a5d58621e041e5 # shrinks to source = "------------\n------------", selectors = [19604, 22712, 11154, 22530], first_replacement = "｜", second_replacement = "《》"
+cc e435b24f81db057551cc36d9067053da48a7d7327401b785323ce5d9014dd03d # shrinks to source = "12341234、", operations = [(16762, 3495, "かんじ\n\n、"), (6318, 37024, "《［＃\n［＃")]

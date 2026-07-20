@@ -11,7 +11,7 @@ Usage: aozora completions [OPTIONS] <SHELL>
 Arguments:
   <SHELL>
           Shell dialect to emit a completion script for
-          
+
           [possible values: bash, elvish, fish, powershell, zsh, nushell]
 
 Options:

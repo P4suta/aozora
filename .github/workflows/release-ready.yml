@@ -1,0 +1,1018 @@
+name: release-ready
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-ready-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AOZORA_CORPUS_REPOSITORY: P4suta/aozorabunko_text
+  AOZORA_CORPUS_SHA: b1ec9a7fa46de8dd5acc33378428c899e86bfb32
+  AOZORA_SPEC_REPOSITORY: P4suta/aozora-notation-spec
+  AOZORA_SPEC_SHA: a5473069f219000f7306a012e79e3ea393406680
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+      - id: scope
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          run=false
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            run=true
+          elif [[ "$GITHUB_EVENT_NAME" == push ]] &&
+              git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+            run=true
+          elif [[ "$HEAD_REF" == release-plz-* ]]; then
+            run=true
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [[ "$run" == true ]]; then
+            grep -Fx "AOZORA_CORPUS_REPOSITORY=$AOZORA_CORPUS_REPOSITORY" .github/release-inputs.env
+            grep -Fx "AOZORA_CORPUS_SHA=$AOZORA_CORPUS_SHA" .github/release-inputs.env
+            grep -Fx "AOZORA_SPEC_REPOSITORY=$AOZORA_SPEC_REPOSITORY" .github/release-inputs.env
+            grep -Fx "AOZORA_SPEC_SHA=$AOZORA_SPEC_SHA" .github/release-inputs.env
+          fi
+
+  quality:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.AOZORA_SPEC_REPOSITORY }}
+          ref: ${{ env.AOZORA_SPEC_SHA }}
+          path: .spec
+          fetch-depth: 1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_CORPUS_SHA }}
+          path: .corpus
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-dev-image
+      - name: Verify pinned inputs
+        run: |
+          set -euo pipefail
+          test "$(git -C .spec rev-parse HEAD)" = "$AOZORA_SPEC_SHA"
+          test "$(git -C .corpus rev-parse HEAD)" = "$AOZORA_CORPUS_SHA"
+          test -n "$(find .corpus -type f -name '*.txt' -print -quit)"
+          test -n "$(find .spec -type f -print -quit)"
+      - name: Warning-free workspace gates
+        env:
+          BASELINE_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          just baseline-ratchet
+          just lint-full
+          just test
+          just test-doc-all
+          just msrv-check
+          just deny
+          just audit
+          just semver
+      - name: Generated and external specification gates
+        env:
+          AOZORA_SPEC_REPO: ${{ github.workspace }}/.spec
+        run: |
+          just verify-spec-vectors
+          just conformance
+          just drift-gate
+          just schema-check
+          just types-check
+          just types-langs-check
+      - name: Strict corpus gates
+        env:
+          AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
+        run: |
+          just audit-gate
+          just corpus-sweep
+          just verbatim-gate
+          just render-leak-gate
+          just render-correctness-gate
+          just alloc-gate
+          just perf-gate
+          just incremental-speedup-gate
+      - name: Deep property tests
+        run: just prop-deep
+
+  mutation:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        assignment:
+          - "aozora:0/16"
+          - "aozora:1/16"
+          - "aozora:2/16"
+          - "aozora:3/16"
+          - "aozora:4/16"
+          - "aozora:5/16"
+          - "aozora:6/16"
+          - "aozora:7/16"
+          - "aozora:8/16"
+          - "aozora:9/16"
+          - "aozora:10/16"
+          - "aozora:11/16"
+          - "aozora:12/16"
+          - "aozora:13/16"
+          - "aozora:14/16"
+          - "aozora:15/16"
+          - "aozora-cli:0/12"
+          - "aozora-cli:1/12"
+          - "aozora-cli:2/12"
+          - "aozora-cli:3/12"
+          - "aozora-cli:4/12"
+          - "aozora-cli:5/12"
+          - "aozora-cli:6/12"
+          - "aozora-cli:7/12"
+          - "aozora-cli:8/12"
+          - "aozora-cli:9/12"
+          - "aozora-cli:10/12"
+          - "aozora-cli:11/12"
+          - "aozora-ffi:0/1"
+          - "aozora-extism:0/1"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup-dev-image
+      - name: Mutation sweep
+        env:
+          ASSIGNMENT: ${{ matrix.assignment }}
+        run: |
+          CRATE="${ASSIGNMENT%%:*}"
+          SHARD="${ASSIGNMENT#*:}"
+          just mutants -p "$CRATE" --all-features --shard "$SHARD" --sharding round-robin
+      - name: Verify mutation outcome
+        run: |
+          set -euo pipefail
+          report=mutants.out/outcomes.json
+          test -s "$report"
+          test "$(jq -er .missed "$report")" -eq 0
+          test "$(jq -er .timeout "$report")" -eq 0
+          test "$(jq -er .total_mutants "$report")" -gt 0
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-mutants-${{ strategy.job-index }}
+          path: mutants.out
+          retention-days: 90
+          if-no-files-found: error
+
+  fuzz:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup-dev-image
+      - run: just fuzz-all-deep
+      - name: Reject retained fuzz failures
+        run: |
+          set -euo pipefail
+          if find crates -path '*/fuzz/*/artifacts/*' -type f \
+              \( -name 'crash-*' -o -name 'oom-*' -o -name 'leak-*' -o -name 'timeout-*' \) \
+              -print -quit | grep -q .; then
+            exit 1
+          fi
+
+  sanitizers:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [asan, tsan]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup-dev-image
+      - run: docker compose run --rm dev bash scripts/sanitizers.sh ${{ matrix.mode }}
+
+  cross-os:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, windows-2025]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        with:
+          tool: nextest
+      - run: cargo nextest run --workspace --exclude aozora-bench --all-targets --all-features --no-fail-fast
+
+  native-artifacts:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    name: native artifact (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            archive: zip
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_CORPUS_SHA }}
+          path: .corpus
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: "1.97.0"
+          targets: ${{ matrix.target }}
+          components: llvm-tools-preview
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: release-ready-native-${{ matrix.target }}
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        with:
+          tool: cargo-auditable,cargo-cyclonedx
+      - name: Resolve immutable release identity
+        run: |
+          set -euo pipefail
+          version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          test -n "$version"
+          echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build profile-guided CLI
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          profile_dir="$GITHUB_WORKSPACE/pgo-data"
+          profile_data="$GITHUB_WORKSPACE/aozora.profdata"
+          mkdir -p "$profile_dir"
+          export RUSTFLAGS="-Cprofile-generate=$profile_dir"
+          export LLVM_PROFILE_FILE="$profile_dir/aozora-%p-%m.profraw"
+          cargo auditable build --locked --profile dist \
+            --target "$TARGET" --package aozora-cli
+
+          suffix=""
+          [[ "$TARGET" == *-windows-* ]] && suffix=".exe"
+          binary="target/${TARGET}/dist/aozora${suffix}"
+          training_count=0
+          while IFS= read -r source; do
+            "$binary" check --format json "$source" >/dev/null
+            "$binary" render "$source" >/dev/null
+            training_count=$((training_count + 1))
+          done < <(find .corpus -type f -name '*.txt' -print | sort | sed -n '1,120p')
+          test "$training_count" -gt 0
+
+          llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV |
+            awk '/^host:/ { print $2 }')/bin/llvm-profdata"
+          test -x "$llvm_profdata" || test -x "${llvm_profdata}.exe"
+          [[ -x "$llvm_profdata" ]] || llvm_profdata="${llvm_profdata}.exe"
+          llvm_readobj="$(dirname "$llvm_profdata")/llvm-readobj"
+          test -x "$llvm_readobj" || test -x "${llvm_readobj}.exe"
+          [[ -x "$llvm_readobj" ]] || llvm_readobj="${llvm_readobj}.exe"
+          "$llvm_profdata" merge -o "$profile_data" "$profile_dir"/*.profraw
+          "$llvm_profdata" show --counts "$profile_data" |
+            grep -E 'Functions shown: [1-9]' >/dev/null
+
+          unset LLVM_PROFILE_FILE
+          export RUSTFLAGS="-Cprofile-use=$profile_data -Cllvm-args=-pgo-warn-missing-function"
+          cargo auditable build --locked --profile dist \
+            --target "$TARGET" --package aozora-cli
+          if "$llvm_readobj" --sections "$binary" |
+              grep -E '(__llvm_prf|\.lprf)' >/dev/null; then
+            echo "::error title=PGO::final CLI is still profile-instrumented"
+            exit 1
+          fi
+          if command -v shasum >/dev/null 2>&1; then
+            profile_sha="$(shasum -a 256 "$profile_data" | awk '{ print $1 }')"
+          else
+            profile_sha="$(sha256sum "$profile_data" | awk '{ print $1 }')"
+          fi
+          echo "PROFILE_SHA=$profile_sha" >> "$GITHUB_ENV"
+          AOZORA_CLI_ARTIFACT="$binary" ARTIFACT_SIZE_ONLY=cli \
+            cargo run -p aozora-xtask -q -- artifacts size-check
+
+      - name: Build native FFI
+        run: |
+          set -euo pipefail
+          cargo auditable build --locked --profile dist \
+            --target "${{ matrix.target }}" --package aozora-ffi
+      - name: Assemble native distribution
+        id: archive
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          name="aozora-v${VERSION}-${TARGET}"
+          staging="${RUNNER_TEMP}/${name}"
+          target_dir="target/${TARGET}/dist"
+          mkdir -p "${staging}/completions" "${staging}/man/man1" "${staging}/schema"
+
+          suffix=""
+          [[ "$ARCHIVE" == zip ]] && suffix=".exe"
+          binary="${target_dir}/aozora${suffix}"
+          cp "$binary" "$staging/"
+
+          "$binary" completions bash > "${staging}/completions/aozora.bash"
+          "$binary" completions zsh > "${staging}/completions/_aozora"
+          "$binary" completions fish > "${staging}/completions/aozora.fish"
+          "$binary" completions powershell > "${staging}/completions/_aozora.ps1"
+          "$binary" completions elvish > "${staging}/completions/aozora.elv"
+          "$binary" completions nushell > "${staging}/completions/aozora.nu"
+          "$binary" man > "${staging}/man/man1/aozora.1"
+          for sub in check lint fmt render inspect pandoc explain repl tui doctor init spec lsp completions; do
+            "$binary" man "$sub" > "${staging}/man/man1/aozora-${sub}.1"
+          done
+          "$binary" spec schema config > "${staging}/schema/aozora-config.schema.json"
+
+          found_dynamic=false
+          found_link_library=false
+          for library in libaozora_ffi.so libaozora_ffi.dylib aozora_ffi.dll; do
+            if [[ -f "${target_dir}/${library}" ]]; then
+              cp "${target_dir}/${library}" "$staging/"
+              found_dynamic=true
+            fi
+          done
+          for library in libaozora_ffi.a aozora_ffi.lib aozora_ffi.dll.lib; do
+            if [[ -f "${target_dir}/${library}" ]]; then
+              cp "${target_dir}/${library}" "$staging/"
+              found_link_library=true
+            fi
+          done
+          test "$found_dynamic" = true
+          test "$found_link_library" = true
+          cp "${target_dir}/aozora.h" "$staging/"
+          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "$staging/"
+
+          schema_version="$(jq -er '.properties.schemaVersion.const' \
+            crates/aozora-conformance/json/schema-nodes.json)"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg version "$VERSION" \
+            --arg target "$TARGET" \
+            --argjson schemaVersion "$schema_version" \
+            --arg optimization "pgo" \
+            --arg profileSha256 "$PROFILE_SHA" \
+            '{commit:$commit,version:$version,target:$target,schemaVersion:$schemaVersion,optimization:$optimization,profileSha256:$profileSha256}' \
+            > "${staging}/manifest.json"
+
+          cd "$RUNNER_TEMP"
+          if [[ "$ARCHIVE" == zip ]]; then
+            7z a "${name}.zip" "$name" > /dev/null
+            artifact="${name}.zip"
+          else
+            tar czf "${name}.tar.gz" "$name"
+            artifact="${name}.tar.gz"
+          fi
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$artifact" > "${artifact}.sha256"
+          else
+            sha256sum "$artifact" > "${artifact}.sha256"
+          fi
+          {
+            echo "name=$name"
+            echo "artifact=${RUNNER_TEMP}/${artifact}"
+            echo "checksum=${RUNNER_TEMP}/${artifact}.sha256"
+          } >> "$GITHUB_OUTPUT"
+      - name: Generate native SBOM
+        id: sbom
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          destination="${RUNNER_TEMP}/native-sboms"
+          mkdir -p "$destination"
+          cargo cyclonedx \
+            --manifest-path crates/aozora-cli/Cargo.toml \
+            --target "$TARGET" \
+            --format json --spec-version 1.5 --all --override-filename sbom
+          source="$(find crates/aozora-cli -maxdepth 1 -type f -name 'sbom*' -print -quit)"
+          test -n "$source"
+          mv "$source" "$destination/${{ steps.archive.outputs.name }}-cli.cdx.json"
+          cargo cyclonedx \
+            --manifest-path crates/aozora-ffi/Cargo.toml \
+            --target "$TARGET" \
+            --format json --spec-version 1.5 --all --override-filename sbom
+          source="$(find crates/aozora-ffi -maxdepth 1 -type f -name 'sbom*' -print -quit)"
+          test -n "$source"
+          mv "$source" "$destination/${{ steps.archive.outputs.name }}-ffi.cdx.json"
+          test "$(find "$destination" -name '*.cdx.json' | wc -l)" -eq 2
+          echo "directory=$destination" >> "$GITHUB_OUTPUT"
+      - name: Smoke-test packaged native CLI
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.artifact }}
+          ARCHIVE_KIND: ${{ matrix.archive }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          smoke="${RUNNER_TEMP}/native-smoke"
+          mkdir -p "$smoke"
+          if [[ "$ARCHIVE_KIND" == zip ]]; then
+            7z x "$ARCHIVE" "-o${smoke}" > /dev/null
+            binary="$(find "$smoke" -type f -name 'aozora.exe' -print -quit)"
+          else
+            tar xzf "$ARCHIVE" -C "$smoke"
+            binary="$(find "$smoke" -type f -name 'aozora' -print -quit)"
+          fi
+          test -f "$binary"
+          "$binary" --version | grep -F "$VERSION"
+          printf '｜青空《あおぞら》\n' | "$binary" check --format json -
+          printf '｜青空《あおぞら》\n' | "$binary" render - | grep -F '<ruby>'
+          manifest="$(find "$smoke" -type f -name manifest.json -print -quit)"
+          test "$(jq -er .commit "$manifest")" = "$GITHUB_SHA"
+          header="$(find "$smoke" -type f -name aozora.h -print -quit)"
+          grep -F "#define AOZORA_SCHEMA_VERSION $(jq -er .schemaVersion "$manifest")" "$header"
+          config_schema="$(find "$smoke" -type f -name aozora-config.schema.json -print -quit)"
+          test "$(jq -er .title "$config_schema")" = AozoraConfig
+
+          library_root="$(dirname "$header")"
+          source="$GITHUB_WORKSPACE/crates/aozora-ffi/tests/c_smoke/smoke.c"
+          if [[ "$TARGET" == *-windows-* ]]; then
+            test -s "${library_root}/aozora_ffi.dll"
+            test -s "${library_root}/aozora_ffi.dll.lib"
+            export AOZORA_C_ROOT
+            AOZORA_C_ROOT="$(cygpath -w "$library_root")"
+            export AOZORA_C_SOURCE
+            AOZORA_C_SOURCE="$(cygpath -w "$source")"
+            # shellcheck disable=SC2016
+            powershell.exe -NoProfile -NonInteractive -Command '
+              $output = Join-Path $env:AOZORA_C_ROOT "aozora_ffi_smoke.exe"
+              & cl.exe /nologo /W4 "/I$env:AOZORA_C_ROOT" $env:AOZORA_C_SOURCE "/Fe$output" /link "/LIBPATH:$env:AOZORA_C_ROOT" aozora_ffi.dll.lib
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $env:PATH = "$env:AOZORA_C_ROOT;$env:PATH"
+              & $output
+              exit $LASTEXITCODE
+            '
+          else
+            consumer="${RUNNER_TEMP}/aozora-ffi-smoke"
+            cc -O2 -Wall -Wextra -I "$library_root" \
+              -L "$library_root" -Wl,-rpath,"$library_root" \
+              -o "$consumer" "$source" -laozora_ffi
+            "$consumer"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-native-${{ github.sha }}-${{ matrix.target }}
+          path: |
+            ${{ steps.archive.outputs.artifact }}
+            ${{ steps.archive.outputs.checksum }}
+            ${{ steps.sbom.outputs.directory }}/*.cdx.json
+          retention-days: 90
+          if-no-files-found: error
+
+  vscode-artifacts:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    name: VSIX artifact (${{ matrix.vsce_target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vsce_target: linux-x64
+            cargo_target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: false
+          - vsce_target: linux-arm64
+            cargo_target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            cross: false
+          - vsce_target: alpine-x64
+            cargo_target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            cross: true
+          - vsce_target: alpine-arm64
+            cargo_target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            cross: true
+          - vsce_target: darwin-x64
+            cargo_target: x86_64-apple-darwin
+            runner: macos-15-intel
+            cross: false
+          - vsce_target: darwin-arm64
+            cargo_target: aarch64-apple-darwin
+            runner: macos-latest
+            cross: false
+          - vsce_target: win32-x64
+            cargo_target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            cross: false
+          - vsce_target: win32-arm64
+            cargo_target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            cross: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.cargo_target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: release-ready-vscode-${{ matrix.vsce_target }}
+      - if: matrix.cross
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        with:
+          tool: cross
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        with:
+          tool: cargo-cyclonedx
+      - name: Build bundled language server
+        env:
+          TARGET: ${{ matrix.cargo_target }}
+          USE_CROSS: ${{ matrix.cross }}
+        run: |
+          set -euo pipefail
+          export AOZORA_BUILD_VERSION
+          AOZORA_BUILD_VERSION="$(awk -F' *= *' \
+            '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          if [[ "$USE_CROSS" == true ]]; then
+            cross build --locked --profile dist --target "$TARGET" --bin aozora
+          else
+            cargo build --locked --profile dist --target "$TARGET" --bin aozora
+          fi
+          mkdir -p editors/vscode/server
+          if [[ "$TARGET" == *-windows-* ]]; then
+            cp "target/${TARGET}/dist/aozora.exe" editors/vscode/server/aozora.exe
+          else
+            cp "target/${TARGET}/dist/aozora" editors/vscode/server/aozora
+            chmod 0755 editors/vscode/server/aozora
+          fi
+          cargo cyclonedx \
+            --manifest-path crates/aozora-cli/Cargo.toml \
+            --target "$TARGET" \
+            --format json --spec-version 1.5 --all \
+            --override-filename aozora-vscode-sbom
+          sbom="$(find crates/aozora-cli -maxdepth 1 -type f \
+            -name 'aozora-vscode-sbom*.json' -print -quit)"
+          test -n "$sbom"
+          mv "$sbom" editors/vscode/SBOM.cdx.json
+          cp NOTICE editors/vscode/
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.14"
+      - name: Build platform VSIX
+        working-directory: editors/vscode
+        env:
+          CARGO_TARGET: ${{ matrix.cargo_target }}
+          VSCE_TARGET: ${{ matrix.vsce_target }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          version="$(awk -F' *= *' \
+            '/^version = / { gsub(/"/, "", $2); print $2; exit }' ../../Cargo.toml)"
+          bun pm pkg set "version=$version"
+          bun run compile
+          bun run vsce package --target "$VSCE_TARGET" --no-yarn
+          vsix="$(find . -maxdepth 1 -name '*.vsix' -print -quit)"
+          test -n "$vsix"
+          test "$(unzip -p "$vsix" extension/package.json | jq -er .version)" = "$version"
+          if [[ "$CARGO_TARGET" == *-windows-* ]]; then
+            unzip -l "$vsix" | grep -F 'extension/server/aozora.exe'
+            server_path='extension/server/aozora.exe'
+          else
+            unzip -l "$vsix" | grep -F 'extension/server/aozora'
+            server_path='extension/server/aozora'
+          fi
+          unzip -l "$vsix" | grep -F 'extension/SBOM.cdx.json'
+          unzip -l "$vsix" | grep -F 'extension/LICENSE-APACHE'
+          unzip -l "$vsix" | grep -F 'extension/LICENSE-MIT'
+          unzip -l "$vsix" | grep -F 'extension/NOTICE'
+          unpacked="$(mktemp -d)"
+          unzip -q "$vsix" -d "$unpacked"
+          server="${unpacked}/${server_path}"
+          chmod 0755 "$server"
+          "$server" --version | grep -F "$version"
+          printf '｜青空《あおぞら》\n' | "$server" check --format json -
+          schema_version="$(jq -er '.properties.schemaVersion.const' \
+            ../../crates/aozora-conformance/json/schema-nodes.json)"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg version "$version" \
+            --arg target "$VSCE_TARGET" \
+            --arg cargoTarget "$CARGO_TARGET" \
+            --argjson schemaVersion "$schema_version" \
+            '{commit:$commit,version:$version,target:$target,cargoTarget:$cargoTarget,schemaVersion:$schemaVersion}' \
+            > "manifest-${VSCE_TARGET}.json"
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$vsix" > "${vsix}.sha256"
+          else
+            sha256sum "$vsix" > "${vsix}.sha256"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-vsix-${{ github.sha }}-${{ matrix.vsce_target }}
+          path: |
+            editors/vscode/*.vsix
+            editors/vscode/*.vsix.sha256
+            editors/vscode/manifest-*.json
+          retention-days: 90
+          if-no-files-found: error
+
+  artifacts:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: ./.github/actions/setup-dev-image
+      - name: Build and exercise distribution channels
+        run: |
+          just publish-check
+          just smoke-ffi
+          just extism-build
+          just smoke-extism
+          just smoke-go
+          just parity-wasm
+          just playground-all
+          just playground-e2e
+          just vscode-ci
+      - name: Build npm, CLI, C, and playground artifacts
+        run: |
+          docker compose run --rm dev bash -euc '
+            cargo run -p aozora-xtask -q -- artifacts crates
+            cargo build --locked --profile dist -p aozora-cli
+            cargo build --locked --release -p aozora-ffi
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
+              wasm-pack build --target web --release crates/aozora-wasm --locked
+            wasm=crates/aozora-wasm/pkg/aozora_wasm_bg.wasm
+            before=$(wc -c < "$wasm")
+            wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
+              --enable-bulk-memory --enable-mutable-globals \
+              --enable-nontrapping-float-to-int \
+              "$wasm" -o "$wasm"
+            after=$(wc -c < "$wasm")
+            test "$after" -lt "$before"
+            cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
+            cargo cyclonedx \
+              --manifest-path crates/aozora-wasm/Cargo.toml \
+              --target wasm32-unknown-unknown \
+              --format json --spec-version 1.5 --all \
+              --override-filename aozora-wasm-sbom
+            wasm_sbom=$(find crates/aozora-wasm -maxdepth 1 -type f \
+              -name "aozora-wasm-sbom*.json" -print -quit)
+            test -n "$wasm_sbom"
+            mv "$wasm_sbom" crates/aozora-wasm/pkg/aozora-wasm.cdx.json
+            package_json=crates/aozora-wasm/pkg/package.json
+            generated="$(mktemp)"
+            jq ".files = (.files + [\"LICENSE-APACHE\", \"LICENSE-MIT\", \"NOTICE\", \"aozora-wasm.cdx.json\"] | unique)" \
+              "$package_json" > "$generated"
+            mv "$generated" "$package_json"
+            (cd crates/aozora-wasm/pkg && npm pack)
+            mkdir -p target/release-ready-build
+            cargo cyclonedx \
+              --manifest-path crates/aozora-extism/Cargo.toml \
+              --target wasm32-unknown-unknown \
+              --format json --spec-version 1.5 --all \
+              --override-filename aozora-extism-sbom
+            extism_sbom=$(find crates/aozora-extism -maxdepth 1 -type f \
+              -name "aozora-extism-sbom*.json" -print -quit)
+            test -n "$extism_sbom"
+            mv "$extism_sbom" target/release-ready-build/aozora-extism.cdx.json
+            cp /cargo/target/dist/aozora target/release-ready-build/
+            find /cargo/target/release -maxdepth 1 -type f \
+              \( -name "libaozora_ffi.so" -o -name "libaozora_ffi.a" -o -name "aozora.h" \) \
+              -exec cp {} target/release-ready-build/ \;
+          '
+      - name: Normalize artifact staging ownership
+        run: sudo chown -R "$(id -u):$(id -g)" target
+      - name: Enforce artifact size ratchets
+        run: docker compose run --rm dev cargo run -p aozora-xtask -q -- artifacts size-check
+      - name: Assemble immutable artifact set
+        run: |
+          set -euo pipefail
+          rm -rf target/release-ready
+          mkdir -p target/release-ready
+          cp target/release-ready-build/aozora target/release-ready/
+          cp crates/aozora-extism/dist/aozora.wasm target/release-ready/
+          cp target/release-ready-build/aozora-extism.cdx.json target/release-ready/
+          cp crates/aozora-wasm/pkg/*.tgz target/release-ready/
+          cp -R target/release-ready-build/playground target/release-ready/playground
+          find target/release-ready-build -type f \
+            \( -name 'libaozora_ffi.so' -o -name 'libaozora_ffi.a' -o -name 'aozora.h' \) \
+            -exec cp {} target/release-ready/ \;
+          cp target/release-ready-build/crates/*.crate target/release-ready/
+          mkdir -p target/go-sdk/aozora-go
+          cp -R crates/aozora-go/. target/go-sdk/aozora-go/
+          mkdir -p target/go-sdk/aozora-go/testdata
+          cp -R crates/aozora-conformance/fixtures/render \
+            target/go-sdk/aozora-go/testdata/render
+          cp LICENSE-APACHE LICENSE-MIT NOTICE target/go-sdk/aozora-go/
+          cmp target/go-sdk/aozora-go/aozora.wasm \
+            target/release-ready/aozora.wasm
+          tar -C target/go-sdk -czf target/release-ready/aozora-go.tar.gz aozora-go
+          version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          docker compose run --rm dev bash -euc '
+            cd crates/aozora-go
+            bash ../../scripts/go-sbom.sh "$1"
+          ' _ "$version" > target/release-ready/aozora-go.cdx.json
+          schema_version="$(jq -er '.properties.schemaVersion.const' \
+            crates/aozora-conformance/json/schema-nodes.json)"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg version "$version" \
+            --argjson schemaVersion "$schema_version" \
+            --arg wasmOptimization "binaryen-Oz" \
+            --arg extismOptimization "binaryen-Oz" \
+            '{commit:$commit,version:$version,schemaVersion:$schemaVersion,wasmOptimization:$wasmOptimization,extismOptimization:$extismOptimization}' \
+            > target/release-ready/manifest.json
+          (
+            cd target/release-ready
+            find . -type f ! -name SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 sha256sum > /tmp/aozora-SHA256SUMS
+            mv /tmp/aozora-SHA256SUMS SHA256SUMS
+          )
+          test -s target/release-ready/aozora
+          test -s target/release-ready/aozora.wasm
+          test -s target/release-ready/aozora-extism.cdx.json
+          test -s target/release-ready/libaozora_ffi.so
+          test -s target/release-ready/libaozora_ffi.a
+          test -s target/release-ready/aozora.h
+          test -s target/release-ready/aozora-go.cdx.json
+          test -s target/release-ready/manifest.json
+          test -s target/release-ready/playground/index.html
+          diff -qr target/release-ready-build/playground target/release-ready/playground
+      - name: Install and exercise exact C artifact
+        run: |
+          docker compose run --rm dev bash -euc '
+            root=target/release-ready
+            output=/tmp/aozora-ffi-artifact-smoke
+            cc -O2 -Wall -Wextra -I "$root" \
+              -L "$root" -Wl,-rpath,"$root" \
+              -o "$output" crates/aozora-ffi/tests/c_smoke/smoke.c \
+              -laozora_ffi
+            "$output"
+            python3 scripts/ffi-fixture-parity.py \
+              "$root/libaozora_ffi.so" \
+              crates/aozora-conformance/fixtures/render
+          '
+      - name: Install and exercise exact Extism artifact
+        run: |
+          docker compose run --rm \
+            -e AOZORA_EXTISM_ARTIFACT=/workspace/target/release-ready/aozora.wasm \
+            dev cargo test -p aozora-extism --features host-smoke \
+            --test host_smoke -- --nocapture
+      - name: Exercise exact CLI artifact on a pseudo-terminal
+        run: |
+          docker compose run --rm dev \
+            python3 scripts/tty-smoke.py target/release-ready/aozora
+      - name: Install and exercise exact npm artifact
+        run: |
+          set -euo pipefail
+          install_root="$(mktemp -d)"
+          npm install --ignore-scripts --prefix "$install_root" \
+            target/release-ready/*.tgz
+          package_root="${install_root}/node_modules/aozora-wasm"
+          schema_version="$(jq -er .schemaVersion \
+            target/release-ready/manifest.json)"
+          node crates/aozora-wasm/tests/js/parity-web.mjs \
+            "$package_root" \
+            crates/aozora-conformance/fixtures/render \
+            "$schema_version"
+      - name: Install and exercise exact Go artifact
+        run: |
+          docker compose run --rm dev bash -euc '
+            smoke="$(mktemp -d)"
+            tar xzf target/release-ready/aozora-go.tar.gz -C "$smoke"
+            cd "$smoke/aozora-go"
+            go test ./...
+          '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-ready-${{ github.sha }}
+          path: target/release-ready
+          retention-days: 90
+          if-no-files-found: error
+
+  python:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11"
+      - run: pip install --upgrade "maturin>=1.9,<2.0" pytest mypy twine
+      - if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/smoke-py.sh
+      - name: Build wheel and sdist
+        run: |
+          maturin build --release -F extension-module -m crates/aozora-py/Cargo.toml -o target/python-dist
+          if [[ "${{ matrix.os }}" == ubuntu-latest ]]; then
+            maturin sdist -m crates/aozora-py/Cargo.toml -o target/python-dist
+          fi
+          twine check target/python-dist/*
+          test -n "$(find target/python-dist -name '*.whl' -print -quit)"
+          if [[ "${{ matrix.os }}" == ubuntu-latest ]]; then
+            test -n "$(find target/python-dist -name '*.tar.gz' -print -quit)"
+          fi
+          wheel="$(find target/python-dist -name '*.whl' -print -quit)"
+          install_root="${RUNNER_TEMP}/python-wheel-smoke"
+          python -m pip install --no-index --no-deps --target "$install_root" "$wheel"
+          EXPECTED_SCHEMA="$(jq -er '.properties.schemaVersion.const' \
+            crates/aozora-conformance/json/schema-nodes.json)" \
+          PYTHONPATH="$install_root" python -c \
+            'import os, aozora; d = aozora.Document("｜青空《あおぞら》"); assert "<ruby>" in d.to_html(); assert aozora.schema_version() == int(os.environ["EXPECTED_SCHEMA"])'
+          PYTHONPATH="$install_root" python -m pytest \
+            crates/aozora-py/tests/test_fixture_parity.py -q
+          if [[ "${{ matrix.os }}" == ubuntu-latest ]]; then
+            sdist="$(find target/python-dist -name '*.tar.gz' -print -quit)"
+            sdist_root="${RUNNER_TEMP}/python-sdist-smoke"
+            python -m pip install --no-index --no-deps --no-build-isolation \
+              --target "$sdist_root" "$sdist"
+            PYTHONPATH="$sdist_root" python -c \
+              'import aozora; assert "<ruby>" in aozora.Document("｜青空《あおぞら》").to_html()'
+            PYTHONPATH="$sdist_root" python -m pytest \
+              crates/aozora-py/tests/test_fixture_parity.py -q
+          fi
+          version="$(awk -F' *= *' \
+            '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          schema_version="$(jq -er '.properties.schemaVersion.const' \
+            crates/aozora-conformance/json/schema-nodes.json)"
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg version "$version" \
+            --arg os "${{ matrix.os }}" \
+            --argjson schemaVersion "$schema_version" \
+            '{commit:$commit,version:$version,os:$os,schemaVersion:$schemaVersion}' \
+            > "target/python-dist/manifest-${{ matrix.os }}.json"
+          (
+            cd target/python-dist
+            for package in *.whl *.tar.gz; do
+              [[ -f "$package" ]] || continue
+              if command -v shasum >/dev/null 2>&1; then
+                shasum -a 256 "$package" > "${package}.sha256"
+              else
+                sha256sum "$package" > "${package}.sha256"
+              fi
+            done
+          )
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-python-${{ github.sha }}-${{ matrix.os }}
+          path: target/python-dist
+          retention-days: 90
+          if-no-files-found: error
+
+  release-ready:
+    if: always()
+    needs: [qualify, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release gate
+        env:
+          RUN: ${{ needs.qualify.outputs.run }}
+          QUALIFY: ${{ needs.qualify.result }}
+          QUALITY: ${{ needs.quality.result }}
+          MUTATION: ${{ needs.mutation.result }}
+          FUZZ: ${{ needs.fuzz.result }}
+          SANITIZERS: ${{ needs.sanitizers.result }}
+          CROSS_OS: ${{ needs.cross-os.result }}
+          NATIVE_ARTIFACTS: ${{ needs.native-artifacts.result }}
+          VSCODE_ARTIFACTS: ${{ needs.vscode-artifacts.result }}
+          ARTIFACTS: ${{ needs.artifacts.result }}
+          PYTHON: ${{ needs.python.result }}
+        run: |
+          set -euo pipefail
+          test "$QUALIFY" = success
+          if [[ "$RUN" != true ]]; then
+            exit 0
+          fi
+          for result in "$QUALITY" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS" "$NATIVE_ARTIFACTS" "$VSCODE_ARTIFACTS" "$ARTIFACTS" "$PYTHON"; do
+            test "$result" = success
+          done
+      - if: needs.qualify.outputs.run == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*${{ github.sha }}*
+          path: qualified
+          merge-multiple: true
+      - name: Prove cross-artifact release identity
+        if: needs.qualify.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          manifest=qualified/manifest.json
+          test "$(jq -er .commit "$manifest")" = "$GITHUB_SHA"
+          version="$(jq -er .version "$manifest")"
+          schema="$(jq -er .schemaVersion "$manifest")"
+
+          test "$(find qualified -maxdepth 1 -name 'manifest-*.json' -type f | wc -l)" -eq 11
+          for channel_manifest in qualified/manifest-*.json; do
+            test "$(jq -er .commit "$channel_manifest")" = "$GITHUB_SHA"
+            test "$(jq -er .version "$channel_manifest")" = "$version"
+            test "$(jq -er .schemaVersion "$channel_manifest")" = "$schema"
+          done
+
+          native_count=0
+          while IFS= read -r archive; do
+            case "$archive" in
+              *.zip) native_manifest="$(unzip -p "$archive" '*/manifest.json')" ;;
+              *) native_manifest="$(tar -xOf "$archive" --wildcards '*/manifest.json')" ;;
+            esac
+            test "$(jq -er .commit <<<"$native_manifest")" = "$GITHUB_SHA"
+            test "$(jq -er .version <<<"$native_manifest")" = "$version"
+            test "$(jq -er .schemaVersion <<<"$native_manifest")" = "$schema"
+            native_count=$((native_count + 1))
+          done < <(find qualified -maxdepth 1 -type f \
+            \( -name 'aozora-v*.tar.gz' -o -name 'aozora-v*.zip' \) | sort)
+          test "$native_count" -eq 3
+
+          test "$(find qualified -maxdepth 1 -name '*.vsix' -type f | wc -l)" -eq 8
+          test "$(find qualified -maxdepth 1 -name '*.whl' -type f | wc -l)" -eq 3
+          test "$(find qualified -maxdepth 1 -name '*.tar.gz' -type f \
+            ! -name 'aozora-v*.tar.gz' ! -name 'aozora-go.tar.gz' | wc -l)" -eq 1
+          test "$(find qualified -maxdepth 1 -name '*.sha256' -type f | wc -l)" -eq 15
+          for checksum in qualified/*.sha256; do
+            (cd qualified && sha256sum --check "$(basename "$checksum")")
+          done
+          for wheel in qualified/*.whl; do
+            metadata="$(unzip -p "$wheel" '*/METADATA')"
+            grep -Fx "Version: $version" <<<"$metadata"
+            grep -Fx 'License: Apache-2.0 OR MIT' <<<"$metadata"
+            unzip -l "$wheel" | grep -E '/sboms/[^/]+\\.cyclonedx\\.json$'
+          done
+          test "$(find qualified -maxdepth 1 -name '*.crate' -type f | wc -l)" -gt 0
+          for package in qualified/*.crate; do
+            [[ "$(basename "$package")" == *-"${version}.crate" ]]
+          done
+
+          npm_package="$(find qualified -maxdepth 1 -name '*.tgz' -type f -print -quit)"
+          test -n "$npm_package"
+          test "$(tar -xOf "$npm_package" package/package.json | jq -er .version)" = "$version"
+          for legal in LICENSE-APACHE LICENSE-MIT NOTICE; do
+            tar -tzf "$npm_package" | grep -Fx "package/$legal"
+          done
+          tar -tzf "$npm_package" | grep -Fx package/aozora-wasm.cdx.json
+          grep -F "#define AOZORA_SCHEMA_VERSION $schema" qualified/aozora.h
+          for legal in LICENSE-APACHE LICENSE-MIT NOTICE; do
+            tar -tzf qualified/aozora-go.tar.gz | grep -Fx "aozora-go/$legal"
+          done
+          tar -xOf qualified/aozora-go.tar.gz aozora-go/json_gen.go |
+            grep -F "const SchemaVersion = $schema"
+          (cd qualified && sha256sum --check SHA256SUMS)

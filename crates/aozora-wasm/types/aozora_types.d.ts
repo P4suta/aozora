@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "lineGothic" | "lineFontSize" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "lineGothic" | "lineFontSize" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";
@@ -28,16 +28,17 @@ export type InternalCheckCode = "aozora::lex::residual_annotation_marker" | "aoz
 // Wire envelope payload types
 // ─────────────────────────────────────────────────────────
 
-/** Half-open byte span `[start, end)` in the relevant coordinate system
-(sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */
+/** Half-open UTF-8 byte span `[start, end)` in original source coordinates. */
 export interface Span {
   start: number;
   end: number;
 }
 
-/** Single byte offset (used by `ContainerPair` open / close in normalized coords). */
-export interface Offset {
-  offset: number;
+/** One source edit in pre-edit UTF-8 byte coordinates. */
+export interface TextEdit {
+  start: number;
+  end: number;
+  replacement: string;
 }
 
 /** One entry of `diagnostics` — `Diagnostic` projection. */
@@ -47,8 +48,8 @@ export interface Diagnostic {
   severity: Severity;
   source: DiagnosticSource;
   span: Span;
-  /** Codepoint payload (only `SourceContainsPua` carries one today). */
-  codepoint?: string;
+  /** Unicode scalar value (only `SourceContainsPua` carries one today). */
+  codepoint?: number;
 }
 
 /** One entry of `nodes` — classified `Node` span in source coords. */
@@ -64,11 +65,29 @@ export interface Pair {
   close: Span;
 }
 
-/** One entry of `container_pairs` — paired container (open in normalized coords). */
+/** One entry of `container_pairs` — paired container in source coordinates. */
 export interface ContainerPair {
   kind: ContainerKind;
-  open: Offset;
-  close: Offset;
+  open: Span;
+  close: Span;
+}
+
+/** One resolved `※［＃…］` reference. */
+export interface GaijiResolution {
+  span: Span;
+  description: string;
+  mencode?: string;
+  codepoint?: number;
+  resolved?: string;
+}
+
+/** One completion-catalogue entry. */
+export interface Slug {
+  canonical: string;
+  family: string;
+  accepts_param: boolean;
+  doc: string;
+  partner?: string;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -77,7 +96,7 @@ export interface ContainerPair {
 
 /** Generic wire envelope. Every endpoint emits this top-level shape. */
 export interface JsonEnvelope<T> {
-  schemaVersion: 2;
+  schemaVersion: 3;
   data: ReadonlyArray<T>;
 }
 
@@ -85,3 +104,5 @@ export type DiagnosticsEnvelope    = JsonEnvelope<Diagnostic>;
 export type NodesEnvelope          = JsonEnvelope<Node>;
 export type PairsEnvelope          = JsonEnvelope<Pair>;
 export type ContainerPairsEnvelope = JsonEnvelope<ContainerPair>;
+export type GaijiEnvelope          = JsonEnvelope<GaijiResolution>;
+export type SlugsEnvelope           = JsonEnvelope<Slug>;

@@ -13,8 +13,8 @@ x-common-env: &common-env
   # purpose. Nesting a named volume inside the bind mount (the old
   # /workspace/target etc.) makes the Docker daemon create the host-side
   # mountpoint (./target, ./.cargo, ./.sccache) as **root**, which then
-  # blocks host-side cargo — the `smoke-ffi` / `pgo` recipes build on the
-  # host — with "failed to create directory ... Permission denied", and
+    # blocks workspace artifact writes with "failed to create directory ...
+    # Permission denied", and
   # litters the working tree with root-owned junk. Keeping the caches at
   # /cargo/* leaves the host's own ./target free for host builds and keeps
   # the checkout clean. The named volumes still persist them between runs.

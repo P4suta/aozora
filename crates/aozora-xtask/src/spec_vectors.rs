@@ -10,15 +10,12 @@
 //! - `sync` copies the vectors + schema + `RUNNER.md` out of the sibling's
 //!   `conformance/` subtree into the vendored copy. The spec wins: never
 //!   hand-edit the vendored files, edit the spec and re-sync. Vendored-only
-//!   files (`README.md`, `error-free-baseline.json`,
-//!   `tree-sitter-snapshot.json`) are parser-repo-owned and left untouched.
-//! - `check` fails when the vendored copy has drifted from the sibling —
-//!   someone hand-edited it, or changed the spec without re-syncing.
-//!   `--allow-missing` turns an absent sibling into a skip (exit 0): the
-//!   dev container and cloud CI have no sibling checkout, and there the
-//!   vendored copy is itself the authority (the parser is tested against
-//!   it), so the vendored==spec invariant is enforced on the developer
-//!   host at push time and by the weekly `spec-freshness` workflow.
+//!   files (`README.md`, `tree-sitter-snapshot.json`) are parser-repo-owned
+//!   and left untouched.
+//! - `check` fails when the source is missing or the vendored copy has
+//!   drifted. `just verify-spec-vectors` provides the optional local
+//!   convenience path; release qualification always supplies the pinned
+//!   source checkout.
 //!
 //! Override the sibling location with `AOZORA_SPEC_REPO` (absolute, or
 //! relative to the workspace root); it defaults to `../aozora-notation-spec`.
@@ -53,7 +50,7 @@ const RUNNER_REL: &str = "RUNNER.md";
 
 pub(crate) fn dispatch(args: &SpecVectorsArgs) -> Result<(), String> {
     match args.op {
-        SpecVectorsOp::Check { allow_missing } => check(allow_missing),
+        SpecVectorsOp::Check => check(),
         SpecVectorsOp::Sync => sync(),
     }
 }
@@ -88,25 +85,16 @@ fn resolve_spec_repo(root: &Path, override_var: Option<OsString>) -> PathBuf {
     )
 }
 
-fn check(allow_missing: bool) -> Result<(), String> {
+fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let spec = spec_repo(&root);
     let spec_conf = spec.join(SPEC_CONFORMANCE_REL);
     let spec_vectors = spec_conf.join(VECTORS_SUBDIR);
 
     if !spec_vectors.is_dir() {
-        if allow_missing {
-            eprintln!(
-                "spec-vectors check: sibling spec not present at {} — skipping \
-                 (the vendored copy is authoritative here)",
-                spec.display()
-            );
-            return Ok(());
-        }
         return Err(format!(
             "sibling spec repo not found at {} (set {SPEC_REPO_ENV}, or check out \
-             P4suta/aozora-notation-spec). Pass --allow-missing to treat an absent \
-             sibling as a skip.",
+             P4suta/aozora-notation-spec).",
             spec.display()
         ));
     }
@@ -168,9 +156,7 @@ fn sync() -> Result<(), String> {
 
     // Replace vectors/ + schema/ wholesale so deletions in the spec
     // propagate — a leftover vector would otherwise linger. The
-    // vendored-only files (README.md / error-free-baseline.json /
-    // tree-sitter-snapshot.json) sit outside these two subtrees and are
-    // untouched.
+    // vendored-only files sit outside these subtrees and remain untouched.
     remove_dir_if_present(&dest_vectors)?;
     remove_dir_if_present(dest_schema_dir)?;
     fs::create_dir_all(&dest_vectors)

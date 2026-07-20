@@ -2,7 +2,7 @@
   "name": "aozora-vscode",
   "displayName": "aozora — aozora-flavored markdown",
   "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by the aozora language server.",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "yasunobu-sakashita",
   "license": "Apache-2.0 OR MIT",
   "icon": "media/icon.png",
@@ -244,12 +244,12 @@
         "aozora.lsp.path": {
           "type": "string",
           "default": "aozora",
-          "description": "Path to the `aozora` executable (run as `aozora lsp --stdio`). Defaults to looking it up on PATH."
+          "description": "Path to a custom `aozora` executable. The platform package uses its bundled server when this remains at the default."
         },
         "aozora.cli.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the `aozora` CLI used by 'Aozora: Lint workspace'. Empty = look up `aozora` on PATH."
+          "description": "Path to a custom `aozora` CLI used by 'Aozora: Lint workspace'. Empty uses the bundled executable."
         },
         "aozora.trace.server": {
           "type": "string",

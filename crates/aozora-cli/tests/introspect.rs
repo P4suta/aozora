@@ -10,6 +10,8 @@
 
 use std::process::{Command, ExitStatus, Stdio};
 
+use aozora::json::SCHEMA_VERSION;
+
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
 fn run(args: &[&str]) -> (ExitStatus, String, String) {
@@ -74,7 +76,10 @@ fn kinds_default_auto_is_json_when_stdout_piped() {
     assert!(status.success(), "kinds failed: {stderr:?}");
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("piped kinds must default to json");
-    assert_eq!(parsed["schemaVersion"], 1, "cli-local envelope: {parsed}");
+    assert_eq!(
+        parsed["schemaVersion"], SCHEMA_VERSION,
+        "wire envelope: {parsed}"
+    );
     assert!(parsed["data"]["nodeKinds"].is_array(), "{parsed}");
     // The human table section header must NOT appear — proof it is not tables.
     assert!(
@@ -90,7 +95,7 @@ fn kinds_format_json_emits_valid_envelope() {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("kinds --format json must be valid JSON");
     assert_eq!(
-        parsed["schemaVersion"], 1,
+        parsed["schemaVersion"], SCHEMA_VERSION,
         "envelope schemaVersion: {parsed}"
     );
     // Every section appears as a camelCase array under `data`.
@@ -139,7 +144,7 @@ fn schema_diagnostics_emits_valid_json() {
 
 #[test]
 fn schema_each_envelope_succeeds() {
-    for which in ["diagnostics", "nodes", "pairs", "container-pairs"] {
+    for which in ["config", "diagnostics", "nodes", "pairs", "container-pairs"] {
         let (status, stdout, stderr) = run(&["spec", "schema", which]);
         assert!(status.success(), "schema {which} failed: {stderr:?}");
         assert!(
@@ -147,6 +152,47 @@ fn schema_each_envelope_succeeds() {
             "schema {which} output is not valid JSON",
         );
     }
+}
+
+#[test]
+fn config_schema_is_closed_and_uses_the_runtime_value_types() {
+    let (status, stdout, stderr) = run(&["spec", "schema", "config"]);
+    assert!(status.success(), "schema config failed: {stderr:?}");
+    let schema: serde_json::Value = serde_json::from_str(&stdout).expect("valid config schema");
+    assert_eq!(schema["title"], "AozoraConfig");
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(
+        schema["properties"]["encoding"]["anyOf"][0]["$ref"],
+        "#/$defs/Encoding"
+    );
+    assert_eq!(
+        schema["properties"]["format"]["anyOf"][0]["$ref"],
+        "#/$defs/DiagFormat"
+    );
+    assert_eq!(
+        schema["properties"]["color"]["anyOf"][0]["$ref"],
+        "#/$defs/ColorChoice"
+    );
+    assert_eq!(
+        schema["properties"]["strict"]["type"],
+        serde_json::json!(["boolean", "null"])
+    );
+    assert_eq!(
+        schema["properties"]["lang"]["type"],
+        serde_json::json!(["string", "null"])
+    );
+
+    let constants = |definition: &str| {
+        schema["$defs"][definition]["oneOf"]
+            .as_array()
+            .expect("enum definition")
+            .iter()
+            .map(|variant| variant["const"].as_str().expect("string enum constant"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(constants("Encoding"), ["auto", "utf8", "sjis"]);
+    assert_eq!(constants("DiagFormat"), ["auto", "human", "json", "short"]);
+    assert_eq!(constants("ColorChoice"), ["auto", "always", "never"]);
 }
 
 // ---------------------------------------------------------------------
@@ -161,7 +207,7 @@ fn spec_slugs_needs_no_input_and_emits_the_wire_envelope() {
     let (status, stdout, stderr) = run(&["spec", "slugs"]);
     assert!(status.success(), "spec slugs failed: {stderr:?}");
     assert!(
-        stdout.starts_with(r#"{"schemaVersion":2,"#),
+        stdout.starts_with(&format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"#)),
         "wire envelope: {stdout:?}"
     );
     assert!(stdout.contains(r#""canonical":"#), "slugs: {stdout:?}");

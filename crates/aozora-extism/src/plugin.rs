@@ -29,8 +29,7 @@ pub fn to_source(input: String) -> FnResult<String> {
     Ok(logic::render_source(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and return the diagnostics wire envelope
-/// (`{ "schemaVersion": 2, "data": [ … ] }`).
+/// Parse the input source and return the diagnostics wire envelope.
 #[plugin_fn]
 pub fn diagnostics_json(input: String) -> FnResult<String> {
     Ok(logic::render_diagnostics_json(input).map_err(Error::msg)?)
@@ -72,7 +71,7 @@ pub fn slugs_json(_input: String) -> FnResult<String> {
     Ok(logic::slugs_json())
 }
 
-/// Return the parser's channel-aware build version (e.g. `0.5.0`).
+/// Return the parser's channel-aware build version.
 /// Input is ignored; hosts call this to surface the plugin build in a
 /// footer / diagnostics, distinct from the wire `schema_version`.
 #[plugin_fn]

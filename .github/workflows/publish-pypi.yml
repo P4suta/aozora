@@ -1,155 +1,118 @@
-# PyPI publish workflow for `aozora-py`.
-#
-# Ships ONE abi3 wheel per platform (pyo3 `abi3-py311`): a single
-# `cp311-abi3` wheel loads on CPython 3.11, 3.12, 3.13, 3.14 and every
-# future 3.x — no per-Python-version build matrix. Plus an sdist for
-# source installs where no wheel matches.
-#
-# Publishing: a release-plz `v*` tag triggers a real upload automatically.
-# Manual fallback (dry run by default):
-#   gh workflow run publish-pypi.yml -f dry_run=false
-#
-# Future matrix growth (0.5.0+, via cibuildwheel): Linux aarch64,
-# macOS universal2, and a SEPARATE free-threaded build — abi3 wheels
-# cannot target `3.13t`/`3.14t` (the limited API is incompatible with
-# `Py_GIL_DISABLED`), so free-threaded support needs its own non-abi3
-# `cp31xt` wheels.
-
 name: publish-pypi
 
 on:
-  # A release-plz `v*` tag fans out here automatically; workflow_dispatch
-  # stays as a manual fallback (defaults to a dry run).
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      commit:
+        description: "Qualified release commit SHA to retry"
+        type: string
+        required: true
       dry_run:
-        description: "Build wheels + sdist + twine check; do not upload to PyPI"
+        description: "Verify qualified wheels and sdist without uploading"
         type: boolean
         default: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-pypi
   cancel-in-progress: false
 
 jobs:
-  build-wheels:
-    name: build abi3 wheel (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # Force bash on every runner: Windows defaults to PowerShell, which
-    # breaks the `\` line-continuations and bash-style `dist/*` globbing.
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      # Any 3.11+ interpreter can host the build; abi3-py311 fixes the
-      # wheel's ABI floor regardless of which one maturin finds.
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
-        with:
-          python-version: "3.11"
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: pypi-${{ matrix.os }}
-
-      - name: Install maturin + twine
-        run: pip install --upgrade "maturin>=1.9,<2.0" twine
-
-      - name: Build abi3 wheel
-        # No `--interpreter` / per-version loop: with abi3-py311 maturin
-        # emits a single `cp311-abi3` wheel, tagged at the lowest
-        # compatible manylinux on Linux (a no-op flag on macOS / Windows).
-        run: |
-          maturin build --release --strip \
-            --manifest-path crates/aozora-py/Cargo.toml \
-            --out dist
-
-      - name: Verify metadata with twine check
-        run: twine check dist/*.whl
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: wheel-${{ matrix.os }}
-          path: dist/*.whl
-          retention-days: 7
-
-  build-sdist:
-    name: build sdist
+  qualify:
     runs-on: ubuntu-latest
+    env:
+      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.QUALIFIED_SHA }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+      - run: pip install --upgrade twine
+      - name: Download qualified Python distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for os in ubuntu-latest macos-latest windows-2025; do
+            scripts/download-release-ready-artifact.sh \
+              "release-python-$QUALIFIED_SHA-$os" dist "$QUALIFIED_SHA"
+          done
+      - name: Verify immutable distribution identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
+          test "$(find dist -maxdepth 1 -name '*.whl' -type f | wc -l)" -eq 3
+          test "$(find dist -maxdepth 1 -name '*.tar.gz' -type f | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -name 'manifest-*.json' -type f | wc -l)" -eq 3
+          version=
+          for manifest in dist/manifest-*.json; do
+            test "$(jq -er .commit "$manifest")" = "$QUALIFIED_SHA"
+            candidate="$(jq -er .version "$manifest")"
+            if [[ -z "$version" ]]; then
+              version="$candidate"
+            else
+              test "$candidate" = "$version"
+            fi
+          done
+          if [[ -n "$RELEASE_TAG" ]]; then
+            test "v${version}" = "$RELEASE_TAG"
+          fi
+          twine check dist/*.whl dist/*.tar.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          toolchain: stable
-
-      - name: Install maturin + twine
-        run: pip install --upgrade "maturin>=1.9,<2.0" twine
-
-      - name: Build sdist
-        # `aozora-py` path-depends on sibling workspace crates; maturin
-        # vendors them into the sdist. If a future restructuring breaks
-        # sdist resolution, fall back to wheels-only (drop this job and
-        # the `needs: build-sdist` below) — the abi3 wheels already cover
-        # every supported platform.
-        run: maturin sdist --manifest-path crates/aozora-py/Cargo.toml --out dist
-
-      - name: Verify metadata with twine check
-        run: twine check dist/*.tar.gz
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: sdist
-          path: dist/*.tar.gz
-          retention-days: 7
+          name: qualified-python
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          retention-days: 90
+          if-no-files-found: error
 
   publish:
-    name: upload to PyPI
-    # Real upload on a `v*` tag push; manual dispatch only when dry_run=false.
-    if: github.event_name == 'push' || inputs.dry_run == false
-    needs: [build-wheels, build-sdist]
+    needs: qualify
+    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-latest
-    # Gated behind the `release` GitHub Environment: required-reviewer
-    # approval + deployment branch/tag restriction. PyPI strongly
-    # recommends scoping a trusted publisher to a dedicated environment,
-    # so set the environment name to `release` in the PyPI publisher
-    # settings to match. Ref:
-    # https://docs.pypi.org/trusted-publishers/security-model/
     environment: release
     permissions:
-      # Trusted publishing: PyPI verifies via OIDC, no API token in
-      # the secrets store. The PyPI project must opt in via its
-      # "publisher" settings (a "pending publisher" works for the very
-      # first upload of a new project). Until then, fall back by setting
-      # `secrets.PYPI_TOKEN` and replacing the `id-token` permission with
-      # `password: ${{ secrets.PYPI_TOKEN }}` on the publish step.
+      actions: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          # All artifacts (wheel-<os> + sdist) merged into dist/.
-          merge-multiple: true
+          name: qualified-python
           path: dist
-
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+      - name: Resolve registry state
+        id: registry
+        run: |
+          set -euo pipefail
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -type f -print -quit)"
+          test -n "$wheel"
+          version="$(unzip -p "$wheel" '*/METADATA' |
+            awk -F': ' '$1 == "Version" { print $2; exit }')"
+          test -n "$version"
+          if metadata="$(curl -fsS "https://pypi.org/pypi/aozora/${version}/json" 2>/dev/null)"; then
+            local_count=0
+            for package in dist/*; do
+              test -f "$package"
+              filename="$(basename "$package")"
+              digest="$(sha256sum "$package" | awk '{ print $1 }')"
+              test "$(jq -er --arg filename "$filename" \
+                '.urls[] | select(.filename == $filename) | .digests.sha256' \
+                <<<"$metadata")" = "$digest"
+              local_count=$((local_count + 1))
+            done
+            test "$(jq -er '.urls | length' <<<"$metadata")" -eq "$local_count"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        if: steps.registry.outputs.publish == 'true'
         with:
           packages-dir: dist
-          skip-existing: true

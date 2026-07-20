@@ -68,7 +68,7 @@ pub(crate) mod sanitize;
 pub(crate) mod token;
 mod tokenize;
 
-pub(crate) use classify::{ClassifiedSpan, SpanKind, classify};
+pub(crate) use classify::{ClassifiedSpan, SpanKind, classify_range};
 pub(crate) use pair::{PairEvent, pair};
 pub(crate) use sanitize::sanitize;
 pub(crate) use token::Token;

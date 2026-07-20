@@ -25,7 +25,7 @@ Two environments, deliberately different:
 
 | | reviewer | branches / tags | why |
 | --- | --- | --- | --- |
-| `release` | required | `main`, `v*`, `vscode-v*` | you approve each publish batch |
+| `release` | required | `main`, `v*` | you approve each publish batch |
 | `release-plz` | **none** | `main` | the gate is the Release-PR merge; a second approval would only stall an unattended publish |
 
 A job cannot reach environment secrets **or** the OIDC token until the
@@ -37,10 +37,9 @@ publisher rule matches.
 What stops a stray **Run workflow** click is not one mechanism but three,
 and it is worth knowing which one you are relying on:
 
-- `release.yml` — an event guard: the publish job requires a `refs/tags/`
-  push, so a dispatch builds and stops.
-- `publish-pypi` / `publish-npm` / `publish-extism-wasm` — `dry_run: true`
-  is the input default.
+- Every channel publisher requires an exact `release-ready` commit on manual
+  dispatch and defaults `dry_run` to true. A dispatch downloads and verifies
+  that commit's retained artifacts; it never rebuilds release bytes.
 - `release-plz.yml` — **neither**, and the button is live. Its
   `workflow_dispatch` takes no inputs and `release-plz-release` has no
   event guard, so a dispatch on `main` is equivalent to a push on `main`.
@@ -69,7 +68,6 @@ EOF
 
 gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='main'      -f type=branch
 gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='v*'        -f type=tag
-gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='vscode-v*' -f type=tag
 ```
 
 ### 2. The `release-plz` environment + GitHub App
@@ -161,7 +159,7 @@ CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the runner.)
 
 1. Create a granular-access token that can publish `aozora-wasm`, add it
    as the `NPM_TOKEN` secret on the `release` environment.
-2. `gh workflow run publish-npm.yml -f dry_run=false -f use_oidc=false`
+2. `gh workflow run publish-npm.yml -f commit="$(git rev-parse vX.Y.Z^{commit})" -f dry_run=false -f use_oidc=false`
 3. Register the trusted publisher: package → Settings → Trusted Publisher
    → GitHub Actions, workflow `publish-npm.yml`, environment `release`.
 4. Delete the `NPM_TOKEN` secret. From then on a `v*` tag publishes
@@ -174,7 +172,7 @@ live on the environment, behind the approval gate:
 
 ```sh
 gh secret set VSCE_PAT --env release   # Azure DevOps PAT (Marketplace)
-gh secret set OVSX_PAT --env release   # Open VSX token (optional)
+gh secret set OVSX_PAT --env release   # Open VSX token
 ```
 
 ### 7. Delete the repository-level copies

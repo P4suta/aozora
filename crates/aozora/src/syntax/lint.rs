@@ -1,7 +1,7 @@
 //! Non-canonical directive catalogue for the notation-hygiene lint.
 //!
 //! [`canonical_directive`] maps a `［＃…］` directive body that the parser
-//! keeps as `DirectiveKind::Unknown` — because it is spelled as a *verified
+//! keeps as `DirectiveKind::Editorial` — because it is spelled as a *verified
 //! near-miss* of a recognized construct (送り仮名 drift, a synonym, or a
 //! malformed prefix / close) — to its canonical spelling. It returns `None`
 //! for a genuine editorial Unknown, so the lint that consumes it fires only
@@ -72,7 +72,7 @@ const EXACT: &[(&str, &str)] = &[
 /// `None` for a genuine editorial Unknown. `body` is the trimmed inner text,
 /// without the `［＃` / `］` delimiters.
 #[must_use]
-pub fn canonical_directive(body: &str) -> Option<Cow<'static, str>> {
+pub(crate) fn canonical_directive(body: &str) -> Option<Cow<'static, str>> {
     if let Some((_, canonical)) = EXACT.iter().find(|(variant, _)| *variant == body) {
         return Some(Cow::Borrowed(canonical));
     }
@@ -282,7 +282,8 @@ fn forward_form(body: &str) -> Option<String> {
 /// call the parser). Each must satisfy: `canonical_directive(sample)` is
 /// `Some`, `［＃sample］` parses to Unknown, and `［＃<canonical>］` parses to a
 /// non-Unknown node.
-pub const CATALOGUE_SAMPLES: &[&str] = &[
+#[cfg(test)]
+pub(crate) const CATALOGUE_SAMPLES: &[&str] = &[
     "字下げ終わり",
     "字下げ終り",
     "字下げおわり",
@@ -351,64 +352,6 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "ここから2　字下げ",
     // 字下げ numeric.
     "この行2字下げ",
-];
-
-/// Bodies that MUST stay a lossless `Unknown` — the negative catalogue that
-/// anchors the zero-false-positive invariant from the *other* side.
-///
-/// Drawn from the occurrence-ranked corpus residue (`corpus/render-digest.json`
-/// `unknown_shapes_top`), these are the three families that dominate the tail
-/// and that neither Tier1 ([`canonical_directive`]) nor Tier2
-/// ([`crate::syntax::degraded::degraded_directive`]) may ever match:
-///
-/// - **Editorial prose** — bibliographic / collation / conjecture / semantic
-///   notes (edition names, `では`, `誤記か`, `伏字`, `注釈番号`, `正字`) and
-///   free-form spatial-layout descriptions (`上に…付き`, `右側に…形で`) for which
-///   the core models no construct. Matching one would launder an editor's note
-///   into a directive.
-/// - **Multi-axis compounds** — `、`-joined two-directive bodies that ADR-0027
-///   deliberately declines (repairing them would silently drop an axis).
-/// - **Gaiji-composition descriptions** — `「X」の下に「Y」` glyph builds, owned
-///   by the 外字 layer, not the directive catalogues.
-///
-/// The `catalogue_refuses_every_editorial_body` self-test in the `aozora` crate
-/// asserts both catalogues return `None` for every entry; each catalogue-growth
-/// PR adds the adjacent editorial bodies its new rule sits near, so a future
-/// rule that over-generalises fails here instead of laundering prose.
-pub const EDITORIAL_MUST_STAY_UNKNOWN: &[&str] = &[
-    // Editorial prose — bibliographic / collation / conjecture / semantic.
-    "底本では「蒼空」",
-    "入力者注",
-    "未完",
-    "「甲」は「乙」の誤記か",
-    "初出時「甲」",
-    "「甲」は筑摩版では「乙」",
-    "底本3字伏字",
-    "「甲」は注釈番号",
-    "「甲」の「乙」に代えて「丙」",
-    "一つ目の「甲」は「乙」付き",
-    "「甲」は「乙」の右側に注記するような形で",
-    // Spatial / layout descriptions the vertical core models no construct for —
-    // ruby/annotation attaches only right (default) or 左に (left), never 上に
-    // (above); "上部に出ている" / "下にポイントを下げて…行で" are free-form position
-    // prose. Folding any onto a real leaf would be a spatial lie, so they stay
-    // inert — the decoys adjacent to Tier2's 下げて… indent rule (D6).
-    "「甲」は上に「乙」付き",
-    "「甲」は上部に出ている",
-    "「甲」は「乙」の下にポイントを下げて2行で",
-    // Multi-axis compounds with two independent targets / constructs — ADR-0027
-    // declines these and no layer serves them: each `、`-clause styles a
-    // *different* target (「乙」) or a *different* construct (返り点 / 分数), so
-    // there is no single faithful reduction. (The single-target
-    // `「X」は縦中横、行右/左小書き` compound is different — its secondary axis
-    // annotates the *same* 「X」 target — and IS served, render-only in Tier2,
-    // by dropping the small-script axis; see `crate::syntax::degraded` D7 / ADR-0027 A5.)
-    "ここから3字下げ、「甲」は返り点",
-    "「甲」は上付き小文字、「乙」は分数",
-    "「甲」は縦中横、「乙」は上付き小書き",
-    // Gaiji-composition descriptions — owned by the 外字 layer.
-    "「窗」の下に「心」",
-    "「甲」の中に「乙」",
 ];
 
 #[cfg(test)]

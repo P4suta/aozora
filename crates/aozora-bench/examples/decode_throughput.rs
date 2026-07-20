@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use aozora::encoding::decode_sjis;
+use aozora::decode_sjis;
 use aozora_corpus::{CorpusItem, FilesystemCorpus};
 use rayon::prelude::*;
 

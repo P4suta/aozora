@@ -23,9 +23,8 @@
 //! Note on the interactive-TTY guard: the test harness's stdin is never a
 //! terminal, so [`aozora check`] with no input under `cargo test` takes the
 //! *piped* branch (empty document, exit 0), which the regression test below
-//! pins. The guard's actual hit path — a bare TTY — is covered by the
-//! `write_stdin_hint` unit test in `src/input.rs`, plus the manual check
-//! documented in the PR.
+//! pins. The guard's actual hit path — a bare TTY — is covered against the
+//! packaged binary by `scripts/tty-smoke.py`.
 
 use std::io::Write;
 use std::process::{Command, ExitStatus, Stdio};

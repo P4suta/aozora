@@ -15,7 +15,7 @@ import {
 import { lowerBoundByStart } from './utils';
 
 /**
- * Map every `kind` returned by `Document.nodesJson()` to a CSS class
+ * Map every `kind` returned by `Document.nodes()` to a CSS class
  * defined in `theme.ts`. Kinds not in this table are skipped.
  *
  * Mapping note: the wire format uses camelCase ("aozoraHeading"); we
@@ -31,7 +31,7 @@ const KIND_TO_CLASS: Record<string, string> = {
   warichu: 'cm-aozora-warichu',
   kaeriten: 'cm-aozora-kaeriten',
   directive: 'cm-aozora-directive',
-  aozoraHeading: 'cm-aozora-aozora-heading',
+  heading: 'cm-aozora-aozora-heading',
   headingHint: 'cm-aozora-heading-hint',
   sectionBreak: 'cm-aozora-section-break',
   pageBreak: 'cm-aozora-page-break',

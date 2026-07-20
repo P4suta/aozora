@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::mem;
 use std::path::PathBuf;
 
-use aozora::encoding::decode_auto_into;
+use aozora::decode_auto_into;
 use aozora_corpus::{Archive, ArchivePayload, CorpusItem, FilesystemCorpus, with_load_pool};
 use rayon::prelude::*;
 
@@ -489,8 +489,6 @@ pub fn build_pathological_aozora(target_bytes: usize) -> String {
 mod tests {
     use std::hint::black_box;
 
-    use aozora::Document;
-
     use super::*;
 
     #[test]
@@ -502,7 +500,7 @@ mod tests {
     #[test]
     fn build_synthetic_parses_without_panic() {
         let s = build_synthetic_aozora(4096);
-        let doc = Document::new(s);
+        let doc = aozora::parse(s).expect("source fits parser span limit");
         let tree = doc.snapshot();
         black_box(tree);
     }
@@ -513,7 +511,7 @@ mod tests {
         assert!(s.len() >= 8192, "expected >= 8192 bytes, got {}", s.len());
         // The pathological buffer must still parse without panicking — it
         // is a perf stressor, not a fuzz input.
-        let doc = Document::new(s);
+        let doc = aozora::parse(s).expect("source fits parser span limit");
         let tree = doc.snapshot();
         black_box(tree);
     }
@@ -591,7 +589,7 @@ mod tests {
     #[test]
     fn build_synthetic_emits_no_diagnostics_for_well_formed_input() {
         let s = build_synthetic_aozora(2048);
-        let doc = Document::new(s);
+        let doc = aozora::parse(s).expect("source fits parser span limit");
         let tree = doc.snapshot();
         assert!(
             tree.diagnostics().is_empty(),

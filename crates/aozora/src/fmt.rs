@@ -12,8 +12,8 @@
 //! dependency. The batch-driver CLI plumbing (file discovery, diff/check
 //! reporting, progress UI, encoding selection) lives in `aozora-cli`.
 
-use crate::Document;
 use crate::render::SerializeOptions;
+use crate::{Document, Severity};
 
 /// Canonicalise an aozora source string.
 ///
@@ -39,7 +39,16 @@ pub fn format_source(source: &str) -> String {
 /// recognized node and is not rewritten again).
 #[must_use]
 pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
-    Document::new(source).snapshot().to_source_with(opts)
+    let snapshot = Document::new(source).snapshot();
+    if snapshot
+        .diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.severity() == Severity::Error)
+    {
+        source.to_owned()
+    } else {
+        snapshot.to_source_with(opts)
+    }
 }
 
 #[cfg(test)]
@@ -80,6 +89,12 @@ mod tests {
         let once = format_source(input);
         let twice = format_source(&once);
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn malformed_source_is_preserved() {
+        let source = "《《※［＃「あ」、U+3042］［＃";
+        assert_eq!(format_source(source), source);
     }
 
     #[test]

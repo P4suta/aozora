@@ -42,8 +42,8 @@ use std::process::ExitCode;
 use crate::fmt::{decode, read_file};
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
+use aozora::json;
 use aozora::pandoc::to_pandoc;
-use aozora::{Document, json};
 use clap::{Parser, ValueEnum};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
@@ -262,7 +262,7 @@ impl Repl {
 /// newline). Pure — the same parse tree every other subcommand would produce,
 /// so the bytes match `inspect nodes` / `render` / `pandoc` exactly.
 fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
-    let doc = Document::new(source);
+    let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
 
     let mut sections: Vec<String> = Vec::new();
@@ -370,12 +370,6 @@ fn step(repl: &mut Repl, line: &str, out: &mut impl Write) -> io::Result<bool> {
 
 /// The terminal path: `rustyline` supplies line editing and in-session history.
 /// Ctrl-C abandons the current line and re-prompts; Ctrl-D (EOF) leaves.
-// mutants::skip — this path only runs on a real terminal (`DefaultEditor` and
-// `readline` require a TTY), so the sweep host cannot exercise it; its sole
-// decision — stop on `step`'s `false`, keep looping otherwise — is the same
-// continue/stop seam the piped-stdin `scripted` twin drives end-to-end and the
-// `step_*` unit tests pin. Reinforcing it would need a pseudo-terminal harness.
-#[cfg_attr(test, mutants::skip)]
 fn interactive(repl: &mut Repl) -> Result<ExitCode> {
     let mut editor = DefaultEditor::new().context("failed to initialise the line editor")?;
     loop {
@@ -458,7 +452,10 @@ mod tests {
         let source = "｜青空《あおぞら》";
         let out = eval(source, Mode::Html, &lang("en"));
         // The HTML view is byte-for-byte the `aozora render` output.
-        let expected = Document::new(source).snapshot().to_html();
+        let expected = aozora::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot()
+            .to_html();
         assert!(
             !expected.is_empty(),
             "fixture must render to non-empty HTML"
@@ -478,7 +475,11 @@ mod tests {
     fn eval_nodes_matches_the_inspect_engine() {
         let source = "青空《あおぞら》";
         let out = eval(source, Mode::Nodes, &lang("en"));
-        let expected = json::nodes(&Document::new(source).snapshot());
+        let expected = json::nodes(
+            &aozora::parse(source)
+                .expect("source fits parser span limit")
+                .snapshot(),
+        );
         assert!(
             out.contains(expected.trim_end()),
             "nodes view is inspect bytes: {out}"

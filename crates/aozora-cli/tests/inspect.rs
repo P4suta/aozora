@@ -2,8 +2,7 @@
 //! projection of the shared `aozora::json` envelope.
 //!
 //! These verify the argv / dispatch / stdin / file plumbing and that
-//! the `{ "schemaVersion": 2, "data": [ … ] }` envelope reaches
-//! stdout. The byte-level shape of each envelope is pinned by the unit
+//! the versioned envelope reaches stdout. The byte-level shape of each envelope is pinned by the unit
 //! tests in `aozora::json`; here we only confirm the CLI surfaces it
 //! (and that `gaiji` resolves references while the others walk the tree).
 //! The static `slugs` catalogue is a `spec` view (`aozora spec slugs`,
@@ -11,17 +10,17 @@
 //!
 //! Pure stdlib (mirrors `smoke.rs`) so the test crate stays dep-light.
 
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::process::{ExitStatus, Stdio};
 
+use aozora::json::SCHEMA_VERSION;
 use tempfile::NamedTempFile;
 
 mod common;
 
-/// Every wire envelope opens with this versioned header; asserting the
-/// literal prefix is a structural check that needs no JSON parser in
-/// the (deliberately dep-light) test crate.
-const ENVELOPE_PREFIX: &str = r#"{"schemaVersion":2,"#;
+fn envelope_prefix() -> String {
+    format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"#)
+}
 
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = common::hermetic_command();
@@ -31,12 +30,14 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     }
     let mut child = cmd.spawn().expect("spawn aozora");
     if let Some(s) = stdin {
-        child
+        let result = child
             .stdin
             .as_mut()
             .expect("piped stdin")
-            .write_all(s.as_bytes())
-            .expect("write stdin");
+            .write_all(s.as_bytes());
+        if let Err(error) = result {
+            assert_eq!(error.kind(), ErrorKind::BrokenPipe, "write stdin: {error}");
+        }
     }
     let output = child.wait_with_output().expect("wait");
     (
@@ -61,7 +62,10 @@ fn write_temp(contents: &str) -> NamedTempFile {
 fn inspect_nodes_emits_ruby_kind_from_stdin() {
     let (status, stdout, stderr) = run(&["inspect", "nodes"], Some("｜青梅《おうめ》\n"));
     assert!(status.success(), "wire nodes failed: {stderr:?}");
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
+    assert!(
+        stdout.starts_with(&envelope_prefix()),
+        "envelope: {stdout:?}"
+    );
     assert!(stdout.contains(r#""kind":"ruby""#), "nodes: {stdout:?}");
 }
 
@@ -69,7 +73,10 @@ fn inspect_nodes_emits_ruby_kind_from_stdin() {
 fn inspect_pairs_emits_ruby_pair_with_open_and_close() {
     let (status, stdout, _) = run(&["inspect", "pairs"], Some("｜青梅《おうめ》\n"));
     assert!(status.success());
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
+    assert!(
+        stdout.starts_with(&envelope_prefix()),
+        "envelope: {stdout:?}"
+    );
     assert!(stdout.contains(r#""kind":"ruby""#), "pairs: {stdout:?}");
     assert!(
         stdout.contains(r#""open":"#) && stdout.contains(r#""close":"#),
@@ -82,21 +89,26 @@ fn inspect_container_pairs_emits_pair_offsets() {
     let src = "［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n";
     let (status, stdout, stderr) = run(&["inspect", "container-pairs"], Some(src));
     assert!(status.success(), "container-pairs failed: {stderr:?}");
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(
-        stdout.contains(r#""offset":"#),
+        stdout.starts_with(&envelope_prefix()),
+        "envelope: {stdout:?}"
+    );
+    assert!(
+        stdout.contains(r#""open":{"start":"#) && stdout.contains(r#""close":{"start":"#),
         "expected a container pair: {stdout:?}"
     );
 }
 
 #[test]
 fn inspect_diagnostics_emits_data_for_pua_collision() {
-    // `wire diagnostics` is a pure projection: it exits 0 regardless of
-    // findings (unlike `check --strict`), and the PUA sentinel produces
-    // a `source_contains_pua` entry.
+    // Diagnostics are tolerated without the shared `--strict` flag, and the
+    // PUA sentinel produces a `source_contains_pua` entry.
     let (status, stdout, _) = run(&["inspect", "diagnostics"], Some("abc\u{E001}def"));
-    assert!(status.success(), "diagnostics projection always exits 0");
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
+    assert!(status.success(), "diagnostics are tolerated by default");
+    assert!(
+        stdout.starts_with(&envelope_prefix()),
+        "envelope: {stdout:?}"
+    );
     assert!(
         stdout.contains(r#""kind":"source_contains_pua""#),
         "diag: {stdout:?}"
@@ -107,17 +119,18 @@ fn inspect_diagnostics_emits_data_for_pua_collision() {
 fn inspect_gaiji_resolves_reference() {
     let (status, stdout, stderr) = run(&["inspect", "gaiji"], Some("※［＃「々」］"));
     assert!(status.success(), "gaiji failed: {stderr:?}");
-    assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
+    assert!(
+        stdout.starts_with(&envelope_prefix()),
+        "envelope: {stdout:?}"
+    );
     assert!(stdout.contains(r#""resolved":"々""#), "gaiji: {stdout:?}");
 }
 
 #[test]
-fn inspect_gaiji_resolutions_is_an_accepted_alias() {
-    // The wire-function name `gaiji-resolutions` is an alias for the
-    // short, user-facing `gaiji`.
-    let (status, stdout, _) = run(&["inspect", "gaiji-resolutions"], Some("※［＃「々」］"));
-    assert!(status.success());
-    assert!(stdout.contains(r#""resolved":"々""#), "alias: {stdout:?}");
+fn inspect_rejects_removed_gaiji_resolutions_alias() {
+    let (status, _, stderr) = run(&["inspect", "gaiji-resolutions"], Some("※［＃「々」］"));
+    assert!(!status.success());
+    assert!(stderr.contains("invalid value"), "stderr: {stderr:?}");
 }
 
 #[test]

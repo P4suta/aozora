@@ -1,142 +1,116 @@
-# npm publish workflow for `aozora-wasm`.
-#
-# wasm-pack publishes to the npm registry the JS shim + .wasm bundle
-# emitted by `wasm-pack build --target web`. The crate's
-# `[package.metadata.wasm-pack.profile]` controls the bundle name.
-#
-# SECURITY MODEL (industry-standard, see releasing-secrets.md):
-#   * The `build` job runs ungated and only produces the package + a
-#     `npm publish --dry-run` smoke test (no credentials).
-#   * The live `publish` job runs in the `release` GitHub Environment
-#     (required-reviewer approval + deployment branch/tag restriction);
-#     credentials are unreachable until a protection rule passes.
-#   * Default `use_oidc: true` publishes via npm Trusted Publishing
-#     (OIDC) — no long-lived token, and npm attaches a provenance
-#     attestation automatically. Requires npm CLI >= 11.5.1.
-#     Ref: https://docs.npmjs.com/trusted-publishers
-#   * Default `dry_run: true` so a stray click cannot publish.
-#
-# Publishing: a release-plz `v*` tag fans out here and publishes via OIDC
-# Trusted Publishing automatically. Manual fallback (steady state, no secret):
-#   gh workflow run publish-npm.yml -f dry_run=false
-#   # then approve the `publish` job in the release environment.
-#
-# BOOTSTRAP (one-time, first publish of a brand-new package): npm does
-# NOT allow Trusted Publishing until the package already exists, so the
-# first publish needs a token. Populate the `NPM_TOKEN` environment
-# secret (account 2FA must be enabled) and run:
-#   gh workflow run publish-npm.yml -f dry_run=false -f use_oidc=false
-# Then register the trusted publisher on npmjs.com and drop the token.
-
 name: publish-npm
 
 on:
-  # A release-plz `v*` tag fans out here automatically; workflow_dispatch
-  # stays as a manual fallback (defaults to a dry run).
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      commit:
+        description: "Qualified release commit SHA to retry"
+        type: string
+        required: true
       dry_run:
-        description: "Run wasm-pack publish in --dry-run mode (no upload)"
+        description: "Verify the qualified package without uploading"
         type: boolean
         default: true
       use_oidc:
-        description: "Publish via npm Trusted Publishing (OIDC). Uncheck ONLY for the one-time bootstrap publish (uses the NPM_TOKEN env secret)."
+        description: "Use npm Trusted Publishing; disable only for first-package bootstrap"
         type: boolean
         default: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: publish-npm
   cancel-in-progress: false
 
 jobs:
-  build:
+  qualify:
     runs-on: ubuntu-latest
+    env:
+      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: publish-npm
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+          ref: ${{ env.QUALIFIED_SHA }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build wasm-pack package
+      - name: Download qualified package
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          wasm-pack build --target web --release crates/aozora-wasm
-          cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
-
-      - name: Verify npm legal files
-        run: test -s crates/aozora-wasm/pkg/LICENSE-APACHE && test -s crates/aozora-wasm/pkg/LICENSE-MIT && test -s crates/aozora-wasm/pkg/NOTICE
-
-      - name: Dry-run npm publish (smoke test)
-        working-directory: crates/aozora-wasm/pkg
-        run: npm publish --dry-run
-
-      - name: Upload package artefact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+          scripts/download-release-ready-artifact.sh \
+            "release-ready-$QUALIFIED_SHA" qualified "$QUALIFIED_SHA"
+      - name: Verify immutable package identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
+          test "$(jq -er .commit qualified/manifest.json)" = "$QUALIFIED_SHA"
+          mapfile -t packages < <(find qualified -maxdepth 1 -name '*.tgz' -type f)
+          test "${#packages[@]}" -eq 1
+          package_version="$(tar -xOf "${packages[0]}" package/package.json | jq -er .version)"
+          test "$package_version" = "$(jq -er .version qualified/manifest.json)"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            test "v${package_version}" = "$RELEASE_TAG"
+          fi
+          mkdir -p npm-dist
+          cp "${packages[0]}" npm-dist/
+          npm publish npm-dist/*.tgz --dry-run
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: npm-pkg
-          path: crates/aozora-wasm/pkg
-          retention-days: 7
+          name: qualified-npm
+          path: npm-dist/*.tgz
+          retention-days: 90
           if-no-files-found: error
 
   publish:
-    needs: build
-    # Real publish on a `v*` tag push; manual dispatch only when dry_run=false.
+    needs: qualify
     if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: read
-      id-token: write  # OIDC token for npm Trusted Publishing + provenance
+      id-token: write
     steps:
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Download package artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: npm-pkg
+          name: qualified-npm
           path: pkg
-
-      # Trusted Publishing needs npm CLI >= 11.5.1 (and Node >= 22.14.0);
-      # provenance on the bootstrap path also wants a recent npm. The
-      # setup-node LTS image ships an older npm, so upgrade it first.
-      - name: Upgrade npm
-        run: npm install -g npm@latest
-
-      # A tag push always takes the OIDC path (steady state); on dispatch the
-      # use_oidc input chooses. `inputs.use_oidc` is empty on a push event, so
-      # without the event guard a tag release would wrongly fall to bootstrap.
-      - name: Publish to npm (OIDC Trusted Publishing)
-        if: ${{ github.event_name == 'push' || inputs.use_oidc }}
-        working-directory: pkg
-        run: npm publish --access public
-
-      # One-time bootstrap only: a brand-new package cannot use Trusted
-      # Publishing yet, so authenticate with the NPM_TOKEN env secret. Manual
-      # dispatch only — never on a tag push.
-      - name: Publish to npm (bootstrap token)
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.use_oidc }}
-        working-directory: pkg
+      - run: npm install -g npm@latest
+      - name: Resolve registry state
+        id: registry
+        run: |
+          set -euo pipefail
+          package="$(find pkg -maxdepth 1 -name '*.tgz' -type f -print -quit)"
+          test -n "$package"
+          name="$(tar -xOf "$package" package/package.json | jq -er .name)"
+          version="$(tar -xOf "$package" package/package.json | jq -er .version)"
+          integrity="$(PACKAGE="$package" node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { createHash } from "node:crypto";
+            process.stdout.write(`sha512-${createHash("sha512")
+              .update(readFileSync(process.env.PACKAGE)).digest("base64")}`);
+          ')"
+          if remote="$(npm view "${name}@${version}" dist.integrity 2>/dev/null)"; then
+            test "$remote" = "$integrity"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish with npm Trusted Publishing
+        if: ${{ steps.registry.outputs.publish == 'true' && (github.event_name == 'push' || inputs.use_oidc) }}
+        run: npm publish pkg/*.tgz --access public
+      - name: Bootstrap first publish with token
+        if: ${{ steps.registry.outputs.publish == 'true' && github.event_name == 'workflow_dispatch' && !inputs.use_oidc }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish pkg/*.tgz --access public --provenance

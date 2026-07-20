@@ -11,12 +11,6 @@ use std::path::{Path, PathBuf};
 /// Find `program` on the process `PATH`, returning the first executable
 /// candidate — the convenience wrapper over [`find_on_path`] that reads the
 /// live `PATH`.
-// mutants::skip — a thin adapter over the live process `PATH`: it only reads
-// `PATH` and hands off to [`find_on_path`], which carries the swept search
-// assertions. A live-`PATH` read cannot be exercised deterministically without
-// mutating the global process environment — ruled out here by
-// `#![forbid(unsafe_code)]` (env mutation is `unsafe` on edition 2024).
-#[cfg_attr(test, mutants::skip)]
 pub(crate) fn which(program: &str) -> Option<PathBuf> {
     find_on_path(&env::var_os("PATH")?, program)
 }
@@ -41,46 +35,53 @@ pub(crate) fn find_in_dir(dir: &Path, program: &str) -> Option<PathBuf> {
         .find(|candidate| is_executable_file(candidate))
 }
 
-// mutants::skip — the Windows PATHEXT expansion is cfg-dead on the Linux
-// sweep host, so cargo-mutants cannot exercise it here; the non-Windows
-// counterpart below carries the swept assertions. Reinforcing this variant
-// would need a separate Windows mutation pass.
-#[cfg_attr(test, mutants::skip)]
-#[cfg(windows)]
 fn executable_candidates(dir: &Path, program: &str) -> Vec<PathBuf> {
-    // The bare name (for an already-suffixed program), then each PATHEXT entry.
+    #[cfg(windows)]
+    let extensions = Some(env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned()));
+    #[cfg(not(windows))]
+    let extensions: Option<String> = None;
+
+    executable_candidates_with_extensions(dir, program, extensions.as_deref())
+}
+
+fn executable_candidates_with_extensions(
+    dir: &Path,
+    program: &str,
+    extensions: Option<&str>,
+) -> Vec<PathBuf> {
     let mut candidates = vec![dir.join(program)];
-    let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned());
-    for ext in pathext.split(';').filter(|ext| !ext.is_empty()) {
-        candidates.push(dir.join(format!("{program}{ext}")));
+    if let Some(extensions) = extensions {
+        for extension in extensions
+            .split(';')
+            .filter(|extension| !extension.is_empty())
+        {
+            candidates.push(dir.join(format!("{program}{extension}")));
+        }
     }
     candidates
 }
 
-#[cfg(not(windows))]
-fn executable_candidates(dir: &Path, program: &str) -> Vec<PathBuf> {
-    vec![dir.join(program)]
-}
-
-#[cfg(unix)]
 fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    path.metadata()
-        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
-// mutants::skip — the non-unix fallback is cfg-dead on the Linux sweep host;
-// the `#[cfg(unix)]` variant above carries the swept assertions. Reinforcing
-// this variant would need a separate non-unix mutation pass.
-#[cfg_attr(test, mutants::skip)]
-#[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        path.metadata()
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_path_finds_the_active_cargo_toolchain() {
+        assert!(which("cargo").is_some());
+    }
 
     #[cfg(not(windows))]
     #[test]
@@ -90,6 +91,24 @@ mod tests {
             got,
             vec![PathBuf::from("/bin/pandoc")],
             "one bare candidate"
+        );
+    }
+
+    #[test]
+    fn executable_candidates_expand_windows_extensions() {
+        let got = executable_candidates_with_extensions(
+            Path::new("tools"),
+            "pandoc",
+            Some(".COM;.EXE;;.CMD"),
+        );
+        assert_eq!(
+            got,
+            vec![
+                PathBuf::from("tools/pandoc"),
+                PathBuf::from("tools/pandoc.COM"),
+                PathBuf::from("tools/pandoc.EXE"),
+                PathBuf::from("tools/pandoc.CMD"),
+            ]
         );
     }
 

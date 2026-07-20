@@ -25,15 +25,13 @@ Two layers keep the loop honest:
   (run by `just conformance`) parses each vector's `source` and compares
   the parser's projections — `serialize`, `nodes`, `pairs`,
   `diagnostics` — against `expected`, governed by `meta.level`
-  (`must` fails the build, `should` warns, `may` is informational). The
-  `html` channel is **informative** (spec §8) and only ever warns.
-- **Drift check:** `just verify-spec-vectors` (`xtask spec-vectors check
-  --allow-missing`) fails the push if this vendored copy has drifted from
-  the sibling spec repo. It runs host-side in `ci-parallel`'s background
-  lane (pre-push) and is a no-op where the spec isn't checked out, so the
-  vendored copy is authoritative in CI. The weekly `spec-freshness`
-  workflow re-runs it against a fresh sibling checkout and files a tracking
-  issue on drift.
+  (`must`, `should`, and `may` all fail on a mismatch). HTML is part of the
+  same exact comparison.
+- **Drift check:** `just verify-spec-vectors` fails the push if this vendored
+  copy has drifted from the sibling spec repo. It is a local no-op when no
+  spec checkout is configured. `release-ready` and the weekly
+  `spec-freshness` workflow supply a pinned checkout and run the strict
+  `xtask spec-vectors check`.
 
 We vendor (rather than a submodule / crates.io pin) so the gate needs no
 network and no checked-out sibling — see ADR notes in the spec repo.
