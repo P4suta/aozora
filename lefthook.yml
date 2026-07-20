@@ -133,18 +133,13 @@ pre-push:
           git rebase --exec 'git commit --amend --no-edit -S' <base>   # a range
         Re-run `scripts/check-signed-commits.sh` manually to see which
         commit failed verification.
-    # Conformance regression gate: fail the push when the corpus per-file
-    # Unknown-degradation rate rose above corpus/baseline.json. Needs a
-    # corpus; runtime-skips (no-op, not a failure) when AOZORA_CORPUS_ROOT
-    # is unset — so a machine without the corpus still pushes and the
-    # corpus CI job (checkout of P4suta/aozorabunko_text) is the backstop.
+    # Local corpus gates are optional when AOZORA_CORPUS_ROOT is unset.
+    # release-ready always checks out the pinned corpus and cannot skip them.
     audit-gate:
       run: just audit-gate
       fail_text: |
-        Unknown-degradation regression: more notation now falls through to
-        the Annotation{Unknown} catch-all than corpus/baseline.json allows.
-        Fix the recogniser, or — if the shift is intentional and justified —
-        re-baseline with `just audit-gate-update` and commit corpus/baseline.json.
+        Corpus audit failed. Re-run `just audit-gate` for the first document
+        with a panic, internal diagnostic, unknown fallback, or parse failure.
     # Verbatim-provenance gate (I5): fail the push when any corpus
     # document's Tree::to_source_verbatim() no longer equals a fresh
     # sanitize() of its decoded source. Same corpus bind-mount + runtime-
@@ -155,10 +150,6 @@ pre-push:
         Verbatim-provenance regression: Tree::to_source_verbatim() no longer
         equals a fresh sanitize() of the source for one or more corpus docs.
         The I5 verbatim==sanitize invariant must hold byte-exact.
-    # Render-leak ratchet (#399): fail the push when notation control markers
-    # (《…》 / ｜ / ［＃…］) newly survive into visible rendered HTML above
-    # corpus/render-leak-baseline.json. Runtime-skips (no-op) when
-    # AOZORA_CORPUS_ROOT is unset; the corpus CI job is the backstop.
     render-leak-gate:
       run: just render-leak-gate
       fail_text: |
@@ -166,11 +157,6 @@ pre-push:
         newly survives into visible rendered text. Run
         `just render-audit` (or `xtask corpus render-audit`) to find the
         offending document, then fix the classifier/renderer so it resolves.
-    # Render-correctness ratchet (#414): fail the push when structural render
-    # defects (I-A HTML tags don't balance, I-C undeclared aozora-* class) rise
-    # above corpus/render-correctness-baseline.json. Catches recognized-but-wrong
-    # output the recognition / leak gates cannot see. Runtime-skips (no-op) when
-    # AOZORA_CORPUS_ROOT is unset; the corpus CI job is the backstop.
     render-correctness-gate:
       run: just render-correctness-gate
       fail_text: |
@@ -178,25 +164,6 @@ pre-push:
         structurally malformed (unbalanced HTML tags or an undeclared class).
         Run `just render-correctness` (or `xtask corpus render-correctness`) to
         find the offending document, then fix the renderer.
-    # Render-digest ratchet (#414): fail the push when a non-circular corpus
-    # metric moves the wrong way — panic count rose, a node/annotation kind
-    # vanished (recogniser regression), or gaiji resolution dropped. Runtime-
-    # skips (no-op) when AOZORA_CORPUS_ROOT is unset; the corpus CI job backstops.
-    digest-gate:
-      run: just digest-gate
-      fail_text: |
-        Render-digest regression: a known-good corpus metric moved the wrong
-        way (panic rose / a kind vanished / gaiji resolution dropped). Run
-        `just digest-gate` for detail; fix the recogniser/renderer — do not
-        raise the baseline.
-    catalogue-sweep-gate:
-      run: just catalogue-sweep-gate
-      fail_text: |
-        Catalogue-sweep regression: the Tier1/Tier2 catalogues either regressed
-        (a matched shape fell back to residue / residue grew) or silently began
-        matching a NEW shape. Run `just catalogue-sweep-gate` for detail. A new
-        match must be vetted as a genuine near-miss (not an editorial
-        false-positive) before re-baselining with `just catalogue-sweep-gate-update`.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
     # per-file / per-source-byte) regress beyond corpus/alloc-baseline.json.
