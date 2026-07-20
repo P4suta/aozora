@@ -43,7 +43,7 @@ tempfile = { workspace = true }
 # for `syn::parse_file`. Not in `[workspace.dependencies]` (no other crate
 # needs it); already present in Cargo.lock transitively via the proc-macro
 # derives, so this pins the same 2.x line without adding a new graph.
-syn = { version = "2.0.117", features = ["full", "visit", "parsing"] }
+syn = { version = "3.0.2", features = ["full", "visit", "parsing"] }
 toml = { workspace = true }
 tree-sitter = "0.26"
 tree-sitter-aozora = { workspace = true }
