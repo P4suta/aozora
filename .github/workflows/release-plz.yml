@@ -25,13 +25,12 @@ name: release-plz
 on:
   push:
     branches: [main]
-  # Re-runs a release that failed after the merge, and refreshes the Release PR
-  # without waiting for the next push to main. Neither job has an event guard,
-  # so a dispatch does exactly what a push on main does — and what that is, is
-  # bounded by release-plz.toml's `release_always = false` (release only from a
-  # Release-PR merge commit); a real release also waits for the exact commit's
-  # release-ready proof under ADR-0042.
   workflow_dispatch:
+    inputs:
+      commit:
+        description: "Exact qualified Release PR merge commit to recover"
+        required: true
+        type: string
 
 # One release pipeline per ref; never cancel a publish already in flight.
 concurrency:
@@ -41,8 +40,27 @@ concurrency:
 permissions: {}
 
 jobs:
+  release-freeze:
+    name: publication freeze
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 1
+      - name: Require a reviewed rearm
+        run: |
+          if [[ -e .github/RELEASE_FROZEN.md ]]; then
+            echo "::error title=release frozen::remove .github/RELEASE_FROZEN.md in a reviewed rearm PR before running release-plz"
+            exit 1
+          fi
+
   # Open / update the single Release PR (version bump + CHANGELOG.md).
   release-plz-pr:
+    needs: release-freeze
+    if: needs.release-freeze.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # The App secrets live on the release-plz environment (more scoped than
@@ -93,8 +111,11 @@ jobs:
 
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
+    needs: release-freeze
     runs-on: ubuntu-latest
     timeout-minutes: 480
+    env:
+      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
     # The App key lives in this environment's secrets. Configure it with a
     # deployment-branch policy of `main` only (a workflow on any other branch
     # cannot read the credential) and NO required reviewers: the human gate is
@@ -116,6 +137,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.QUALIFIED_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -129,9 +151,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
           release=false
           if git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
             release=true
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$release" != true ]]; then
+            echo "::error title=release commit::$QUALIFIED_SHA does not change the workspace version"
+            exit 1
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
@@ -145,7 +173,7 @@ jobs:
           for _ in $(seq 1 420); do
             state="$(gh run list \
               --workflow release-ready.yml \
-              --commit "$GITHUB_SHA" \
+              --commit "$QUALIFIED_SHA" \
               --limit 1 \
               --json status,conclusion \
               --jq '.[0] | [.status, (.conclusion // "")] | @tsv')"
@@ -168,22 +196,23 @@ jobs:
         run: |
           set -euo pipefail
           scripts/download-release-ready-artifact.sh \
-            "release-ready-$GITHUB_SHA" qualified
-          while read -r crate; do
-            cargo package --locked -p "$crate"
-          done < <(cargo metadata --no-deps --format-version 1 |
-            jq -r '.packages[] | select(.publish != []) | .name')
+            "release-ready-$QUALIFIED_SHA" qualified "$QUALIFIED_SHA"
+          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
+          test "$(jq -er .commit qualified/manifest.json)" = "$QUALIFIED_SHA"
+          cargo run -p aozora-xtask -q -- artifacts crates
           qualified_count=0
           for package in qualified/*.crate; do
-            local_package="target/package/$(basename "$package")"
+            local_package="target/release-ready-build/crates/$(basename "$package")"
             test -s "$local_package"
             cmp "$package" "$local_package"
             qualified_count=$((qualified_count + 1))
           done
           test "$qualified_count" -gt 0
-          test "$qualified_count" -eq "$(find target/package -maxdepth 1 -name '*.crate' | wc -l)"
+          test "$qualified_count" -eq "$(find target/release-ready-build/crates \
+            -maxdepth 1 -name '*.crate' | wc -l)"
 
       - name: release-plz release
+        if: steps.release-commit.outputs.release == 'true'
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release

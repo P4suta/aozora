@@ -3,6 +3,18 @@
 Releases are Release-PR driven by [release-plz](https://release-plz.dev/).
 Humans never edit a version or push a release tag.
 
+## Publication freeze
+
+When `.github/RELEASE_FROZEN.md` exists, release-plz fails before either
+credential-bearing job can start. The GitHub Actions workflow should also be
+manually disabled. The repository latch and server-side disable are independent
+so an accidental enable does not resume publication.
+
+Rearming is a release decision, not ordinary maintenance. Remove the latch in
+a dedicated reviewed PR while the workflow remains disabled, verify the merge
+did not create a tag or publication, and enable the workflow only after a
+maintainer explicitly starts a new release checkpoint.
+
 ## Cutting a release
 
 1. Land Conventional Commits on `main`. release-plz opens or updates the
@@ -25,6 +37,17 @@ Humans never edit a version or push a release tag.
    approve `release-vscode.yml` as part of a package release.
 8. Verify every intended registry version, draft asset, checksum, and
    attestation. Publish the draft in the GitHub UI only after they all match.
+
+If release-plz fails before creating the tag, fix the workflow at its source,
+then dispatch it with the exact qualified Release PR merge commit:
+
+```sh
+commit=<40-character-release-merge-commit>
+gh workflow run release-plz.yml -f commit="$commit"
+```
+
+The recovery checkout, successful `release-ready` run, artifact manifest, and
+published crate bytes must all resolve to that commit.
 
 release-plz waits for `release-ready` on the exact version-changing commit,
 then creates the tag. The tag-driven jobs publish only the already-verified

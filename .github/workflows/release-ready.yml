@@ -2,7 +2,7 @@ name: release-ready
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:

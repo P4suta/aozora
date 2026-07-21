@@ -33,21 +33,19 @@ then. An OIDC token minted under an environment carries
 `…:environment:<name>` in its `sub` claim, which is what the registry's
 publisher rule matches.
 
-What stops a stray **Run workflow** click is not one mechanism but three,
-and it is worth knowing which one you are relying on:
+What stops a stray **Run workflow** click depends on the publisher:
 
 - Every channel publisher requires an exact `release-ready` commit on manual
   dispatch and defaults `dry_run` to true. A dispatch downloads and verifies
   that commit's retained artifacts; it never rebuilds release bytes.
-- `release-plz.yml` — **neither**, and the button is live. Its
-  `workflow_dispatch` takes no inputs and `release-plz-release` has no
-  event guard, so a dispatch on `main` is equivalent to a push on `main`.
-  What bounds both is not in the workflow at all: `release-plz.toml`'s
-  `release_always = false` releases only from a Release-PR merge commit,
-  so a dispatch on an ordinary `main` commit does nothing, and one on the
-  merge commit re-runs a publish that is idempotent against crates.io —
-  which is how you finish a release that failed. See
-  [ADR-0039](../adr/0039-release-plzs-manual-trigger-stays-unguarded.md).
+- `release-plz.yml` requires the exact qualified Release-PR merge commit on
+  manual dispatch. It checks that commit changes the workspace version, waits
+  for its successful `release-ready` run, and compares the retained crate
+  artifacts with a local reproduction before publishing. See
+  [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md).
+- While `.github/RELEASE_FROZEN.md` exists, release-plz fails before either
+  credential-bearing job starts. Manually disabling the workflow in GitHub
+  Actions provides an independent server-side freeze.
 
 ## One-time setup
 
