@@ -1,6 +1,10 @@
 # 0009. Single source of truth for version pins
 
-- Status: accepted
+- Status: accepted; the handbook that held the canonical pin was retired
+  (#549), superseding decisions 1–3 — the version single-source-of-truth now
+  lives in the machine sources per
+  [ADR-0038](0038-release-plz-owns-versioning-and-crates-io-publishing.md), so
+  the `crates/aozora-book/src/…` references below are historical
 - Date: 2026-06-15
 - Deciders: @P4suta
 - Tags: docs, release, versioning

@@ -9,7 +9,7 @@ Pre-built binaries are attached to every
 [GitHub Release](https://github.com/P4suta/aozora/releases). Or:
 
 ```sh
-cargo install --git https://github.com/P4suta/aozora --locked aozora-cli
+cargo install aozora-cli --locked
 ```
 
 ## Use

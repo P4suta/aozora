@@ -87,7 +87,7 @@ body = """
 ### {{ group | upper_first }}
 
 {% for commit in commits %}\
-- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{% if commit.remote.pr_number %}{{ commit.message | upper_first | split(pat=" (#") | first }} (#{{ commit.remote.pr_number }}){% else %}{{ commit.message | upper_first }}{% endif %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{% if commit.breaking %}⚠ **BREAKING** — {% endif %}{% if commit.remote.pr_number %}{{ commit.message | upper_first | split(pat=" (#") | first }} (#{{ commit.remote.pr_number }}){% else %}{{ commit.message | upper_first }}{% endif %}
 {% endfor %}
 {% endfor %}
 """

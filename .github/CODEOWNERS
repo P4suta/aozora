@@ -10,7 +10,5 @@
 /docs/adr/               @P4suta
 /Dockerfile              @P4suta
 /docker-compose.yml      @P4suta
+/crates/aozora/          @P4suta
 /crates/aozora-ffi/      @P4suta
-/crates/aozora-render/   @P4suta
-/crates/aozora-encoding/ @P4suta
-/crates/aozora-pipeline/ @P4suta
