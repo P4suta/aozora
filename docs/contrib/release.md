@@ -26,6 +26,17 @@ Humans never edit a version or push a release tag.
 8. Verify every intended registry version, draft asset, checksum, and
    attestation. Publish the draft in the GitHub UI only after they all match.
 
+If release-plz fails before creating the tag, fix the workflow at its source,
+then dispatch it with the exact qualified Release PR merge commit:
+
+```sh
+commit=<40-character-release-merge-commit>
+gh workflow run release-plz.yml -f commit="$commit"
+```
+
+The recovery checkout, successful `release-ready` run, artifact manifest, and
+published crate bytes must all resolve to that commit.
+
 release-plz waits for `release-ready` on the exact version-changing commit,
 then creates the tag. The tag-driven jobs publish only the already-verified
 package artifacts. VSIX artifacts remain qualified by `release-ready`, but
