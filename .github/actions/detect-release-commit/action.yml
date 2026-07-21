@@ -16,13 +16,23 @@ inputs:
   head-ref:
     description: PR head ref to test against the release-plz-* pattern; empty on push/dispatch.
     default: ""
+  same-repo:
+    description: >
+      "true" only when the PR head branch lives in this repository, not a fork
+      (callers pass `github.event.pull_request.head.repo.full_name ==
+      github.repository`). Gates `release-branch`, so an outside contributor
+      cannot name a fork branch `release-plz-*` to trigger the heavy
+      release-ready matrix (and make ci defer its Rust graph). Defaults to
+      "false": recognizing a release-plz head is opt-in per caller, so a caller
+      that forgets the assertion fails safe (no trigger) rather than open.
+    default: "false"
 
 outputs:
   version-changed:
     description: "true when HEAD's diff against its parent touches a top-level `version = ` line in Cargo.toml."
     value: ${{ steps.detect.outputs.version-changed }}
   release-branch:
-    description: "true when head-ref matches release-plz-*."
+    description: "true when head-ref matches release-plz-* AND the head is a same-repo (non-fork) branch."
     value: ${{ steps.detect.outputs.release-branch }}
 
 runs:
@@ -32,6 +42,7 @@ runs:
       shell: bash
       env:
         HEAD_REF: ${{ inputs.head-ref }}
+        SAME_REPO: ${{ inputs.same-repo }}
       run: |
         set -euo pipefail
         version_changed=false
@@ -39,7 +50,7 @@ runs:
           version_changed=true
         fi
         release_branch=false
-        if [[ "$HEAD_REF" == release-plz-* ]]; then
+        if [[ "$HEAD_REF" == release-plz-* && "$SAME_REPO" == true ]]; then
           release_branch=true
         fi
         echo "version-changed=$version_changed" >> "$GITHUB_OUTPUT"

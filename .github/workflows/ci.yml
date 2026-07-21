@@ -126,6 +126,7 @@ jobs:
         uses: ./.github/actions/detect-release-commit
         with:
           head-ref: ${{ github.event.pull_request.head.ref }}
+          same-repo: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
   msrv:
     needs: changes
@@ -494,11 +495,15 @@ jobs:
       AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Source the corpus pin from the single source of truth
+      # (.github/release-inputs.env) rather than a local literal, so this
+      # checkout can never drift from the revision release-ready qualifies.
+      - uses: ./.github/actions/load-release-inputs
       - name: Check out the conformance corpus
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: P4suta/aozorabunko_text
-          ref: b1ec9a7fa46de8dd5acc33378428c899e86bfb32
+          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_CORPUS_SHA }}
           path: .corpus
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
