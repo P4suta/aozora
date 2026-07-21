@@ -20,13 +20,32 @@
 set -euo pipefail
 ref="${1:?usage: code-identity-hash.sh <git-ref>}"
 
-# Root Cargo.toml: zero the workspace version line and the two internal pins.
-# `^version = ` matches only the [workspace.package] line — `rust-version` and
-# third-party `name = { version = … }` entries are left intact.
+# Fail — emitting NOTHING — if the ref or the files it must read are absent, so
+# an unresolvable ref can never print a plausible, comparable hash that a caller
+# might mistake for a real one.
+git rev-parse --verify --quiet "${ref}^{tree}" >/dev/null \
+  || { echo "code-identity-hash: cannot resolve ${ref}" >&2; exit 1; }
+for f in Cargo.toml Cargo.lock; do
+  git cat-file -e "${ref}:${f}" 2>/dev/null \
+    || { echo "code-identity-hash: ${ref}:${f} is missing" >&2; exit 1; }
+done
+
+# Root Cargo.toml, section-aware so ONLY release-plz's footprint is zeroed: the
+# [workspace.package] `version`, and internal dependency pins in
+# [workspace.dependencies] — an inline entry carrying both a `version` and a
+# `path = "crates/…"`, i.e. a workspace member identified by path, not by name.
+# Every other `version = ` line (a `[workspace.dependencies.foo]` table-form
+# third-party pin, `rust-version`, a crate-manifest version) stays in the hash.
 norm_toml() {
-  git cat-file blob "${ref}:Cargo.toml" | sed -E '
-    s/^version = "[^"]*"/version = "0"/
-    s/^((aozora|aozora-[a-z]+|tree-sitter-aozora) = \{ version = )"[^"]*"/\1"0"/
+  git cat-file blob "${ref}:Cargo.toml" | awk '
+    /^\[/ { section = $0 }
+    section == "[workspace.package]" && /^version = "/ {
+      sub(/"[^"]*"/, "\"0\""); print; next
+    }
+    section == "[workspace.dependencies]" && /version = "/ && /path = "crates\// {
+      sub(/version = "[^"]*"/, "version = \"0\""); print; next
+    }
+    { print }
   '
 }
 

@@ -43,10 +43,12 @@ A new `code-proof` job (`needs: qualify`) emits `reuse`:
 
 `scripts/code-identity-hash.sh <ref>` is that hash: the tree's blobs verbatim
 (`git ls-tree`) with release-plz's version footprint — and only that —
-neutralised: the root `Cargo.toml` version line and the two internal pins, every
-no-`source` (workspace-local) `[[package]]` version in `Cargo.lock`, and
-`CHANGELOG.md` excluded. Every other byte — a third-party dependency bump, a new
-line, any real edit — stays in the hash.
+neutralised. Section-aware, so it zeroes the `[workspace.package]` version and
+the internal `[workspace.dependencies]` pins (identified by their `crates/…`
+path, not by name — a table-form third-party `version` in the root manifest is
+left intact), every no-`source` (workspace-local) `[[package]]` version in
+`Cargo.lock`, and `CHANGELOG.md` excluded. Every other byte — a third-party
+dependency bump, a new line, any real edit — stays in the hash.
 
 The five code gates gain `needs: [qualify, code-proof]` and
 `if: … run == 'true' && needs.code-proof.outputs.reuse != 'true'`. The artifact
@@ -61,13 +63,15 @@ green)", which preserves its meaning.
 
 Safety is argued from three properties:
 
-- **Fail-open to a full run.** Any doubt — the PR is not uniquely identified,
-  its run is not completed-success, the hashes differ, or a `gh` call fails —
-  leaves `reuse=false`, so the gates run in full. `code-proof` exits 0 in every
-  such branch.
-- **Fail-closed on error.** An unexpected failure fails the `code-proof` job;
-  the fan-in requires `code-proof == success`, so a broken proof stops the
-  release rather than publishing on an unknown basis.
+- **Fail-open to a full run.** A *data* doubt — the PR is not uniquely
+  identified, its run is not completed-success, or the hashes differ — leaves
+  `reuse=false`, so the gates run in full. `code-proof` exits 0 on each of these.
+- **Fail-closed on error.** An *operational* failure instead — a `gh` / `git`
+  call, or the hash script, erroring under `set -euo pipefail` — fails the
+  `code-proof` job; the fan-in requires `code-proof == success`, so a broken
+  proof stops the release rather than publishing on an unknown basis. The hash
+  script also validates its ref up front and prints nothing on error, so an
+  unresolvable ref cannot masquerade as a comparable hash.
 - **Unforgeable and fork-safe.** The consumer honours only a PR whose head is a
   `release-plz-*` branch *in this repository* (`head.repo.full_name ==
   github.repository`), the same trust boundary as the rest of the release. The

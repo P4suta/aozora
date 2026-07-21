@@ -67,10 +67,11 @@ jobs:
   #     recomputes the code hash itself from git blobs — a fork rewriting this
   #     workflow cannot forge a hash or a "success".
   #   * It only honours a same-repository `release-plz-*` PR (never a fork).
-  #   * Any doubt — PR not unique, run not completed-success, hash mismatch, API
-  #     failure — leaves `reuse=false`, so the gates run in FULL (fail-open to a
-  #     full run). It exits 0 in every branch; a real error fails the job, which
-  #     the fan-in below treats as a hard stop (fail-closed, never publishes).
+  #   * A DATA doubt — PR not unique, run not completed-success, hash mismatch —
+  #     leaves `reuse=false`, so the gates run in FULL (fail-open to a full run).
+  #     An OPERATIONAL error instead — a gh/git call or the hash script failing
+  #     under `set -euo pipefail` — fails the job, which the fan-in treats as a
+  #     hard stop (fail-closed; never publishes on an unknown basis).
   code-proof:
     needs: qualify
     if: needs.qualify.outputs.run == 'true'
@@ -114,6 +115,10 @@ jobs:
             if [[ "${ok:-0}" -ge 1 ]]; then
               # refs/pull/<n>/head persists after the branch is deleted at merge.
               git fetch --no-tags --quiet origin "refs/pull/$number/head"
+              # Bind the hashed commit to the one the green run was for: the PR's
+              # two pointers (.head.sha and refs/pull/<n>/head) must name the same
+              # commit, else the two proofs describe different commits — fail closed.
+              test "$(git rev-parse FETCH_HEAD)" = "$head"
               pr_hash="$(bash scripts/code-identity-hash.sh FETCH_HEAD)"
               merge_hash="$(bash scripts/code-identity-hash.sh "$merge")"
               if [[ "$pr_hash" == "$merge_hash" ]]; then
