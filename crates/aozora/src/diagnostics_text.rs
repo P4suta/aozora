@@ -14,8 +14,6 @@
 
 use std::fmt::{self, Write as _};
 
-use crate::pipeline::lexer::sanitize;
-
 use crate::Diagnostic;
 
 /// Render `diagnostics` over `source` as a plain-text report.
@@ -24,10 +22,12 @@ use crate::Diagnostic;
 /// <message>` header followed by the offending source slice — joined by
 /// newlines. Returns the empty string when `diagnostics` is empty.
 ///
-/// Spans are in *sanitized* coordinates (the lexer strips the BOM, folds
-/// CRLF→LF, and decomposes 〔…〕 accent digraphs, each of which shifts
-/// byte offsets), so `source` is sanitized internally before the
-/// offending slice is cut — mirroring the CLI's graphical renderer.
+/// Spans are in *source* coordinates — [`Snapshot::diagnostics`] maps
+/// them back onto the original bytes — so the offending slice is cut
+/// from `source` directly. A span that falls out of range or lands
+/// mid-codepoint degrades to no slice rather than panicking.
+///
+/// [`Snapshot::diagnostics`]: crate::Snapshot::diagnostics
 ///
 /// # Panics
 ///
@@ -47,7 +47,6 @@ fn write_report(out: &mut String, source: &str, diagnostics: &[Diagnostic]) -> f
     if diagnostics.is_empty() {
         return Ok(());
     }
-    let sanitized = sanitize(source).text;
     for diag in diagnostics {
         let span = diag.span();
         let (start, end) = (span.start as usize, span.end as usize);
@@ -57,7 +56,11 @@ fn write_report(out: &mut String, source: &str, diagnostics: &[Diagnostic]) -> f
             severity = diag.severity().as_json_str(),
             code = diag.code(),
         )?;
-        if let Some(slice) = sanitized.get(start..end) {
+        // The span is in source coordinates, so the offending slice is
+        // cut from the original `source`. `str::get` yields `None` for an
+        // out-of-range or non-char-boundary span, degrading to no slice
+        // rather than panicking.
+        if let Some(slice) = source.get(start..end) {
             writeln!(out, "  > {slice:?}")?;
         }
     }
@@ -67,6 +70,66 @@ fn write_report(out: &mut String, source: &str, diagnostics: &[Diagnostic]) -> f
 #[cfg(test)]
 mod tests {
     use crate::Document;
+    use crate::pipeline::lexer::sanitize;
+
+    /// Assert that the offending slice `diagnostics_text` quotes for
+    /// `source` is cut from the *original* source at the source-coordinate
+    /// span — not from a re-sanitized copy, which for BOM / CRLF /
+    /// `〔…〕`-accent inputs shifts the text or falls out of range.
+    fn assert_source_coordinate_slice(source: &str, expected: &str) {
+        let doc = Document::new(source);
+        let tree = doc.snapshot();
+        let diagnostics = tree.diagnostics();
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "fixture must yield exactly one diagnostic: {source:?}"
+        );
+        let span = diagnostics[0].span();
+        let (start, end) = (span.start as usize, span.end as usize);
+        assert_eq!(
+            source.get(start..end),
+            Some(expected),
+            "source-coordinate span must bracket the expected source slice"
+        );
+        // The sanitized copy the old code sliced disagrees at this span —
+        // out of range (BOM/CRLF) or the decomposed text (accent) — so a
+        // render that quotes `expected` proves the slice came from source.
+        let sanitized = sanitize(source).text;
+        assert_ne!(
+            sanitized.get(start..end),
+            Some(expected),
+            "fixture must actually diverge from the sanitized slice"
+        );
+        let text = super::diagnostics_text(source, diagnostics);
+        assert!(
+            text.contains(&format!("  > {expected:?}")),
+            "offending slice must quote the source substring: {text:?}"
+        );
+    }
+
+    #[test]
+    fn slice_uses_source_coordinates_across_crlf_shift() {
+        // `\r\n` folds to `\n`, so the sentinel sits one byte later in
+        // source than in sanitized text; the old sanitize-and-slice path
+        // cut the sanitized copy at the source span and lost the slice.
+        assert_source_coordinate_slice("\r\n\u{E001}", "\u{E001}");
+    }
+
+    #[test]
+    fn slice_uses_source_coordinates_across_bom_shift() {
+        // A stripped leading BOM (3 bytes) shifts every later offset; the
+        // source span lands out of range of the shorter sanitized text.
+        assert_source_coordinate_slice("\u{FEFF}\u{E001}", "\u{E001}");
+    }
+
+    #[test]
+    fn slice_uses_source_coordinates_across_accent_decomposition() {
+        // `〔cafe'〕` decomposes to `〔café〕`: same byte width, different
+        // content, so slicing the sanitized copy would quote the
+        // decomposed form instead of the source the author typed.
+        assert_source_coordinate_slice("〔cafe'〕", "〔cafe'〕");
+    }
 
     #[test]
     fn empty_when_no_diagnostics() {
