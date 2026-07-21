@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use ropey::Rope;
 
 use crate::encoding::gaiji::{GaijiResolution, gaiji_resolutions};
-use crate::incremental::reparse;
+use crate::incremental::{diagnostics_allow_incremental, reparse};
 use crate::pipeline::lexer::sanitize;
 use crate::pipeline::{LexOutput, SanitizedText, SourceNode, lex_shared};
 use crate::render::{
@@ -1089,15 +1089,6 @@ struct IncrementalSanitized {
     edit_range: Range<usize>,
 }
 
-fn diagnostics_allow_incremental(diagnostics: &[Diagnostic]) -> bool {
-    diagnostics.iter().all(|diagnostic| {
-        matches!(
-            diagnostic,
-            Diagnostic::UnresolvedGaiji { .. } | Diagnostic::NonCanonicalDirective { .. }
-        )
-    })
-}
-
 fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize> {
     let start = ["\r\n\r\n", "\n\n", "\r\r"]
         .into_iter()
@@ -2015,6 +2006,21 @@ mod tests {
         assert_snapshots_match(
             &document.snapshot(),
             &Document::new("first-second-tail").snapshot(),
+        );
+    }
+
+    #[test]
+    fn edit_batch_with_unclosed_ruby_matches_full_parse() {
+        let mut document = Document::new("");
+        document
+            .edit([
+                TextEdit::new(0..0, "《《《"),
+                TextEdit::new(0..0, "\n\n\n［＃］"),
+            ])
+            .expect("same-offset insertions are disjoint");
+        assert_snapshots_match(
+            &document.snapshot(),
+            &Document::new("《《《\n\n\n［＃］").snapshot(),
         );
     }
 
