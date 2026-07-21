@@ -37,6 +37,9 @@ pub(crate) fn reparse(
     if !balanced_nodes(&reparsed.source_nodes) {
         return None;
     }
+    if !region_diagnostics_are_closed(&reparsed.diagnostics) {
+        return None;
+    }
     if introduces_ruby_format_dependency(cached, &reparsed, region.start, region.end) {
         return None;
     }
@@ -48,6 +51,24 @@ pub(crate) fn reparse(
         region,
         source_delta: delta,
         source_unchanged,
+    })
+}
+
+pub(crate) fn diagnostics_allow_incremental(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().all(|diagnostic| {
+        matches!(
+            diagnostic,
+            Diagnostic::UnresolvedGaiji { .. } | Diagnostic::NonCanonicalDirective { .. }
+        )
+    })
+}
+
+fn region_diagnostics_are_closed(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().all(|diagnostic| {
+        !matches!(
+            diagnostic,
+            Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. }
+        )
     })
 }
 
