@@ -193,11 +193,8 @@ fn navigate_mut<'a>(
         return root;
     }
     let mut cur: &mut Vec<DocumentSymbol> = root;
-    for (i, &idx) in path.iter().enumerate() {
+    for &idx in path {
         let node = &mut cur[idx];
-        if i + 1 == path.len() {
-            return node.children.get_or_insert_with(Vec::new);
-        }
         cur = node.children.get_or_insert_with(Vec::new);
     }
     cur

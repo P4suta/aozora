@@ -10,7 +10,7 @@ on:
         type: string
         required: true
       tag:
-        description: "Existing vX.Y.Z GitHub Release tag"
+        description: "Existing vX.Y.Z draft GitHub Release tag"
         type: string
         required: true
       dry_run:
@@ -96,7 +96,11 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+              if [[ "$is_draft" != true ]]; then
+                echo "::error title=release::release $RELEASE_TAG is already published and immutable" >&2
+                exit 1
+              fi
               gh release upload "$RELEASE_TAG" \
                 dist/aozora.wasm dist/aozora.wasm.sha256 \
                 dist/aozora-extism.cdx.json \

@@ -235,8 +235,9 @@ fn build_completion_item(
     // we must aim end at the
     // START of `］`, not its END.
     let existing_full_close_start: Option<usize> = (!ctx.half_width()
-        && ctx.close_end > ctx.body_start
-        && source[ctx.body_start..ctx.close_end].ends_with('］'))
+        && source
+            .get(ctx.body_start..ctx.close_end)
+            .is_some_and(|body| body.ends_with('］')))
     .then(|| ctx.close_end - '］'.len_utf8());
 
     // Splice into the document. For half-width openers, rewrite the

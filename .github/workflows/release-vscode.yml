@@ -1,12 +1,10 @@
 name: release-vscode
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       commit:
-        description: "Qualified release commit SHA to retry"
+        description: "Qualified release commit SHA"
         type: string
         required: true
       tag:
@@ -30,8 +28,8 @@ jobs:
   qualify:
     runs-on: ubuntu-latest
     env:
-      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      QUALIFIED_SHA: ${{ inputs.commit }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +76,7 @@ jobs:
 
   publish:
     needs: qualify
-    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+    if: ${{ inputs.dry_run == false }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -87,7 +85,7 @@ jobs:
       id-token: write
       attestations: write
     env:
-      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      QUALIFIED_SHA: ${{ inputs.commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

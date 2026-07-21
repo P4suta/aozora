@@ -65,12 +65,31 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$QUALIFIED_SHA"
-          test "$(find artefacts -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -type f | wc -l)" -eq 3
-          test "$(find artefacts -maxdepth 1 -name '*.sha256' -type f | wc -l)" -eq 5
-          test "$(find artefacts -maxdepth 1 -name '*.cdx.json' -type f | wc -l)" -eq 7
+          version="${RELEASE_TAG#v}"
+          expected=(
+            "aozora-v${version}-x86_64-unknown-linux-gnu.tar.gz"
+            "aozora-v${version}-x86_64-unknown-linux-gnu.tar.gz.sha256"
+            "aozora-v${version}-x86_64-unknown-linux-gnu-cli.cdx.json"
+            "aozora-v${version}-x86_64-unknown-linux-gnu-ffi.cdx.json"
+            "aozora-v${version}-aarch64-apple-darwin.tar.gz"
+            "aozora-v${version}-aarch64-apple-darwin.tar.gz.sha256"
+            "aozora-v${version}-aarch64-apple-darwin-cli.cdx.json"
+            "aozora-v${version}-aarch64-apple-darwin-ffi.cdx.json"
+            "aozora-v${version}-x86_64-pc-windows-msvc.zip"
+            "aozora-v${version}-x86_64-pc-windows-msvc.zip.sha256"
+            "aozora-v${version}-x86_64-pc-windows-msvc-cli.cdx.json"
+            "aozora-v${version}-x86_64-pc-windows-msvc-ffi.cdx.json"
+            aozora-go.tar.gz
+            aozora-go.tar.gz.sha256
+            aozora-go.cdx.json
+            aozora-go.cdx.json.sha256
+          )
+          diff -u \
+            <(printf '%s\n' "${expected[@]}" | sort) \
+            <(find artefacts -maxdepth 1 -type f -printf '%f\n' | sort)
           (cd artefacts && sha256sum --check ./*.sha256)
 
-          version=
+          archive_version=
           while IFS= read -r archive; do
             case "$archive" in
               *.zip) manifest="$(unzip -p "$archive" '*/manifest.json')" ;;
@@ -78,13 +97,14 @@ jobs:
             esac
             test "$(jq -er .commit <<<"$manifest")" = "$QUALIFIED_SHA"
             candidate="$(jq -er .version <<<"$manifest")"
-            if [[ -z "$version" ]]; then
-              version="$candidate"
+            if [[ -z "$archive_version" ]]; then
+              archive_version="$candidate"
             else
-              test "$candidate" = "$version"
+              test "$candidate" = "$archive_version"
             fi
-          done < <(find artefacts -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -type f | sort)
-          test "v${version}" = "$RELEASE_TAG"
+          done < <(find artefacts -maxdepth 1 -type f \
+            \( -name 'aozora-v*.tar.gz' -o -name 'aozora-v*.zip' \) | sort)
+          test "$archive_version" = "$version"
       - name: Aggregate checksums
         run: |
           cd artefacts
@@ -145,7 +165,7 @@ jobs:
             artefacts/*.sha256
             artefacts/SHA256SUMS
           body_path: CHANGES.md
-          draft: false
+          draft: true
           prerelease: false
           fail_on_unmatched_files: true
           overwrite_files: true

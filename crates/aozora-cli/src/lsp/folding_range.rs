@@ -46,13 +46,10 @@ fn block_ranges(source: &str, out: &mut Vec<FoldingRange>) {
         let line_idx = u32::try_from(line_idx).unwrap_or(u32::MAX);
         // A line may contain multiple openers/closers in unusual
         // input; iterate per match.
-        let mut search_from = 0usize;
-        while let Some(rel) = line[search_from..].find(OPEN) {
+        for _ in line.match_indices(OPEN) {
             stack.push(line_idx);
-            search_from += rel + OPEN.len();
         }
-        let mut search_from = 0usize;
-        while let Some(rel) = line[search_from..].find(CLOSE) {
+        for _ in line.match_indices(CLOSE) {
             if let Some(start_line) = stack.pop()
                 && line_idx > start_line
             {
@@ -65,7 +62,6 @@ fn block_ranges(source: &str, out: &mut Vec<FoldingRange>) {
                     collapsed_text: None,
                 });
             }
-            search_from += rel + CLOSE.len();
         }
     }
     // Unbalanced openers (open without close) are silently dropped —
