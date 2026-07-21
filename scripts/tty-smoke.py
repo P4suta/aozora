@@ -46,7 +46,10 @@ def exercise(binary, args, *, send=b"", expected=0, markers=()):
         if not readable:
             break
         try:
-            output.extend(os.read(fd, 65536))
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            output.extend(chunk)
         except OSError as error:
             if error.errno == errno.EIO:
                 break
