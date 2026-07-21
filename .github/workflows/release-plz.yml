@@ -158,33 +158,18 @@ jobs:
       - id: detect
         uses: ./.github/actions/detect-release-commit
 
+      # The version-standstill accept/reject rule (a rearm dispatch need not
+      # bump the version, but must not re-publish an already-tagged one) is
+      # `xtask release rearm-decision` — pure, unit-tested Rust rather than
+      # inline bash whose workflow_dispatch branch never ran. It validates the
+      # SHA/HEAD, reads QUALIFIED_SHA / GITHUB_EVENT_NAME / VERSION_CHANGED from
+      # the environment, and writes `release=<bool>` to $GITHUB_OUTPUT.
       - name: Detect release commit
         id: release-commit
         shell: bash
         env:
           VERSION_CHANGED: ${{ steps.detect.outputs.version-changed }}
-        run: |
-          set -euo pipefail
-          [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
-          release="$VERSION_CHANGED"
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            # A rearm dispatch recovers an interrupted publish. Its
-            # re-qualified commit need not bump the version — main may
-            # already sit at the target version — so version-changed can be
-            # false. Accept it while the release has NOT happened (no
-            # v<version> tag yet); reject only a version already tagged, so
-            # a rearm cannot re-publish a cut release.
-            version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
-            test -n "$version"
-            if [[ "$release" != true ]] &&
-                git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
-              echo "::error title=release commit::v${version} is already released; nothing to rearm"
-              exit 1
-            fi
-            release=true
-          fi
-          echo "release=$release" >> "$GITHUB_OUTPUT"
+        run: cargo run -p aozora-xtask -q -- release rearm-decision
 
       - name: Require release-ready for this commit
         if: steps.release-commit.outputs.release == 'true'

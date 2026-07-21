@@ -1,0 +1,34 @@
+# Composite action: load the pinned conformance inputs into the job env.
+#
+# `.github/release-inputs.env` is the single source of truth for the corpus
+# and specification repository + revision that every conformance gate pins to.
+# This action reads it and exports the four keys into `$GITHUB_ENV`, so every
+# consumer references `${{ env.AOZORA_* }}` (including in a later `with:`)
+# instead of hard-coding its own copy of the SHA. One source, no duplicate to
+# drift, so no cross-file coherence check is needed.
+#
+# Fails closed if the file — or any one of the four required keys — is missing
+# or empty, so a workflow can never silently check out an unset/blank ref.
+
+name: load-release-inputs
+description: Export the pinned corpus/spec repository+SHA from .github/release-inputs.env into the job environment.
+
+runs:
+  using: composite
+  steps:
+    - id: load
+      shell: bash
+      run: |
+        set -euo pipefail
+        env_file=.github/release-inputs.env
+        test -f "$env_file" || { echo "::error::$env_file not found"; exit 1; }
+        for key in AOZORA_CORPUS_REPOSITORY AOZORA_CORPUS_SHA \
+                   AOZORA_SPEC_REPOSITORY AOZORA_SPEC_SHA; do
+          line=$(grep -E "^${key}=" "$env_file" || true)
+          value=${line#*=}
+          if [[ -z "$line" || -z "$value" ]]; then
+            echo "::error::$key missing or empty in $env_file"
+            exit 1
+          fi
+          echo "$key=$value" >> "$GITHUB_ENV"
+        done

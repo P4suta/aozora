@@ -271,6 +271,24 @@ publish-check:
 artifact-crates *ARGS:
     {{_dev}} cargo run -p aozora-xtask -q -- artifacts crates {{ARGS}}
 
+# Rearm preflight: verify every deployed precondition CI-green cannot prove —
+# the release-plz / release environment secrets + protection, the server-side
+# tag ruleset, a completed-success release-ready for the exact commit, and the
+# first-publish registry residue — plus the offline `release check` gate and the
+# freeze-latch state. Online (`gh` + registry HTTPS), so it runs on the HOST
+# with the maintainer's `gh` auth, not the dev image. Fails closed on any gap.
+# `--offline` runs only the repo-local half; `--first-publish` acknowledges a
+# known new crate/project so it does not hard-stop.
+rearm-preflight *ARGS:
+    cargo run -p aozora-xtask -q -- release preflight {{ARGS}}
+
+# Rearm rehearsal: fire the PyPI / npm publishers' `dry_run` dispatches for the
+# qualified commit so their `qualify` jobs run BEFORE the irreversible tag push
+# (release.yml / extism resolve the tag in qualify and cannot rehearse pre-tag).
+# Dispatches real workflow runs, so it is a deliberate step, on the host.
+rearm-rehearse *ARGS:
+    cargo run -p aozora-xtask -q -- release rehearse {{ARGS}}
+
 # Drift gate: rust-toolchain.toml's channel (the DEV toolchain) and
 # Cargo.toml's rust-version (the PUBLIC CONTRACT) are two authorities
 # holding deliberately different numbers (ADR-0034). Fail if a pin follows
@@ -310,7 +328,7 @@ msrv-local:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check && cargo run -p aozora-xtask -q -- lint suppressions && cargo run -p aozora-xtask -q -- lint coordinates'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- release check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check && cargo run -p aozora-xtask -q -- lint suppressions && cargo run -p aozora-xtask -q -- lint coordinates'
 
 # Suppression-hygiene ratchet (a drift gate): per-crate #[allow] counts —
 # outer `#[allow]` and blanket inner `#![allow]`, tracked separately — may
@@ -1186,50 +1204,6 @@ strict-code:
     fi
     echo "strict-code: clean"
 
-# Every publishable crate (one that is NOT `publish = false`) must ship a
-# README.md — otherwise its crates.io page renders empty (F9). And that README
-# may not carry repo-relative links: crates.io / docs.rs resolve links against
-# nothing, so `](../foo)` / `](./foo)` (and HTML `href`/`src="./…"`) render as
-# dead 404s on the crate page. Absolute https URLs only. The repo-root README.md
-# / README.ja.md are the GitHub landing pages, not crate readmes, so their
-# relative links are fine and they are not scanned. Pure grep/bash, so it runs
-# on the bare host (no dev image) — matching the `readme-gate` CI job.
-readme-gate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    missing=""
-    relative=""
-    for manifest in crates/*/Cargo.toml; do
-        dir=$(dirname "$manifest")
-        # Skip crates opted out of crates.io publication.
-        if grep -qE '^\s*publish\s*=\s*false' "$manifest"; then
-            continue
-        fi
-        readme="$dir/README.md"
-        if [[ ! -f "$readme" ]]; then
-            missing+="  ${dir#crates/}"$'\n'
-            continue
-        fi
-        hits=$(grep -nE '\]\(\.\.?/|(href|src)="\.\.?/' "$readme" || true)
-        if [[ -n "$hits" ]]; then
-            relative+="  == $readme"$'\n'"$hits"$'\n'
-        fi
-    done
-    fail=0
-    if [[ -n "$missing" ]]; then
-        echo "==> publishable crates missing a README.md (crates.io page would be empty):" >&2
-        printf '%s' "$missing" >&2
-        fail=1
-    fi
-    if [[ -n "$relative" ]]; then
-        echo "==> repo-relative links in a published crate README" >&2
-        echo "    (they 404 on crates.io / docs.rs — use absolute https URLs):" >&2
-        printf '%s' "$relative" >&2
-        fail=1
-    fi
-    [[ $fail -eq 0 ]] || exit 1
-    echo "readme-gate: clean"
-
 # Format check (no-write): Rust (rustfmt) + TOML (taplo, taplo.toml policy)
 fmt-check:
     {{_dev}} cargo fmt --all -- --check
@@ -1316,6 +1290,12 @@ shear:
 # package collapse the only checked crate is `aozora`;
 # `aozora-cli` is bin-only (auto-skipped) and `tree-sitter-aozora` is a first
 # publish with no baseline yet.
+#
+# This is also the ONLY guard for the `#[non_exhaustive]` contract on the
+# public `DiagnosticInfo` / `CatalogueMatch` / `CatalogueEntry` types: that
+# attribute is inert within the defining crate, so no in-crate test can catch
+# a regression (a removed field/variant, or the attribute itself dropped).
+# cargo-semver-checks does, cross-crate — keep these types in scope here.
 semver *ARGS:
     {{_dev}} cargo semver-checks check-release --workspace \
         --exclude tree-sitter-aozora {{ARGS}}
@@ -1772,10 +1752,10 @@ ci-parallel:
     for g in deny audit smoke-ffi verify-spec-vectors playground-ci vscode-ci; do
         if want ${GATE_CATS[$g]}; then launch "$g" just "$g"; else skip "$g"; fi
     done
-    # fmt-check / typos / strict-code / readme-gate are
-    # cheap and apply to any file — always run. ci-fast-selftest guards the
-    # change-aware classifier itself (instant host bash).
-    for g in fmt-check typos strict-code readme-gate reuse ci-fast-selftest; do launch "$g" just "$g"; done
+    # fmt-check / typos / strict-code are cheap and apply to any file — always
+    # run. ci-fast-selftest guards the change-aware classifier itself (instant
+    # host bash). README hygiene now rides in `publish check` (drift-gate).
+    for g in fmt-check typos strict-code reuse ci-fast-selftest; do launch "$g" just "$g"; done
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
     # Lint runs the AUTHORITATIVE surface, not the lighter per-commit

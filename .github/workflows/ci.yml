@@ -126,6 +126,7 @@ jobs:
         uses: ./.github/actions/detect-release-commit
         with:
           head-ref: ${{ github.event.pull_request.head.ref }}
+          same-repo: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
   msrv:
     needs: changes
@@ -494,11 +495,15 @@ jobs:
       AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Source the corpus pin from the single source of truth
+      # (.github/release-inputs.env) rather than a local literal, so this
+      # checkout can never drift from the revision release-ready qualifies.
+      - uses: ./.github/actions/load-release-inputs
       - name: Check out the conformance corpus
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: P4suta/aozorabunko_text
-          ref: b1ec9a7fa46de8dd5acc33378428c899e86bfb32
+          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_CORPUS_SHA }}
           path: .corpus
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -802,24 +807,6 @@ jobs:
       - name: Run the test suite
         run: pytest crates/aozora-py/tests -q
 
-  # `readme-gate` (F9): every publishable crate ships a README whose links
-  # are absolute, so they survive being rendered on crates.io.
-  #
-  # This used to ride along with `version-literal-gate` in a `book-versions`
-  # job. That gate policed the handbook's one canonical version pin and
-  # retired with the handbook; readme-gate has nothing to do with either and
-  # would have been deleted by association.
-  readme:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
-        with:
-          tool: just
-      - run: just readme-gate
-
   # Single required status check. Every ci.yml job feeds in; this gate
   # passes iff none of them FAILED — a job that change-aware gating
   # SKIPPED counts as fine. Branch protection requires only `ci-success`
@@ -853,7 +840,6 @@ jobs:
       - cross-aarch64
       - wasm-test
       - python-wheel
-      - readme
       - playground-checks
       - e2e
       - vscode

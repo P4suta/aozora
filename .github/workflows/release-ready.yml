@@ -14,11 +14,11 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  AOZORA_CORPUS_REPOSITORY: P4suta/aozorabunko_text
-  AOZORA_CORPUS_SHA: b1ec9a7fa46de8dd5acc33378428c899e86bfb32
-  AOZORA_SPEC_REPOSITORY: P4suta/aozora-notation-spec
-  AOZORA_SPEC_SHA: a5473069f219000f7306a012e79e3ea393406680
+# The pinned corpus/spec repository + revision are NOT duplicated here. Each
+# job that needs them runs the `load-release-inputs` composite action, which
+# exports them from the single source of truth (.github/release-inputs.env)
+# into `$GITHUB_ENV`. One source, so there is no copy to drift and no
+# cross-file coherence check to keep honest.
 
 jobs:
   qualify:
@@ -33,6 +33,11 @@ jobs:
         uses: ./.github/actions/detect-release-commit
         with:
           head-ref: ${{ github.event.pull_request.head.ref }}
+          same-repo: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      # Fail fast if the pinned-inputs source of truth is missing or malformed,
+      # before committing to the heavy graph. The heavy jobs load it again at
+      # their point of use.
+      - uses: ./.github/actions/load-release-inputs
       - id: scope
         env:
           VERSION_CHANGED: ${{ steps.detect.outputs.version-changed }}
@@ -48,12 +53,6 @@ jobs:
             run=true
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
-          if [[ "$run" == true ]]; then
-            grep -Fx "AOZORA_CORPUS_REPOSITORY=$AOZORA_CORPUS_REPOSITORY" .github/release-inputs.env
-            grep -Fx "AOZORA_CORPUS_SHA=$AOZORA_CORPUS_SHA" .github/release-inputs.env
-            grep -Fx "AOZORA_SPEC_REPOSITORY=$AOZORA_SPEC_REPOSITORY" .github/release-inputs.env
-            grep -Fx "AOZORA_SPEC_SHA=$AOZORA_SPEC_SHA" .github/release-inputs.env
-          fi
 
   quality:
     needs: qualify
@@ -64,6 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/load-release-inputs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.AOZORA_SPEC_REPOSITORY }}
@@ -271,6 +271,7 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/load-release-inputs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}

@@ -6,6 +6,12 @@
 //! path-only internal dev-deps, and no registry `version` on an entry
 //! that points at a `publish = false` member.
 //!
+//! It also checks each publishable crate's README for the crates.io /
+//! docs.rs page: the file exists (else the page is blank), and its links
+//! are absolute — those pages serve the README standalone, so a
+//! repo-relative target 404s. This subsumes the former bash `readme-gate`,
+//! which only caught `./`/`../` prefixes and missed a bare `CONTRIBUTING.md`.
+//!
 //! **Offline.** It reads manifests and never contacts a registry —
 //! whether a crate actually exists on crates.io is a registry fact, and
 //! wiring that into a blocking gate would make the build depend on a
@@ -24,6 +30,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -107,6 +114,13 @@ struct Ledger {
     /// pointing at a `publish = false` member.
     versioned_unpublishable_workspace_deps: Vec<String>,
     non_placeholder_package_versions: Vec<(String, String)>,
+    /// Publishable members whose crate directory has no README.md — the
+    /// crates.io page would render blank.
+    readme_missing: Vec<String>,
+    /// `(crate, offending line)` for repo-relative links in a publishable
+    /// crate's README. crates.io / docs.rs serve the README standalone, so a
+    /// link that resolves against the repo tree 404s there.
+    readme_relative_links: Vec<(String, String)>,
 }
 
 pub(crate) fn dispatch(args: &PublishArgs) -> Result<(), String> {
@@ -183,6 +197,110 @@ fn resolves_to_version(
     }
 }
 
+/// Whether a link target resolves against the repository tree rather than
+/// naming an external resource — so it 404s when the README is served
+/// standalone on crates.io / docs.rs. Not repo-relative: an in-page
+/// `#anchor`, a protocol-relative `//host/…`, and any target carrying a URL
+/// scheme (`https:`, `http:`, `mailto:`, `tel:`, `data:`, …).
+fn is_repo_relative_target(target: &str) -> bool {
+    let t = target.trim();
+    if t.is_empty() || t.starts_with('#') || t.starts_with("//") {
+        return false;
+    }
+    // A scheme is an ASCII letter followed by letters/digits/`+`/`-`/`.` up
+    // to the first colon (RFC 3986). If the target has one, it is absolute.
+    if let Some(colon) = t.find(':') {
+        let scheme = &t[..colon];
+        let is_scheme = scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if is_scheme {
+            return false;
+        }
+    }
+    true
+}
+
+/// The README source lines carrying a repo-relative link — the ones that
+/// would 404 on crates.io / docs.rs. Broader than a `./`/`../` prefix scan:
+/// a bare `CONTRIBUTING.md` or a site-absolute `/x` 404s just the same.
+///
+/// Covers the three ways a README names a link: inline `](target)` (and the
+/// `![alt](target)` image form), an HTML `href`/`src` attribute, and a
+/// reference-style definition `[label]: target`. Lines are returned trimmed,
+/// in file order.
+fn repo_relative_link_lines(readme: &str) -> Vec<String> {
+    let inline = Regex::new(r"\]\(\s*<?([^)\s>]+)").expect("static inline-link regex");
+    let html =
+        Regex::new(r#"(?:href|src)\s*=\s*["']([^"']+)["']"#).expect("static html-link regex");
+    let reference =
+        Regex::new(r"(?m)^\s*\[[^\]]+\]:\s*<?([^\s>]+)").expect("static ref-link regex");
+
+    let mut hits = Vec::new();
+    for line in readme.lines() {
+        let flagged = [&inline, &html, &reference].iter().any(|re| {
+            re.captures_iter(line)
+                .any(|cap| is_repo_relative_target(&cap[1]))
+        });
+        if flagged {
+            hits.push(line.trim().to_owned());
+        }
+    }
+    hits
+}
+
+/// Scan each publishable member's README for the crates.io / docs.rs page:
+/// missing files, and repo-relative links that 404 when the README is served
+/// standalone. Offline — reads the committed file, never the registry.
+/// Returns `(missing, (crate, offending line)…)`.
+fn readme_hygiene(
+    root: &Path,
+    members: &[(CrateManifest, String)],
+) -> (Vec<String>, Vec<(String, String)>) {
+    let mut missing = Vec::new();
+    let mut relative = Vec::new();
+    for (member, rel) in members {
+        if publish_is_disabled(member.package.publish.as_ref()) {
+            continue;
+        }
+        match fs::read_to_string(root.join(rel).join("README.md")) {
+            Err(_) => missing.push(member.package.name.clone()),
+            Ok(text) => {
+                for line in repo_relative_link_lines(&text) {
+                    relative.push((member.package.name.clone(), line));
+                }
+            }
+        }
+    }
+    (missing, relative)
+}
+
+/// Source `package.json` versions that are not the release-injected `0.0.0`
+/// placeholder — a hand-written version here ships in the wrong artifact.
+fn distribution_versions(root: &Path) -> Result<Vec<(String, String)>, String> {
+    const PACKAGE_PATHS: [&str; 3] = [
+        "crates/tree-sitter-aozora/package.json",
+        "editors/vscode/package.json",
+        "playground/package.json",
+    ];
+    let versions = PACKAGE_PATHS
+        .iter()
+        .map(|rel| {
+            let package: JsonPackage = read_json(&root.join(rel))?;
+            Ok((*rel, package.version))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(versions
+        .into_iter()
+        .filter(|(_, version)| version != "0.0.0")
+        .map(|(path, version)| (path.to_owned(), version))
+        .collect())
+}
+
 fn load(root: &Path) -> Result<Ledger, String> {
     let manifest: RootManifest = read_toml(&root.join("Cargo.toml"))?;
     let workspace_deps = &manifest.workspace.dependencies;
@@ -209,6 +327,9 @@ fn load(root: &Path) -> Result<Ledger, String> {
             publishable.push(member.package.name.clone());
         }
     }
+
+    // README hygiene for the crates.io / docs.rs page (offline).
+    let (readme_missing, readme_relative_links) = readme_hygiene(root, &members);
 
     // An "internal" dependency is one whose name is a workspace member.
     let internal: Vec<&str> = members
@@ -252,22 +373,7 @@ fn load(root: &Path) -> Result<Ledger, String> {
         .find_map(|pkg| pkg.changelog_include.clone())
         .unwrap_or_default();
 
-    let package_paths = [
-        "crates/tree-sitter-aozora/package.json",
-        "editors/vscode/package.json",
-        "playground/package.json",
-    ];
-    let non_placeholder_package_versions = package_paths
-        .iter()
-        .map(|rel| {
-            let package: JsonPackage = read_json(&root.join(rel))?;
-            Ok((*rel, package.version))
-        })
-        .collect::<Result<Vec<_>, String>>()?
-        .into_iter()
-        .filter(|(_, version)| version != "0.0.0")
-        .map(|(path, version)| (path.to_owned(), version))
-        .collect();
+    let non_placeholder_package_versions = distribution_versions(root)?;
 
     Ok(Ledger {
         publishable,
@@ -277,6 +383,8 @@ fn load(root: &Path) -> Result<Ledger, String> {
         versioned_internal_dev_deps,
         versioned_unpublishable_workspace_deps,
         non_placeholder_package_versions,
+        readme_missing,
+        readme_relative_links,
     })
 }
 
@@ -293,11 +401,39 @@ fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
     check_changelog_include(ledger, identity, &mut violations);
     check_manifest_hygiene(ledger, &mut violations);
     check_distribution_versions(ledger, &mut violations);
+    check_readme_hygiene(ledger, &mut violations);
 
     if violations.is_empty() {
         Ok(())
     } else {
         Err(violations)
+    }
+}
+
+/// A published crate needs a README — crates.io renders a blank page without
+/// one — whose links are absolute. The bash `readme-gate` this replaces only
+/// caught `./`/`../` prefixes, so a bare `CONTRIBUTING.md` slipped through
+/// and 404'd on the published page.
+fn check_readme_hygiene(ledger: &Ledger, violations: &mut Vec<String>) {
+    if !ledger.readme_missing.is_empty() {
+        violations.push(format!(
+            "{} publishable crate(s) have no README.md (the crates.io page would be blank):\n    {}",
+            ledger.readme_missing.len(),
+            ledger.readme_missing.join("\n    "),
+        ));
+    }
+    if !ledger.readme_relative_links.is_empty() {
+        let listed: Vec<String> = ledger
+            .readme_relative_links
+            .iter()
+            .map(|(krate, line)| format!("{krate}: {line}"))
+            .collect();
+        violations.push(format!(
+            "{} repo-relative link(s) in a publishable crate README (they 404 on crates.io / \
+             docs.rs — use absolute https URLs):\n    {}",
+            ledger.readme_relative_links.len(),
+            listed.join("\n    "),
+        ));
     }
 }
 
@@ -478,8 +614,9 @@ fn check() -> Result<(), String> {
             let expected = ledger.publishable.len().saturating_sub(1);
             eprintln!(
                 "xtask publish check: {folded}/{expected} publishable crates folded into the \
-                 aggregated changelog, {} publish=false skipped",
+                 aggregated changelog, {} publish=false skipped; {} README(s) link-checked",
                 ledger.unpublishable.len(),
+                ledger.publishable.len(),
             );
             Ok(())
         }
@@ -512,6 +649,8 @@ mod tests {
             versioned_internal_dev_deps: Vec::new(),
             versioned_unpublishable_workspace_deps: Vec::new(),
             non_placeholder_package_versions: Vec::new(),
+            readme_missing: Vec::new(),
+            readme_relative_links: Vec::new(),
         }
     }
 
@@ -726,6 +865,95 @@ mod tests {
         assert!(
             !resolves_to_version("aozora-corpus", &inherit, &workspace_deps),
             "inheriting a path-only entry resolves to no version"
+        );
+    }
+
+    #[test]
+    fn is_repo_relative_target_classifies_targets() {
+        for absolute in [
+            "https://example.com/x",
+            "http://example.com",
+            "mailto:a@b.example",
+            "tel:+123",
+            "data:text/plain,hi",
+            "#in-page-anchor",
+            "//cdn.example.com/x",
+        ] {
+            assert!(
+                !is_repo_relative_target(absolute),
+                "{absolute} must be treated as absolute/anchor"
+            );
+        }
+        for relative in [
+            "CONTRIBUTING.md", // the exact bare-relative case the bash gate missed
+            "./docs/x.md",
+            "../sibling/y.md",
+            "docs/guide.md",
+            "/site-absolute/z", // 404s on crates.io just like a bare path
+            "LICENSE",
+        ] {
+            assert!(
+                is_repo_relative_target(relative),
+                "{relative} must be flagged repo-relative"
+            );
+        }
+    }
+
+    #[test]
+    fn repo_relative_link_lines_catches_the_forms_the_prefix_scan_missed() {
+        let readme = "\
+            See [contributing](CONTRIBUTING.md) and [home](https://aozora.example).\n\
+            An <a href=\"docs/guide.md\">html link</a> and an ![img](../logo.png).\n\
+            A clean [spec][s] line.\n\
+            \n\
+            [s]: https://spec.example/v1\n\
+            [old]: legacy/notes.md\n";
+        let hits = repo_relative_link_lines(readme);
+        assert!(
+            hits.iter().any(|l| l.contains("CONTRIBUTING.md")),
+            "bare inline relative link must be caught: {hits:?}"
+        );
+        assert!(
+            hits.iter().any(|l| l.contains("docs/guide.md")),
+            "html href relative link must be caught: {hits:?}"
+        );
+        assert!(
+            hits.iter().any(|l| l.contains("../logo.png")),
+            "relative image src must be caught: {hits:?}"
+        );
+        assert!(
+            hits.iter().any(|l| l.contains("legacy/notes.md")),
+            "reference-definition relative target must be caught: {hits:?}"
+        );
+        assert!(
+            !hits.iter().any(|l| l.contains("clean [spec][s]")),
+            "a line whose only link resolves absolutely must not be flagged: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn verify_flags_a_missing_readme() {
+        let mut ledger = healthy();
+        ledger.readme_missing.push("aozora-cli".to_owned());
+        let err = verify(&ledger).expect_err("a missing README must be flagged");
+        assert!(
+            err.iter()
+                .any(|v| v.contains("aozora-cli") && v.contains("README")),
+            "must name the crate and README: {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_flags_a_repo_relative_readme_link() {
+        let mut ledger = healthy();
+        ledger
+            .readme_relative_links
+            .push(("aozora".to_owned(), "[x](CONTRIBUTING.md)".to_owned()));
+        let err = verify(&ledger).expect_err("a repo-relative README link must be flagged");
+        assert!(
+            err.iter()
+                .any(|v| v.contains("CONTRIBUTING.md") && v.contains("404")),
+            "must show the offending link and why: {err:?}"
         );
     }
 

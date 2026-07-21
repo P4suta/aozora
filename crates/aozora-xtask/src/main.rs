@@ -64,6 +64,7 @@ mod msrv;
 mod perf;
 mod publish;
 mod ratchet;
+mod release;
 mod scan;
 mod schema;
 mod spec_vectors;
@@ -151,6 +152,14 @@ enum Cmd {
     /// the root `Cargo.toml` already states in prose: path-only internal
     /// dev-deps, and no registry `version` on a `publish = false` member.
     Publish(PublishArgs),
+    /// Release rearm guard tooling (DEV-64): the executable form of the
+    /// rearm runbook. `rearm-decision` is the pure, tested version-standstill
+    /// accept/reject logic `release-plz.yml` calls; `check` is an offline
+    /// source-integrity gate (tag ruleset non-empty, native-SBOM path mirror)
+    /// folded into `drift-gate`; `preflight` / `rehearse` verify deployed
+    /// registry/environment state and dry-run the tag-driven publishers at
+    /// rearm time.
+    Release(ReleaseArgs),
     /// Run deterministic instruction-count performance contracts.
     Perf(PerfArgs),
     /// Enforce monotonic performance, allocation, artifact, and wire baselines.
@@ -254,6 +263,60 @@ enum PublishOp {
     /// disagreeing with the workspace's publish set, or a manifest
     /// breaking the publish-path hygiene rules. Wired into `drift-gate`.
     Check,
+}
+
+#[derive(Args)]
+struct ReleaseArgs {
+    #[command(subcommand)]
+    op: ReleaseOp,
+}
+
+#[derive(Subcommand)]
+enum ReleaseOp {
+    /// Decide whether the checked-out commit should publish. The pure
+    /// version-standstill accept/reject logic (a rearm dispatch need not bump
+    /// the version, but must not re-publish an already-tagged one), lifted out
+    /// of `release-plz.yml` so the untested inline branch no longer exists.
+    /// Prints `release=<bool>` for `$GITHUB_OUTPUT`.
+    RearmDecision {
+        /// The triggering event (`push` / `workflow_dispatch`).
+        #[arg(long, env = "GITHUB_EVENT_NAME")]
+        event: String,
+        /// Whether HEAD bumped the workspace version ("true" / "false").
+        #[arg(long, env = "VERSION_CHANGED")]
+        version_changed: String,
+        /// The exact qualified commit; must equal HEAD.
+        #[arg(long, env = "QUALIFIED_SHA")]
+        commit: String,
+    },
+    /// Offline source-integrity gate (wired into `drift-gate`): the committed
+    /// tag ruleset still encodes its rules, and the PR-time native-SBOM path
+    /// set still mirrors what the tag-time `release.yml` expects — so the exact
+    /// drift that would otherwise fail only at tag push fails at PR time.
+    Check,
+    /// Verify the rearm preconditions. `--offline` runs only the checks that
+    /// read the repo (the `check` gate + freeze-latch state); the default also
+    /// queries deployed `gh` / registry state. Fails closed and on zero
+    /// subjects; prints the irreducibly-manual residue to acknowledge.
+    Preflight {
+        /// Skip every network probe — run only the repo-local checks.
+        #[arg(long)]
+        offline: bool,
+        /// The commit being rearmed (defaults to HEAD).
+        #[arg(long)]
+        commit: Option<String>,
+        /// Acknowledge a known first-publish (a new crate / project the
+        /// registry cannot auto-create), so preflight does not hard-stop on it.
+        #[arg(long)]
+        first_publish: bool,
+    },
+    /// Rehearse the tag-driven publishers before the real tag: fire their
+    /// `dry_run` dispatches and fail on any qualify failure or zero dispatches.
+    Rehearse {
+        /// The commit to rehearse (defaults to HEAD).
+        #[arg(long)]
+        commit: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -492,6 +555,7 @@ fn main() {
         Cmd::Version(args) => version::dispatch(&args),
         Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
         Cmd::Publish(args) => publish::dispatch(&args),
+        Cmd::Release(args) => release::dispatch(&args),
         Cmd::Perf(args) => perf::dispatch(&args),
         Cmd::Ratchet(args) => ratchet::check(&args),
         Cmd::Msrv(args) => msrv::dispatch(&args),
