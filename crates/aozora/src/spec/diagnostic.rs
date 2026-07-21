@@ -817,6 +817,7 @@ pub enum Diagnostic {
 /// machine contract. A consumer renders the title and body for a chosen
 /// language from the code and the `info.body_args` placeables.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DiagnosticInfo {
     /// Stable `aozora::lex::*` code.
     pub code: &'static str,

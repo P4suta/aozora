@@ -2374,7 +2374,9 @@ fn classify_body(raw: &str) -> Bucket {
         .trim();
     match Catalogue::normalization(body) {
         Some(CatalogueMatch::Canonical) => Bucket::Tier1,
-        Some(CatalogueMatch::Degraded) => Bucket::Tier2,
+        // Degraded — and any future recognized tier, since CatalogueMatch is
+        // #[non_exhaustive] — is a known but non-Core directive.
+        Some(_) => Bucket::Tier2,
         None => Bucket::Residue,
     }
 }

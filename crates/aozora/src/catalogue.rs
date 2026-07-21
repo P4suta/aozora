@@ -7,6 +7,7 @@ pub struct Catalogue;
 
 /// Notation-hygiene normalization tier for a directive body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CatalogueMatch {
     /// A verified spelling correction.
     Canonical,

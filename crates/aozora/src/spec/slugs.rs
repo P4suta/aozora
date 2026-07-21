@@ -113,6 +113,7 @@ impl SlugFamily {
 /// One row of the slug catalogue.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct SlugEntry {
     /// Canonical body text (without the surrounding `［＃` / `］`).
     pub canonical: &'static str,
