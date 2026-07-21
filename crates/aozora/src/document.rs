@@ -880,11 +880,8 @@ impl Document {
         for edit in edits.iter().rev() {
             next.edit_one(edit);
         }
-        debug_assert_eq!(
-            next.source(),
-            apply_edits_to_source(self.state.source(), &edits),
-            "incremental batch and source splice must agree"
-        );
+        #[cfg(debug_assertions)]
+        debug_assert_incremental_matches_full_reparse(self.state.source(), &next, &edits);
         *self = next;
         Ok(())
     }
@@ -1010,6 +1007,16 @@ impl Document {
         }
         let source = self.state.source();
         let source_region = source_sanitization_region(source, &edit.range);
+        // Accent decomposition rewrites ASCII digraphs only inside a `〔…〕`
+        // span. When such a span crosses a blank line, the re-sanitized
+        // fragment for an interior paragraph never sees the enclosing span,
+        // so decomposition that a full parse performs would be skipped. Fall
+        // back to a full re-sanitize whenever a region boundary lands inside
+        // a span. Gate on the presence of `〔` so the common (bracket-free)
+        // document keeps the allocation-free fast path.
+        if edit_touches_accent_span(source, &source_region) {
+            return None;
+        }
         let region = map
             .source_to_sanitized(source_region.start)
             .zip(map.source_to_sanitized(source_region.end))
@@ -1089,7 +1096,23 @@ struct IncrementalSanitized {
     edit_range: Range<usize>,
 }
 
+/// Whether an edit's re-sanitization region touches an open accent span — in
+/// which case a region-local re-sanitize would diverge from a full parse, so
+/// the caller must fall back. `source.contains('〔')` keeps the common
+/// bracket-free document on the allocation-free fast path.
+// mutants::skip — the `source.contains('〔')` gate is a pure performance
+// optimisation: `inside_accent_span` already returns false without a `〔`, so
+// replacing the `&&` with `||` only forces the correctness-equivalent full
+// re-sanitize for a bracket-bearing document — no output changes, so no test
+// can distinguish it.
+#[cfg_attr(test, mutants::skip)]
+fn edit_touches_accent_span(source: &str, region: &Range<usize>) -> bool {
+    source.contains('〔')
+        && (inside_accent_span(source, region.start) || inside_accent_span(source, region.end))
+}
+
 fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize> {
+    let bytes = source.as_bytes();
     let start = ["\r\n\r\n", "\n\n", "\r\r"]
         .into_iter()
         .filter_map(|boundary| {
@@ -1100,6 +1123,16 @@ fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize>
         })
         .max()
         .unwrap_or(0);
+    // A `\r\r` paragraph match can land on the CR of a following CRLF
+    // (a `\r\r\n` run = lone CR + CRLF), so the boundary would bisect the
+    // `\r\n` pair that sanitize folds to a single `\n`. Back the start up
+    // past the `\r` so the whole CRLF stays inside the re-sanitized
+    // fragment; the fragment then reproduces the fold the full parse makes.
+    let start = if start > 0 && bytes[start - 1] == b'\r' && bytes.get(start) == Some(&b'\n') {
+        start - 1
+    } else {
+        start
+    };
     let end = ["\r\n\r\n", "\n\n", "\r\r"]
         .into_iter()
         .filter_map(|boundary| {
@@ -1110,7 +1143,43 @@ fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize>
         })
         .min()
         .unwrap_or(source.len());
+    // Symmetrically, a boundary can fall between a `\r` and the `\n` that
+    // completes a CRLF; extend past the `\n` so the fragment carries the
+    // whole pair rather than folding a lone CR the full parse would not.
+    // (`bytes.get(end) == Some('\n')` short-circuits for the only `end == 0`
+    // case — an empty source — so `bytes[end - 1]` cannot underflow without a
+    // separate `end > 0` guard.)
+    let end = if bytes.get(end) == Some(&b'\n') && bytes[end - 1] == b'\r' {
+        end + 1
+    } else {
+        end
+    };
     start..end
+}
+
+/// Whether `pos` sits inside an open tortoiseshell (`〔…〕`) span, using the
+/// same first-open/first-close pairing the sanitize stage applies. Accent
+/// decomposition is span-local, so a region boundary landing inside a span
+/// would make a region-local re-sanitize diverge from a full parse (the
+/// fragment never sees the enclosing span).
+fn inside_accent_span(source: &str, pos: usize) -> bool {
+    let mut open = false;
+    for (offset, ch) in source.char_indices() {
+        if offset >= pos {
+            break;
+        }
+        // No open/close guards: for the first-open/first-close question this
+        // asks — "is the most recent bracket an unclosed 〔" — last-write-wins
+        // is the same predicate as the guarded pairing (a 〔 always ends open,
+        // a 〕 always ends closed), without the redundant no-op guards whose
+        // only mutants would be equivalent.
+        if ch == '〔' {
+            open = true;
+        } else if ch == '〕' {
+            open = false;
+        }
+    }
+    open
 }
 
 fn edited_fragment(source: &str, edit: &TextEdit, region: Range<usize>) -> Option<String> {
@@ -1683,6 +1752,42 @@ fn push_source_edit(
     Ok(())
 }
 
+/// Debug-only guard that the incremental edit result parses identically to a
+/// cold full reparse of the spliced source — the `edit() == splice + reparse`
+/// invariant. Byte-equal source is necessary but not sufficient, so this also
+/// compares the sanitized text and the rendered HTML: a region-local
+/// re-sanitize that diverges from a full parse can then never pass silently.
+// mutants::skip — a `#[cfg(debug_assertions)]` sanity check that a batch
+// incremental edit matches a full reparse; in correct code its asserts never
+// fire, so replacing the body with `()` (deleting the check) is unobservable.
+#[cfg(debug_assertions)]
+#[cfg_attr(test, mutants::skip)]
+fn debug_assert_incremental_matches_full_reparse(
+    original: &str,
+    edited: &Document,
+    edits: &[TextEdit],
+) {
+    let spliced = apply_edits_to_source(original, edits);
+    debug_assert_eq!(
+        edited.source(),
+        spliced,
+        "incremental batch and source splice must agree"
+    );
+    let expected = Document::new(spliced);
+    let expected = expected.snapshot();
+    let actual = edited.snapshot();
+    debug_assert_eq!(
+        actual.normalized_source(),
+        expected.normalized_source(),
+        "incremental edit must sanitize identically to a full reparse"
+    );
+    debug_assert_eq!(
+        actual.to_html(),
+        expected.to_html(),
+        "incremental edit must render identically to a full reparse"
+    );
+}
+
 fn apply_edits_to_source(source: &str, edits: &[TextEdit]) -> String {
     let capacity = replacement_capacity(source.len(), edits);
     let mut edited = String::with_capacity(capacity);
@@ -2103,6 +2208,37 @@ mod tests {
     }
 
     #[test]
+    fn source_sanitization_region_end_keeps_a_crlf_whole() {
+        // A `\r\r` paragraph boundary can land on the CR of a following CRLF
+        // (`\r\r\n` = lone CR + CRLF); the region end must extend past the `\n`
+        // so the CRLF stays whole rather than being bisected. In "ab\r\r\ncd"
+        // the `\r\r` ends at the `\n` (byte 4), so the end is 5, past it — not 4.
+        assert_eq!(source_sanitization_region("ab\r\r\ncd", &(0..1)), 0..5);
+    }
+
+    #[test]
+    fn source_sanitization_region_start_keeps_a_crlf_whole() {
+        // Symmetric to the end case: for an edit after the `\r\r\n`, the start
+        // boundary lands on the `\n` (byte 4); backing it up to the CR (byte 3)
+        // keeps the whole CRLF in the region rather than bisecting it at 4.
+        assert_eq!(source_sanitization_region("ab\r\r\ncd", &(5..5)), 3..7);
+    }
+
+    #[test]
+    fn inside_accent_span_closes_at_the_matching_bracket() {
+        // The first `〕` closes the span the first `〔` opened, so a position
+        // past the pair is outside — the close must reset the open flag.
+        let src = "〔a〕bc";
+        let inside = src.find('a').expect("char in span");
+        let after = src.find('b').expect("char after span");
+        assert!(inside_accent_span(src, inside), "inside an open 〔…〕 span");
+        assert!(
+            !inside_accent_span(src, after),
+            "a position past the closing 〕 is outside the span"
+        );
+    }
+
+    #[test]
     fn incremental_sanitization_matches_full_crlf_parse() {
         let source = "first\r\n\r\nsecond\r\n\r\nthird";
         let at = source.find("second").expect("second paragraph");
@@ -2197,6 +2333,55 @@ mod tests {
         let mut edited = source.to_owned();
         edited.insert(at, 'x');
         let full = parse(edited).expect("full parse");
+        assert_snapshots_match(&document.snapshot(), &full.snapshot());
+    }
+
+    #[test]
+    fn incremental_edit_across_cr_cr_lf_run_matches_full_parse() {
+        // `\r\r` heads a CR CR LF run (lone CR + CRLF). A paragraph-boundary
+        // match on the `\r\r` must not bisect the trailing CRLF, or the
+        // re-sanitized fragment gains/drops one `\n` versus a full parse.
+        let source = "c\r\r\n\n\nx";
+        let edit = TextEdit::new(3..3, "b");
+        let mut document = parse(source).expect("document");
+        document.edit([edit.clone()]).expect("valid edit");
+
+        let full =
+            parse(apply_edits_to_source(source, slice::from_ref(&edit))).expect("full parse");
+        assert_eq!(document.source(), "c\r\rb\n\n\nx");
+        // The correct fold keeps the blank line between `c` and `b`; the
+        // buggy region cut collapsed it to a single `\n`.
+        assert_eq!(document.snapshot().normalized_source(), "c\n\nb\n\n\nx");
+        assert_eq!(document.snapshot().nodes(), full.snapshot().nodes());
+        assert_eq!(document.snapshot().to_html(), full.snapshot().to_html());
+        assert_snapshots_match(&document.snapshot(), &full.snapshot());
+    }
+
+    #[test]
+    fn incremental_edit_inside_accent_span_across_blank_line_matches_full_parse() {
+        // A `〔…〕` accent-decomposition span crossing blank lines: an edit
+        // in its interior yields a fragment with no `〔`/`〕`, so a
+        // region-local re-sanitize would skip the decomposition a full parse
+        // performs. The incremental path must fall back to a full parse.
+        let source = "前文\n\n〔Beethoven\n\n1770\n\n1827〕\n\n後文";
+        let at = source
+            .find("\n\n1770")
+            .expect("interior paragraph boundary");
+        let edit = TextEdit::new(at..at, "e`");
+        let mut document = parse(source).expect("document");
+        document.edit([edit.clone()]).expect("valid edit");
+
+        let full =
+            parse(apply_edits_to_source(source, slice::from_ref(&edit))).expect("full parse");
+        // Full parse decomposes the inserted `e``digraph to `è` inside the
+        // span; the incremental result must match byte-for-byte.
+        assert!(full.snapshot().normalized_source().contains('è'));
+        assert_eq!(
+            document.snapshot().normalized_source(),
+            full.snapshot().normalized_source()
+        );
+        assert_eq!(document.snapshot().nodes(), full.snapshot().nodes());
+        assert_eq!(document.snapshot().to_html(), full.snapshot().to_html());
         assert_snapshots_match(&document.snapshot(), &full.snapshot());
     }
 

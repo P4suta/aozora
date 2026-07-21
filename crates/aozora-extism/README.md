@@ -3,7 +3,24 @@
 An [Extism](https://extism.org/) plugin driver for aozora. It builds to
 one portable `aozora.wasm`, loadable from any Extism host SDK.
 
-Not published, so building it is the only way to get it:
+## Install
+
+Every tagged release attaches the built `aozora.wasm` to the
+[GitHub Release](https://github.com/P4suta/aozora/releases/latest),
+alongside its `.sha256` checksum and a CycloneDX SBOM
+(`aozora-extism.cdx.json`, plus its own `.sha256`). The wasm and the SBOM
+each carry a build-provenance attestation, so download and verify the
+released artifact rather than trust an unpinned build:
+
+```sh
+base=https://github.com/P4suta/aozora/releases/latest/download
+curl -LO "$base/aozora.wasm"
+curl -LO "$base/aozora.wasm.sha256"
+sha256sum --check aozora.wasm.sha256
+gh attestation verify aozora.wasm --repo P4suta/aozora
+```
+
+To build the same artifact from source instead:
 
 ```sh
 just extism-build     # → crates/aozora-extism/dist/aozora.wasm

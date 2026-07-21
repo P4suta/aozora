@@ -1,7 +1,7 @@
 {
   "name": "tree-sitter-aozora",
   "version": "0.0.0",
-  "description": "Tree-sitter grammar for aozora-flavored markdown (incremental parsing for the LSP)",
+  "description": "A tree-sitter grammar for Aozora Bunko notation (青空文庫記法), used by the workspace's conformance harness",
   "main": "bindings/node",
   "tree-sitter": [
     {

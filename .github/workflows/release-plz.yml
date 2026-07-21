@@ -32,9 +32,11 @@ on:
         required: true
         type: string
 
-# One release pipeline per ref; never cancel a publish already in flight.
+# Key the push-driven Release-PR flow by ref and the workflow_dispatch-driven
+# publish by its exact commit, so they land in different groups and a routine
+# push can never evict a queued publish; never cancel one already in flight.
 concurrency:
-  group: release-plz-${{ github.ref }}
+  group: release-plz-${{ github.event_name == 'workflow_dispatch' && inputs.commit || github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -112,10 +114,14 @@ jobs:
   # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
     needs: release-freeze
+    # release-fan-in (or a manual rearm) dispatches this after release-ready has
+    # succeeded for the commit; it never runs on the release-commit push itself,
+    # so it stays workflow_dispatch-only (release-plz-pr owns the push path).
+    if: needs.release-freeze.result == 'success' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 480
     env:
-      QUALIFIED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      QUALIFIED_SHA: ${{ inputs.commit }}
     # The App key lives in this environment's secrets. Configure it with a
     # deployment-branch policy of `main` only (a workflow on any other branch
     # cannot read the credential) and NO required reviewers: the human gate is
@@ -139,6 +145,9 @@ jobs:
         with:
           ref: ${{ env.QUALIFIED_SHA }}
           fetch-depth: 0
+          # Fetch tags so the rearm guard below can check whether v<version>
+          # is already released.
+          fetch-tags: true
           persist-credentials: false
 
       - name: Install Rust
@@ -146,20 +155,34 @@ jobs:
         with:
           toolchain: stable
 
+      - id: detect
+        uses: ./.github/actions/detect-release-commit
+
       - name: Detect release commit
         id: release-commit
         shell: bash
+        env:
+          VERSION_CHANGED: ${{ steps.detect.outputs.version-changed }}
         run: |
           set -euo pipefail
           [[ "$QUALIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$QUALIFIED_SHA"
-          release=false
-          if git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+          release="$VERSION_CHANGED"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            # A rearm dispatch recovers an interrupted publish. Its
+            # re-qualified commit need not bump the version — main may
+            # already sit at the target version — so version-changed can be
+            # false. Accept it while the release has NOT happened (no
+            # v<version> tag yet); reject only a version already tagged, so
+            # a rearm cannot re-publish a cut release.
+            version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+            test -n "$version"
+            if [[ "$release" != true ]] &&
+                git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+              echo "::error title=release commit::v${version} is already released; nothing to rearm"
+              exit 1
+            fi
             release=true
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$release" != true ]]; then
-            echo "::error title=release commit::$QUALIFIED_SHA does not change the workspace version"
-            exit 1
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
@@ -170,24 +193,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for _ in $(seq 1 420); do
-            state="$(gh run list \
-              --workflow release-ready.yml \
-              --commit "$QUALIFIED_SHA" \
-              --limit 1 \
-              --json status,conclusion \
-              --jq '.[0] | [.status, (.conclusion // "")] | @tsv')"
-            if [[ "$state" == $'completed\tsuccess' ]]; then
-              exit 0
-            fi
-            if [[ "$state" == completed$'\t'* ]]; then
-              echo "::error title=release-ready::release-ready finished with ${state#*$'\t'}"
-              exit 1
-            fi
-            sleep 60
-          done
-          echo "::error title=release-ready::timed out waiting for this commit"
-          exit 1
+          # release-fan-in dispatches this job only after release-ready has
+          # already completed successfully for QUALIFIED_SHA (and a manual
+          # rearm dispatch re-qualifies first), so re-check once and fail fast
+          # rather than polling.
+          state="$(gh run list \
+            --workflow release-ready.yml \
+            --commit "$QUALIFIED_SHA" \
+            --limit 1 \
+            --json status,conclusion \
+            --jq '.[0] | [.status, (.conclusion // "")] | @tsv')"
+          if [[ "$state" != $'completed\tsuccess' ]]; then
+            echo "::error title=release-ready::release-ready is not completed-success for this commit (${state:-none})"
+            exit 1
+          fi
 
       - name: Verify crates.io packages are qualified bytes
         if: steps.release-commit.outputs.release == 'true'

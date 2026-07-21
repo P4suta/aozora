@@ -49,11 +49,17 @@ gh workflow run release-plz.yml -f commit="$commit"
 The recovery checkout, successful `release-ready` run, artifact manifest, and
 published crate bytes must all resolve to that commit.
 
-release-plz waits for `release-ready` on the exact version-changing commit,
-then creates the tag. The tag-driven jobs publish only the already-verified
-package artifacts. VSIX artifacts remain qualified by `release-ready`, but
-editor marketplaces are opt-in under
+The Release-PR merge lands the version-changing commit on `main`, which runs
+`release-ready`. On success, `release-fan-in` dispatches release-plz (and the
+Pages docs deploy) for that exact commit rather than either workflow polling
+for the result; release-plz re-checks that `release-ready` is
+completed-success for the commit, then publishes and creates the tag. The
+tag-driven jobs publish only the already-verified package artifacts. VSIX
+artifacts remain qualified by `release-ready`, but editor marketplaces are
+opt-in under
 [ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md).
+The manual `gh workflow run release-plz.yml -f commit=…` recovery above is the
+same dispatch entrypoint, driven by hand instead of by `release-fan-in`.
 
 The GitHub Release remains mutable only while it is a draft. Retry a failed
 native or Extism upload before publishing it. Publishing the draft is the final
@@ -92,6 +98,7 @@ An MSRV bump follows the six-month contract in
 ## See also
 
 - [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md)
+- [ADR-0051](../adr/0051-ci-and-release-ready-split-event-driven-release-fan-in-and-the-actions-concurrency-budget.md)
 - [ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md)
 - [ADR-0050](../adr/0050-immutable-releases-are-assembled-as-drafts.md)
 - [Release secrets and Trusted Publishing](releasing-secrets.md)

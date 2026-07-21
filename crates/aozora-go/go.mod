@@ -1,6 +1,6 @@
 module github.com/P4suta/aozora-go
 
-go 1.26
+go 1.24
 
 require github.com/extism/go-sdk v1.7.1
 

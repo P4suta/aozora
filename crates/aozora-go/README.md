@@ -19,8 +19,11 @@ For v0.5.0 the SDK is a **tarball channel**: the release attaches
 `aozora-go.tar.gz` — a complete, buildable module with the `aozora.wasm`
 plugin, generated types, and licences bundled — but there is no
 `github.com/P4suta/aozora-go` repository to `go get` (see
-[Distribution](#distribution)). Because the tarball carries the embedded
-wasm, the extracted module builds offline with no network fetch.
+[Distribution](#distribution)). The tarball carries the embedded wasm, so
+there is no separate plugin download — but the module still requires
+`github.com/extism/go-sdk` and its transitive dependencies, so
+`go build` / `go mod download` fetches those Go modules from the proxy as
+usual.
 
 Download `aozora-go.tar.gz`, verify it against its `.sha256`, and extract
 it into your project (for example under `third_party/`):
@@ -65,7 +68,7 @@ func main() {
 	defer p.Close(ctx)
 
 	html, _ := p.ToHTML("｜青梅《おうめ》")
-	fmt.Println(html) // <ruby>青梅<rt>おうめ</rt></ruby>
+	fmt.Println(html) // <p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby></p>
 
 	nodes, _ := p.Nodes("｜青梅《おうめ》")
 	for _, n := range nodes.Data {

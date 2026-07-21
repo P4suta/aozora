@@ -1,6 +1,7 @@
 package aozora
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -22,6 +23,34 @@ func TestInstallDocsHonest(t *testing.T) {
 	}
 	if !strings.Contains(doc, "aozora-go.tar.gz") {
 		t.Error("README no longer documents the aozora-go.tar.gz release channel")
+	}
+}
+
+// TestUsageExampleHTMLMatchesPlugin ties the README usage example's
+// documented ToHTML output to what the embedded plugin actually returns,
+// so the commented HTML cannot silently drift from the real (byte-exact)
+// render again. ToHTML relays the raw to_html export verbatim — the <p>
+// wrapper and <rp> fallbacks are part of that output, not a stripped-down
+// ruby string.
+func TestUsageExampleHTMLMatchesPlugin(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+
+	ctx := context.Background()
+	p, err := Open(ctx)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close(ctx) })
+
+	html, err := p.ToHTML("｜青梅《おうめ》")
+	if err != nil {
+		t.Fatalf("ToHTML: %v", err)
+	}
+	if !strings.Contains(string(readme), html) {
+		t.Errorf("README usage example does not document the real ToHTML output %q", html)
 	}
 }
 
