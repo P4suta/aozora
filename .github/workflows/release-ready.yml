@@ -275,7 +275,7 @@ jobs:
           components: llvm-tools-preview
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
-      - name: Prioritize the MSVC linker
+      - name: Pin the MSVC linker
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -284,7 +284,8 @@ jobs:
           if (-not (Test-Path $linker)) {
             throw "MSVC linker not found at $linker"
           }
-          $linkerDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: release-ready-native-${{ matrix.target }}
@@ -303,10 +304,6 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET" == *-windows-* ]]; then
-            linker="$(command -v link.exe)"
-            [[ "$linker" == *"Microsoft Visual Studio"* ]]
-          fi
           profile_dir="$GITHUB_WORKSPACE/pgo-data"
           profile_data="$GITHUB_WORKSPACE/aozora.profdata"
           mkdir -p "$profile_dir"
