@@ -5,6 +5,16 @@
 - Deciders: @P4suta
 - Tags: infra, ci, dx
 
+> **Update (DEV-63, 2026-07-21):** the cloud `ci` workflow now defers its
+> whole Rust graph to `release-ready` on a release commit, because
+> `release-ready` runs a strict superset of ci's Rust gates. The cheap gates
+> that were only in ci — coverage floor, `test-doc`, `shear`, `readme-gate`,
+> the playground checks — were folded into `release-ready`'s recipes so the
+> deferral loses no signal. This changes only cloud CI: the local
+> `ci-parallel` pre-push mirror described here is unchanged and still runs the
+> complete gate set, keeping the "verify before push" guarantee intact. See
+> [ADR-0051](0051-ci-and-release-ready-split-event-driven-release-fan-in-and-the-actions-concurrency-budget.md).
+
 ## Context
 
 The pre-push gate (`lefthook` → `just ci` → `just prop-deep`) took

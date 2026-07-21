@@ -4,6 +4,17 @@
 - Date: 2026-07-19
 - Supersedes: ADR-0039
 
+> **Amendment (DEV-63, 2026-07-21):** the branch-protection requirement
+> below is now enforced, not merely documented — `release-ready` is a
+> required status check on the `main` ruleset, so it gates every merge to
+> `main` and not only Release PRs. release-plz no longer busy-polls for the
+> `release-ready` result: a `release-fan-in` workflow turns a successful
+> `release-ready` run into a `workflow_dispatch` of release-plz (and docs),
+> which re-checks the result once. That fan-in only dispatches — it holds no
+> `id-token` or registry secret — so the crates.io publish still runs under
+> `workflow_dispatch`, as Trusted Publishing requires. See
+> [ADR-0051](0051-ci-and-release-ready-split-event-driven-release-fan-in-and-the-actions-concurrency-budget.md).
+
 ## Context
 
 The ordinary CI result did not prove that a commit was publishable. Deep
