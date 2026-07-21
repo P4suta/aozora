@@ -26,7 +26,7 @@ members = [
 exclude = ["crates/aozora-go"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 # MSRV — the public contract, and a MEASURED floor, not a mirror of the
 # toolchain we develop on (that is rust-toolchain.toml's channel; the two
@@ -139,8 +139,8 @@ large_enum_variant = "allow"
 
 [workspace.dependencies]
 # Published crates carry a registry version alongside the workspace path.
-aozora = { version = "0.4.1", path = "crates/aozora" }
-tree-sitter-aozora = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
+aozora = { version = "0.5.0", path = "crates/aozora" }
+tree-sitter-aozora = { version = "0.5.0", path = "crates/tree-sitter-aozora" }
 # publish=false → path-only (no crates.io version): a version pin here would go
 # stale on the workspace-lockstep bump (release-plz never releases it) and break
 # `cargo update`, and force a non-existent registry version onto consumers.

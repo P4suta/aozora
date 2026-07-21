@@ -7,6 +7,168 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-21
+
+
+### Added
+
+- Unify document API and distribution contracts ([#581](https://github.com/P4suta/aozora/pull/581))
+- **examples**: Promote the two recipes worth keeping ([#546](https://github.com/P4suta/aozora/pull/546))
+- **syntax**: Serve tcy small-script compound ([#467](https://github.com/P4suta/aozora/pull/467))
+- Notation-hygiene layers to release quality ([#453](https://github.com/P4suta/aozora/pull/453))
+- **parser**: Purify Core notation vocabulary ([#437](https://github.com/P4suta/aozora/pull/437))
+- **render**: Opt-in normalize-directives render ([#426](https://github.com/P4suta/aozora/pull/426))
+- Render forward emphasis on a ruby base ([#384](https://github.com/P4suta/aozora/pull/384)) ([#390](https://github.com/P4suta/aozora/pull/390))
+- Aozora fmt --fix-notation autofix ([#373](https://github.com/P4suta/aozora/pull/373))
+- Notation-hygiene lint for near-miss directives ([#371](https://github.com/P4suta/aozora/pull/371))
+- Mid-run forward splice — case (B) non-adjacent referent ([#333](https://github.com/P4suta/aozora/pull/333)) ([#363](https://github.com/P4suta/aozora/pull/363))
+- Render no-referent forward heading (E1-4) ([#346](https://github.com/P4suta/aozora/pull/346))
+- Render no-referent forward bouten ([#341](https://github.com/P4suta/aozora/pull/341))
+- Render no-referent forward emphasis (E1-2) ([#340](https://github.com/P4suta/aozora/pull/340))
+- `ForwardOrigin::SelfContained` plumbing ([#339](https://github.com/P4suta/aozora/pull/339))
+- **#237**: B'3 retire SegmentedParse, single engine (#280)
+- **#237**: B'3 wire owned splice into LSP (#278)
+- **#237**: B'2 owned-table incremental splice (#276)
+- **#237**: B'2 norm-offset mapping helper (#275)
+- **#237**: B'2 minimal balanced re-lex region (#273)
+- **#237**: B'1 ParseCache holds OwnedLexOutput (#272)
+- **#237**: Owned-only AST, delete borrowed/arena (#271)
+- **#237**: Flip public Tree API to owned AST (#269)
+- **#237**: Owned read accessors + re-exports (#266)
+- **#237**: Native owned lex fold + perf gate (#264)
+- **#237**: Owned HTML renderer + byte gate (#262)
+- **#237**: Owned to_source + byte-identity gate (#261)
+- **#237**: A2 — incremental reparse via the segment cache (#257)
+- **#237**: A1 — segment-cache foundation (Diagnostic::shifted + SegmentedParse + corpus gate) (#255)
+- Diagnostics_text bindings + ci-timings ([#87](https://github.com/P4suta/aozora/pull/87)) ([#245](https://github.com/P4suta/aozora/pull/245))
+- Compound 字下げ modifiers + 本文終わり/改行 leaf nodes ([#78](https://github.com/P4suta/aozora/pull/78)) ([#239](https://github.com/P4suta/aozora/pull/239))
+- Coupled forward/heading/margin splice ([#202](https://github.com/P4suta/aozora/pull/202)) ([#236](https://github.com/P4suta/aozora/pull/236))
+- Terminal splice model + container splice ([#202](https://github.com/P4suta/aozora/pull/202)) ([#235](https://github.com/P4suta/aozora/pull/235))
+- Source-region splice foundation ([#234](https://github.com/P4suta/aozora/pull/234))
+- Lowering pass + canonical ruby/gaiji forms ([#214](https://github.com/P4suta/aozora/pull/214))
+- Coremodel purification (I5–I12) ([#207](https://github.com/P4suta/aozora/pull/207))
+- **pipeline**: Compound indent line-layout ([#187](https://github.com/P4suta/aozora/pull/187))
+- **cli**: Overhaul the CLI developer experience ([#156](https://github.com/P4suta/aozora/pull/156))
+- **notation**: Corpus-grounded conformance — audit harness + coverage ([#114](https://github.com/P4suta/aozora/pull/114))
+- **notation**: Implement all corpus-attested §6 families + de-circularise the conformance suite ([#104](https://github.com/P4suta/aozora/pull/104))
+- DevEx inner-loop — §6 families, diagnostics, spec gate, polyglot bindings, AngleQuote
+- **xtask**: Comment discipline + coordinate gate ([#561](https://github.com/P4suta/aozora/pull/561))
+- **cli**: Add `aozora lsp` umbrella (exec-delegate) ([#523](https://github.com/P4suta/aozora/pull/523))
+- **fmt**: Progress bar + batch summary for directory fmt ([#521](https://github.com/P4suta/aozora/pull/521))
+- **cli**: Add `aozora tui` live editor/preview ([#520](https://github.com/P4suta/aozora/pull/520))
+- **cli**: Add `aozora repl` interactive shell ([#518](https://github.com/P4suta/aozora/pull/518))
+- **cli**: Add `aozora init` scaffold ([#516](https://github.com/P4suta/aozora/pull/516))
+- **cli**: Add `aozora doctor` user-facing self-check ([#514](https://github.com/P4suta/aozora/pull/514))
+- **cli**: Explain fuzzy "did you mean" + concept targets ([#513](https://github.com/P4suta/aozora/pull/513))
+- **i18n**: Aozora-i18n crate (Fluent) + --lang resolution ([#510](https://github.com/P4suta/aozora/pull/510))
+- **cli**: Unify --format + normalize CLI-local JSON envelopes ([#509](https://github.com/P4suta/aozora/pull/509))
+- **cli**: Add -q/-v verbosity, tracing logging, clap styles ([#508](https://github.com/P4suta/aozora/pull/508))
+- **cli**: Add XDG global config layer + per-field merge ([#507](https://github.com/P4suta/aozora/pull/507))
+- **conformance**: Cross-surface parity gates ([#464](https://github.com/P4suta/aozora/pull/464))
+- **cli**: --color flag and stdin anti-hang guard ([#451](https://github.com/P4suta/aozora/pull/451))
+- Single-line absolute font-size directive (#329 7b) ([#351](https://github.com/P4suta/aozora/pull/351))
+- この行はゴシック体 line-bold marker ([#344](https://github.com/P4suta/aozora/pull/344))
+- Add channel-aware build-version stamp ([#302](https://github.com/P4suta/aozora/pull/302))
+- **#237**: Pandoc reads owned lex output (#267)
+- **cli**: Kinds --format json ([#233](https://github.com/P4suta/aozora/pull/233))
+- **xtask**: Grammar regen drift gate ([#463](https://github.com/P4suta/aozora/pull/463))
+- Consolidate the editor/CLI tooling into the monorepo ([#178](https://github.com/P4suta/aozora/pull/178))
+
+
+### Build
+
+- Separate the toolchain channel from the MSRV ([#541](https://github.com/P4suta/aozora/pull/541))
+
+
+### Changed
+
+- Replace internal pipeline API with documents ([#576](https://github.com/P4suta/aozora/pull/576))
+- Collapse to 3 published crates ([#573](https://github.com/P4suta/aozora/pull/573))
+- Apply the comment discipline tree-wide ([#562](https://github.com/P4suta/aozora/pull/562))
+- Move the contributor docs to docs/ ([#548](https://github.com/P4suta/aozora/pull/548))
+- Move the generated artefacts out of the handbook ([#547](https://github.com/P4suta/aozora/pull/547))
+- **cli**: Group introspection under `aozora spec` + help groups ([#522](https://github.com/P4suta/aozora/pull/522))
+- **api**: Curate umbrella re-exports ([#474](https://github.com/P4suta/aozora/pull/474))
+- **api**: Drop node_at_normalized shim ([#458](https://github.com/P4suta/aozora/pull/458))
+- **render**: Move lossy Tier1 forms to Tier2 ([#434](https://github.com/P4suta/aozora/pull/434))
+- Drop dead owned naming across crates ([#432](https://github.com/P4suta/aozora/pull/432))
+- Parametrize Framed by EnclosureKind ([#352](https://github.com/P4suta/aozora/pull/352))
+- Rename incremental module, fix doc-rot ([#315](https://github.com/P4suta/aozora/pull/315))
+- Drop *Wire suffix (finish wire→json) ([#177](https://github.com/P4suta/aozora/pull/177))
+- Demote node_at_normalized + add ADR-0015 ([#169](https://github.com/P4suta/aozora/pull/169))
+- **json**: Expose wire structs + entries ([#168](https://github.com/P4suta/aozora/pull/168))
+- Single-authority wire tags ([#165](https://github.com/P4suta/aozora/pull/165))
+- Overhaul public & internal API naming
+- Resolve the three findings deferred in #560 ([#563](https://github.com/P4suta/aozora/pull/563))
+- Retire the handbook ([#549](https://github.com/P4suta/aozora/pull/549))
+- **spec**: Migrate diagnostic prose to aozora-i18n (en/ja/zh) ([#511](https://github.com/P4suta/aozora/pull/511))
+- Remove dead Framed & InvalidRubySpan core surfaces ([#457](https://github.com/P4suta/aozora/pull/457))
+- **diagnostics**: Unify onto aozora-spec ([#450](https://github.com/P4suta/aozora/pull/450))
+- **cli**: Fmt delegates to aozora-fmt core ([#409](https://github.com/P4suta/aozora/pull/409))
+
+
+### Chore
+
+- Crate publish DX (docs.rs meta, READMEs) ([#452](https://github.com/P4suta/aozora/pull/452))
+- Adopt taplo for repo-wide TOML formatting ([#308](https://github.com/P4suta/aozora/pull/308))
+- **crates**: Correct 4 crate descriptions ([#428](https://github.com/P4suta/aozora/pull/428))
+- **repo**: Drop archived aozora-tools refs ([#411](https://github.com/P4suta/aozora/pull/411))
+
+
+### Documentation
+
+- Shrink the published READMEs ([#552](https://github.com/P4suta/aozora/pull/552))
+- Cut the READMEs down to what a reader needs ([#543](https://github.com/P4suta/aozora/pull/543))
+- **crates**: Add READMEs for publishable crates ([#469](https://github.com/P4suta/aozora/pull/469))
+- Sweep borrowed-arena doc-rot to owned AST ([#364](https://github.com/P4suta/aozora/pull/364))
+- Drop references to the deleted borrowed engine ([#347](https://github.com/P4suta/aozora/pull/347))
+- **#237**: Sweep stale arena/borrowed-AST doc-rot (#277)
+- Dependency-pin ADR + host-literal recipe ([#208](https://github.com/P4suta/aozora/pull/208))
+- Integrity sweep + rot-detection gates ([#175](https://github.com/P4suta/aozora/pull/175))
+- Fix cli doc-rot + list AOZORA_* env vars ([#505](https://github.com/P4suta/aozora/pull/505))
+- **handbook**: Regen quickstart from real runs ([#462](https://github.com/P4suta/aozora/pull/462))
+
+
+### Fixed
+
+- **parser**: Reject open incremental regions ([#590](https://github.com/P4suta/aozora/pull/590))
+- **vscode**: Delete the drift, not the symptoms ([#558](https://github.com/P4suta/aozora/pull/558))
+- **incremental**: Decline region-end on ruby base ([#476](https://github.com/P4suta/aozora/pull/476))
+- **json**: SchemaVersion casing in wire types and docs ([#422](https://github.com/P4suta/aozora/pull/422))
+- **pair**: Bracket is a hard pairing scope (Category C sink) ([#400](https://github.com/P4suta/aozora/pull/400))
+- **release**: Make package publication recoverable ([#588](https://github.com/P4suta/aozora/pull/588))
+- **cli**: Repair the explain/spec kinds contract ([#553](https://github.com/P4suta/aozora/pull/553))
+- Point diagnostic urls at the specification ([#544](https://github.com/P4suta/aozora/pull/544))
+- Gate anchors and drop hand-counted totals ([#540](https://github.com/P4suta/aozora/pull/540))
+- **cli**: Make the .aozora.toml color key effective ([#524](https://github.com/P4suta/aozora/pull/524))
+- **ci**: Correct release man-page subcommand list ([#504](https://github.com/P4suta/aozora/pull/504))
+- **cli**: Normalize .exe in help snapshots for cross-os ([#479](https://github.com/P4suta/aozora/pull/479))
+- **cli**: Reject oversize input gracefully ([#461](https://github.com/P4suta/aozora/pull/461))
+- **cli**: Exit 0 quietly on stdout broken pipe ([#460](https://github.com/P4suta/aozora/pull/460))
+
+
+### Performance
+
+- **#237**: Remove owned incremental engine (#297)
+- **#237**: PieceSeq compaction, no forced re-parse (#296)
+- **#237**: PieceSeq-spliced diagnostics hot path (#295)
+- **#237**: PieceSeq incremental region-find base (#294)
+- **#237**: Incremental sanitized rope splice (#292)
+- **#237**: SanitizedSrc byte-source trait (#289)
+- **#237**: Recover CRLF incremental coverage (#287)
+- **#237**: O(log n) incremental region-find (#285)
+- **#237**: Diagnostics-only LSP hot path + lazy tree (#283)
+
+
+### Tests
+
+- **aozora**: Kill umbrella mutation survivors + arm baseline ([#495](https://github.com/P4suta/aozora/pull/495))
+- **splice**: Seal coupled edit coverage ([#202](https://github.com/P4suta/aozora/pull/202)) ([#238](https://github.com/P4suta/aozora/pull/238))
+- **doc**: Make the front-door + pandoc examples executed doctests ([#96](https://github.com/P4suta/aozora/pull/96))
+- **cli**: Kill mutation survivors + arm baseline (Wave6a) ([#497](https://github.com/P4suta/aozora/pull/497))
+- Raise workspace coverage 74.65% → 86.20% ([#136](https://github.com/P4suta/aozora/pull/136))
+
+
 
 ### Added
 

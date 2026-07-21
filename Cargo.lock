@@ -142,7 +142,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "aozora"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aho-corasick",
  "aozora-corpus",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-bench"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "aozora-corpus",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-conformance"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "aozora-proptest",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-corpus"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "blake3",
  "num_cpus",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-extism"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "extism",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-ffi"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "aozora-conformance",
@@ -270,14 +270,14 @@ dependencies = [
 
 [[package]]
 name = "aozora-proptest"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "aozora-py"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "pyo3",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-trace"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "addr2line 0.27.0",
  "flate2",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-wasm"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "serde",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-xtask"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aozora",
  "aozora-corpus",
@@ -4352,7 +4352,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-aozora"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "cc",
  "tree-sitter",
