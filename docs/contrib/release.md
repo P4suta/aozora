@@ -15,6 +15,18 @@ a dedicated reviewed PR while the workflow remains disabled, verify the merge
 did not create a tag or publication, and enable the workflow only after a
 maintainer explicitly starts a new release checkpoint.
 
+Before enabling, run `just rearm-preflight` (`xtask release preflight`). It
+verifies the deployed preconditions a green CI never proves — the `release-plz`
+and `release` environment secrets and protection, the server-side tag ruleset,
+a completed-success `release-ready` for the exact commit, and the first-publish
+registry residue — and fails closed on any gap, printing the irreducibly-manual
+items to acknowledge. `just rearm-rehearse` (`xtask release rehearse`) then
+fires the PyPI and npm publishers' `dry_run` dispatches so their `qualify` jobs
+run before the irreversible tag. The offline half is already a `drift-gate`
+check (`xtask release check`): the tag and main rulesets still encode their
+rules, and the PR-time native-SBOM path set still mirrors `release.yml`'s
+tag-time expectation.
+
 ## Cutting a release
 
 1. Land Conventional Commits on `main`. release-plz opens or updates the

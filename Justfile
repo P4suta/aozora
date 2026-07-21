@@ -271,6 +271,24 @@ publish-check:
 artifact-crates *ARGS:
     {{_dev}} cargo run -p aozora-xtask -q -- artifacts crates {{ARGS}}
 
+# Rearm preflight: verify every deployed precondition CI-green cannot prove —
+# the release-plz / release environment secrets + protection, the server-side
+# tag ruleset, a completed-success release-ready for the exact commit, and the
+# first-publish registry residue — plus the offline `release check` gate and the
+# freeze-latch state. Online (`gh` + registry HTTPS), so it runs on the HOST
+# with the maintainer's `gh` auth, not the dev image. Fails closed on any gap.
+# `--offline` runs only the repo-local half; `--first-publish` acknowledges a
+# known new crate/project so it does not hard-stop.
+rearm-preflight *ARGS:
+    cargo run -p aozora-xtask -q -- release preflight {{ARGS}}
+
+# Rearm rehearsal: fire the PyPI / npm publishers' `dry_run` dispatches for the
+# qualified commit so their `qualify` jobs run BEFORE the irreversible tag push
+# (release.yml / extism resolve the tag in qualify and cannot rehearse pre-tag).
+# Dispatches real workflow runs, so it is a deliberate step, on the host.
+rearm-rehearse *ARGS:
+    cargo run -p aozora-xtask -q -- release rehearse {{ARGS}}
+
 # Drift gate: rust-toolchain.toml's channel (the DEV toolchain) and
 # Cargo.toml's rust-version (the PUBLIC CONTRACT) are two authorities
 # holding deliberately different numbers (ADR-0034). Fail if a pin follows
