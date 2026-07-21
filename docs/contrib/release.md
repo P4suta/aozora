@@ -111,6 +111,7 @@ An MSRV bump follows the six-month contract in
 
 - [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md)
 - [ADR-0051](../adr/0051-ci-and-release-ready-split-event-driven-release-fan-in-and-the-actions-concurrency-budget.md)
+- [ADR-0052](../adr/0052-code-gate-reuse-by-code-identity.md)
 - [ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md)
 - [ADR-0050](../adr/0050-immutable-releases-are-assembled-as-drafts.md)
 - [Release secrets and Trusted Publishing](releasing-secrets.md)
