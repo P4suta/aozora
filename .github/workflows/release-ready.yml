@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.scope.outputs.run }}
+      version-changed: ${{ steps.detect.outputs.version-changed }}
+      release-branch: ${{ steps.detect.outputs.release-branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,9 +56,82 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-  quality:
+  # DEV-91 — reuse the heavy CODE gates across a Release PR and its merge commit.
+  # A release-plz Release PR changes only the version line + CHANGELOG, so its
+  # code is byte-identical to the merge that follows; running mutation / fuzz /
+  # sanitizers / the quality graph twice on the same code is the main runner
+  # cost. This job proves the merge commit's code identity (version footprint
+  # neutralised) equals an already-green Release-PR release-ready run, and emits
+  # `reuse=true` so the code gates skip. It is deliberately paranoid:
+  #   * It trusts only GitHub-attested run metadata + immutable git objects, and
+  #     recomputes the code hash itself from git blobs — a fork rewriting this
+  #     workflow cannot forge a hash or a "success".
+  #   * It only honours a same-repository `release-plz-*` PR (never a fork).
+  #   * A DATA doubt — PR not unique, run not completed-success, hash mismatch —
+  #     leaves `reuse=false`, so the gates run in FULL (fail-open to a full run).
+  #     An OPERATIONAL error instead — a gh/git call or the hash script failing
+  #     under `set -euo pipefail` — fails the job, which the fan-in treats as a
+  #     hard stop (fail-closed; never publishes on an unknown basis).
+  code-proof:
     needs: qualify
     if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.decide.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: decide
+        env:
+          VERSION_CHANGED: ${{ needs.qualify.outputs.version-changed }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          reuse=false
+          # Producer: a Release PR (or a manual dispatch) IS the authority whose
+          # green result the merge later reuses — it must run the gates in full.
+          # Only a version-bumping push to main (the merge commit) is a consumer.
+          if [[ "$GITHUB_EVENT_NAME" != push || "$VERSION_CHANGED" != true ]]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "producer run (event=$GITHUB_EVENT_NAME version-changed=$VERSION_CHANGED): full code gates"
+            exit 0
+          fi
+          merge="$GITHUB_SHA"
+          # The same-repo release-plz-* PR this commit merged (fork heads excluded).
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge/pulls" \
+                --jq '[.[] | select(.head.ref | startswith("release-plz-"))
+                           | select(.head.repo.full_name == "'"$GITHUB_REPOSITORY"'")]')"
+          if [[ "$(jq 'length' <<<"$pr")" == 1 ]]; then
+            head="$(jq -er '.[0].head.sha' <<<"$pr")"
+            number="$(jq -er '.[0].number' <<<"$pr")"
+            # That PR head must have a completed-success release-ready run.
+            ok="$(gh run list --workflow release-ready.yml --commit "$head" \
+                  --json event,headBranch,status,conclusion \
+                  --jq '[.[] | select(.event == "pull_request"
+                             and (.headBranch | startswith("release-plz-"))
+                             and .status == "completed"
+                             and .conclusion == "success")] | length')"
+            if [[ "${ok:-0}" -ge 1 ]]; then
+              # refs/pull/<n>/head persists after the branch is deleted at merge.
+              git fetch --no-tags --quiet origin "refs/pull/$number/head"
+              # Bind the hashed commit to the one the green run was for: the PR's
+              # two pointers (.head.sha and refs/pull/<n>/head) must name the same
+              # commit, else the two proofs describe different commits — fail closed.
+              test "$(git rev-parse FETCH_HEAD)" = "$head"
+              pr_hash="$(bash scripts/code-identity-hash.sh FETCH_HEAD)"
+              merge_hash="$(bash scripts/code-identity-hash.sh "$merge")"
+              if [[ "$pr_hash" == "$merge_hash" ]]; then
+                reuse=true
+              fi
+              echo "PR #$number head=$head pr_hash=$pr_hash merge_hash=$merge_hash reuse=$reuse"
+            fi
+          fi
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -126,8 +201,8 @@ jobs:
         run: just prop-deep
 
   mutation:
-    needs: qualify
-    if: needs.qualify.outputs.run == 'true'
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
@@ -196,8 +271,8 @@ jobs:
           if-no-files-found: error
 
   fuzz:
-    needs: qualify
-    if: needs.qualify.outputs.run == 'true'
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -214,8 +289,8 @@ jobs:
           fi
 
   sanitizers:
-    needs: qualify
-    if: needs.qualify.outputs.run == 'true'
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -228,8 +303,8 @@ jobs:
       - run: docker compose run --rm dev bash scripts/sanitizers.sh ${{ matrix.mode }}
 
   cross-os:
-    needs: qualify
-    if: needs.qualify.outputs.run == 'true'
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -979,13 +1054,15 @@ jobs:
 
   release-ready:
     if: always()
-    needs: [qualify, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python]
+    needs: [qualify, code-proof, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python]
     runs-on: ubuntu-latest
     steps:
       - name: Require every release gate
         env:
           RUN: ${{ needs.qualify.outputs.run }}
           QUALIFY: ${{ needs.qualify.result }}
+          CODE_PROOF: ${{ needs.code-proof.result }}
+          REUSE: ${{ needs.code-proof.outputs.reuse }}
           QUALITY: ${{ needs.quality.result }}
           MUTATION: ${{ needs.mutation.result }}
           FUZZ: ${{ needs.fuzz.result }}
@@ -1001,7 +1078,20 @@ jobs:
           if [[ "$RUN" != true ]]; then
             exit 0
           fi
-          for result in "$QUALITY" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS" "$NATIVE_ARTIFACTS" "$VSCODE_ARTIFACTS" "$ARTIFACTS" "$PYTHON"; do
+          # code-proof must have run and decided. An errored code-proof stops the
+          # release (fail-closed) rather than silently defaulting to anything.
+          test "$CODE_PROOF" = success
+          # Code gates: success, or SKIPPED because code-proof reused an already-
+          # green Release-PR run for byte-identical code. The artifact gates are
+          # commit-stamped, so they must always have run and succeeded.
+          for result in "$QUALITY" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS"; do
+            if [[ "$REUSE" == true ]]; then
+              [[ "$result" == success || "$result" == skipped ]]
+            else
+              test "$result" = success
+            fi
+          done
+          for result in "$NATIVE_ARTIFACTS" "$VSCODE_ARTIFACTS" "$ARTIFACTS" "$PYTHON"; do
             test "$result" = success
           done
       - if: needs.qualify.outputs.run == 'true'
