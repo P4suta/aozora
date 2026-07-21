@@ -60,7 +60,17 @@ jobs:
           fi
           mkdir -p npm-dist
           cp "${packages[0]}" npm-dist/
-          npm publish npm-dist/*.tgz --dry-run
+          # Offline publishability lint (no registry round-trip). `npm publish
+          # --dry-run` queries the registry and exits non-zero once this version
+          # is already published, which would break idempotent re-runs before the
+          # publish job's own `npm view` guard can decide. Validate the tarball
+          # locally instead: it must carry the public name, must not be private,
+          # and must actually contain its declared `main` entry.
+          package_json="$(tar -xOf npm-dist/*.tgz package/package.json)"
+          test "$(jq -er .name <<<"$package_json")" = aozora-wasm
+          jq -e '.private != true' <<<"$package_json" >/dev/null
+          main="$(jq -er .main <<<"$package_json")"
+          tar -tzf npm-dist/*.tgz | grep -Fxq "package/$main"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qualified-npm

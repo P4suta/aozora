@@ -441,8 +441,12 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          destination="${RUNNER_TEMP}/native-sboms"
-          mkdir -p "$destination"
+          # Emit the SBOMs at the RUNNER_TEMP root so they share the
+          # archive+checksum least-common-ancestor; actions/upload-artifact then
+          # stores all four at the artifact root, where release.yml locates the
+          # per-target *-cli/*-ffi.cdx.json via `find -maxdepth 1`. A subdir here
+          # would nest the SBOMs under it and fail release.yml's root diff.
+          destination="${RUNNER_TEMP}"
           cargo cyclonedx \
             --manifest-path crates/aozora-cli/Cargo.toml \
             --target "$TARGET" \
@@ -457,7 +461,7 @@ jobs:
           source="$(find crates/aozora-ffi -maxdepth 1 -type f -name 'sbom*' -print -quit)"
           test -n "$source"
           mv "$source" "$destination/${{ steps.archive.outputs.name }}-ffi.cdx.json"
-          test "$(find "$destination" -name '*.cdx.json' | wc -l)" -eq 2
+          test "$(find "$destination" -maxdepth 1 -type f -name '*.cdx.json' | wc -l)" -eq 2
           echo "directory=$destination" >> "$GITHUB_OUTPUT"
       - name: Smoke-test packaged native CLI
         env:
@@ -689,6 +693,12 @@ jobs:
         with:
           node-version: "24"
       - uses: ./.github/actions/setup-dev-image
+      - name: Resolve immutable release identity
+        run: |
+          set -euo pipefail
+          version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          test -n "$version"
+          echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - name: Build and exercise distribution channels
         run: |
           just publish-check
@@ -702,7 +712,7 @@ jobs:
           just vscode-ci
       - name: Build npm, CLI, C, and playground artifacts
         run: |
-          docker compose run --rm dev bash -euc '
+          docker compose run --rm -e AOZORA_BUILD_VERSION dev bash -euc '
             cargo run -p aozora-xtask -q -- artifacts crates
             cargo build --locked --profile dist -p aozora-cli
             cargo build --locked --release -p aozora-ffi
@@ -851,6 +861,15 @@ jobs:
             cd "$smoke/aozora-go"
             go test ./...
           '
+      - name: Assert release version stamp
+        run: |
+          set -euo pipefail
+          got="$(docker compose run --rm dev target/release-ready/aozora --version)"
+          grep -Fq "$AOZORA_BUILD_VERSION" <<<"$got"
+          if grep -q -- '-dev' <<<"$got"; then
+            echo "::error title=version::CLI stamped a dev version: $got" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-ready-${{ github.sha }}
@@ -872,6 +891,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve immutable release identity
+        run: |
+          set -euo pipefail
+          version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
+          test -n "$version"
+          echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
@@ -898,7 +923,7 @@ jobs:
           EXPECTED_SCHEMA="$(jq -er '.properties.schemaVersion.const' \
             crates/aozora-conformance/json/schema-nodes.json)" \
           PYTHONPATH="$install_root" python -c \
-            'import os, aozora; d = aozora.Document("｜青空《あおぞら》"); assert "<ruby>" in d.to_html(); assert aozora.schema_version() == int(os.environ["EXPECTED_SCHEMA"])'
+            'import os, aozora; d = aozora.Document("｜青空《あおぞら》"); assert "<ruby>" in d.to_html(); assert aozora.schema_version() == int(os.environ["EXPECTED_SCHEMA"]); v = aozora.version(); assert v == os.environ["AOZORA_BUILD_VERSION"], v; assert "-dev" not in v, v'
           PYTHONPATH="$install_root" python -m pytest \
             crates/aozora-py/tests/test_fixture_parity.py -q
           if [[ "${{ matrix.os }}" == ubuntu-latest ]]; then
@@ -1002,6 +1027,24 @@ jobs:
           done < <(find qualified -maxdepth 1 -type f \
             \( -name 'aozora-v*.tar.gz' -o -name 'aozora-v*.zip' \) | sort)
           test "$native_count" -eq 3
+
+          # The per-target CLI/FFI SBOMs must sit at the artifact root (release.yml
+          # locates them there via `find -maxdepth 1`). Assert their exact paths so
+          # an upload-layout regression fails here at PR time, not at tag push.
+          native_sboms=(
+            "aozora-v${version}-x86_64-unknown-linux-gnu-cli.cdx.json"
+            "aozora-v${version}-x86_64-unknown-linux-gnu-ffi.cdx.json"
+            "aozora-v${version}-aarch64-apple-darwin-cli.cdx.json"
+            "aozora-v${version}-aarch64-apple-darwin-ffi.cdx.json"
+            "aozora-v${version}-x86_64-pc-windows-msvc-cli.cdx.json"
+            "aozora-v${version}-x86_64-pc-windows-msvc-ffi.cdx.json"
+          )
+          for sbom in "${native_sboms[@]}"; do
+            test -s "qualified/$sbom"
+          done
+          test "$(find qualified -maxdepth 1 -type f \
+            \( -name 'aozora-v*-cli.cdx.json' -o -name 'aozora-v*-ffi.cdx.json' \) \
+            | wc -l)" -eq 6
 
           test "$(find qualified -maxdepth 1 -name '*.vsix' -type f | wc -l)" -eq 8
           test "$(find qualified -maxdepth 1 -name '*.whl' -type f | wc -l)" -eq 3

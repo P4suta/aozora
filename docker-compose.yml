@@ -53,6 +53,13 @@ x-common-env: &common-env
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: "clang"
   TERM: ${TERM:-xterm-256color}
+  # Forward the release version stamp into every container-mediated build
+  # (`just extism-build` / `just playground-all` run `docker compose run`
+  # from inside their recipes). release-ready's artifact jobs export it so
+  # the shipped Extism/npm wasm and playground stamp the clean version;
+  # unset elsewhere it passes empty, which each build.rs treats as absent
+  # (`!forced.is_empty()`) and falls back to the -dev checkout stamp.
+  AOZORA_BUILD_VERSION: "${AOZORA_BUILD_VERSION:-}"
   # /workspace is bind-mounted from the host. Locally the container runs as
   # the matching host UID (1000) so git is happy; in CI it runs as root
   # (AOZORA_UID=0) over a checkout owned by the runner's UID, and git then

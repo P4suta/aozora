@@ -97,18 +97,27 @@ jobs:
             awk -F': ' '$1 == "Version" { print $2; exit }')"
           test -n "$version"
           if metadata="$(curl -fsS "https://pypi.org/pypi/aozora/${version}/json" 2>/dev/null)"; then
-            local_count=0
+            # The release exists on PyPI. Every already-published file is
+            # immutable — verify our local copy matches byte-for-byte — but a
+            # PARTIAL prior upload (some of the four files missing) must remain
+            # completable: publish whenever any local file is not yet present so
+            # `skip-existing` on the upload can fill only the gaps. Failing closed
+            # here would strand a half-finished upload with no recovery path.
+            publish=false
             for package in dist/*; do
               test -f "$package"
               filename="$(basename "$package")"
               digest="$(sha256sum "$package" | awk '{ print $1 }')"
-              test "$(jq -er --arg filename "$filename" \
+              remote="$(jq -r --arg filename "$filename" \
                 '.urls[] | select(.filename == $filename) | .digests.sha256' \
-                <<<"$metadata")" = "$digest"
-              local_count=$((local_count + 1))
+                <<<"$metadata")"
+              if [[ -z "$remote" ]]; then
+                publish=true
+              else
+                test "$remote" = "$digest"
+              fi
             done
-            test "$(jq -er '.urls | length' <<<"$metadata")" -eq "$local_count"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "publish=$publish" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
@@ -116,3 +125,6 @@ jobs:
         if: steps.registry.outputs.publish == 'true'
         with:
           packages-dir: dist
+          # Complete a partial prior upload without erroring on the files that
+          # already landed (the guard above proved they match our digests).
+          skip-existing: true
