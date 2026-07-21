@@ -545,8 +545,24 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: pandoc-smoke
+      # Cache a version-pinned pandoc .deb instead of re-resolving it from apt
+      # every run. The upstream release is a near-static binary, so `dpkg -i`
+      # installs it directly (with an apt `-f` fallback should a lib be
+      # missing). Pinning also makes the smoke's pandoc deterministic.
+      - name: Cache pandoc .deb
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/pandoc-deb
+          key: pandoc-${{ runner.os }}-3.10
       - name: Install pandoc
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pandoc
+        run: |
+          set -euxo pipefail
+          if [ ! -f ~/pandoc-deb/pandoc.deb ]; then
+            mkdir -p ~/pandoc-deb
+            curl -fsSL -o ~/pandoc-deb/pandoc.deb \
+              https://github.com/jgm/pandoc/releases/download/3.10/pandoc-3.10-1-amd64.deb
+          fi
+          sudo dpkg -i ~/pandoc-deb/pandoc.deb || sudo apt-get install -f -y
       - name: Build aozora CLI
         run: cargo build --release -p aozora-cli
       - name: Pandoc round-trip smoke
@@ -670,9 +686,30 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: '1.3.14'
+      # Cache bun's global download store so `bun install` reuses tarballs
+      # across runs. Keyed on the lockfile so a dependency change refreshes it;
+      # `--frozen-lockfile` still enforces integrity against the resolved tree.
+      - name: Cache bun store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('playground/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - name: Install playground deps
         working-directory: playground
         run: bun install --frozen-lockfile
+      # Cache the Playwright browser binaries (~150MB chromium). Keyed on the
+      # lockfile, which pins the resolved @playwright/test version, so a bump
+      # busts the cache and never serves a stale browser. On a hit the install
+      # below skips the download and only re-applies the apt system libs.
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('playground/bun.lock') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
       - name: Install Playwright chromium + system deps
         working-directory: playground
         run: bun x playwright install --with-deps chromium
@@ -694,6 +731,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: '1.3.14'
+      - name: Cache bun store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('editors/vscode/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - name: Install deps
         working-directory: editors/vscode
         run: bun install --frozen-lockfile
@@ -793,6 +837,17 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: maturin-${{ matrix.python }}
+      # Reuse downloaded wheels across runs. pip's cache is content-addressed,
+      # so a stable key + restore-keys is safe even though the tool versions
+      # are constraint-ranged rather than pinned; the matrix arm keeps 3.11 and
+      # 3.14 separate.
+      - name: Cache pip wheels
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py${{ matrix.python }}-maturin-pytest-mypy
+          restore-keys: |
+            pip-${{ runner.os }}-py${{ matrix.python }}-
       - name: Install maturin + test tooling
         run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
       - name: Build the abi3 wheel
