@@ -32,9 +32,11 @@ on:
         required: true
         type: string
 
-# One release pipeline per ref; never cancel a publish already in flight.
+# Key the push-driven Release-PR flow by ref and the workflow_dispatch-driven
+# publish by its exact commit, so they land in different groups and a routine
+# push can never evict a queued publish; never cancel one already in flight.
 concurrency:
-  group: release-plz-${{ github.ref }}
+  group: release-plz-${{ github.event_name == 'workflow_dispatch' && inputs.commit || github.ref }}
   cancel-in-progress: false
 
 permissions: {}

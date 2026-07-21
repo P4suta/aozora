@@ -67,7 +67,11 @@ jobs:
       # `release != 'true'` so they defer to it (capping the Actions fan-out);
       # the three gates `release-ready` cannot run (msrv, wasm-test,
       # pandoc-smoke) stay unconditional here.
-      release: ${{ steps.detect.outputs.version-changed == 'true' || steps.detect.outputs.release-branch == 'true' }}
+      # version-changed is only honored on push (mirrors release-ready's
+      # qualify): a version bump on a non-release-plz PR is NOT a release
+      # commit there, so ci must not defer its Rust graph for it — otherwise
+      # both workflows would skip and the PR would merge with no Rust CI.
+      release: ${{ (github.event_name == 'push' && steps.detect.outputs.version-changed == 'true') || steps.detect.outputs.release-branch == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
