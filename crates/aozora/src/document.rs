@@ -2184,6 +2184,29 @@ mod tests {
     }
 
     #[test]
+    fn source_sanitization_region_end_keeps_a_crlf_whole() {
+        // A `\r\r` paragraph boundary can land on the CR of a following CRLF
+        // (`\r\r\n` = lone CR + CRLF); the region end must extend past the `\n`
+        // so the CRLF stays whole rather than being bisected. In "ab\r\r\ncd"
+        // the `\r\r` ends at the `\n` (byte 4), so the end is 5, past it — not 4.
+        assert_eq!(source_sanitization_region("ab\r\r\ncd", &(0..1)), 0..5);
+    }
+
+    #[test]
+    fn inside_accent_span_closes_at_the_matching_bracket() {
+        // The first `〕` closes the span the first `〔` opened, so a position
+        // past the pair is outside — the close must reset the open flag.
+        let src = "〔a〕bc";
+        let inside = src.find('a').expect("char in span");
+        let after = src.find('b').expect("char after span");
+        assert!(inside_accent_span(src, inside), "inside an open 〔…〕 span");
+        assert!(
+            !inside_accent_span(src, after),
+            "a position past the closing 〕 is outside the span"
+        );
+    }
+
+    #[test]
     fn incremental_sanitization_matches_full_crlf_parse() {
         let source = "first\r\n\r\nsecond\r\n\r\nthird";
         let at = source.find("second").expect("second paragraph");
