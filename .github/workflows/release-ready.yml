@@ -1015,7 +1015,7 @@ jobs:
             metadata="$(unzip -p "$wheel" '*/METADATA')"
             grep -Fx "Version: $version" <<<"$metadata"
             grep -Fx 'License: Apache-2.0 OR MIT' <<<"$metadata"
-            unzip -l "$wheel" | grep -E '/sboms/[^/]+\\.cyclonedx\\.json$'
+            unzip -l "$wheel" | grep -E '/sboms/[^/]+\.cyclonedx\.json$'
           done
           test "$(find qualified -maxdepth 1 -name '*.crate' -type f | wc -l)" -gt 0
           for package in qualified/*.crate; do
