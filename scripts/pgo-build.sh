@@ -28,7 +28,7 @@ host=$(rustc -vV | awk '/^host:/ { print $2 }')
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
 llvm_readobj="$(dirname "$llvm_profdata")/llvm-readobj"
 "$llvm_profdata" merge -o "$profile_data" "$profile_dir"/*.profraw
-"$llvm_profdata" show --counts "$profile_data" |
+"$llvm_profdata" show --all-functions --counts "$profile_data" |
     grep -E 'Functions shown: [1-9]' >/dev/null
 
 unset LLVM_PROFILE_FILE

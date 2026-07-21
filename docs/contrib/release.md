@@ -16,13 +16,26 @@ Humans never edit a version or push a release tag.
    `release-ready`; the label cannot make a failed or absent proof mergeable.
 4. Squash-merge the Release PR by hand. GitHub web-flow signs the resulting
    commit; auto-merge remains disabled for Release PRs.
-5. Approve the single deployment batch in the protected `release` environment.
+5. Wait for release-plz to publish the public crates in dependency order and
+   create the `vX.Y.Z` tag.
+6. Approve `release.yml` in the protected `release` environment first. It
+   creates the draft GitHub Release and attaches the native and Go artifacts.
+7. Approve `publish-extism-wasm.yml`, `publish-npm.yml`, and
+   `publish-pypi.yml`. Each is a separate deployment. Do not dispatch or
+   approve `release-vscode.yml` as part of a package release.
+8. Verify every intended registry version, draft asset, checksum, and
+   attestation. Publish the draft in the GitHub UI only after they all match.
 
 release-plz waits for `release-ready` on the exact version-changing commit,
-publishes the public crates in dependency order through OIDC, and creates the
-`vX.Y.Z` tag. The tag-driven registry jobs publish the already-verified release
-channels. A partial registry outage is retried against the same version and
-artifact checksums.
+then creates the tag. The tag-driven jobs publish only the already-verified
+package artifacts. VSIX artifacts remain qualified by `release-ready`, but
+editor marketplaces are opt-in under
+[ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md).
+
+The GitHub Release remains mutable only while it is a draft. Retry a failed
+native or Extism upload before publishing it. Publishing the draft is the final
+irreversible action under
+[ADR-0050](../adr/0050-immutable-releases-are-assembled-as-drafts.md).
 
 For a retry, resolve the tag commit once and pass it to the affected channel:
 
@@ -33,12 +46,14 @@ gh workflow run release.yml -f commit="$commit" -f tag="$tag" -f dry_run=false
 gh workflow run publish-npm.yml -f commit="$commit" -f dry_run=false
 gh workflow run publish-pypi.yml -f commit="$commit" -f dry_run=false
 gh workflow run publish-extism-wasm.yml -f commit="$commit" -f tag="$tag" -f dry_run=false
-gh workflow run release-vscode.yml -f commit="$commit" -f tag="$tag" -f dry_run=false
 ```
 
-After publication, provenance can be verified with:
+After downloading an asset, verify both the immutable-release attestation and
+the build provenance:
 
 ```sh
+gh release verify vX.Y.Z --repo P4suta/aozora
+gh release verify-asset vX.Y.Z ./aozora-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo P4suta/aozora
 gh attestation verify aozora-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo P4suta/aozora
 ```
 
@@ -54,5 +69,7 @@ An MSRV bump follows the six-month contract in
 ## See also
 
 - [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md)
+- [ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md)
+- [ADR-0050](../adr/0050-immutable-releases-are-assembled-as-drafts.md)
 - [Release secrets and Trusted Publishing](releasing-secrets.md)
 - [ADR-0037](../adr/0037-release-binaries-are-not-ca-code-signed.md)

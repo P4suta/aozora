@@ -191,10 +191,14 @@ mod tests {
         let src = "［＃ここから2字下げ］本文\n";
         let off = src.find('［').expect("open marker");
         let resp = prepare_at(src, off).expect("container open is coupled");
-        let PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. } = resp else {
+        let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = resp else {
             panic!("expected RangeWithPlaceholder, got {resp:?}");
         };
         assert_eq!(placeholder, "［＃ここから2字下げ］");
+        assert_eq!(range.start, Position::new(0, 0));
+        let end_character = u32::try_from("［＃ここから2字下げ］".encode_utf16().count())
+            .expect("test directive fits in an LSP coordinate");
+        assert_eq!(range.end, Position::new(0, end_character));
     }
 
     #[test]

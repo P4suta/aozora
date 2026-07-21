@@ -263,6 +263,14 @@ mod tests {
     }
 
     #[test]
+    fn open_document_debug_reports_versions() {
+        let state = OpenDocument::new("plain".to_owned());
+        let debug = format!("{state:?}");
+        assert!(debug.contains("edit_version: 0"), "{debug}");
+        assert!(debug.contains("snapshot_version: 0"), "{debug}");
+    }
+
+    #[test]
     fn rejected_edit_is_atomic() {
         let state = OpenDocument::new("あ".to_owned());
         assert_eq!(

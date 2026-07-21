@@ -88,14 +88,8 @@ fn char_at_offset(source: &str, offset: usize) -> Option<(usize, char, usize)> {
 /// `(byte_start, ch, byte_end)` for the char *immediately before*
 /// `offset`. None at the start of the buffer.
 fn char_before_offset(source: &str, offset: usize) -> Option<(usize, char, usize)> {
-    if offset == 0 {
-        return None;
-    }
-    let mut start = offset - 1;
-    while start > 0 && !source.is_char_boundary(start) {
-        start -= 1;
-    }
-    let ch = source[start..offset].chars().next()?;
+    let head = source.get(..offset)?;
+    let (start, ch) = head.char_indices().next_back()?;
     Some((start, ch, offset))
 }
 
@@ -150,17 +144,18 @@ fn try_link(
 /// land mid-codepoint when the window cuts a multi-byte char in
 /// half (regression: `&source[..mid_codepoint]` panics).
 fn find_partner_forward(source: &str, start: usize, target: char) -> Option<(usize, usize)> {
-    let mut idx = start;
-    let limit = source.len();
-    while idx < limit && idx - start < SCAN_WINDOW {
-        let ch = source[idx..].chars().next()?;
+    for (rel, ch) in source
+        .get(start..)?
+        .char_indices()
+        .take_while(|(rel, _)| *rel < SCAN_WINDOW)
+    {
         if ch == '\n' {
             return None;
         }
         if ch == target {
+            let idx = start + rel;
             return Some((idx, idx + ch.len_utf8()));
         }
-        idx += ch.len_utf8();
     }
     None
 }
@@ -172,21 +167,16 @@ fn find_partner_forward(source: &str, start: usize, target: char) -> Option<(usi
 /// codepoint does not poison the upcoming slice (regression:
 /// `&source[mid_codepoint..end]` panics).
 fn find_partner_backward(source: &str, end: usize, target: char) -> Option<(usize, usize)> {
-    let mut floor = end.saturating_sub(SCAN_WINDOW);
-    while floor < end && !source.is_char_boundary(floor) {
-        floor += 1;
-    }
-    let head = &source[floor..end];
-    let mut byte_in_head = head.len();
-    for ch in head.chars().rev() {
-        let ch_len = ch.len_utf8();
-        byte_in_head -= ch_len;
+    let floor =
+        (end.saturating_sub(SCAN_WINDOW)..=end).find(|&offset| source.is_char_boundary(offset))?;
+    let head = source.get(floor..end)?;
+    for (rel, ch) in head.char_indices().rev() {
         if ch == '\n' {
             return None;
         }
         if ch == target {
-            let abs = floor + byte_in_head;
-            return Some((abs, abs + ch_len));
+            let abs = floor + rel;
+            return Some((abs, abs + ch.len_utf8()));
         }
     }
     None

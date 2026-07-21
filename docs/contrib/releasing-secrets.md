@@ -4,11 +4,10 @@ The operational runbook for the release credentials. Almost none of this
 is visible in the tree: it is GitHub-server-side and registry-side state,
 so this page is its only record.
 
-The goal: **no long-lived publish token sits in the repository.** Where a
-registry supports OIDC Trusted Publishing we mint a short-lived token at
-publish time. Where it does not (VS Code Marketplace, Open VSX) the token
-will live as an *Environment* secret behind an approval gate, never as a
-repository secret.
+The goal: **no long-lived publish token sits in the repository.** Package
+registries use OIDC Trusted Publishing after any first-publish bootstrap.
+Editor marketplaces are not part of the standard package release and need no
+credentials until a maintainer explicitly opts into that channel.
 
 Why it is shaped this way is in
 [ADR-0020](../adr/0020-release-secret-hardening-trusted-publishing.md)
@@ -25,7 +24,7 @@ Two environments, deliberately different:
 
 | | reviewer | branches / tags | why |
 | --- | --- | --- | --- |
-| `release` | required | `main`, `v*` | you approve each publish batch |
+| `release` | required | `main`, `v*` | you approve each package publisher and draft assembly |
 | `release-plz` | **none** | `main` | the gate is the Release-PR merge; a second approval would only stall an unattended publish |
 
 A job cannot reach environment secrets **or** the OIDC token until the
@@ -115,34 +114,42 @@ Getting there costs one token, once, because of two crates.io facts:
 - **A publisher is bound to an exact workflow filename + environment**,
   because that is what the `sub` claim is matched against.
 
-Bootstrap:
+Bootstrap for the first release containing a new crate:
 
-1. Add `CARGO_REGISTRY_TOKEN` (scopes: publish-new **and** publish-update)
-   as a `release-plz` environment secret and reference it from
-   `release-plz-release`'s `env:`.
-2. Merge the Release PR. Authenticated by token, this is the one run that
-   can bring new crates into existence.
-3. Remove the `env:` line, delete the secret, revoke the token.
+1. Before merging the Release PR, register Trusted Publishers for every crate
+   that already exists. Use owner `P4suta`, repository `aozora`, workflow
+   `release-plz.yml`, and environment `release-plz`.
+2. Create a crates.io token with publish-new and publish-update scopes. Add it
+   as the `CARGO_REGISTRY_TOKEN` secret on the `release-plz` environment.
+3. In a small bootstrap-only PR, add
+   `CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}` only to the
+   `release-plz release` action's `env:`. Merge it immediately before the
+   Release PR.
+4. Merge the Release PR. This one token-authenticated run publishes both new
+   and existing public crates in dependency order and creates the release tag.
+5. Register the newly created crate's Trusted Publisher. In a cleanup PR,
+   remove the workflow reference, then delete the environment secret and
+   revoke the token.
 
 Do **not** hand-pre-create the new crates against the previous release
 tag. They did not exist at that tag, so dependents cannot compile against
 the umbrella's published version — `cargo publish` verifies against the
 registry and fails before uploading.
 
-Register a publisher per publishable crate (crate → Settings → Trusted
-Publishing → Add → GitHub): owner `P4suta`, repository `aozora`, workflow
-**`release-plz.yml`**, environment **`release-plz`**. Crates carried over
-from the retired `publish-crates.yml` still point at it, and crates.io has
-no edit UI — **delete and re-add** those.
+Crates carried over from the retired `publish-crates.yml` still point at the
+old workflow, and crates.io has no edit UI. Delete and re-add those publisher
+entries.
 
 Then enable **Trusted Publishing only** per crate, so a leaked token
 cannot publish aozora. Do this *after* a green OIDC release, never before:
-a failed OIDC publish would otherwise leave no way back in.
+a failed OIDC publish would otherwise leave no way back in. The bootstrap
+release does not prove OIDC because the token is present; use the next normal
+release as that proof.
 
 ### 4. PyPI — tokenless from day one
 
 PyPI has a **pending publisher**, so no bootstrap. Add one (Publishing →
-pending publisher) with the distribution name of `aozora-py`, owner
+pending publisher) with the distribution name of `aozora`, owner
 `P4suta`, repository `aozora`, workflow `publish-pypi.yml`, environment
 `release`.
 
@@ -150,55 +157,55 @@ Then publish promptly — a pending publisher does **not** reserve the name
 until first use, so register and publish back to back. The first OIDC
 upload creates the project and promotes the publisher.
 
-### 5. npm — bootstrap required
+### 5. npm — existing package, configure OIDC directly
 
-Unlike PyPI, npm requires the package to **already exist** before a
-trusted publisher can be configured, and the account needs 2FA. So npm
-needs a one-time token, like crates.io. (Trusted Publishing also needs npm
-CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the runner.)
+The `aozora-wasm` package already exists, so no npm token bootstrap is needed.
+Register its trusted publisher with owner `P4suta`, repository `aozora`,
+workflow `publish-npm.yml`, and environment `release`. Trusted Publishing
+requires npm CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the
+runner.
 
-1. Create a granular-access token that can publish `aozora-wasm`, add it
-   as the `NPM_TOKEN` secret on the `release` environment.
-2. `gh workflow run publish-npm.yml -f commit="$(git rev-parse vX.Y.Z^{commit})" -f dry_run=false -f use_oidc=false`
-3. Register the trusted publisher: package → Settings → Trusted Publisher
-   → GitHub Actions, workflow `publish-npm.yml`, environment `release`.
-4. Delete the `NPM_TOKEN` secret. From then on a `v*` tag publishes
-   automatically and npm attaches provenance itself.
+Enable npm's setting that disallows token publication after the first green
+OIDC release.
 
-### 6. VS Code Marketplace & Open VSX — no OIDC
+### 6. VS Code Marketplace & Open VSX — optional, no OIDC
 
-No OIDC publishing exists, so these tokens persist. Once created they will
-live on the environment, behind the approval gate:
+These are disabled for package releases under
+[ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md).
+Do not create their credentials until explicitly opting into editor
+publication. No OIDC publishing exists, so any future credentials belong on
+the `release` environment behind its approval gate:
 
 ```sh
 gh secret set VSCE_PAT --env release   # Azure DevOps PAT (Marketplace)
 gh secret set OVSX_PAT --env release   # Open VSX token
 ```
 
-### 7. Delete the repository-level copies
+### 7. Keep repository-level copies absent
 
 Repository secrets are readable by any workflow run, so they silently
-defeat the environment gate. Once the values live on `release`:
+defeat the environment gate. If any old copies exist:
 
 ```sh
 gh secret delete VSCE_PAT
 gh secret delete OVSX_PAT
-gh secret delete NPM_TOKEN
 ```
 
 ## Verification
 
 ```sh
-gh secret list --env release          # holds the non-OIDC tokens
-gh secret list                        # VSCE_PAT / OVSX_PAT must be ABSENT
+gh secret list --env release          # empty is expected for package-only OIDC
+gh secret list                        # publish tokens must be absent
+gh secret list --env release-plz      # App credentials; bootstrap token only temporarily
 gh api repos/P4suta/aozora/environments/release/deployment-branch-policies
 ```
 
 The `Scorecard supply-chain security` workflow keeps the Token-Permissions
 and Pinned-Dependencies posture from regressing.
 
-The release itself is in [Release process](release.md) — from there, the
-only manual step is approving the publish batch once.
+The release itself is in [Release process](release.md). Each protected
+publisher needs approval, and publishing the completed GitHub draft is a
+separate final action.
 
 ## References
 

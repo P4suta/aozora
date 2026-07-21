@@ -165,7 +165,11 @@ jobs:
         run: |
           CRATE="${ASSIGNMENT%%:*}"
           SHARD="${ASSIGNMENT#*:}"
-          just mutants -p "$CRATE" --all-features --shard "$SHARD" --sharding round-robin
+          FEATURES=(--all-features)
+          if [[ "$CRATE" == aozora-extism ]]; then
+            FEATURES=()
+          fi
+          just mutants -p "$CRATE" "${FEATURES[@]}" --shard "$SHARD" --sharding round-robin
       - name: Verify mutation outcome
         run: |
           set -euo pipefail
@@ -231,7 +235,8 @@ jobs:
       - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: nextest
-      - run: cargo nextest run --workspace --exclude aozora-bench --all-targets --all-features --no-fail-fast
+      - run: cargo nextest run --workspace --exclude aozora-bench --exclude aozora-extism --all-targets --all-features --no-fail-fast
+      - run: cargo nextest run -p aozora-extism --all-targets --no-fail-fast
 
   native-artifacts:
     needs: qualify
@@ -270,6 +275,16 @@ jobs:
           components: llvm-tools-preview
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+      - name: Prioritize the MSVC linker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $linkerDir = Join-Path $env:VCToolsInstallDir 'bin\HostX64\x64'
+          $linker = Join-Path $linkerDir 'link.exe'
+          if (-not (Test-Path $linker)) {
+            throw "MSVC linker not found at $linker"
+          }
+          $linkerDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: release-ready-native-${{ matrix.target }}
@@ -288,6 +303,10 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
+          if [[ "$TARGET" == *-windows-* ]]; then
+            linker="$(command -v link.exe)"
+            [[ "$linker" == *"Microsoft Visual Studio"* ]]
+          fi
           profile_dir="$GITHUB_WORKSPACE/pgo-data"
           profile_data="$GITHUB_WORKSPACE/aozora.profdata"
           mkdir -p "$profile_dir"
@@ -315,7 +334,7 @@ jobs:
           test -x "$llvm_readobj" || test -x "${llvm_readobj}.exe"
           [[ -x "$llvm_readobj" ]] || llvm_readobj="${llvm_readobj}.exe"
           "$llvm_profdata" merge -o "$profile_data" "$profile_dir"/*.profraw
-          "$llvm_profdata" show --counts "$profile_data" |
+          "$llvm_profdata" show --all-functions --counts "$profile_data" |
             grep -E 'Functions shown: [1-9]' >/dev/null
 
           unset LLVM_PROFILE_FILE
@@ -532,7 +551,7 @@ jobs:
             cross: true
           - vsce_target: alpine-arm64
             cargo_target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-latest
             cross: true
           - vsce_target: darwin-x64
             cargo_target: x86_64-apple-darwin

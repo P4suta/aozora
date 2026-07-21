@@ -126,9 +126,6 @@ const EMMET_RULES: &[EmmetRule] = &[
     },
 ];
 
-/// Maximum trigger prefix length, used to cap the look-back window.
-const MAX_PREFIX_LEN: usize = 1;
-
 /// Look-back window for `in_slug_context`. A slug body never spans
 /// hundreds of bytes, so 256 covers every realistic case while
 /// keeping the scan O(1).
@@ -157,9 +154,6 @@ pub(super) fn emmet_completions(
         return Vec::new();
     }
 
-    // Walk back up to MAX_PREFIX_LEN bytes to find a matching rule.
-    // Longer prefixes win (the `EMMET_RULES` order does the work).
-    //
     // Skip any rule whose look-back lands inside a multi-byte UTF-8
     // codepoint — that's never a valid trigger (every trigger we
     // handle is ASCII), so the candidate byte slice would be a
@@ -169,10 +163,7 @@ pub(super) fn emmet_completions(
         .iter()
         .find_map(|rule| {
             let plen = rule.prefix.len();
-            if plen > cursor || plen > MAX_PREFIX_LEN {
-                return None;
-            }
-            let start = cursor - plen;
+            let start = cursor.checked_sub(plen)?;
             if !source.is_char_boundary(start) {
                 return None;
             }
@@ -201,10 +192,9 @@ fn in_slug_context(source: &str, cursor: usize) -> bool {
     // chops a multi-byte char in two, so we snap forward to the next
     // valid char boundary before slicing — otherwise a long
     // Japanese paragraph above the cursor would panic.
-    let mut start = cursor.saturating_sub(SLUG_WINDOW);
-    while start < cursor && !source.is_char_boundary(start) {
-        start += 1;
-    }
+    let start = (cursor.saturating_sub(SLUG_WINDOW)..=cursor)
+        .find(|&offset| source.is_char_boundary(offset))
+        .unwrap_or(cursor);
     let window = &source[start..cursor];
     for ch in window.chars().rev() {
         match ch {
