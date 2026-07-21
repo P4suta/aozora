@@ -23,7 +23,10 @@ pip install aozora                  # Python
 ```
 
 Pre-built CLI binaries are on the
-[releases page](https://github.com/P4suta/aozora/releases).
+[releases page](https://github.com/P4suta/aozora/releases). The Go SDK
+ships there as a tarball (`aozora-go.tar.gz`);
+[`crates/aozora-go`](./crates/aozora-go/README.md) covers its
+`replace`-directive install.
 
 ## Use
 
