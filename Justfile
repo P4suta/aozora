@@ -310,7 +310,7 @@ msrv-local:
 # invocations against an already-warm container with the xtask binary
 # cached in `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check && cargo run -p aozora-xtask -q -- lint suppressions && cargo run -p aozora-xtask -q -- lint coordinates'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check && cargo run -p aozora-xtask -q -- conformance grammar --check && cargo run -p aozora-xtask -q -- publish check && cargo run -p aozora-xtask -q -- release check && cargo run -p aozora-xtask -q -- msrv check && cargo run -p aozora-xtask -q -- docs check && cargo run -p aozora-xtask -q -- lint suppressions && cargo run -p aozora-xtask -q -- lint coordinates'
 
 # Suppression-hygiene ratchet (a drift gate): per-crate #[allow] counts —
 # outer `#[allow]` and blanket inner `#![allow]`, tracked separately — may
