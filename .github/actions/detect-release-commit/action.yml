@@ -1,0 +1,46 @@
+# Composite action: classify the checked-out HEAD as a release commit.
+#
+# The single source of truth for release-commit detection. The two
+# primitives below were copy-pasted across release-ready.yml (qualify),
+# docs.yml, and release-plz.yml; each caller now derives its own release
+# policy (dispatch handling, push-only guards, tag existence) from the
+# primitives instead of re-implementing the git-diff probe.
+#
+# Requires a checkout with fetch-depth >= 2 so `git diff HEAD^` can resolve
+# the parent commit.
+
+name: detect-release-commit
+description: Emit release-commit primitives (version-line change, release-plz branch head) for the checked-out HEAD.
+
+inputs:
+  head-ref:
+    description: PR head ref to test against the release-plz-* pattern; empty on push/dispatch.
+    default: ""
+
+outputs:
+  version-changed:
+    description: "true when HEAD's diff against its parent touches a top-level `version = ` line in Cargo.toml."
+    value: ${{ steps.detect.outputs.version-changed }}
+  release-branch:
+    description: "true when head-ref matches release-plz-*."
+    value: ${{ steps.detect.outputs.release-branch }}
+
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      env:
+        HEAD_REF: ${{ inputs.head-ref }}
+      run: |
+        set -euo pipefail
+        version_changed=false
+        if git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+          version_changed=true
+        fi
+        release_branch=false
+        if [[ "$HEAD_REF" == release-plz-* ]]; then
+          release_branch=true
+        fi
+        echo "version-changed=$version_changed" >> "$GITHUB_OUTPUT"
+        echo "release-branch=$release_branch" >> "$GITHUB_OUTPUT"

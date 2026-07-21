@@ -1,0 +1,55 @@
+# Event-driven fan-in: turn a successful release-ready run into the two
+# downstream dispatches (crates.io publish + Pages docs), replacing the
+# busy-poll loops that release-plz.yml and docs.yml used to run.
+#
+# release-ready succeeds on every push to main — it short-circuits GREEN when
+# the commit is not a release — so this workflow fires on each such push. The
+# version-line re-check below keeps it inert unless HEAD actually bumps the
+# workspace version, so only a real Release-PR merge fans out.
+#
+# This helper only *dispatches* release-plz.yml and docs.yml; it holds no
+# id-token and no registry secret. That is what keeps crates.io Trusted
+# Publishing usable: crates.io refuses OIDC minted under a workflow_run
+# trigger, so the publish must run under workflow_dispatch — which is exactly
+# how release-plz then runs (ADR-0038).
+
+name: release-fan-in
+
+on:
+  workflow_run:
+    workflows: [release-ready]
+    types: [completed]
+
+# One fan-out decision per qualified commit; never cancel a dispatch in flight.
+concurrency:
+  group: release-fan-in-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read # checkout head_sha for the release-commit probe
+  actions: write # gh workflow run (dispatch release-plz + docs)
+
+jobs:
+  fan-in:
+    # Only a successful release-ready run from a push on main can release.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    env:
+      QUALIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+      - id: detect
+        uses: ./.github/actions/detect-release-commit
+      - name: Dispatch release + docs for a qualified release commit
+        if: steps.detect.outputs.version-changed == 'true'
+        run: |
+          set -euo pipefail
+          gh workflow run release-plz.yml --ref main -f commit="$QUALIFIED_SHA"
+          gh workflow run docs.yml --ref main -f commit="$QUALIFIED_SHA"

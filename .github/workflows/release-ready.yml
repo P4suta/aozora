@@ -29,18 +29,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
+      - id: detect
+        uses: ./.github/actions/detect-release-commit
+        with:
+          head-ref: ${{ github.event.pull_request.head.ref }}
       - id: scope
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          VERSION_CHANGED: ${{ steps.detect.outputs.version-changed }}
+          RELEASE_BRANCH: ${{ steps.detect.outputs.release-branch }}
         run: |
           set -euo pipefail
           run=false
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             run=true
-          elif [[ "$GITHUB_EVENT_NAME" == push ]] &&
-              git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$VERSION_CHANGED" == true ]]; then
             run=true
-          elif [[ "$HEAD_REF" == release-plz-* ]]; then
+          elif [[ "$RELEASE_BRANCH" == true ]]; then
             run=true
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
@@ -87,11 +91,15 @@ jobs:
           just baseline-ratchet
           just lint-full
           just test
+          just coverage
+          just test-doc
           just test-doc-all
           just msrv-check
           just deny
           just audit
+          just shear
           just semver
+          just readme-gate
       - name: Generated and external specification gates
         env:
           AOZORA_SPEC_REPO: ${{ github.workspace }}/.spec
@@ -124,6 +132,7 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
+      max-parallel: 10
       matrix:
         assignment:
           - "aozora:0/16"
@@ -536,6 +545,7 @@ jobs:
         shell: bash
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         include:
           - vsce_target: linux-x64
@@ -707,6 +717,7 @@ jobs:
           just smoke-extism
           just smoke-go
           just parity-wasm
+          just playground-ci
           just playground-all
           just playground-e2e
           just vscode-ci

@@ -61,8 +61,18 @@ jobs:
       playground: ${{ steps.filter.outputs.playground }}
       vscode: ${{ steps.filter.outputs.vscode }}
       docs: ${{ steps.filter.outputs.docs }}
+      # A release commit — a `version = ` bump on push, or a `release-plz-*` PR
+      # head — triggers the full `release-ready` workflow, which runs a superset
+      # of ci's Rust gates. The Rust jobs `release-ready` covers gate on
+      # `release != 'true'` so they defer to it (capping the Actions fan-out);
+      # the three gates `release-ready` cannot run (msrv, wasm-test,
+      # pandoc-smoke) stay unconditional here.
+      release: ${{ steps.detect.outputs.version-changed == 'true' || steps.detect.outputs.release-branch == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # detect-release-commit diffs HEAD^ for the version-line change.
+          fetch-depth: 2
       - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706  # v4.0.2
         id: filter
         with:
@@ -108,6 +118,10 @@ jobs:
             docs:
               - 'docs/**'
               - '**/README.md'
+      - id: detect
+        uses: ./.github/actions/detect-release-commit
+        with:
+          head-ref: ${{ github.event.pull_request.head.ref }}
 
   msrv:
     needs: changes
@@ -227,7 +241,7 @@ jobs:
   # `needs: dev-image` job then restores that tar and `docker load`s it.
   dev-image:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
+    if: (needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true') && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -246,7 +260,7 @@ jobs:
   lint:
     name: lint (${{ matrix.target }})
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -265,7 +279,7 @@ jobs:
   # for ~3 extra wall-clock minutes per push without adding signal.
   coverage:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -274,7 +288,7 @@ jobs:
 
   perf-gate:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -295,7 +309,7 @@ jobs:
   # frontend too. (E2E is a separate job — see #335b.)
   playground-checks:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -310,7 +324,7 @@ jobs:
   # artifact (covered by `extism-build`).
   test-internals:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -325,7 +339,7 @@ jobs:
   # at review time. Mirrors the sibling afm repo's `doc` job.
   doc:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -339,7 +353,7 @@ jobs:
   # plus `test-doc-all` for the umbrella crate's feature-gated examples.
   doctest:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -349,7 +363,7 @@ jobs:
 
   audit:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -371,7 +385,7 @@ jobs:
   # under `docs/contrib/`, so a docs-only change can break it.
   drift-gate:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
+    if: (needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true') && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -403,11 +417,12 @@ jobs:
   # diff against.
   mutants-in-diff:
     needs: [changes, dev-image]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         shard:
           - "0/8"
@@ -459,7 +474,7 @@ jobs:
   # through the parser and asserts every `must`-tier case passes.
   conformance:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -469,7 +484,7 @@ jobs:
   # Phase O5 — strict whole-corpus gates over the pinned corpus revision.
   corpus-audit-gate:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     env:
       AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
@@ -542,7 +557,7 @@ jobs:
   # the cbindgen build script generates `aozora.h` cleanly.
   smoke-ffi:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -561,7 +576,7 @@ jobs:
   # Runs in the dev image (Go + Extism toolchain live there).
   smoke-go:
     needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -573,7 +588,7 @@ jobs:
   # Build-only: no npm publish.
   wasm-build:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -624,7 +639,7 @@ jobs:
   # `playground-e2e` note (shared-node_modules EEXIST race).
   e2e:
     needs: changes
-    if: needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -663,7 +678,7 @@ jobs:
   # build time (esbuild.mjs), so a change to that asset must re-check.
   vscode:
     needs: changes
-    if: needs.changes.outputs.vscode == 'true' || needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.vscode == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -691,7 +706,7 @@ jobs:
   # regressions.
   cross-aarch64:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -792,7 +807,7 @@ jobs:
   # would have been deleted by association.
   readme:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
