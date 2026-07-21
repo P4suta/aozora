@@ -54,7 +54,9 @@ every caller derives its own policy from it.
   target), and `pandoc-smoke` (the `pandoc` binary). The cheap gates
   that `release-ready` did not already run were folded into its
   `quality`/`artifacts` recipes — `just coverage`, `test-doc`, `shear`,
-  `readme-gate`, `playground-ci` — so the deferral loses no signal.
+  `playground-ci` — so the deferral loses no signal. (README hygiene, once a
+  standalone `readme-gate`, is now part of `publish check` inside `drift-gate`,
+  which `release-ready` already runs — see DEV-90.)
 
 - `release-ready` is added to the `main` branch ruleset's required
   status checks, alongside `ci-success` and the CodeQL trio. It was

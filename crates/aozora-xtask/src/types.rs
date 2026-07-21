@@ -1,23 +1,36 @@
 //! TypeScript types artefact dump / drift gate.
 //!
-//! Generates `crates/aozora-wasm/types/aozora_types.d.ts` directly
-//! from the live Rust enums and wire structs. The output is a
-//! discriminated-union `.d.ts` for downstream TypeScript consumers:
+//! Generates `crates/aozora-wasm/types/aozora_types.d.ts` for downstream
+//! TypeScript consumers:
 //!
 //! ```text
 //! import type { NodeKind, Diagnostic } from "aozora-wasm/aozora_types";
 //! ```
 //!
+//! Two halves, anchored two different ways:
+//!
+//! * **Enums** (`NodeKind`, `PairKind`, …) are string-literal unions
+//!   projected from the live `::ALL` constants — the JSON Schema erases
+//!   them to a plain `string`, so they must come from Rust. Adding a
+//!   variant flows into the output once the `ALL` array is updated.
+//! * **Payload interfaces** (`Span`, `Diagnostic`, …) are hand-written:
+//!   they carry `JSDoc` the schema has no field for, and `TextEdit` is an
+//!   edit *input* with no wire schema at all. They are NOT free-floating —
+//!   `xtask types check` cross-checks each interface's field set and
+//!   optionality against the committed wire JSON Schema, which
+//!   `xtask schema check` in turn ties to the live wire structs. A
+//!   wire-struct field change therefore propagates schema → this parity
+//!   check → a forced `.d.ts` edit.
+//!
 //! The source of truth lives outside `pkg/` because `wasm-pack`
 //! wipes that directory on rebuild. A future packaging step copies
 //! this file into `pkg/` before `npm publish`.
 //!
-//! Drift-gated by `xtask types check` so a new `NodeKind` variant
-//! lands as a build-time CI failure if the artefact regen step is
-//! forgotten. The aozora-syntax / aozora-spec ALL constants drive
-//! the codegen — adding a variant flows automatically into the
-//! generated output once the ALL array is updated.
+//! Drift-gated by `xtask types check`: a stale artefact (the regen step
+//! was forgotten) and an interface that disagrees with the schema both
+//! fail CI.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -140,10 +153,11 @@ fn render_enums(out: &mut String) {
     );
 }
 
-/// Module-level static assertion that pins the `Sentinel`→`NodeRef`
-/// linkage at compile time. If `NodeRef::sentinel_kind` is ever removed
-/// or has its signature changed, this `const` fails to type-check —
-/// catching the drift before the TS artefact silently goes stale.
+/// Render the wire payload interfaces (`Span`, `Diagnostic`, …). Hand-written
+/// rather than projected from the schema so they can carry `JSDoc`;
+/// [`check_payload_schema_parity`] guards that they stay field-for-field
+/// consistent with the wire JSON Schema. `TextEdit` is an edit *input* with
+/// no wire-output schema, so it lives here without a parity entry.
 fn render_wire_payloads(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");
     out.push_str("// Wire envelope payload types\n");
@@ -221,13 +235,195 @@ fn check() -> Result<(), String> {
     let actual = render();
     let stored = fs::read_to_string(&path)
         .map_err(|err| format!("read types artefact {}: {err}", path.display()))?;
-    if actual == stored {
-        eprintln!("xtask types check: aozora_types.d.ts up to date");
+    let mut errors = Vec::new();
+    if actual != stored {
+        errors.push(format!(
+            "TypeScript types drift detected in {TYPES_REL_PATH}: \
+             run `xtask types ts` to regenerate, then commit"
+        ));
+    }
+    // Anchor the hand-written payload interfaces to the wire JSON Schema, so a
+    // wire-struct field change cannot slip past the byte-identical drift check
+    // (both sides share the same hand-written strings).
+    if let Err(err) = check_payload_schema_parity(&root, &actual) {
+        errors.push(err);
+    }
+    if errors.is_empty() {
+        eprintln!("xtask types check: aozora_types.d.ts up to date and schema-consistent");
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+/// One payload type's field shape from the wire JSON Schema.
+struct SchemaFields {
+    /// All property names.
+    properties: BTreeSet<String>,
+    /// The subset marked `required`; everything else is optional.
+    required: BTreeSet<String>,
+}
+
+/// Field shapes for every payload type the committed wire schemas define,
+/// keyed by type title (`Diagnostic`, `Node`, `Span`, …). Built from the same
+/// `SCHEMA_FILES` the host-language types are generated from; `xtask schema
+/// check` ties those to the live wire structs, so this is the anchor the
+/// hand-written `.d.ts` interfaces are checked against.
+fn schema_field_shapes(root: &Path) -> Result<BTreeMap<String, SchemaFields>, String> {
+    let mut shapes = BTreeMap::new();
+    for (rel, _) in SCHEMA_FILES {
+        let path = root.join(rel);
+        let text =
+            fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let schema: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("parse {}: {err}", path.display()))?;
+        // The per-entry item type (Diagnostic / Node / …) — named by its title.
+        if let Some(items) = schema
+            .get("properties")
+            .and_then(|p| p.get("data"))
+            .and_then(|d| d.get("items"))
+            && let Some(title) = items.get("title").and_then(Value::as_str)
+        {
+            insert_object_shape(title, items, &mut shapes);
+        }
+        // Shared `$defs` (Span, …) are named by their key, not an inner title;
+        // identical across files, so first wins.
+        if let Some(defs) = schema.get("$defs").and_then(Value::as_object) {
+            for (key, def) in defs {
+                insert_object_shape(key, def, &mut shapes);
+            }
+        }
+    }
+    Ok(shapes)
+}
+
+/// Record `obj`'s `properties` + `required` under `name`, if it is an object
+/// schema with properties. First insertion wins (shared `$defs` repeat
+/// identically across files).
+fn insert_object_shape(name: &str, obj: &Value, shapes: &mut BTreeMap<String, SchemaFields>) {
+    let Some(props) = obj.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let properties = props.keys().cloned().collect();
+    let required = obj
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    shapes.entry(name.to_owned()).or_insert(SchemaFields {
+        properties,
+        required,
+    });
+}
+
+/// The fields of one generated `export interface`: name → is-optional
+/// (`field?:`). `None` if the interface is absent from the artefact.
+fn dts_interface_fields(dts: &str, name: &str) -> Option<BTreeMap<String, bool>> {
+    let header = format!("export interface {name} {{");
+    let after = &dts[dts.find(&header)? + header.len()..];
+    let body = &after[..after.find("\n}")?];
+    let mut fields = BTreeMap::new();
+    for line in body.lines() {
+        let line = line.trim();
+        // Skip blank lines and JSDoc (`/** … */`, ` * …`).
+        if line.is_empty() || line.starts_with('/') || line.starts_with('*') {
+            continue;
+        }
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
+        let key = line[..colon].trim();
+        let (key, optional) = key
+            .strip_suffix('?')
+            .map_or((key, false), |base| (base, true));
+        if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            fields.insert(key.to_owned(), optional);
+        }
+    }
+    Some(fields)
+}
+
+/// Interfaces that mirror a wire schema type, and the schema title each must
+/// match. `TextEdit` is deliberately absent — an edit *input* with no
+/// wire-output schema — so it is exempt from this parity check.
+const SCHEMA_MIRRORED_INTERFACES: &[(&str, &str)] = &[
+    ("Span", "Span"),
+    ("Diagnostic", "Diagnostic"),
+    ("Node", "Node"),
+    ("Pair", "Pair"),
+    ("ContainerPair", "ContainerPair"),
+    ("GaijiResolution", "GaijiResolution"),
+    ("Slug", "Slug"),
+];
+
+/// Cross-check every schema-backed `.d.ts` payload interface against the wire
+/// JSON Schema: same field names, and `?` iff the field is not
+/// schema-`required`. This is what the byte-identical drift check alone cannot
+/// do — `render()` and the committed artefact share the same hand-written
+/// strings, so a wire field added in Rust (which reaches the schema via
+/// `xtask schema check`) would otherwise never surface as a `.d.ts` gap.
+fn check_payload_schema_parity(root: &Path, dts: &str) -> Result<(), String> {
+    let shapes = schema_field_shapes(root)?;
+    let mut problems = Vec::new();
+    for (interface, title) in SCHEMA_MIRRORED_INTERFACES {
+        let Some(shape) = shapes.get(*title) else {
+            problems.push(format!(
+                "no wire schema defines `{title}` to check interface `{interface}` against"
+            ));
+            continue;
+        };
+        let Some(fields) = dts_interface_fields(dts, interface) else {
+            problems.push(format!("generated .d.ts has no `interface {interface}`"));
+            continue;
+        };
+        let names: BTreeSet<String> = fields.keys().cloned().collect();
+        for missing in shape.properties.difference(&names) {
+            problems.push(format!(
+                "interface `{interface}` is missing wire field `{missing}` (the schema has it)"
+            ));
+        }
+        for extra in names.difference(&shape.properties) {
+            problems.push(format!(
+                "interface `{interface}` declares field `{extra}` absent from the schema"
+            ));
+        }
+        for (field, &optional) in &fields {
+            if !shape.properties.contains(field) {
+                continue;
+            }
+            // Mismatch iff the two notions of "optional" disagree: a field is
+            // consistent when `optional` (TS `?`) equals "not schema-required".
+            if optional == shape.required.contains(field) {
+                problems.push(format!(
+                    "interface `{interface}` field `{field}` is {} but the schema marks it {}",
+                    if optional {
+                        "optional (`?`)"
+                    } else {
+                        "required"
+                    },
+                    if shape.required.contains(field) {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                ));
+            }
+        }
+    }
+    if problems.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "TypeScript types drift detected in {TYPES_REL_PATH}:\n  \
-             run `xtask types ts` to regenerate, then commit"
+            "TypeScript payload interfaces disagree with the wire JSON Schema:\n  {}\n  \
+             -> if the schema is right (run `xtask schema check`), edit the interface in \
+             `render_wire_payloads` to match",
+            problems.join("\n  "),
         ))
     }
 }
@@ -711,6 +907,75 @@ mod tests {
         assert!(dts.contains("export type NodeKind ="), "enums section");
         assert!(dts.contains("interface Span"), "payload section");
         assert!(dts.contains("JsonEnvelope<Diagnostic>"), "envelope section");
+    }
+
+    #[test]
+    fn dts_interface_fields_reads_names_and_optionality() {
+        let dts = "export interface Diagnostic {\n  /** doc */\n  kind: string;\n  \
+                   span: Span;\n  codepoint?: number;\n}\n";
+        let fields = dts_interface_fields(dts, "Diagnostic").expect("interface present");
+        assert_eq!(fields.get("kind"), Some(&false), "kind is required");
+        assert_eq!(fields.get("span"), Some(&false), "span is required");
+        assert_eq!(
+            fields.get("codepoint"),
+            Some(&true),
+            "codepoint is optional"
+        );
+        assert_eq!(fields.len(), 3, "JSDoc lines are not fields: {fields:?}");
+        assert!(
+            dts_interface_fields(dts, "Absent").is_none(),
+            "a missing interface reads as None"
+        );
+    }
+
+    #[test]
+    fn schema_field_shapes_cover_every_mirrored_interface() {
+        let root = workspace_root().expect("workspace root");
+        let shapes = schema_field_shapes(&root).expect("the committed schemas must parse");
+        for (_, title) in SCHEMA_MIRRORED_INTERFACES {
+            assert!(
+                shapes.contains_key(*title),
+                "schema shape for `{title}` must exist (mirrored interface has no anchor)"
+            );
+        }
+    }
+
+    #[test]
+    fn live_payload_interfaces_match_the_schema() {
+        // The integration guard: the hand-written interfaces the artefact
+        // ships must agree, field-for-field, with the committed wire schema.
+        let root = workspace_root().expect("workspace root");
+        check_payload_schema_parity(&root, &render())
+            .expect("hand-written .d.ts interfaces must match the wire schema");
+    }
+
+    #[test]
+    fn parity_flags_an_interface_missing_a_wire_field() {
+        let root = workspace_root().expect("workspace root");
+        // Drop `severity` (unique to Diagnostic) from an otherwise-live artefact.
+        let doctored = render().replace("  severity: Severity;\n", "");
+        let err = check_payload_schema_parity(&root, &doctored)
+            .expect_err("a dropped wire field must be flagged");
+        assert!(
+            err.contains("Diagnostic") && err.contains("severity") && err.contains("missing"),
+            "must name the interface and missing field: {err}"
+        );
+    }
+
+    #[test]
+    fn parity_flags_a_wrong_optionality() {
+        let root = workspace_root().expect("workspace root");
+        // Make required `kind` optional in the Node interface.
+        let doctored = render().replace(
+            "export interface Node {\n  kind: NodeKind;",
+            "export interface Node {\n  kind?: NodeKind;",
+        );
+        let err = check_payload_schema_parity(&root, &doctored)
+            .expect_err("wrong optionality must be flagged");
+        assert!(
+            err.contains("Node") && err.contains("kind") && err.contains("required"),
+            "must name the interface, field, and the schema's requirement: {err}"
+        );
     }
 
     #[test]

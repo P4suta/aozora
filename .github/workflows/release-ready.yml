@@ -99,7 +99,6 @@ jobs:
           just audit
           just shear
           just semver
-          just readme-gate
       - name: Generated and external specification gates
         env:
           AOZORA_SPEC_REPO: ${{ github.workspace }}/.spec
