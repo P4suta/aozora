@@ -194,9 +194,9 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
 # tree-sitter CLI — regenerates crates/tree-sitter-aozora/src/{parser.c,
 # grammar.json,node-types.json} from grammar.js. Pinned to the SAME version
 # as the `tree-sitter` runtime crate (Cargo.lock: 0.26.10) so the generated
-# parse tables target the ABI that aozora-lsp links against, and so
-# `xtask conformance grammar --check` (the grammar regen drift gate) is
-# reproducible across machines.
+# parse tables target the ABI the conformance harness (`aozora-xtask`'s
+# `tree-sitter` runtime) links against, and so `xtask conformance grammar
+# --check` (the grammar regen drift gate) is reproducible across machines.
 #
 # Built from source rather than binstalled: tree-sitter's prebuilt Linux
 # release binary is linked against glibc 2.39 and dies at runtime on this

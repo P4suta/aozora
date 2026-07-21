@@ -9,6 +9,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.5.0] - 2026-07-21
 
+> ⚠ **Breaking changes.** 0.5.0 collapses the workspace to three published
+> crates ([#573](https://github.com/P4suta/aozora/pull/573)), replaces the
+> internal pipeline API with the document surface
+> ([#576](https://github.com/P4suta/aozora/pull/576)), and unifies the document
+> API and distribution contracts
+> ([#581](https://github.com/P4suta/aozora/pull/581)). Downstream code that
+> depended on the former building-block crates (spec / syntax / scan / encoding
+> / pipeline / render / fmt / pandoc / cst / query) must migrate to the `aozora`
+> umbrella crate. The API, notation, and wire-schema breaks are detailed in the
+> notes below.
+
 
 ### Added
 

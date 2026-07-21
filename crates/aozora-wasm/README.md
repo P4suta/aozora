@@ -3,7 +3,13 @@
 A wasm-bindgen driver for the aozora parser. It powers the browser
 [playground](https://p4suta.github.io/aozora/playground/).
 
-Not published to npm or crates.io, so build it:
+Install from npm:
+
+```sh
+npm install aozora-wasm
+```
+
+Or build from source:
 
 ```sh
 rustup target add wasm32-unknown-unknown

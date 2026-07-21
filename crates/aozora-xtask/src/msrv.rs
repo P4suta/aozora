@@ -110,6 +110,7 @@ struct RootManifest {
 #[derive(Deserialize)]
 struct WorkspaceTable {
     package: WorkspacePackage,
+    members: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +127,73 @@ struct ToolchainFile {
 #[derive(Deserialize)]
 struct ToolchainTable {
     channel: String,
+}
+
+/// A workspace member's manifest — only the `[package]` fields I7 reads.
+#[derive(Deserialize)]
+struct MemberManifest {
+    package: Option<MemberPackage>,
+}
+
+#[derive(Deserialize)]
+struct MemberPackage {
+    name: Option<String>,
+    publish: Option<Publish>,
+    #[serde(rename = "rust-version")]
+    rust_version: Option<RustVersion>,
+}
+
+/// `cargo`'s `publish` key: a bool, or an allow-list of registries. Absent
+/// means publishable to every registry.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Publish {
+    Flag(bool),
+    Registries(Vec<String>),
+}
+
+/// `rust-version` is either inherited from the workspace
+/// (`rust-version.workspace = true`) or written as a literal. Only the
+/// inherited form keeps the MSRV single-source.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RustVersion {
+    Inherited { workspace: bool },
+    Literal(String),
+}
+
+/// Whether cargo would publish this member (i.e. `publish` is not `false`
+/// and not an empty registry list).
+fn is_published(package: &MemberPackage) -> bool {
+    match &package.publish {
+        None | Some(Publish::Flag(true)) => true,
+        Some(Publish::Flag(false)) => false,
+        Some(Publish::Registries(registries)) => !registries.is_empty(),
+    }
+}
+
+/// The MSRV violation for a published member, or `None` when it correctly
+/// inherits the workspace `rust-version`.
+fn member_msrv_violation(member: &str, package: &MemberPackage) -> Option<String> {
+    let name = package.name.as_deref().unwrap_or(member);
+    match &package.rust_version {
+        Some(RustVersion::Inherited { workspace: true }) => None,
+        Some(RustVersion::Inherited { workspace: false }) => Some(format!(
+            "{member}/Cargo.toml: published crate `{name}` sets \
+             `rust-version.workspace = false`; it must inherit the workspace MSRV \
+             with `rust-version.workspace = true`"
+        )),
+        Some(RustVersion::Literal(v)) => Some(format!(
+            "{member}/Cargo.toml: published crate `{name}` hardcodes \
+             `rust-version = {v:?}`; it must inherit the workspace MSRV with \
+             `rust-version.workspace = true` so the contract stays single-source"
+        )),
+        None => Some(format!(
+            "{member}/Cargo.toml: published crate `{name}` declares no \
+             `rust-version`; it must inherit the workspace MSRV with \
+             `rust-version.workspace = true`"
+        )),
+    }
 }
 
 pub(crate) fn dispatch(args: &MsrvArgs) -> Result<(), String> {
@@ -192,6 +260,41 @@ const MSRV_PAGE: &str = "docs/contrib/msrv.md";
 /// 1.96.0" and is *correct* to, because that is what it was. Scanning
 /// them would turn every honest record into a violation.
 const MAINTAINED_DOCS: &[&str] = &["docs/contrib"];
+
+/// I7 — every *published* member inherits the workspace MSRV.
+///
+/// The contract this gate polices is a single workspace field, but a
+/// published member that hardcodes or omits `rust-version` silently opts
+/// out of it. `tree-sitter-aozora` shipped published with no `rust-version`
+/// for a full release cycle because nothing looked past the root manifest.
+fn check_members_inherit_msrv(
+    root: &Path,
+    members: &[String],
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    for member in members {
+        // The members here are literal paths; a glob would have to be
+        // expanded first, and skipping it silently is exactly the hole
+        // this gate closes.
+        if member.contains('*') {
+            return Err(format!(
+                "workspace member glob {member:?} is unsupported here — this gate \
+                 must enumerate every member or it silently skips one"
+            ));
+        }
+        let manifest: MemberManifest = read_toml(&root.join(member).join("Cargo.toml"))?;
+        // No `[package]` — a virtual member that publishes nothing.
+        let Some(package) = manifest.package else {
+            continue;
+        };
+        if is_published(&package)
+            && let Some(violation) = member_msrv_violation(member, &package)
+        {
+            violations.push(violation);
+        }
+    }
+    Ok(())
+}
 
 fn check_docs(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let mut offenders = Vec::new();
@@ -340,6 +443,9 @@ fn check() -> Result<(), String> {
     check_docs(&root, &mut violations)?;
     check_badges(&root, &mut violations)?;
 
+    // I7 — every published member inherits the workspace MSRV.
+    check_members_inherit_msrv(&root, &manifest.workspace.members, &mut violations)?;
+
     if violations.is_empty() {
         eprintln!(
             "xtask msrv check: contract {msrv}, dev channel {channel} ({} releases of headroom)",
@@ -450,5 +556,68 @@ mod tests {
         // The integration test: read the real files. This is what fails in
         // CI when someone bumps one pin and forgets its siblings.
         check().expect("the committed pins must satisfy every invariant");
+    }
+
+    fn member(toml: &str) -> MemberPackage {
+        toml::from_str::<MemberManifest>(toml)
+            .expect("valid toml")
+            .package
+            .expect("has a [package]")
+    }
+
+    #[test]
+    fn is_published_reads_cargos_publish_key() {
+        assert!(
+            is_published(&member("[package]\nname = \"x\"\n")),
+            "an absent publish key is publishable"
+        );
+        assert!(is_published(&member(
+            "[package]\nname = \"x\"\npublish = true\n"
+        )));
+        assert!(!is_published(&member(
+            "[package]\nname = \"x\"\npublish = false\n"
+        )));
+        assert!(is_published(&member(
+            "[package]\nname = \"x\"\npublish = [\"crates-io\"]\n"
+        )));
+        assert!(
+            !is_published(&member("[package]\nname = \"x\"\npublish = []\n")),
+            "an empty registry list is unpublishable"
+        );
+    }
+
+    #[test]
+    fn published_member_must_inherit_the_workspace_rust_version() {
+        // Inherited — the only accepted form.
+        assert!(
+            member_msrv_violation(
+                "crates/x",
+                &member("[package]\nname = \"x\"\nrust-version.workspace = true\n"),
+            )
+            .is_none(),
+            "inheriting the workspace MSRV is compliant"
+        );
+
+        // Hardcoded literal — drifts from the single source.
+        let literal = member_msrv_violation(
+            "crates/x",
+            &member("[package]\nname = \"x\"\nrust-version = \"1.89.0\"\n"),
+        )
+        .expect("a literal rust-version is a violation");
+        assert!(literal.contains("hardcodes"), "{literal}");
+
+        // Omitted entirely — no contract at all. This is the exact hole
+        // `tree-sitter-aozora` sat in.
+        let missing = member_msrv_violation("crates/x", &member("[package]\nname = \"x\"\n"))
+            .expect("a missing rust-version is a violation");
+        assert!(missing.contains("declares no"), "{missing}");
+
+        // Explicit opt-out.
+        let optout = member_msrv_violation(
+            "crates/x",
+            &member("[package]\nname = \"x\"\nrust-version.workspace = false\n"),
+        )
+        .expect("opting out is a violation");
+        assert!(optout.contains("workspace = false"), "{optout}");
     }
 }
