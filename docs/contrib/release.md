@@ -3,6 +3,18 @@
 Releases are Release-PR driven by [release-plz](https://release-plz.dev/).
 Humans never edit a version or push a release tag.
 
+## Publication freeze
+
+When `.github/RELEASE_FROZEN.md` exists, release-plz fails before either
+credential-bearing job can start. The GitHub Actions workflow should also be
+manually disabled. The repository latch and server-side disable are independent
+so an accidental enable does not resume publication.
+
+Rearming is a release decision, not ordinary maintenance. Remove the latch in
+a dedicated reviewed PR while the workflow remains disabled, verify the merge
+did not create a tag or publication, and enable the workflow only after a
+maintainer explicitly starts a new release checkpoint.
+
 ## Cutting a release
 
 1. Land Conventional Commits on `main`. release-plz opens or updates the
