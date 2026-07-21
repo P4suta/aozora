@@ -1014,10 +1014,7 @@ impl Document {
         // back to a full re-sanitize whenever a region boundary lands inside
         // a span. Gate on the presence of `〔` so the common (bracket-free)
         // document keeps the allocation-free fast path.
-        if source.contains('〔')
-            && (inside_accent_span(source, source_region.start)
-                || inside_accent_span(source, source_region.end))
-        {
+        if edit_touches_accent_span(source, &source_region) {
             return None;
         }
         let region = map
@@ -1099,6 +1096,21 @@ struct IncrementalSanitized {
     edit_range: Range<usize>,
 }
 
+/// Whether an edit's re-sanitization region touches an open accent span — in
+/// which case a region-local re-sanitize would diverge from a full parse, so
+/// the caller must fall back. `source.contains('〔')` keeps the common
+/// bracket-free document on the allocation-free fast path.
+// mutants::skip — the `source.contains('〔')` gate is a pure performance
+// optimisation: `inside_accent_span` already returns false without a `〔`, so
+// replacing the `&&` with `||` only forces the correctness-equivalent full
+// re-sanitize for a bracket-bearing document — no output changes, so no test
+// can distinguish it.
+#[cfg_attr(test, mutants::skip)]
+fn edit_touches_accent_span(source: &str, region: &Range<usize>) -> bool {
+    source.contains('〔')
+        && (inside_accent_span(source, region.start) || inside_accent_span(source, region.end))
+}
+
 fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize> {
     let bytes = source.as_bytes();
     let start = ["\r\n\r\n", "\n\n", "\r\r"]
@@ -1134,7 +1146,10 @@ fn source_sanitization_region(source: &str, edit: &Range<usize>) -> Range<usize>
     // Symmetrically, a boundary can fall between a `\r` and the `\n` that
     // completes a CRLF; extend past the `\n` so the fragment carries the
     // whole pair rather than folding a lone CR the full parse would not.
-    let end = if end > 0 && bytes.get(end) == Some(&b'\n') && bytes[end - 1] == b'\r' {
+    // (`bytes.get(end) == Some('\n')` short-circuits for the only `end == 0`
+    // case — an empty source — so `bytes[end - 1]` cannot underflow without a
+    // separate `end > 0` guard.)
+    let end = if bytes.get(end) == Some(&b'\n') && bytes[end - 1] == b'\r' {
         end + 1
     } else {
         end
@@ -1153,10 +1168,15 @@ fn inside_accent_span(source: &str, pos: usize) -> bool {
         if offset >= pos {
             break;
         }
-        match ch {
-            '〔' if !open => open = true,
-            '〕' if open => open = false,
-            _ => {}
+        // No open/close guards: for the first-open/first-close question this
+        // asks — "is the most recent bracket an unclosed 〔" — last-write-wins
+        // is the same predicate as the guarded pairing (a 〔 always ends open,
+        // a 〕 always ends closed), without the redundant no-op guards whose
+        // only mutants would be equivalent.
+        if ch == '〔' {
+            open = true;
+        } else if ch == '〕' {
+            open = false;
         }
     }
     open
@@ -1737,7 +1757,11 @@ fn push_source_edit(
 /// invariant. Byte-equal source is necessary but not sufficient, so this also
 /// compares the sanitized text and the rendered HTML: a region-local
 /// re-sanitize that diverges from a full parse can then never pass silently.
+// mutants::skip — a `#[cfg(debug_assertions)]` sanity check that a batch
+// incremental edit matches a full reparse; in correct code its asserts never
+// fire, so replacing the body with `()` (deleting the check) is unobservable.
 #[cfg(debug_assertions)]
+#[cfg_attr(test, mutants::skip)]
 fn debug_assert_incremental_matches_full_reparse(
     original: &str,
     edited: &Document,
@@ -2180,6 +2204,37 @@ mod tests {
         assert_eq!(
             source_sanitization_region("first\r\n\r\nmiddle\r\n\r\nlast", &(11..11)),
             9..19,
+        );
+    }
+
+    #[test]
+    fn source_sanitization_region_end_keeps_a_crlf_whole() {
+        // A `\r\r` paragraph boundary can land on the CR of a following CRLF
+        // (`\r\r\n` = lone CR + CRLF); the region end must extend past the `\n`
+        // so the CRLF stays whole rather than being bisected. In "ab\r\r\ncd"
+        // the `\r\r` ends at the `\n` (byte 4), so the end is 5, past it — not 4.
+        assert_eq!(source_sanitization_region("ab\r\r\ncd", &(0..1)), 0..5);
+    }
+
+    #[test]
+    fn source_sanitization_region_start_keeps_a_crlf_whole() {
+        // Symmetric to the end case: for an edit after the `\r\r\n`, the start
+        // boundary lands on the `\n` (byte 4); backing it up to the CR (byte 3)
+        // keeps the whole CRLF in the region rather than bisecting it at 4.
+        assert_eq!(source_sanitization_region("ab\r\r\ncd", &(5..5)), 3..7);
+    }
+
+    #[test]
+    fn inside_accent_span_closes_at_the_matching_bracket() {
+        // The first `〕` closes the span the first `〔` opened, so a position
+        // past the pair is outside — the close must reset the open flag.
+        let src = "〔a〕bc";
+        let inside = src.find('a').expect("char in span");
+        let after = src.find('b').expect("char after span");
+        assert!(inside_accent_span(src, inside), "inside an open 〔…〕 span");
+        assert!(
+            !inside_accent_span(src, after),
+            "a position past the closing 〕 is outside the span"
         );
     }
 
