@@ -647,8 +647,12 @@ jobs:
           unzip -q "$vsix" -d "$unpacked"
           server="${unpacked}/${server_path}"
           chmod 0755 "$server"
-          "$server" --version | grep -F "$version"
-          printf '｜青空《あおぞら》\n' | "$server" check --format json -
+          if [[ "$CARGO_TARGET" == aarch64-unknown-linux-musl && "$(uname -m)" != aarch64 ]]; then
+            file "$server" | grep -E 'ELF 64-bit.*ARM aarch64'
+          else
+            "$server" --version | grep -F "$version"
+            printf '｜青空《あおぞら》\n' | "$server" check --format json -
+          fi
           schema_version="$(jq -er '.properties.schemaVersion.const' \
             ../../crates/aozora-conformance/json/schema-nodes.json)"
           jq -n \
