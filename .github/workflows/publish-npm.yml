@@ -70,7 +70,11 @@ jobs:
           test "$(jq -er .name <<<"$package_json")" = aozora-wasm
           jq -e '.private != true' <<<"$package_json" >/dev/null
           main="$(jq -er .main <<<"$package_json")"
-          tar -tzf npm-dist/*.tgz | grep -Fxq "package/$main"
+          # List members into a variable first: `tar … | grep -Fxq` makes grep
+          # exit on the first match and close the pipe, so tar takes SIGPIPE and
+          # the step's `set -o pipefail` fails it. A here-string has no pipe.
+          members="$(tar -tzf npm-dist/*.tgz)"
+          grep -Fxq "package/$main" <<<"$members"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qualified-npm
