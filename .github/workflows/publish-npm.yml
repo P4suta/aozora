@@ -122,9 +122,9 @@ jobs:
           fi
       - name: Publish with npm Trusted Publishing
         if: ${{ steps.registry.outputs.publish == 'true' && (github.event_name == 'push' || inputs.use_oidc) }}
-        run: npm publish pkg/*.tgz --access public
+        run: npm publish ./pkg/*.tgz --access public
       - name: Bootstrap first publish with token
         if: ${{ steps.registry.outputs.publish == 'true' && github.event_name == 'workflow_dispatch' && !inputs.use_oidc }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish pkg/*.tgz --access public --provenance
+        run: npm publish ./pkg/*.tgz --access public --provenance
