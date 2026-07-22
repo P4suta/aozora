@@ -150,6 +150,21 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # `ref: <sha>` above leaves a detached HEAD; `release-plz release` resolves
+      # the current branch via `git rev-parse --abbrev-ref --symbolic-full-name
+      # @{upstream}` and aborts ("cannot determine current branch") without one.
+      # Put HEAD on a local `main` whose upstream is origin/main. Branch config
+      # alone is not enough — @{upstream} needs the remote-tracking ref present —
+      # so create it at HEAD (no network; QUALIFIED_SHA is the release tip). The
+      # rearm-decision step below still asserts HEAD == QUALIFIED_SHA.
+      - name: Attach HEAD to a tracking branch for release-plz
+        shell: bash
+        run: |
+          git switch -C main
+          git config branch.main.remote origin
+          git config branch.main.merge refs/heads/main
+          git update-ref refs/remotes/origin/main HEAD
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
