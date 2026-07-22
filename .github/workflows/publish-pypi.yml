@@ -93,8 +93,10 @@ jobs:
           set -euo pipefail
           wheel="$(find dist -maxdepth 1 -name '*.whl' -type f -print -quit)"
           test -n "$wheel"
-          version="$(unzip -p "$wheel" '*/METADATA' |
-            awk -F': ' '$1 == "Version" { print $2; exit }')"
+          # Capture first: `unzip -p | awk … exit` SIGPIPEs unzip under pipefail
+          # (awk exits on the first Version line) — the DEV-105 class.
+          wheel_metadata="$(unzip -p "$wheel" '*/METADATA')"
+          version="$(awk -F': ' '$1 == "Version" { print $2; exit }' <<<"$wheel_metadata")"
           test -n "$version"
           if metadata="$(curl -fsS "https://pypi.org/pypi/aozora/${version}/json" 2>/dev/null)"; then
             # The release exists on PyPI. Every already-published file is
