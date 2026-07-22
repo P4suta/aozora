@@ -236,5 +236,4 @@ jobs:
         with:
           command: release
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
