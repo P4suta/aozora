@@ -46,7 +46,10 @@ runs:
       run: |
         set -euo pipefail
         version_changed=false
-        if git diff HEAD^ -- Cargo.toml | grep -Eq '^[+-]version = '; then
+        # Capture first: `git diff | grep -Eq` SIGPIPEs git under pipefail
+        # (grep exits on the first match, closing the pipe) — the DEV-105 class.
+        version_diff="$(git diff HEAD^ -- Cargo.toml)"
+        if grep -Eq '^[+-]version = ' <<<"$version_diff"; then
           version_changed=true
         fi
         release_branch=false

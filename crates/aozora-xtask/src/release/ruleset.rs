@@ -1,6 +1,6 @@
 //! `xtask release check` — offline source-integrity for the release path.
 //!
-//! Two facts that today live only in server-side / tag-time state, checked
+//! Three facts that today live only in server-side / tag-time state, checked
 //! against the committed source so a drift fails at PR time (in `drift-gate`)
 //! instead of silently, or only at the real tag push:
 //!
@@ -14,6 +14,10 @@
 //!   filenames. They must agree, or the PR-time assertion stops mirroring the
 //!   tag-time expectation — exactly the B1 layout drift that would hard-fail
 //!   only at tag push.
+//! * **`release_always` enabled.** `release-plz.toml` must keep
+//!   `release_always = true`, or the `workflow_dispatch` recovery silently skips
+//!   publishing a re-qualified commit ("current commit is not from a release
+//!   PR") — the DEV-106 failure that ran green while publishing nothing.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,8 +31,11 @@ pub(super) fn check() -> Result<(), String> {
     let mut violations = Vec::new();
     ruleset_integrity(&root, &mut violations);
     sbom_mirror_parity(&root, &mut violations);
+    release_always_enabled(&root, &mut violations);
     if violations.is_empty() {
-        eprintln!("xtask release check: tag ruleset + native-SBOM path mirror intact");
+        eprintln!(
+            "xtask release check: tag ruleset + native-SBOM path mirror + release_always intact"
+        );
         Ok(())
     } else {
         Err(format!(
@@ -196,6 +203,37 @@ fn sbom_mirror_parity(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
+// ── release_always ───────────────────────────────────────────────────────
+
+/// `release-plz release` runs only on `workflow_dispatch` (the recovery / fan-in
+/// path). With `release_always = false` it publishes only from a release-PR
+/// merge commit and silently skips a re-qualified recovery commit — it must be
+/// `true`. Pure over the file text so the branches are unit-testable.
+fn release_always_violation(text: &str) -> Option<String> {
+    let re = Regex::new(r"(?m)^\s*release_always\s*=\s*(true|false)\b")
+        .expect("static release_always regex");
+    match re.captures(text).map(|c| c[1].to_owned()).as_deref() {
+        None => Some(
+            "release-plz.toml: no `release_always = <bool>` — the key moved or was renamed, \
+             so this gate is inert"
+                .to_owned(),
+        ),
+        Some("false") => Some(
+            "release-plz.toml: `release_always = false` makes a recovery dispatch skip \
+             publishing (\"current commit is not from a release PR\"); it must be true"
+                .to_owned(),
+        ),
+        Some(_) => None,
+    }
+}
+
+fn release_always_enabled(root: &Path, violations: &mut Vec<String>) {
+    match fs::read_to_string(root.join("release-plz.toml")) {
+        Err(err) => violations.push(format!("read release-plz.toml: {err}")),
+        Ok(text) => violations.extend(release_always_violation(&text)),
+    }
+}
+
 fn workspace_root() -> Result<PathBuf, String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest_dir)
@@ -251,6 +289,21 @@ mod tests {
         let found = native_sboms_in(text, "native_sboms=(");
         assert_eq!(found.len(), 2, "only the two in-block SBOMs: {found:?}");
         assert!(found.iter().all(|f| f.contains("linux-gnu")));
+    }
+
+    #[test]
+    fn release_always_true_passes_false_and_missing_fail() {
+        assert!(release_always_violation("[workspace]\nrelease_always = true\n").is_none());
+        assert!(
+            release_always_violation("release_always = false\n")
+                .expect("false is a violation")
+                .contains("must be true")
+        );
+        assert!(
+            release_always_violation("publish = true\n")
+                .expect("a missing key is a violation")
+                .contains("moved or was renamed")
+        );
     }
 
     #[test]
