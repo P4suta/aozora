@@ -71,6 +71,7 @@ mod spec_vectors;
 mod trace;
 mod types;
 mod version;
+mod workflows;
 
 pub(crate) use artifacts::ArtifactsArgs;
 pub(crate) use ci::CiArgs;
@@ -203,6 +204,11 @@ enum LintOp {
     /// rots on the next edit above it. Name a symbol instead. Wired into
     /// `drift-gate`.
     Coordinates,
+    /// Fail when a workflow/action `run:` block calls a `just <recipe>` that no
+    /// longer exists, or pipes a producer into an early-exit consumer under
+    /// `set -o pipefail` (a SIGPIPE that only bites at release time). Wired into
+    /// `drift-gate`.
+    Workflows,
 }
 
 #[derive(Args)]
@@ -565,6 +571,7 @@ fn main() {
         Cmd::Lint(args) => match args.op {
             LintOp::Suppressions => lint::check(),
             LintOp::Coordinates => coords::check(),
+            LintOp::Workflows => workflows::check(),
         },
     };
     if let Err(err) = result {

@@ -1,6 +1,6 @@
 //! `xtask release check` — offline source-integrity for the release path.
 //!
-//! Two facts that today live only in server-side / tag-time state, checked
+//! Four facts that today live only in server-side / tag-time state, checked
 //! against the committed source so a drift fails at PR time (in `drift-gate`)
 //! instead of silently, or only at the real tag push:
 //!
@@ -14,6 +14,14 @@
 //!   filenames. They must agree, or the PR-time assertion stops mirroring the
 //!   tag-time expectation — exactly the B1 layout drift that would hard-fail
 //!   only at tag push.
+//! * **`release_always` enabled.** `release-plz.toml` must keep
+//!   `release_always = true`, or the `workflow_dispatch` recovery silently skips
+//!   publishing a re-qualified commit ("current commit is not from a release
+//!   PR") — the DEV-106 failure that ran green while publishing nothing.
+//! * **Detached-HEAD attach.** `release-plz-release` checks out a SHA (a
+//!   detached HEAD); the attach-branch step (`git update-ref
+//!   refs/remotes/origin/main …`) must survive, or `release-plz release` aborts
+//!   at `git … @{upstream}` before publishing — DEV-104.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,8 +35,12 @@ pub(super) fn check() -> Result<(), String> {
     let mut violations = Vec::new();
     ruleset_integrity(&root, &mut violations);
     sbom_mirror_parity(&root, &mut violations);
+    release_always_enabled(&root, &mut violations);
+    detached_head_attach_guard(&root, &mut violations);
     if violations.is_empty() {
-        eprintln!("xtask release check: tag ruleset + native-SBOM path mirror intact");
+        eprintln!(
+            "xtask release check: tag ruleset + SBOM mirror + release_always + detached-HEAD attach intact"
+        );
         Ok(())
     } else {
         Err(format!(
@@ -196,6 +208,61 @@ fn sbom_mirror_parity(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
+// ── release_always ───────────────────────────────────────────────────────
+
+/// `release-plz release` runs only on `workflow_dispatch` (the recovery / fan-in
+/// path). With `release_always = false` it publishes only from a release-PR
+/// merge commit and silently skips a re-qualified recovery commit — it must be
+/// `true`. Pure over the file text so the branches are unit-testable.
+fn release_always_violation(text: &str) -> Option<String> {
+    let re = Regex::new(r"(?m)^\s*release_always\s*=\s*(true|false)\b")
+        .expect("static release_always regex");
+    match re.captures(text).map(|c| c[1].to_owned()).as_deref() {
+        None => Some(
+            "release-plz.toml: no `release_always = <bool>` — the key moved or was renamed, \
+             so this gate is inert"
+                .to_owned(),
+        ),
+        Some("false") => Some(
+            "release-plz.toml: `release_always = false` makes a recovery dispatch skip \
+             publishing (\"current commit is not from a release PR\"); it must be true"
+                .to_owned(),
+        ),
+        Some(_) => None,
+    }
+}
+
+fn release_always_enabled(root: &Path, violations: &mut Vec<String>) {
+    match fs::read_to_string(root.join("release-plz.toml")) {
+        Err(err) => violations.push(format!("read release-plz.toml: {err}")),
+        Ok(text) => violations.extend(release_always_violation(&text)),
+    }
+}
+
+// ── detached-HEAD attach ─────────────────────────────────────────────────
+
+/// Pure over release-plz.yml text: if `release-plz-release` checks out a SHA
+/// (detached HEAD) but the attach-branch step's load-bearing
+/// `git update-ref refs/remotes/origin/main` is gone, `release-plz release`
+/// aborts at `git … @{upstream}`.
+fn detached_head_violation(release_plz_yml: &str) -> Option<String> {
+    let checks_out_sha = release_plz_yml.contains("ref: ${{ env.QUALIFIED_SHA }}");
+    let attaches = release_plz_yml.contains("update-ref refs/remotes/origin/main");
+    (checks_out_sha && !attaches).then(|| {
+        "release-plz.yml: release-plz-release checks out a SHA (detached HEAD) but no longer \
+         attaches a tracking branch (`git update-ref refs/remotes/origin/main`); `release-plz \
+         release` will abort at `git … @{upstream}` — DEV-104"
+            .to_owned()
+    })
+}
+
+fn detached_head_attach_guard(root: &Path, violations: &mut Vec<String>) {
+    match fs::read_to_string(root.join(".github/workflows/release-plz.yml")) {
+        Err(err) => violations.push(format!("read release-plz.yml: {err}")),
+        Ok(text) => violations.extend(detached_head_violation(&text)),
+    }
+}
+
 fn workspace_root() -> Result<PathBuf, String> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest_dir)
@@ -251,6 +318,36 @@ mod tests {
         let found = native_sboms_in(text, "native_sboms=(");
         assert_eq!(found.len(), 2, "only the two in-block SBOMs: {found:?}");
         assert!(found.iter().all(|f| f.contains("linux-gnu")));
+    }
+
+    #[test]
+    fn release_always_true_passes_false_and_missing_fail() {
+        assert!(release_always_violation("[workspace]\nrelease_always = true\n").is_none());
+        assert!(
+            release_always_violation("release_always = false\n")
+                .expect("false is a violation")
+                .contains("must be true")
+        );
+        assert!(
+            release_always_violation("publish = true\n")
+                .expect("a missing key is a violation")
+                .contains("moved or was renamed")
+        );
+    }
+
+    #[test]
+    fn detached_head_attach_must_survive_a_sha_checkout() {
+        let with =
+            "ref: ${{ env.QUALIFIED_SHA }}\n  git update-ref refs/remotes/origin/main HEAD\n";
+        assert!(detached_head_violation(with).is_none());
+        let without = "ref: ${{ env.QUALIFIED_SHA }}\n  git switch -C main\n";
+        assert!(
+            detached_head_violation(without)
+                .expect("a SHA checkout without the attach is a violation")
+                .contains("@{upstream}")
+        );
+        // A workflow that never checks out a SHA is not subject to this.
+        assert!(detached_head_violation("ref: main\n").is_none());
     }
 
     #[test]
