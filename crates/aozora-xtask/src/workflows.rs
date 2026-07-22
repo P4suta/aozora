@@ -58,7 +58,9 @@ fn recipe_names(justfile: &str) -> BTreeSet<String> {
 /// `run: <cmd>` (single line) or `run: |` / `run: >` followed by a body
 /// indented past the **`run:` key's own column** (`- run:` shifts it by two, so
 /// a sibling `env:` / `with:` under the same step is not mistaken for body).
-/// Comment lines (first non-space char `#`) are dropped.
+/// Comment lines (first non-space char `#`) are dropped, and shell
+/// line-continuations (a line ending in `|` or `\`) are joined into one
+/// logical command so a multi-line pipe is seen whole.
 fn run_lines(yaml: &str) -> Vec<RunLine> {
     let lines: Vec<&str> = yaml.lines().collect();
     let mut out = Vec::new();
@@ -85,8 +87,11 @@ fn run_lines(yaml: &str) -> Vec<RunLine> {
             i += 1;
             continue;
         }
-        // Block scalar: body is the deeper-indented lines that follow.
+        // Block scalar: body is the deeper-indented lines that follow. Join
+        // shell line-continuations — a line ending in `|` or `\` — into one
+        // logical command, so a producer piped to a next-line consumer is seen.
         i += 1;
+        let mut pending: Option<(usize, String)> = None;
         while i < lines.len() {
             let body = lines[i];
             if body.trim().is_empty() {
@@ -97,8 +102,25 @@ fn run_lines(yaml: &str) -> Vec<RunLine> {
             if body_indent <= run_col {
                 break;
             }
-            push_cmd(&mut out, i + 1, body.trim_start(), block);
+            let t = body.trim();
+            if !t.starts_with('#') {
+                let piece = t.trim_end_matches('\\').trim_end();
+                match &mut pending {
+                    Some((_, acc)) => {
+                        acc.push(' ');
+                        acc.push_str(piece);
+                    }
+                    None => pending = Some((i + 1, piece.to_owned())),
+                }
+                if !(t.ends_with('|') || t.ends_with('\\')) {
+                    let (no, acc) = pending.take().expect("pending set just above");
+                    push_cmd(&mut out, no, &acc, block);
+                }
+            }
             i += 1;
+        }
+        if let Some((no, acc)) = pending.take() {
+            push_cmd(&mut out, no, &acc, block);
         }
     }
     out
@@ -126,9 +148,10 @@ fn just_calls(text: &str, re: &Regex) -> Vec<String> {
 }
 
 /// True when `line` pipes a real producer into an early-exit consumer
-/// (`grep -q` / `grep -m` / `head`). Instant builtins (`echo` / `printf`) fill
-/// the pipe before the consumer can close it, and a self-terminating `find …
-/// -quit` stops on its own — both benign.
+/// (`grep -q` / `grep -m` / `head`, or an `awk … exit`). Instant builtins
+/// (`echo` / `printf`) fill the pipe before the consumer can close it, and a
+/// self-terminating `find … -quit` stops on its own — both benign. An `awk`
+/// with no `exit` reads to EOF and is likewise safe.
 fn sigpipe_hazard(line: &str, re: &Regex) -> bool {
     let Some(m) = re.find(line) else {
         return false;
@@ -202,7 +225,7 @@ pub(crate) fn check() -> Result<(), String> {
 
     let just_re = Regex::new(r"(?:^|[;&|(])\s*just\s+(?P<recipe>[a-z_][A-Za-z0-9_-]*)")
         .map_err(|e| format!("compile just pattern: {e}"))?;
-    let pipe_re = Regex::new(r"\|\s*(?:grep\s+-[A-Za-z]*[qm]|head)\b")
+    let pipe_re = Regex::new(r"\|\s*(?:grep\s+-[A-Za-z]*[qm]|head)\b|\|\s*awk\b[^|]*\bexit\b")
         .map_err(|e| format!("compile pipe pattern: {e}"))?;
 
     let mut problems = Vec::new();
@@ -269,7 +292,7 @@ mod tests {
         Regex::new(r"(?:^|[;&|(])\s*just\s+(?P<recipe>[a-z_][A-Za-z0-9_-]*)").unwrap()
     }
     fn pipe_re() -> Regex {
-        Regex::new(r"\|\s*(?:grep\s+-[A-Za-z]*[qm]|head)\b").unwrap()
+        Regex::new(r"\|\s*(?:grep\s+-[A-Za-z]*[qm]|head)\b|\|\s*awk\b[^|]*\bexit\b").unwrap()
     }
 
     #[test]
@@ -326,6 +349,24 @@ jobs:
     }
 
     #[test]
+    fn run_lines_joins_a_multiline_pipe() {
+        let yaml = "\
+jobs:
+  x:
+    steps:
+      - run: |
+          v=\"$(unzip -p w META |
+            awk '/V/ { print; exit }')\"
+";
+        let run = run_lines(yaml);
+        let joined: Vec<&str> = run.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            joined.iter().any(|t| t.contains("unzip -p w META | awk")),
+            "multi-line pipe was not joined: {joined:?}"
+        );
+    }
+
+    #[test]
     fn just_calls_finds_commands_not_prose_or_flags() {
         let re = just_re();
         assert_eq!(just_calls("just drift-gate", &re), vec!["drift-gate"]);
@@ -351,8 +392,16 @@ jobs:
             &re
         ));
         assert!(sigpipe_hazard("cat big | head -1", &re));
+        assert!(sigpipe_hazard(
+            "unzip -p w '*/METADATA' | awk '/V/ { print; exit }'",
+            &re
+        ));
         assert!(!sigpipe_hazard("echo \"$labels\" | grep -qx approved", &re));
         assert!(!sigpipe_hazard("find . -print -quit | grep -q .", &re));
+        assert!(
+            !sigpipe_hazard("sha256sum f | awk '{ print $1 }'", &re),
+            "awk without exit reads all input"
+        );
         assert!(
             !sigpipe_hazard("tar -tzf x.tgz | wc -l", &re),
             "non-early-exit consumer"
