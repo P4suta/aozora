@@ -13,8 +13,14 @@
 # crate the canonical release identity.
 
 [workspace]
-# Release ONLY when the Release PR is merged (not on every push to main).
-release_always = false
+# `release-plz-release` runs on workflow_dispatch only (release-plz-pr owns the
+# push path), and release-fan-in dispatches it solely on a version-changed push
+# — so "release only on a deliberate release" is enforced by the dispatch
+# gating, not this flag (a leftover from the push-triggered era). Keep it true
+# so a recovery dispatch of a re-qualified, non-release-PR commit still
+# publishes the prepared-but-unpublished version; false makes release-plz skip
+# with "current commit is not from a release PR".
+release_always = true
 # Publish every public crate to crates.io, in the dependency order release-plz
 # derives from the workspace graph.
 publish = true
