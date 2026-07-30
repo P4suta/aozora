@@ -1106,6 +1106,10 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
   const initializationRevisionRef = useRef(0);
   const previousAttentionDiagnostics = useRef<Set<string> | null>(null);
   const storageFailureShownRef = useRef(false);
+  const dialogReturnFocusRef = useRef<{
+    readonly element: HTMLElement | null;
+    readonly fallbackId: string | null;
+  }>({ element: null, fallbackId: null });
 
   const locale = preferences.locale;
   const setPreference = useCallback(
@@ -1129,6 +1133,34 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     },
     [],
   );
+
+  const openDialog = useCallback(
+    (nextDialog: Exclude<DialogName, null>, fallbackId?: string) => {
+      const activeElement = document.activeElement;
+      dialogReturnFocusRef.current = {
+        element:
+          activeElement instanceof HTMLElement ? activeElement : null,
+        fallbackId: fallbackId ?? null,
+      };
+      setDialog(nextDialog);
+    },
+    [],
+  );
+
+  const dismissDialog = useCallback(() => {
+    const returnFocus = dialogReturnFocusRef.current;
+    dialogReturnFocusRef.current = { element: null, fallbackId: null };
+    setDialog(null);
+    afterDialogsClose(() => {
+      const connectedElement = returnFocus.element?.isConnected
+        ? returnFocus.element
+        : null;
+      const fallbackElement = returnFocus.fallbackId
+        ? document.getElementById(returnFocus.fallbackId)
+        : null;
+      (connectedElement ?? fallbackElement)?.focus();
+    });
+  }, []);
 
   const reportStorageResult = useCallback(
     (saved: boolean) => {
@@ -1265,12 +1297,12 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         (event.ctrlKey || event.metaKey)
       ) {
         event.preventDefault();
-        setDialog('commands');
+        openDialog('commands');
       }
     };
     globalThis.addEventListener('keydown', onKeyDown);
     return () => globalThis.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [openDialog]);
 
   useEffect(() => {
     if (!pendingJump || !editorController) return;
@@ -1384,7 +1416,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         case 'guide':
         case 'settings':
         case 'about':
-          setDialog(action);
+          openDialog(action, 'playground-overflow-trigger');
           break;
         case 'outline':
           setPreference('outlineOpen', !preferences.outlineOpen);
@@ -1396,12 +1428,13 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
           break;
       }
     },
-    [loadSample, preferences.outlineOpen, setPreference, share],
+    [loadSample, openDialog, preferences.outlineOpen, setPreference, share],
   );
 
   const headerMenu = (
     <ActionMenu
       aria-label={message(locale, 'more')}
+      id="playground-overflow-trigger"
       onAction={menuAction}
       size="M"
     >
@@ -1548,16 +1581,25 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       <div className={paneStyle}>
         <div className={mobileToolsStyle}>
           <ActionButton
+            id="playground-mobile-outline-trigger"
             isDisabled={initialization !== 'ready'}
-            onPress={() => setDialog('outline')}
+            onPress={() =>
+              openDialog('outline', 'playground-mobile-outline-trigger')
+            }
             size="S"
           >
             <ViewList />
             <ActionButtonText>{message(locale, 'outline')}</ActionButtonText>
           </ActionButton>
           <ActionButton
+            id="playground-mobile-diagnostics-trigger"
             isDisabled={initialization !== 'ready'}
-            onPress={() => setDialog('diagnostics')}
+            onPress={() =>
+              openDialog(
+                'diagnostics',
+                'playground-mobile-diagnostics-trigger',
+              )
+            }
             size="S"
           >
             <InfoCircle />
@@ -1698,13 +1740,21 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
                   </ToggleButton>
                 </>
               )}
-              <ActionButton onPress={() => setDialog('commands')}>
+              <ActionButton
+                id="playground-commands-trigger"
+                onPress={() =>
+                  openDialog('commands', 'playground-commands-trigger')
+                }
+              >
                 <Code />
                 <ActionButtonText>
                   {message(locale, 'commands')}
                 </ActionButtonText>
               </ActionButton>
-              <ActionButton onPress={() => setDialog('guide')}>
+              <ActionButton
+                id="playground-guide-trigger"
+                onPress={() => openDialog('guide', 'playground-guide-trigger')}
+              >
                 <HelpCircle />
                 <ActionButtonText>{message(locale, 'guide')}</ActionButtonText>
               </ActionButton>
@@ -1714,13 +1764,17 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
               </ActionButton>
               <ActionButton
                 aria-label={message(locale, 'settings')}
-                onPress={() => setDialog('settings')}
+                id="playground-settings-trigger"
+                onPress={() =>
+                  openDialog('settings', 'playground-settings-trigger')
+                }
               >
                 <Settings />
               </ActionButton>
               <ActionButton
                 aria-label={message(locale, 'about')}
-                onPress={() => setDialog('about')}
+                id="playground-about-trigger"
+                onPress={() => openDialog('about', 'playground-about-trigger')}
               >
                 <InfoCircle />
               </ActionButton>
@@ -1734,7 +1788,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         analysis={analysis}
         dialog={dialog}
         locale={locale}
-        onDismiss={() => setDialog(null)}
+        onDismiss={dismissDialog}
         onJump={jumpToRange}
         onRunCommand={runCommand}
         preferences={preferences}

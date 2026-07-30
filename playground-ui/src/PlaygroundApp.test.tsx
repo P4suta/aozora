@@ -590,6 +590,11 @@ describe('shared PlaygroundApp', () => {
 
     await user.click(screen.getByRole('switch', { name: '入力支援' }));
     expect(harness.setSetting).toHaveBeenLastCalledWith('assist', false);
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '設定' })).toBeNull(),
+    );
+    expect(screen.getByRole('button', { name: '設定' })).toHaveFocus();
     expect(loadPreferences()).toMatchObject({
       colorScheme: 'dark',
       locale: 'ja',
