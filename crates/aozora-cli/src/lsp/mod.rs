@@ -120,10 +120,6 @@ pub(crate) struct LspArgs {
     /// Speak LSP over stdio. Accepted for editor compatibility; this is the
     /// only supported transport, so the flag is a no-op.
     #[arg(long)]
-    #[expect(
-        dead_code,
-        reason = "--stdio is accepted for editor compatibility but never read: the server only speaks stdio"
-    )]
     stdio: bool,
 }
 
