@@ -34,36 +34,6 @@ updates:
       actions-sha-bumps:
         patterns: ["*"]
 
-  - package-ecosystem: docker
-    # Bumps Dockerfile FROM pins. Currently: rust (toolchain stage) and
-    # ubuntu (book stage).
-    #
-    # The `rust` base follows rust-toolchain.toml's channel — the DEV
-    # toolchain, which is deliberately NOT the MSRV (ADR-0034). It is
-    # therefore *supposed* to track stable, so the former `ignore` here is
-    # gone: a dependabot `rust` PR is now a useful signal that a new stable
-    # shipped. The MSRV (Cargo.toml's `rust-version`) is a separate,
-    # measured number that none of this touches.
-    #
-    # Such a PR lands RED on purpose. Dependabot cannot edit
-    # rust-toolchain.toml or the mise manifest, so `xtask msrv check` (in
-    # drift-gate) fails until a maintainer syncs the channel in the same
-    # PR. That gate is what makes the un-ignore safe — do not re-add the
-    # ignore without also removing the gate's reason to exist.
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      docker-base-images:
-        patterns: ["*"]
-
-  - package-ecosystem: devcontainers
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: monday
-
   - package-ecosystem: npm
     # JS/TS surfaces: the playground, the VS Code extension, and the
     # tree-sitter node bindings.

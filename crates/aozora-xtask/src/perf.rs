@@ -6,6 +6,8 @@ use std::process::{Command, Stdio};
 
 use crate::{PerfArgs, PerfOp};
 
+pub(crate) const PERF_BASELINE: &str = "crates/aozora-bench/perf-baseline-native-v1.tsv";
+
 pub(crate) fn dispatch(args: &PerfArgs) -> Result<(), String> {
     match args.op {
         PerfOp::Check => check(),
@@ -14,7 +16,7 @@ pub(crate) fn dispatch(args: &PerfArgs) -> Result<(), String> {
 
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
-    let baseline_path = root.join("crates/aozora-bench/perf-baseline.tsv");
+    let baseline_path = root.join(PERF_BASELINE);
     let baseline = parse_baseline(&read_file(&baseline_path)?)?;
     if baseline.is_empty() {
         return Err(format!(

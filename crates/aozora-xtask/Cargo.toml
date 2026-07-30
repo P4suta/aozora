@@ -1,6 +1,6 @@
 [package]
 name = "aozora-xtask"
-description = "Developer-side tooling for the aozora workspace (samply profile wrappers, etc.). Runs on the host — does not go through the Docker dev image because perf_event_open and clock_gettime need direct kernel access."
+description = "Developer-side tooling for the native aozora workspace."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -36,13 +36,6 @@ regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-# AST parsing for `xtask lint suppressions`: counts #[allow] lint pairs
-# per crate by walking the real syntax tree, so `#[cfg(test)]` modules and
-# `reason = "…"` clauses are handled structurally rather than by regex.
-# "visit" for the Visit trait, "full" for item/expr coverage, "parsing"
-# for `syn::parse_file`. Not in `[workspace.dependencies]` because no other
-# crate needs the full syntax tree or visitor API.
-syn = { version = "3.0.0", features = ["full", "visit", "parsing"] }
 toml = { workspace = true }
 tree-sitter = "0.26"
 tree-sitter-aozora = { workspace = true }

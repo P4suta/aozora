@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "classifier state transitions and the source-size cap establish these invariants"
+)]
+
 //! Classify stage — classify the pair-stage event stream into [`Node`] spans.
 //!
 //! Walks the cross-linked [`PairEvent`] stream produced by the pair stage and

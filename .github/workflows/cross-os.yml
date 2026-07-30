@@ -10,12 +10,7 @@
 # separators, `.aozora.toml` walk-up, or CRLF handling would ship
 # undetected. This lane runs the real test binaries there.
 #
-# CI-ONLY BY NATURE (the Docker-only exception): every other CI lane runs
-# inside the Linux dev container (Justfile policy: never invoke cargo on
-# the host). macOS/Windows runner behaviour is intrinsically CI-only — it
-# cannot be reproduced in a Linux Docker image locally — so this matrix is
-# the one documented exception to that policy and invokes cargo on the
-# runner host directly, with no `just` / Docker wrapper.
+# macOS and Windows runner behaviour is intrinsically platform-specific.
 #
 # Weekly + manual dispatch provide early warning. The release-ready workflow
 # runs the same native matrix on the release commit and is the publish gate.
@@ -55,17 +50,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
-          toolchain: stable
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 cargo:cargo-nextest
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: cross-os-${{ matrix.runner }}
-
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
-        with:
-          tool: nextest
 
       # The workspace test suite as real binaries on the shipping platform.
       # Default per-OS shell (bash on macOS, pwsh on Windows) — this single

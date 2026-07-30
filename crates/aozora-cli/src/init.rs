@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the embedded project template is a valid static document"
+)]
+
 //! `aozora init` — scaffold a new Aozora notation project.
 //!
 //! The onboarding counterpart to [`aozora doctor`](crate::doctor): `doctor`

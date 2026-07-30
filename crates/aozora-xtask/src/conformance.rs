@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the conformance tool validates committed fixture and snapshot inputs"
+)]
+
 //! WPT-style conformance runner.
 //!
 //! Walks the fixture set under

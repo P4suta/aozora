@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the fixed trigger patterns are a valid static automaton"
+)]
+
 //! Trigger-byte scanner for the Aozora notation lexer.
 //!
 //! ## What it does

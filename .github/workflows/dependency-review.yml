@@ -1,9 +1,8 @@
 # Dependency review on pull requests.
 #
-# Complements the cargo-deny local gate: `cargo deny` runs inside the
-# dev image and checks the full workspace against our licence +
-# advisory rules, while dependency-review focuses on *changes* a PR
-# introduces and comments the diff directly in the review UI.
+# Complements `just ci-repo`: cargo-deny checks the full workspace against
+# our licence and advisory rules, while dependency-review focuses on changes
+# a PR introduces and comments the diff directly in the review UI.
 #
 # Action pinning: the actions below are pinned to full commit SHAs
 # (the `# vX.Y.Z` trailer is the resolved tag); Dependabot's

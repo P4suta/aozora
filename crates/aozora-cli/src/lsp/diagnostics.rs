@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "diagnostic codes are normalized to a non-empty final segment"
+)]
+
 //! aozora lexer diagnostic → LSP `Diagnostic` adapter.
 //!
 //! The machine *catalogue* — codes, severities, documentation URLs — is

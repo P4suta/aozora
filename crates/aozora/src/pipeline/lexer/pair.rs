@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "stack shape is checked before the matching pair is removed"
+)]
+
 //! Pair stage — streaming balanced-stack pairing over the tokenize-stage token stream.
 //!
 //! Consumes the [`Token`] iterator produced by the tokenize stage and emits a

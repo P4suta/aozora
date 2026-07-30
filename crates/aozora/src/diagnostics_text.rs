@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "diagnostic rendering writes into an infallible String buffer"
+)]
+
 //! Dependency-free plain-text diagnostic rendering.
 //!
 //! [`diagnostics_text`] formats a parse's diagnostics into a

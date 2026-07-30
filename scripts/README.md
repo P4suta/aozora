@@ -20,12 +20,12 @@ just perf-gate
 Run the Profile-Guided Optimisation pipeline against the full
 Aozora corpus and produce a release binary tuned for the workload.
 
-The Docker-backed `just pgo` recipe builds an instrumented `aozora` CLI,
+The native `just pgo` recipe builds an instrumented `aozora` CLI,
 trains it with real corpus documents, merges the LLVM profile, and rebuilds
 the distribution binary with `-Cprofile-use`. It rejects an empty corpus,
 an empty profile, and a final binary that still contains instrumentation.
 
-`AOZORA_CORPUS_ROOT` must point to a checkout visible inside the workspace.
+`AOZORA_CORPUS_ROOT` must point to a readable corpus checkout.
 The result is written to `target/pgo/aozora`.
 
 ```sh
@@ -147,7 +147,5 @@ Both targets:
    them, which is the original foot-gun).
 3. Spawn `samply record --save-only --no-open` at 4 kHz.
 
-Why on the host (not Docker): `samply` opens `perf_event_open(2)`
-directly against the kernel; Docker's default seccomp profile
-blocks it. The xtask binary therefore runs without the `{{_dev}}`
-prefix that other Justfile targets use.
+`samply` opens `perf_event_open(2)` directly against the kernel, so the host's
+`perf_event_paranoid` policy controls whether profiling is available.

@@ -26,10 +26,10 @@ So a comment earns its place only as one of: a doc `missing_docs` requires
 
 ## Running anything
 
-Docker only. `just` wraps `docker compose run`; never call `cargo` /
-`wasm-pack` on the host. `./bootstrap` on a fresh clone. `just
-ci-parallel` is the full gate and runs on every push — it prints
-`::error title=<gate>::` naming whichever failed.
+The locked native mise environment is canonical. Run `./bootstrap` on a
+fresh clone, then use `just`; CI invokes the same fixed `just ci-*` suites.
+Do not install ad-hoc tool versions around `mise.toml` and `mise.lock`.
+`just ci` is the local pre-push gate.
 
 Commits must be signed and Conventional. Do not reach for `LEFTHOOK=0`
 or `--no-verify`.

@@ -3,9 +3,6 @@
 //! [`LANGUAGE`] provides a lossless editing projection of the source language.
 //! The `aozora` crate remains the semantic authority.
 
-// FFI binding to the generated tree-sitter C parser. The unsafe here is the
-// standard `tree-sitter-language` pattern (and is exempt in the strict-code
-// gate, alongside `aozora-ffi`); every block stays explicitly gated.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use tree_sitter_language::LanguageFn;

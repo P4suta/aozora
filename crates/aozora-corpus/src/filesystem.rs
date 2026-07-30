@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "filesystem corpus metadata is validated before conversion"
+)]
+
 //! [`FilesystemCorpus`] — yield every `.txt` file found under a root.
 //!
 //! Accepts any directory layout. Canonical usage is to point it at a

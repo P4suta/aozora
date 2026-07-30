@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# First-run setup for a fresh clone. Thin wrapper around `just setup`
-# (which does the real work: prerequisite checks → build the dev image →
-# install git hooks → green test). Kept at the repo root because it is the
-# entry point a newcomer guesses before they know `just` exists.
+# First-run setup for a fresh clone.
 set -euo pipefail
 
-if ! command -v just >/dev/null 2>&1; then
+if ! command -v mise >/dev/null 2>&1; then
   cat >&2 <<'MSG'
-`just` is not installed — it is the single entry point for every aozora
-dev task. Install it, then re-run ./bootstrap:
+`mise` is required to install aozora's locked native toolchain.
+Install it, then re-run ./bootstrap:
 
-  cargo install just        # or: brew install just / apt install just
-  https://github.com/casey/just#installation
+  https://mise.jdx.dev/getting-started.html
 MSG
   exit 1
 fi
 
-exec just setup
+export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
+mise trust
+mise install --locked just
+exec mise exec --no-deps --locked just -- just setup

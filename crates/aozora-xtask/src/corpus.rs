@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "corpus analysis validates bounded fixture metadata before conversion"
+)]
+
 //! `xtask corpus pack` — build / refresh a single-file corpus archive
 //!.
 //!

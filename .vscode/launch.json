@@ -1,9 +1,5 @@
 {
-  // Debug the CLI with CodeLLDB (vadimcn.vscode-lldb). Native debugging
-  // needs a Rust toolchain to build the debuggee, which the Docker-first
-  // workflow otherwise does not require — run this inside the Dev
-  // Container (the image ships rust + lldb), or install a host toolchain.
-  // The canonical build path stays `just` / Docker.
+  // Debug the CLI with CodeLLDB after `./bootstrap`.
   "version": "0.2.0",
   "configurations": [
     {

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "generated schemas are JSON object values by construction"
+)]
+
 //! JSON Schema artefact dump / drift gate.
 //!
 //! Bridges `aozora::json::schema_*` →

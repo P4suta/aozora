@@ -5,9 +5,7 @@
 
 # Cargo
 Cargo.lock.bak
-# CARGO_HOME inside the dev container resolves to /workspace/.cargo, which bind-mounts
-# onto this directory. The registry/git caches underneath are docker volumes and
-# should never be tracked.
+# Local Cargo configuration and cache overrides are not repository state.
 /.cargo/
 # Inner Cargo.lock generated when building upstream/comrak standalone (e.g. for
 # running its own test suite). The workspace-root Cargo.lock is authoritative.
@@ -99,7 +97,6 @@ dhat-heap.json
 # Local env overrides
 .env
 .env.local
-/docker-compose.override.yml
 
 # Ad-hoc scratch files (render outputs, debug dumps, …)
 .tmp-*

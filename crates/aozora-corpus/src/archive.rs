@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "archive construction validates sizes, offsets, and fixture metadata before access"
+)]
+
 //! Single-file binary corpus archive.
 //!
 //! Replaces "directory of 17 435 small files + walkdir + per-file

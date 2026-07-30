@@ -151,7 +151,16 @@ jobs:
           ref: ${{ env.AOZORA_CORPUS_SHA }}
           path: .corpus
           fetch-depth: 1
-      - uses: ./.github/actions/setup-dev-image
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev valgrind
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: >-
+            rust@1.97.0 just taplo github:crate-ci/typos cargo:cargo-nextest
+            cargo:cargo-llvm-cov cargo:cargo-deny cargo:cargo-audit
+            cargo:cargo-shear cargo:cargo-semver-checks tree-sitter
+            npm:quicktype node go
       - name: Verify pinned inputs
         run: |
           set -euo pipefail
@@ -241,7 +250,11 @@ jobs:
           - "aozora-extism:0/1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just cargo:cargo-mutants
       - name: Mutation sweep
         env:
           ASSIGNMENT: ${{ matrix.assignment }}
@@ -276,7 +289,11 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust just cargo:cargo-fuzz
       - run: just fuzz-all-deep
       - name: Reject retained fuzz failures
         run: |
@@ -298,8 +315,12 @@ jobs:
         mode: [asan, tsan]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: docker compose run --rm dev bash scripts/sanitizers.sh ${{ matrix.mode }}
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust
+      - run: bash scripts/sanitizers.sh ${{ matrix.mode }}
 
   cross-os:
     needs: [qualify, code-proof]
@@ -312,12 +333,11 @@ jobs:
         runner: [macos-latest, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
-          toolchain: stable
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
-        with:
-          tool: nextest
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 cargo:cargo-nextest
       - run: cargo nextest run --workspace --exclude aozora-bench --exclude aozora-extism --all-targets --all-features --no-fail-fast
       - run: cargo nextest run -p aozora-extism --all-targets --no-fail-fast
 
@@ -626,35 +646,27 @@ jobs:
           - vsce_target: linux-x64
             cargo_target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            cross: false
           - vsce_target: linux-arm64
             cargo_target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            cross: false
           - vsce_target: alpine-x64
             cargo_target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
-            cross: true
           - vsce_target: alpine-arm64
             cargo_target: aarch64-unknown-linux-musl
-            runner: ubuntu-latest
-            cross: true
+            runner: ubuntu-24.04-arm
           - vsce_target: darwin-x64
             cargo_target: x86_64-apple-darwin
             runner: macos-15-intel
-            cross: false
           - vsce_target: darwin-arm64
             cargo_target: aarch64-apple-darwin
             runner: macos-latest
-            cross: false
           - vsce_target: win32-x64
             cargo_target: x86_64-pc-windows-msvc
             runner: windows-2025
-            cross: false
           - vsce_target: win32-arm64
             cargo_target: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            cross: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -664,27 +676,20 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: release-ready-vscode-${{ matrix.vsce_target }}
-      - if: matrix.cross
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
-        with:
-          tool: cross
+      - if: startsWith(matrix.vsce_target, 'alpine-')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: cargo-cyclonedx
       - name: Build bundled language server
         env:
           TARGET: ${{ matrix.cargo_target }}
-          USE_CROSS: ${{ matrix.cross }}
         run: |
           set -euo pipefail
           export AOZORA_BUILD_VERSION
           AOZORA_BUILD_VERSION="$(awk -F' *= *' \
             '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
-          if [[ "$USE_CROSS" == true ]]; then
-            cross build --locked --profile dist --target "$TARGET" --bin aozora
-          else
-            cargo build --locked --profile dist --target "$TARGET" --bin aozora
-          fi
+          cargo build --locked --profile dist --target "$TARGET" --bin aozora
           mkdir -p editors/vscode/server
           if [[ "$TARGET" == *-windows-* ]]; then
             cp "target/${TARGET}/dist/aozora.exe" editors/vscode/server/aozora.exe
@@ -774,10 +779,21 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
-      - uses: ./.github/actions/setup-dev-image
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: >-
+            rust@1.97.0 just bun node go cargo:wasm-pack npm:binaryen
+            cargo:cargo-cyclonedx
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: release-ready-artifacts
+      - name: Install Playwright system dependencies
+        working-directory: playground
+        run: bun x playwright install --with-deps chromium
       - name: Resolve immutable release identity
         run: |
           set -euo pipefail
@@ -798,55 +814,50 @@ jobs:
           just vscode-ci
       - name: Build npm, CLI, C, and playground artifacts
         run: |
-          docker compose run --rm -e AOZORA_BUILD_VERSION dev bash -euc '
-            cargo run -p aozora-xtask -q -- artifacts crates
-            cargo build --locked --profile dist -p aozora-cli
-            cargo build --locked --release -p aozora-ffi
-            CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
-              wasm-pack build --target web --release crates/aozora-wasm --locked
-            wasm=crates/aozora-wasm/pkg/aozora_wasm_bg.wasm
-            before=$(wc -c < "$wasm")
-            wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
-              --enable-bulk-memory --enable-mutable-globals \
-              --enable-nontrapping-float-to-int \
-              "$wasm" -o "$wasm"
-            after=$(wc -c < "$wasm")
-            test "$after" -lt "$before"
-            cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
-            cargo cyclonedx \
-              --manifest-path crates/aozora-wasm/Cargo.toml \
-              --target wasm32-unknown-unknown \
-              --format json --spec-version 1.5 --all \
-              --override-filename aozora-wasm-sbom
-            wasm_sbom=$(find crates/aozora-wasm -maxdepth 1 -type f \
-              -name "aozora-wasm-sbom*.json" -print -quit)
-            test -n "$wasm_sbom"
-            mv "$wasm_sbom" crates/aozora-wasm/pkg/aozora-wasm.cdx.json
-            package_json=crates/aozora-wasm/pkg/package.json
-            generated="$(mktemp)"
-            jq ".files = (.files + [\"LICENSE-APACHE\", \"LICENSE-MIT\", \"NOTICE\", \"aozora-wasm.cdx.json\"] | unique)" \
-              "$package_json" > "$generated"
-            mv "$generated" "$package_json"
-            (cd crates/aozora-wasm/pkg && npm pack)
-            mkdir -p target/release-ready-build
-            cargo cyclonedx \
-              --manifest-path crates/aozora-extism/Cargo.toml \
-              --target wasm32-unknown-unknown \
-              --format json --spec-version 1.5 --all \
-              --override-filename aozora-extism-sbom
-            extism_sbom=$(find crates/aozora-extism -maxdepth 1 -type f \
-              -name "aozora-extism-sbom*.json" -print -quit)
-            test -n "$extism_sbom"
-            mv "$extism_sbom" target/release-ready-build/aozora-extism.cdx.json
-            cp /cargo/target/dist/aozora target/release-ready-build/
-            find /cargo/target/release -maxdepth 1 -type f \
-              \( -name "libaozora_ffi.so" -o -name "libaozora_ffi.a" -o -name "aozora.h" \) \
-              -exec cp {} target/release-ready-build/ \;
-          '
-      - name: Normalize artifact staging ownership
-        run: sudo chown -R "$(id -u):$(id -g)" target
+          cargo run -p aozora-xtask -q -- artifacts crates
+          cargo build --locked --profile dist -p aozora-cli
+          cargo build --locked --release -p aozora-ffi
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
+            wasm-pack build --target web --release crates/aozora-wasm --locked
+          wasm=crates/aozora-wasm/pkg/aozora_wasm_bg.wasm
+          before=$(wc -c < "$wasm")
+          wasm-opt -Oz --strip-debug --strip-dwarf --vacuum \
+            --enable-bulk-memory --enable-mutable-globals \
+            --enable-nontrapping-float-to-int "$wasm" -o "$wasm"
+          after=$(wc -c < "$wasm")
+          test "$after" -lt "$before"
+          cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
+          cargo cyclonedx \
+            --manifest-path crates/aozora-wasm/Cargo.toml \
+            --target wasm32-unknown-unknown \
+            --format json --spec-version 1.5 --all \
+            --override-filename aozora-wasm-sbom
+          wasm_sbom=$(find crates/aozora-wasm -maxdepth 1 -type f \
+            -name "aozora-wasm-sbom*.json" -print -quit)
+          test -n "$wasm_sbom"
+          mv "$wasm_sbom" crates/aozora-wasm/pkg/aozora-wasm.cdx.json
+          package_json=crates/aozora-wasm/pkg/package.json
+          generated="$(mktemp)"
+          jq '.files = (.files + ["LICENSE-APACHE", "LICENSE-MIT", "NOTICE", "aozora-wasm.cdx.json"] | unique)' \
+            "$package_json" > "$generated"
+          mv "$generated" "$package_json"
+          (cd crates/aozora-wasm/pkg && npm pack)
+          mkdir -p target/release-ready-build
+          cargo cyclonedx \
+            --manifest-path crates/aozora-extism/Cargo.toml \
+            --target wasm32-unknown-unknown \
+            --format json --spec-version 1.5 --all \
+            --override-filename aozora-extism-sbom
+          extism_sbom=$(find crates/aozora-extism -maxdepth 1 -type f \
+            -name "aozora-extism-sbom*.json" -print -quit)
+          test -n "$extism_sbom"
+          mv "$extism_sbom" target/release-ready-build/aozora-extism.cdx.json
+          cp target/dist/aozora target/release-ready-build/
+          find target/release -maxdepth 1 -type f \
+            \( -name "libaozora_ffi.so" -o -name "libaozora_ffi.a" -o -name "aozora.h" \) \
+            -exec cp {} target/release-ready-build/ \;
       - name: Enforce artifact size ratchets
-        run: docker compose run --rm dev cargo run -p aozora-xtask -q -- artifacts size-check
+        run: cargo run -p aozora-xtask -q -- artifacts size-check
       - name: Assemble immutable artifact set
         run: |
           set -euo pipefail
@@ -871,10 +882,8 @@ jobs:
             target/release-ready/aozora.wasm
           tar -C target/go-sdk -czf target/release-ready/aozora-go.tar.gz aozora-go
           version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
-          docker compose run --rm dev bash -euc '
-            cd crates/aozora-go
-            bash ../../scripts/go-sbom.sh "$1"
-          ' _ "$version" > target/release-ready/aozora-go.cdx.json
+          (cd crates/aozora-go && bash ../../scripts/go-sbom.sh "$version") \
+            > target/release-ready/aozora-go.cdx.json
           schema_version="$(jq -er '.properties.schemaVersion.const' \
             crates/aozora-conformance/json/schema-nodes.json)"
           jq -n \
@@ -904,28 +913,22 @@ jobs:
           diff -qr target/release-ready-build/playground target/release-ready/playground
       - name: Install and exercise exact C artifact
         run: |
-          docker compose run --rm dev bash -euc '
-            root=target/release-ready
-            output=/tmp/aozora-ffi-artifact-smoke
-            cc -O2 -Wall -Wextra -I "$root" \
-              -L "$root" -Wl,-rpath,"$root" \
-              -o "$output" crates/aozora-ffi/tests/c_smoke/smoke.c \
-              -laozora_ffi
-            "$output"
-            python3 scripts/ffi-fixture-parity.py \
-              "$root/libaozora_ffi.so" \
-              crates/aozora-conformance/fixtures/render
-          '
+          root=target/release-ready
+          output=/tmp/aozora-ffi-artifact-smoke
+          cc -O2 -Wall -Wextra -I "$root" \
+            -L "$root" -Wl,-rpath,"$root" \
+            -o "$output" crates/aozora-ffi/tests/c_smoke/smoke.c \
+            -laozora_ffi
+          "$output"
+          python3 scripts/ffi-fixture-parity.py \
+            "$root/libaozora_ffi.so" \
+            crates/aozora-conformance/fixtures/render
       - name: Install and exercise exact Extism artifact
-        run: |
-          docker compose run --rm \
-            -e AOZORA_EXTISM_ARTIFACT=/workspace/target/release-ready/aozora.wasm \
-            dev cargo test -p aozora-extism --features host-smoke \
-            --test host_smoke -- --nocapture
+        env:
+          AOZORA_EXTISM_ARTIFACT: ${{ github.workspace }}/target/release-ready/aozora.wasm
+        run: cargo test -p aozora-extism --features host-smoke --test host_smoke -- --nocapture
       - name: Exercise exact CLI artifact on a pseudo-terminal
-        run: |
-          docker compose run --rm dev \
-            python3 scripts/tty-smoke.py target/release-ready/aozora
+        run: python3 scripts/tty-smoke.py target/release-ready/aozora
       - name: Install and exercise exact npm artifact
         run: |
           set -euo pipefail
@@ -941,16 +944,14 @@ jobs:
             "$schema_version"
       - name: Install and exercise exact Go artifact
         run: |
-          docker compose run --rm dev bash -euc '
-            smoke="$(mktemp -d)"
-            tar xzf target/release-ready/aozora-go.tar.gz -C "$smoke"
-            cd "$smoke/aozora-go"
-            go test ./...
-          '
+          smoke="$(mktemp -d)"
+          tar xzf target/release-ready/aozora-go.tar.gz -C "$smoke"
+          cd "$smoke/aozora-go"
+          go test ./...
       - name: Assert release version stamp
         run: |
           set -euo pipefail
-          got="$(docker compose run --rm dev target/release-ready/aozora --version)"
+          got="$(target/release-ready/aozora --version)"
           grep -Fq "$AOZORA_BUILD_VERSION" <<<"$got"
           if grep -q -- '-dev' <<<"$got"; then
             echo "::error title=version::CLI stamped a dev version: $got" >&2

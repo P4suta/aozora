@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the LSP document map is read only after the matching insertion or lookup"
+)]
+
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;

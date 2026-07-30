@@ -1,3 +1,5 @@
+#![expect(clippy::expect_used, reason = "fmt::Write into String is infallible")]
+
 //! Lifetime-free Aozora-source serialize helpers.
 //!
 //! The shared, AST-payload-free marker emitters the owned serializer

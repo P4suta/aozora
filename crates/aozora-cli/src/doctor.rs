@@ -1,7 +1,12 @@
+#![expect(
+    clippy::expect_used,
+    reason = "doctor constructs a valid static version requirement"
+)]
+
 //! `aozora doctor` — the end-user runtime self-check.
 //!
 //! Distinct from the contributor `just doctor`, which probes the *development*
-//! box (Docker image, host tools, git hooks, signing). This one answers the
+//! toolchain, git hooks, signing, and optional system dependencies. This one answers the
 //! reader's question — "will `aozora` behave the way I think it will *here*?" —
 //! by reporting four things and nothing it has to reach the network for:
 //!

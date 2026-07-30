@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the maintained MSRV regex is a valid static pattern"
+)]
+
 //! MSRV / toolchain pin coherence gate.
 //!
 //! Two authorities, deliberately holding **different** numbers:
@@ -55,10 +60,9 @@ static MSRV_PINS: &[Pin] = &[Pin {
 
 /// Pins that must equal the toolchain channel (`rust-toolchain.toml`).
 static TOOLCHAIN_PINS: &[Pin] = &[Pin {
-    path: "Dockerfile",
-    what: "the `FROM rust:` base tag",
-    // `FROM rust:1.97.0-bookworm@sha256:…`
-    pattern: r"(?m)^FROM\s+rust:([0-9]+\.[0-9]+\.[0-9]+)-",
+    path: "mise.toml",
+    what: "mise's stable Rust tool",
+    pattern: r#"(?m)^\s*\{\s*version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)""#,
 }];
 
 struct Pin {
@@ -406,8 +410,7 @@ fn check() -> Result<(), String> {
         if found != channel {
             violations.push(format!(
                 "{}: {} is {found}, but rust-toolchain.toml's channel is {channel}\n\
-                 -> this follows the DEV channel, not the MSRV; re-resolve the digest with \
-                 `docker buildx imagetools inspect rust:{channel}-bookworm`",
+                 -> this follows the DEV channel, not the MSRV",
                 pin.path, pin.what,
             ));
         }

@@ -14,8 +14,7 @@
 #   so the developer doesn't need to remember it.
 #
 # Notes
-#   - Each sanitiser requires `cargo +nightly`. The script installs
-#     nightly + the relevant components on first run if missing.
+#   - Each sanitiser uses the date-pinned nightly from mise.toml.
 #   - Miri rejects most C dependencies and is slow; expect 10-100x
 #     slower than `cargo test`. Use --filter to scope.
 #   - TSan requires `RUSTFLAGS=-Zsanitizer=thread` and a panic=abort
@@ -63,12 +62,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ensure_nightly() {
-    if ! rustup toolchain list | grep -q nightly; then
-        echo ">> installing nightly toolchain" >&2
-        rustup toolchain install nightly --profile minimal
-    fi
-}
+nightly="nightly-2026-07-15"
 
 host_triple() {
     rustc -vV | sed -n 's/^host: //p'
@@ -76,20 +70,14 @@ host_triple() {
 
 case "$mode" in
     miri)
-        ensure_nightly
-        if ! rustup +nightly component list --installed 2>/dev/null | grep -q miri; then
-            echo ">> installing miri component" >&2
-            rustup +nightly component add miri
-        fi
-        echo ">> running cargo +nightly miri test ${filter:+with --test '$filter'}" >&2
+        echo ">> running cargo +$nightly miri test${filter:+ with filter: $filter}" >&2
         if [[ -n "$filter" ]]; then
-            cargo +nightly miri test --workspace -- "$filter"
+            cargo "+$nightly" miri test --workspace -- "$filter"
         else
-            cargo +nightly miri test --workspace
+            cargo "+$nightly" miri test --workspace
         fi
         ;;
     tsan)
-        ensure_nightly
         target="$(host_triple)"
         echo ">> running ThreadSanitizer (target=$target)" >&2
         # `Z build-std=std,test` is required because the sanitiser
@@ -98,32 +86,31 @@ case "$mode" in
         export RUSTFLAGS="-Zsanitizer=thread"
         export RUSTDOCFLAGS="-Zsanitizer=thread"
         if [[ -n "$filter" ]]; then
-            cargo +nightly test \
+            cargo "+$nightly" test \
                 -Z build-std \
                 --target "$target" \
                 --workspace \
                 -- "$filter"
         else
-            cargo +nightly test \
+            cargo "+$nightly" test \
                 -Z build-std \
                 --target "$target" \
                 --workspace
         fi
         ;;
     asan)
-        ensure_nightly
         target="$(host_triple)"
         echo ">> running AddressSanitizer (target=$target)" >&2
         export RUSTFLAGS="-Zsanitizer=address"
         export RUSTDOCFLAGS="-Zsanitizer=address"
         if [[ -n "$filter" ]]; then
-            cargo +nightly test \
+            cargo "+$nightly" test \
                 -Z build-std \
                 --target "$target" \
                 --workspace \
                 -- "$filter"
         else
-            cargo +nightly test \
+            cargo "+$nightly" test \
                 -Z build-std \
                 --target "$target" \
                 --workspace

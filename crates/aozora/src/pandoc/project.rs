@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "projection state maintains a non-empty frame stack and infallible buffers"
+)]
+
 //! Source-driven projection from a [`Snapshot`] to a
 //! [`pandoc_ast::Pandoc`] document.
 //!

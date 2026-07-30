@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the fallback symbol regex is a valid static pattern"
+)]
+
 //! Symbolicator — DWARF resolution via [`addr2line::Loader`].
 //!
 //! The samply gecko trace stores raw addresses (file-offset relative

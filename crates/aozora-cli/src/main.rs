@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "document commands validate source inputs before constructing parser spans"
+)]
+
 //! `aozora` command-line frontend.
 //!
 //! Subcommands fall into two groups:
@@ -67,6 +72,11 @@
 #![allow(
     clippy::doc_markdown,
     reason = "--help text is human-facing prose; identifiers like to_source need not be code-spanned in command help"
+)]
+#![allow(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the CLI owns the process output channels"
 )]
 #![forbid(unsafe_code)]
 

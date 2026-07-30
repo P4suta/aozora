@@ -5,10 +5,11 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::RatchetArgs;
+use crate::{RatchetArgs, perf::PERF_BASELINE};
 
 const TSV_BASELINES: &[&str] = &[
     "crates/aozora-bench/perf-baseline.tsv",
+    PERF_BASELINE,
     "crates/aozora-bench/artifact-size-baseline.tsv",
 ];
 const ALLOC_BASELINE: &str = "corpus/alloc-baseline.json";

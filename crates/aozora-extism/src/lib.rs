@@ -63,6 +63,10 @@
 /// does not trip the workspace `dead_code = "deny"` lint. Mirrors how
 /// `aozora-wasm` gates its `MAX_SOURCE_BYTES` guard.
 #[cfg(any(target_arch = "wasm32", test))]
+#[expect(
+    clippy::expect_used,
+    reason = "guard_len proves the parser's span-limit error is unreachable"
+)]
 mod logic {
     use aozora::json;
 

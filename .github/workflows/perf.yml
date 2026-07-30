@@ -2,14 +2,12 @@
 #
 # Runs `just perf-gate`, which drives fixed micro-benchmarks under
 # Valgrind's Callgrind. Callgrind
-# counts CPU *instructions* — deterministic across runs and machines —
-# instead of wall-clock, which is far too noisy on shared GitHub runners to
-# gate on.
+# counts CPU *instructions* within the native CI measurement epoch instead of
+# wall-clock, which is far too noisy on shared GitHub runners to gate on.
 #
-# The committed instruction baseline makes every ephemeral runner a real
-# regression check; a case exceeding its baseline by more than 10% fails.
+# The committed instruction ceilings make every ephemeral runner a regression
+# check; any case exceeding its ceiling fails.
 #
-# Runs inside the in-tree dev image, mirroring ci.yml's container jobs.
 # Action SHAs are pinned; Dependabot bumps weekly.
 name: perf
 
@@ -25,7 +23,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read # anonymous GHCR read for the dev-image buildcache
 
 jobs:
   perf-gate:
@@ -33,6 +30,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y valgrind
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: scheduled-perf
       - name: Instruction-count perf gate
         run: just perf-gate

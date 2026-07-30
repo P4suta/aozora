@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "scanner branch guards establish the selected trigger position"
+)]
+
 //! Tokenize stage — linear tokenization of sanitized source into a token stream.
 //!
 //! Walks the sanitize-stage text via the SIMD-accelerated

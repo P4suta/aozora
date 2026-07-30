@@ -1,3 +1,9 @@
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "interning validates pool bounds and collision invariants"
+)]
+
 //! Owned, lifetime-free string interner.
 //!
 //! Owns all interned bytes in a single `String` and hands back a [`StrId`]

@@ -12,7 +12,7 @@
 //! `xtask conformance grammar --update` regenerates the artefacts from
 //! `grammar.js` via the pinned `tree-sitter` CLI; `--check` (the default,
 //! wired into `drift-gate`) exits non-zero when the on-disk artefacts have
-//! drifted from a fresh generate. The dev image pins the CLI to the same
+//! drifted from a fresh generate. mise pins the CLI to the same
 //! version as the `tree-sitter` runtime crate so the gate is reproducible.
 //!
 //! Mirrors the [`crate::schema`] / [`crate::types`] drift gates: `--update`
@@ -93,8 +93,8 @@ fn scratch_generate(grammar_crate: &Path) -> Result<ScratchDir, String> {
         .map_err(|err| {
             format!(
                 "spawn `tree-sitter generate` failed: {err}\n\
-                 (the tree-sitter CLI must be on PATH — the dev image pins it; \
-                 run this gate through `just drift-gate` / `just grammar`)"
+                 (the tree-sitter CLI must be on PATH; run `just setup`, then \
+                 use `just drift-gate` / `just grammar`)"
             )
         })?;
     if output.status.success() {

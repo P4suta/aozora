@@ -21,7 +21,7 @@ out of `../aozora-notation-spec/conformance/`. To change a vector, edit it
 
 Two layers keep the loop honest:
 
-- **In-tree gate (Docker / cloud CI):** `xtask conformance vectors`
+- **In-tree gate:** `xtask conformance vectors`
   (run by `just conformance`) parses each vector's `source` and compares
   the parser's projections — `serialize`, `nodes`, `pairs`,
   `diagnostics` — against `expected`, governed by `meta.level`

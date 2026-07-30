@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the in-memory capped writer is infallible"
+)]
+
 //! Aozora-source serializer over the semantic AST.
 //!
 //! Serializes the normalized text back to Aozora source in a single forward

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "release ruleset patterns and workflow fixtures are validated constants"
+)]
+
 //! `xtask release check` — offline source-integrity for the release path.
 //!
 //! Four facts that today live only in server-side / tag-time state, checked

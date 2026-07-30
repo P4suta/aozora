@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "diagnostic hints write into an infallible String buffer"
+)]
+
 //! Diagnostic rendering for document subcommands.
 //!
 //! Three views over the same `&[Diagnostic]`:

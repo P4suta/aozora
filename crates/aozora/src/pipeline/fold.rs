@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the sanitize-stage size cap makes normalized offsets fit u32"
+)]
+
 //! Owned lex API + the single-pass owned normalizer.
 //!
 //! Produces an [`LexOutput`] whose normalized text, registry, and side

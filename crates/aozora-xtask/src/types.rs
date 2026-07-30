@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "type generation uses validated static regexes and schema structures"
+)]
+
 //! TypeScript types artefact dump / drift gate.
 //!
 //! Generates `crates/aozora-wasm/types/aozora_types.d.ts` for downstream
@@ -647,8 +652,8 @@ fn generate_lang(lt: &LangType, combined_schema: &Path) -> Result<String, String
         .arg(combined_schema);
     let output = cmd.output().map_err(|err| {
         format!(
-            "failed to run quicktype ({err}); it ships in the dev image — \
-             run via `just types-langs`, not on the host"
+            "failed to run quicktype ({err}); run `just setup`, then \
+             use `just types-langs`"
         )
     })?;
     if !output.status.success() {
@@ -739,7 +744,7 @@ fn gofmt(src: &str) -> Result<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|err| format!("failed to run gofmt ({err}); it ships in the dev image"))?;
+        .map_err(|err| format!("failed to run gofmt ({err}); run `just setup`"))?;
     child
         .stdin
         .take()

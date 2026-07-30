@@ -10,9 +10,10 @@
     clippy::missing_assert_message,
     clippy::absolute_paths,
     clippy::items_after_statements,
+    clippy::expect_used,
+    clippy::panic,
     reason = "build.rs is dev-tooling code that emits source to OUT_DIR; \
-              the workspace's pedantic lint profile aimed at library APIs \
-              fires noisy here without improving anything downstream"
+              malformed generator inputs must stop the build"
 )]
 //! Compile-time gaiji table generator.
 //!

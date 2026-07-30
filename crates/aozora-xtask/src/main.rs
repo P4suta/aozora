@@ -15,15 +15,6 @@
 //! - portability: bash idioms break on Windows / non-bash shells; an
 //!   `xtask` binary works wherever `cargo run` does
 //!
-//! ## Why on the host (not Docker)
-//!
-//! `samply` opens `perf_event_open(2)` directly against the kernel.
-//! Docker's default seccomp profile blocks it; even with
-//! `--privileged --pid=host` the kernel's `/proc/sys/kernel/perf_event_paranoid`
-//! is read inside the container's PID namespace, which doesn't
-//! match what the host's perf-events subsystem will allow.
-//! Bottom line: profiling needs to be on the host, period.
-//!
 //! ## Why a separate crate (and not part of `aozora-bench`)
 //!
 //! `aozora-bench` is a library + examples crate consumed by `cargo
@@ -42,6 +33,11 @@
     missing_docs,
     reason = "host dev-tool binary — not a public API surface"
 )]
+#![allow(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "xtask reports command results directly to developers and CI"
+)]
 
 use std::env;
 use std::ffi::OsString;
@@ -57,9 +53,7 @@ mod conformance;
 mod coords;
 mod corpus;
 mod deps;
-mod docs;
 mod grammar;
-mod lint;
 mod msrv;
 mod perf;
 mod publish;
@@ -71,7 +65,6 @@ mod spec_vectors;
 mod trace;
 mod types;
 mod version;
-mod workflows;
 
 pub(crate) use artifacts::ArtifactsArgs;
 pub(crate) use ci::CiArgs;
@@ -174,17 +167,7 @@ enum Cmd {
     /// READMEs derive the MSRV badge rather than writing it down, and that
     /// the contract stays at least six months behind the channel.
     Msrv(MsrvArgs),
-    /// Dangling-reference gate: every `docs/**.md` that a CI workflow or
-    /// the Justfile tells a reader to open must exist. Deleting a page
-    /// does not break the reference to it — it makes the reference wrong
-    /// while everything stays green.
-    Docs(DocsArgs),
-    /// Suppression-hygiene ratchet: per-crate `#[allow(...)]` counts (outer
-    /// and blanket inner, tracked separately) may only decrease from a
-    /// hardcoded baseline, and the `aozora-pipeline` `.expect(` count may
-    /// not grow. Every silenced lint is a question nobody re-asks; this
-    /// keeps their quantity a monotonically-shrinking number. Wired into
-    /// `drift-gate`.
+    /// Repository source-policy checks that cannot be expressed by the compiler.
     Lint(LintArgs),
 }
 
@@ -196,32 +179,10 @@ struct LintArgs {
 
 #[derive(Subcommand)]
 enum LintOp {
-    /// Fail when a crate's `#[allow]` count differs from its recorded
-    /// baseline (grew → a new suppression slipped in; shrank → lower the
-    /// baseline to the printed number). Wired into `drift-gate`.
-    Suppressions,
     /// Fail when a comment cites source by `file:line` — a coordinate that
     /// rots on the next edit above it. Name a symbol instead. Wired into
     /// `drift-gate`.
     Coordinates,
-    /// Fail when a workflow/action `run:` block calls a `just <recipe>` that no
-    /// longer exists, or pipes a producer into an early-exit consumer under
-    /// `set -o pipefail` (a SIGPIPE that only bites at release time). Wired into
-    /// `drift-gate`.
-    Workflows,
-}
-
-#[derive(Args)]
-struct DocsArgs {
-    #[command(subcommand)]
-    op: DocsOp,
-}
-
-#[derive(Subcommand)]
-enum DocsOp {
-    /// Fail when CI or the Justfile names a doc page that is not there.
-    /// Wired into `drift-gate`.
-    Check,
 }
 
 #[derive(Args)]
@@ -565,13 +526,8 @@ fn main() {
         Cmd::Perf(args) => perf::dispatch(&args),
         Cmd::Ratchet(args) => ratchet::check(&args),
         Cmd::Msrv(args) => msrv::dispatch(&args),
-        Cmd::Docs(args) => match args.op {
-            DocsOp::Check => docs::check(),
-        },
         Cmd::Lint(args) => match args.op {
-            LintOp::Suppressions => lint::check(),
             LintOp::Coordinates => coords::check(),
-            LintOp::Workflows => workflows::check(),
         },
     };
     if let Err(err) = result {

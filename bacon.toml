@@ -1,9 +1,7 @@
 # bacon configuration for aozora.
 #
-# Launch with `just watch` (or the `just watch-lint` / `just watch-test`
-# convenience recipes) — bacon runs inside the dev container so every
-# command goes through the Docker-only execution surface (CLAUDE.md);
-# never invoke bacon on the host.
+# Launch with `just watch` or the `just watch-lint` / `just watch-test`
+# convenience recipes after installing the locked mise toolchain.
 # Keybindings (built-in defaults):
 #   c  clippy       t  test        d  doc           f  failing-only
 #   q  quit         esc previous   Ctrl-J  list jobs
