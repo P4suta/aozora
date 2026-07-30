@@ -293,7 +293,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust just cargo:cargo-fuzz
+          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
       - run: just fuzz-all-deep
       - name: Reject retained fuzz failures
         run: |
@@ -319,7 +319,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust
+          install_args: rust@nightly-2026-07-15
       - run: bash scripts/sanitizers.sh ${{ matrix.mode }}
 
   cross-os:
