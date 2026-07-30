@@ -32,6 +32,7 @@ const ja = {
   more: 'その他',
   outline: 'アウトライン',
   outlineEmpty: '見出しがありません。',
+  outlineEntryLabel: '{text}、見出しレベル {level}',
   preview: 'プレビュー',
   retry: '再試行',
   sample: 'サンプル',
@@ -85,6 +86,7 @@ const en: Record<MessageKey, string> = {
   more: 'More',
   outline: 'Outline',
   outlineEmpty: 'No headings.',
+  outlineEntryLabel: '{text}, heading level {level}',
   preview: 'Preview',
   retry: 'Retry',
   sample: 'Sample',
@@ -108,4 +110,14 @@ const catalog: Record<Locale, Record<MessageKey, string>> = { ja, en };
 
 export function message(locale: Locale, key: MessageKey): string {
   return catalog[locale][key];
+}
+
+export function formatMessage(
+  locale: Locale,
+  key: MessageKey,
+  parameters: Readonly<Record<string, string | number>>,
+): string {
+  return message(locale, key).replace(/\{(\w+)\}/g, (match, name: string) =>
+    name in parameters ? String(parameters[name]) : match,
+  );
 }

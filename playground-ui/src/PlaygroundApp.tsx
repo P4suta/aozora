@@ -54,7 +54,7 @@ import {
   useState,
 } from 'react';
 
-import { message } from './catalog';
+import { formatMessage, message } from './catalog';
 import {
   copyShareUrl,
   readSharedSource,
@@ -227,6 +227,12 @@ const outlineEntryStyle = style({
   alignSelf: 'stretch',
   flexShrink: 0,
   justifySelf: 'stretch',
+  width: 'full',
+});
+
+const outlineItemStyle = style({
+  display: 'flex',
+  flexShrink: 0,
   width: 'full',
 });
 
@@ -551,19 +557,29 @@ function OutlineList({
     return <div className={emptyStyle}>{message(locale, 'outlineEmpty')}</div>;
   }
   return (
-    <div className={scrollAreaStyle}>
+    <div className={scrollAreaStyle} role="list">
       {entries.map((entry) => (
-        <ActionButton
-          isDisabled={entry.range === null}
+        <div
+          aria-level={Math.max(1, entry.level)}
+          className={outlineItemStyle}
           key={`${entry.level}:${entry.text}:${entry.range?.start ?? 'none'}:${entry.range?.end ?? 'none'}`}
-          onPress={() => {
-            if (entry.range) onJump(entry.range);
-          }}
-          size="S"
-          styles={outlineEntryStyle}
+          role="listitem"
         >
-          {`${'　'.repeat(Math.max(0, entry.level - 1))}${entry.text}`}
-        </ActionButton>
+          <ActionButton
+            aria-label={formatMessage(locale, 'outlineEntryLabel', {
+              level: entry.level,
+              text: entry.text,
+            })}
+            isDisabled={entry.range === null}
+            onPress={() => {
+              if (entry.range) onJump(entry.range);
+            }}
+            size="S"
+            styles={outlineEntryStyle}
+          >
+            {`${'　'.repeat(Math.max(0, entry.level - 1))}${entry.text}`}
+          </ActionButton>
+        </div>
       ))}
     </div>
   );
@@ -1223,7 +1239,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       globalThis.clearTimeout(pending);
       abort.abort();
     };
-  }, [adapter, initialization, source]);
+  }, [adapter, initialization, locale, source]);
 
   useEffect(() => {
     if (!boot.invalidUrl) return;

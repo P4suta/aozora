@@ -344,7 +344,11 @@ describe('shared PlaygroundApp', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Outline' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Welcome' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Welcome, heading level 1',
+      }),
+    );
     expect(harness.revealRange).toHaveBeenCalledWith({
       start: 0,
       end: '# Welcome'.length,
@@ -403,6 +407,7 @@ describe('shared PlaygroundApp', () => {
     const harness = fakeHarness();
     render(<PlaygroundApp adapter={harness.adapter} />);
     await screen.findByLabelText('Fake editor');
+    await waitFor(() => expect(harness.analyze).toHaveBeenCalledOnce());
     expect(document.title).toBe('Fake Writer — Fake engine');
 
     await user.click(screen.getByRole('button', { name: 'Settings' }));
@@ -416,6 +421,7 @@ describe('shared PlaygroundApp', () => {
       expect(document.documentElement.lang).toBe('ja');
       expect(document.title).toBe('Fake Writer — 偽エンジン');
       expect(harness.setLocale).toHaveBeenLastCalledWith('ja');
+      expect(harness.analyze).toHaveBeenCalledTimes(2);
     });
 
     await user.click(screen.getByRole('switch', { name: '入力支援' }));
@@ -445,7 +451,13 @@ describe('shared PlaygroundApp', () => {
 
     await user.click(screen.getByRole('button', { name: 'Outline' }));
     const dialog = await screen.findByRole('dialog', { name: 'Outline' });
-    await user.click(within(dialog).getByRole('button', { name: 'Welcome' }));
+    const listItem = within(dialog).getByRole('listitem');
+    expect(listItem).toHaveAttribute('aria-level', '1');
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'Welcome, heading level 1',
+      }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Outline' })).toBeNull();
