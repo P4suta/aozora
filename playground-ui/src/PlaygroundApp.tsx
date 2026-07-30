@@ -1158,7 +1158,14 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       const fallbackElement = returnFocus.fallbackId
         ? document.getElementById(returnFocus.fallbackId)
         : null;
-      (connectedElement ?? fallbackElement)?.focus();
+      const target = connectedElement ?? fallbackElement;
+      if (!target) return;
+      // DialogContainer also schedules its own restoration work. Focusing
+      // after two frames makes the explicit, locale-safe target the final
+      // destination in browsers where the Provider replaced the trigger.
+      globalThis.requestAnimationFrame(() => {
+        globalThis.requestAnimationFrame(() => target.focus());
+      });
     });
   }, []);
 
