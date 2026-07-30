@@ -257,14 +257,21 @@ jobs:
           persist-credentials: false
       - id: msrv
         run: echo "version=$(awk -F'\"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
         with:
           key: ci-msrv
-      - run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
-      - run: cargo check --locked -p aozora-extism --all-targets
+      - env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
+      - env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: cargo check --locked -p aozora-extism --all-targets
 
   wasm-test:
     runs-on: ubuntu-latest
@@ -315,7 +322,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -325,6 +333,7 @@ jobs:
       - run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
       - env:
           AOZORA_PY_VENV: ${{ runner.temp }}/aozora-py-${{ matrix.python }}
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
         run: bash scripts/smoke-py.sh
 
   commitlint:
