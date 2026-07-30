@@ -3,10 +3,7 @@
 # Validity alone (`taplo check`) is not enough — formatting is part of the
 # convention, matching the find-my-files reference repo's taplo policy.
 
-# taplo does not honor .gitignore, so exclude the host build dir explicitly.
-# (In the dev container the target dir lives at /cargo/target — OUTSIDE the
-# /workspace bind mount — so it is never globbed there; this guards host runs,
-# where ./target sits inside the checkout.)
+# taplo does not honor .gitignore, so exclude the build directory explicitly.
 exclude = ["target/**"]
 
 [formatting]

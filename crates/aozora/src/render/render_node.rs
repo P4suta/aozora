@@ -1,3 +1,5 @@
+#![expect(clippy::expect_used, reason = "fmt::Write into String is infallible")]
+
 //! HTML rendering for individual AST nodes.
 //!
 //! Emits per-node HTML by reading an owned [`Node`] and resolving every

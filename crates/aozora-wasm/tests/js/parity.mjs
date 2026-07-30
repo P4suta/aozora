@@ -6,7 +6,7 @@
 // against the same golden data the Rust gate pins.
 //
 // Usage:  node parity.mjs <path-to-wasm-nodejs-pkg>
-// Driven by `just parity-wasm` (locally, in Docker) and the ci.yml
+// Driven by `just parity-wasm` locally and by ci.yml.
 // `wasm-build` job (host runner).
 
 import { createRequire } from "node:module";

@@ -1,3 +1,9 @@
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "the conformance harness fails immediately on malformed committed fixtures"
+)]
+
 //! Golden-fixture infrastructure for the aozora parser conformance
 //! suite.
 //!

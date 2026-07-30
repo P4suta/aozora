@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the spelling table is validated before lookup"
+)]
+
 //! Block-level HTML render state + text escaper.
 //!
 //! The shared, AST-free machinery the owned HTML renderer

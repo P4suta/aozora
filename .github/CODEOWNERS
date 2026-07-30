@@ -8,7 +8,7 @@
 /.github/workflows/      @P4suta
 /.github/rulesets/       @P4suta
 /docs/adr/               @P4suta
-/Dockerfile              @P4suta
-/docker-compose.yml      @P4suta
+/mise.toml               @P4suta
+/mise.lock               @P4suta
 /crates/aozora/          @P4suta
 /crates/aozora-ffi/      @P4suta

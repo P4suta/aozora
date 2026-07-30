@@ -101,6 +101,11 @@ clone_on_ref_ptr = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
 missing_assert_message = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
 
 str_to_string = "warn"
 absolute_paths = "warn"
@@ -421,13 +426,8 @@ debug = 1
 split-debuginfo = "unpacked"
 # `debug = "line-tables-only"` keeps backtraces (line + file + symbol
 # names) but drops the local-variable / parameter DWARF that doubles
-# rustc's link-stage memory and time. The dev workflow goes through
-# `docker compose run dev cargo nextest run`; nobody attaches gdb
-# inside the container. The variable-inspect side of full debug info
-# is therefore paying for nothing on every workspace cargo invocation.
-# `mold` (the linker we already use, see docker-compose.yml) compounds
-# the win because it spends a non-trivial fraction of its runtime in
-# the debug-info section it now no longer has to merge.
+# rustc's link-stage memory and time. Backtraces retain the information used
+# during routine native development without paying for debugger-only locals.
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
@@ -438,10 +438,6 @@ debug = "line-tables-only"
 #      crate's compile that consumes their `TokenStream` output.
 #   2. dependency object code that gets linked into test binaries
 #      runs faster, shrinking the test step in the coverage job.
-# The cold-cache cost is +10-20 % on the dependency build itself, but
-# sccache's GHA backend (see docker-compose.ci.yml) pulls those
-# objects from the run-shared cache on subsequent runs, so the
-# amortised cost is negligible. Workspace crates stay at the default
-# opt-level=0 so iteration on aozora-* code keeps full incremental
-# rebuild speed.
+# The cold-cache cost is paid once by the native Cargo cache. Workspace crates
+# stay at the default opt-level=0 so iteration keeps full incremental speed.
 opt-level = 2

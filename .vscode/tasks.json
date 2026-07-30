@@ -1,7 +1,5 @@
 {
-  // Surfaces the canonical `just` recipes as VS Code tasks. Each runs on
-  // the host shell and `just` re-enters Docker, so this stays
-  // Docker-first (no host cargo). Ctrl-Shift-B runs the default (ci).
+  // Surfaces the canonical native `just` recipes as VS Code tasks.
   "version": "2.0.0",
   "tasks": [
     {
@@ -10,7 +8,7 @@
       "command": "just ci",
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": ["$rustc"],
-      "detail": "Full local CI gate — the merge-gate replica."
+      "detail": "Full local fixed CI gate."
     },
     {
       "label": "test",

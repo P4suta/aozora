@@ -1,3 +1,8 @@
+#![expect(
+    clippy::panic,
+    reason = "Sentinel discriminants are compile-time Unicode scalar constants"
+)]
+
 //! PUA sentinel codepoints reserved by the Aozora pipeline.
 //!
 //! The lexer rewrites every recognised Aozora construct into one of

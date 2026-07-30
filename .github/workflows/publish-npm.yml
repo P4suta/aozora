@@ -108,6 +108,7 @@ jobs:
           test -n "$package"
           name="$(tar -xOf "$package" package/package.json | jq -er .name)"
           version="$(tar -xOf "$package" package/package.json | jq -er .version)"
+          # shellcheck disable=SC2016
           integrity="$(PACKAGE="$package" node --input-type=module -e '
             import { readFileSync } from "node:fs";
             import { createHash } from "node:crypto";

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "document construction maintains bounded source-coordinate invariants"
+)]
+
 //! `Document` owns an editable Aozora source buffer. `Snapshot` is an
 //! immutable, cheaply cloned view of one parsed document version.
 //!

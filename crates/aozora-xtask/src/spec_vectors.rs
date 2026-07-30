@@ -3,8 +3,8 @@
 //! The [`aozora-notation-spec`](https://github.com/P4suta/aozora-notation-spec)
 //! sibling repository is the single source of truth for the conformance
 //! corpus. A copy is vendored under
-//! `crates/aozora-conformance/spec-vectors/` so the in-container
-//! `just conformance` gate and cloud CI run the vectors without a network
+//! `crates/aozora-conformance/spec-vectors/` so local and cloud
+//! conformance gates run the vectors without a network
 //! round-trip or a checked-out sibling.
 //!
 //! - `sync` copies the vectors + schema + `RUNNER.md` out of the sibling's

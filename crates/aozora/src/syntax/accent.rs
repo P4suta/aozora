@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "matched accent grammar establishes character boundaries"
+)]
+
 //! Aozora Bunko accent decomposition — ASCII digraph → Unicode letter.
 //!
 //! Spec: <https://www.aozora.gr.jp/accent_separation.html>

@@ -304,6 +304,10 @@ pub fn schema_slugs() -> serde_json::Value {
 /// `{schemaVersion, data: […]}` envelope. The envelope shape is
 /// shared by wire functions; only the inner item schema varies.
 #[cfg(feature = "schema")]
+#[expect(
+    clippy::expect_used,
+    reason = "the envelope root is constructed from an object literal"
+)]
 fn envelope_schema(
     title: &str,
     description: &str,

@@ -1,8 +1,7 @@
 //! `xtask ci profile` — data-driven CI wall-clock profiler.
 //!
 //! Rust CI on GitHub Actions has well-known long-tail behaviour:
-//! Docker layer rebuilds, `cargo install` of dev tooling, and external
-//! checks like `lychee` can each silently consume tens of minutes
+//! tool installation, cache misses, and external checks can each consume time
 //! without the workflow log surfacing where the time went. The
 //! `xtask ci profile` subcommand pulls the per-job and per-step wall
 //! times of a given workflow run and ranks them, so optimisation

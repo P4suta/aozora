@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "parser inputs are capped to the u32 span representation"
+)]
+
 use core::ops::Range;
 use std::sync::Arc;
 

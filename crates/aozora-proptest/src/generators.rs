@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the generated branch sets are static and non-empty"
+)]
+
 //! Proptest generator strategies for aozora property-based tests.
 //!
 //! These strategies are intentionally *stratified*: each one targets a

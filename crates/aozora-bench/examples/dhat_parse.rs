@@ -10,7 +10,7 @@
 //! `dhat-heap.json` (viewable at <https://nnethercote.github.io/dh_view/dh_view.html>).
 //!
 //! ```text
-//! just dhat   # docker compose run --rm dev cargo run --release -p aozora-bench --example dhat_parse
+//! just dhat
 //! ```
 
 use std::hint::black_box;

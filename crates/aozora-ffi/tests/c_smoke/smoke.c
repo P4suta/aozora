@@ -202,8 +202,7 @@ int main(void) {
      *    AOZORA_SOURCE_TOO_LARGE (-5). The guard checks src_len before
      *    dereferencing src_ptr, so a non-null dangling pointer with a
      *    fabricated huge length is safe: the call returns before any
-     *    read. Skip where size_t cannot hold UINT32_MAX + 1 (e.g. a
-     *    32-bit host); the dev image is 64-bit. */
+     *    read. Skip where size_t cannot hold UINT32_MAX + 1. */
 #if SIZE_MAX > 0xFFFFFFFFu
     {
         /* Non-null but never dereferenced. */

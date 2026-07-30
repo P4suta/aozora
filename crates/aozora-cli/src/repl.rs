@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "REPL initialization validates parser bounds and history state"
+)]
+
 //! `aozora repl` — an interactive read-eval-print loop for the notation.
 //!
 //! The terminal counterpart to the web playground: type one line of Aozora

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "vendored fixture paths are filtered to the required shape before extraction"
+)]
+
 //! [`VendoredCorpus`] — read in-tree golden fixtures.
 //!
 //! Exposes `spec/aozora/fixtures/<card-id>/input.sjis.txt` files as a

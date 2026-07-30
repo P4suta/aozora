@@ -1,3 +1,9 @@
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "embedded locale resources and identifiers are build-time constants"
+)]
+
 //! Localization layer for the `aozora` binary (CLI shell + in-process LSP).
 //!
 //! A thin, function-based wrapper over the [Project Fluent] runtime. The

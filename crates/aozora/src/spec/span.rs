@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "Span construction maintains source bounds and UTF-8 boundaries"
+)]
+
 //! Byte-range span over a UTF-8 source buffer.
 //!
 //! `u32` (rather than `usize`) caps the addressable source at 4 GiB,

@@ -5,8 +5,8 @@ name: spec-freshness
 #
 # The vendored copy under `crates/aozora-conformance/spec-vectors/` is a
 # snapshot of `P4suta/aozora-notation-spec`'s `conformance/` subtree. The
-# pre-push gate (`xtask spec-vectors check` in `ci-parallel`'s background
-# lane) enforces vendored==spec on a developer HOST that has the sibling
+# pre-push gate (`xtask spec-vectors check` via `just drift-gate`) enforces
+# vendored==spec on a developer host that has the sibling
 # checked out; it is a no-op elsewhere. This workflow closes that gap: it
 # checks out a FRESH sibling and runs the same drift check against it, so a
 # spec change that landed without a matching `just sync-spec-vectors` here
@@ -36,17 +36,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # The parser repo at the workspace root (provides the Dockerfile /
-      # compose / xtask and the vendored spec-vectors/ we are checking).
+      # The parser repo and its vendored spec vectors.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0
 
-      # Build / load the dev image and set COMPOSE_FILE + AOZORA_UID so the
-      # `docker compose run dev` steps below reuse it (no rebuild).
-      - uses: ./.github/actions/setup-dev-image
-
-      # The sibling spec — the source of truth. Checked out AFTER the image
-      # is loaded so it never enters the Docker build context. It lands
-      # inside the workspace, hence at /workspace/.spec-repo in the container.
+      # The sibling spec — the source of truth.
       - name: Check out the sibling specification
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -54,10 +54,9 @@ jobs:
           path: .spec-repo
 
       # Compile the tool as a hard step: a build break is a real regression
-      # worth failing the weekly job loudly (not a soft drift issue). The
-      # /cargo/target volume caches it for the run step below.
+      # worth failing the weekly job loudly.
       - name: Build the xtask binary
-        run: docker compose run --rm dev cargo build -p aozora-xtask
+        run: cargo build --locked -p aozora-xtask
 
       # Drift check against the fresh sibling. `set +e` + PIPESTATUS captures
       # the check's own exit code (the binary is already built, so this only
@@ -66,9 +65,8 @@ jobs:
         id: check
         run: |
           set +e
-          docker compose run --rm \
-            -e AOZORA_SPEC_REPO=/workspace/.spec-repo \
-            dev cargo run -p aozora-xtask -q -- spec-vectors check 2>&1 | tee spec-check.log
+          AOZORA_SPEC_REPO="$GITHUB_WORKSPACE/.spec-repo" \
+            cargo run -p aozora-xtask -q -- spec-vectors check 2>&1 | tee spec-check.log
           code=${PIPESTATUS[0]}
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           echo "spec-vectors check exited with $code"

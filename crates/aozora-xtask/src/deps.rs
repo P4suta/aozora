@@ -14,15 +14,8 @@
 //!
 //! Same precedent as the `samply` subcommand (see [`crate`] docs).
 //!
-//! ## Why on the host (not Docker)
-//!
 //! `systemctl --user` talks to the host's systemd user instance.
-//! Inside the dev container there is no per-user systemd, so the
-//! timer would never fire. Same reasoning as `xtask samply` —
-//! tooling that touches the host kernel / init system runs on the
-//! host, not in the container.
-//!
-//!
+//! The timer is therefore available only on systems using systemd.
 //!
 //! ## Layout
 //!
@@ -217,25 +210,21 @@ fn state_dir() -> Result<PathBuf, String> {
 }
 
 fn render_service_unit(repo_root: &Path, log_file: &Path) -> String {
-    // Hard-fail (`ConditionPathExists`) rather than half-run if the
-    // repo or Docker disappears — the health-check is meaningless
-    // without the dev container `just deps-check` invokes.
     format!(
         "\
 [Unit]
 Description=Weekly aozora workspace dependency-health check (just deps-check)
 Documentation=file://{repo}/CONTRIBUTING.md
 ConditionPathExists={repo}/Justfile
-ConditionPathExists=/var/run/docker.sock
 
 [Service]
 Type=oneshot
 WorkingDirectory={repo}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=MISE_IGNORED_CONFIG_PATHS=%h/.config/mise/config.toml
 # Tee output to a rolling log so 'just deps-status' (and the user's
 # eyeball) can see the most recent run; `journalctl --user -u {svc}`
 # is the structured alternative.
-ExecStart=/bin/bash -c 'just deps-check 2>&1 | tee -a \"{log}\"'
+ExecStart=/bin/bash -lc 'mise exec --locked -- just deps-check 2>&1 | tee -a \"{log}\"'
 Nice=10
 IOSchedulingClass=idle
 ",
@@ -350,12 +339,16 @@ mod tests {
     }
 
     #[test]
-    fn service_unit_is_oneshot_with_docker_guard() {
+    fn service_unit_uses_the_locked_native_environment() {
         let unit = render_service_unit(Path::new("/repo"), Path::new("/log"));
         assert!(unit.contains("Type=oneshot"), "oneshot unit: {unit}");
         assert!(
-            unit.contains("ConditionPathExists=/var/run/docker.sock"),
-            "requires docker socket: {unit}"
+            unit.contains("MISE_IGNORED_CONFIG_PATHS=%h/.config/mise/config.toml"),
+            "ignores user-global mise configuration: {unit}"
+        );
+        assert!(
+            unit.contains("mise exec --locked -- just deps-check"),
+            "uses the locked native toolchain: {unit}"
         );
         assert!(
             unit.contains("just deps-check"),

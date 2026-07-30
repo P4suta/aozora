@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "TUI initialization validates parser bounds and terminal state"
+)]
+
 //! `aozora tui` — a full-screen, live editor for the notation.
 //!
 //! The editor-free counterpart to `--watch`: instead of re-running a command

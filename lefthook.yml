@@ -1,31 +1,3 @@
-# Pre-commit / pre-push hooks — every command runs inside the dev
-# container through `just`, never directly on the host.
-#
-# Enable after clone:  `just hooks`
-# Disable:             `just hooks-uninstall`
-#
-# Reference: https://lefthook.dev/configuration/
-#
-# Status icons in the summary
-# ---------------------------
-# Lefthook prints one of three markers next to each command in its
-# summary line:
-#   ✔️  success (exit 0)
-#   🗙  failed
-#   🥊  also a failure path — typically when the command exited
-#       non-zero but lefthook fell back to its branding icon because
-#       the underlying tooling (docker compose run, `just`) buried
-#       the status. Treat 🥊 the same as 🗙 — see the actual command
-#       output above the summary to find the real error.
-#
-# `fail_text` on each command below is the explicit human hint that
-# lefthook displays on failure so it's obvious what to fix without
-# scrolling back through hundreds of lines of cargo output.
-
-# Make the summary noisier on failures — show what command was
-# executing, its stdout, the stderr, and the skip reasons (default
-# already lists most of these, this is the explicit form so it
-# survives lefthook version bumps that change the default set).
 output:
   - meta
   - summary
@@ -39,190 +11,43 @@ output:
 
 pre-commit:
   parallel: true
-  skip:
-    - rebase
-    - merge
+  skip: [rebase, merge]
   commands:
-    # `just fmt` = `cargo fmt --all` + `taplo fmt` (writes). Any reformat is
-    # re-staged automatically so the commit carries the fixed formatting.
-    # `fmt-check` is kept out of pre-commit because fixing-and-restaging is
-    # strictly more helpful than failing the commit. The glob covers `.toml`
-    # too so a TOML-only commit still runs taplo (matches the clippy glob).
     fmt:
       glob: "*.{rs,toml}"
       run: just fmt
       stage_fixed: true
-      fail_text: |
-        `just fmt` failed (cargo fmt / taplo). Run `just fmt` manually to see
-        the error. Common cause: rustfmt edition mismatch with rust-toolchain.toml.
-    # Light `clippy` (--lib --bins --tests, no bench) keeps commits fast.
-    # The heavier `--all-targets --all-features` surface (bench / example
-    # targets, aozora-bench) now runs in CI's `lint (clippy-strict)`
-    # matrix cell — the authoritative backstop — instead of on every
-    # commit. Run `just lint-full` locally before a release if you touched
-    # a bench / example target.
     clippy:
       glob: "*.{rs,toml}"
       run: just clippy
-      fail_text: |
-        clippy reported an error. Re-run `just clippy` for the full
-        diagnostic. `[workspace.lints]` in Cargo.toml controls which
-        lints fire — fix the code rather than silencing the lint.
     typos:
       run: just typos
-      fail_text: |
-        `typos` found a probable typo. Re-run `just typos` to see the
-        candidate fixes, or add an exception to `_typos.toml` if the
-        flagged token is intentional (proper noun, identifier, etc.).
-    # Playground frontend type-check. Fast (< 2 s) and runs only when
-    # TS / TSX / JSON files under `playground/` actually changed.
-    # `vite.config.ts` / `vitest.config.ts` count too.
     playground-typecheck:
       glob: "playground/**/*.{ts,tsx,json}"
       run: just playground-typecheck
-      fail_text: |
-        Playground TypeScript failed to compile. Re-run
-        `just playground-typecheck` for the full tsc output.
-    # VS Code extension type-check, on the same terms as the playground's:
-    # only when TS / JSON under `editors/vscode/` actually changed
-    # (`tsconfig.json` / `package.json` count too). The rest of the
-    # extension's gate — biome, the esbuild bundle, `node --test` — runs
-    # pre-push inside `ci-parallel`.
     vscode-typecheck:
       glob: "editors/vscode/**/*.{ts,json}"
       run: just vscode-typecheck
-      fail_text: |
-        VS Code extension TypeScript failed to compile. Re-run
-        `just vscode-typecheck` for the full tsc output.
 
 commit-msg:
   commands:
-    # Conventional Commits via `committed` (config in committed.toml).
-    # Runs on the host — committed is provisioned by mise and a commit-msg
-    # lint needs no container. `{1}` is the commit-message file path.
     committed:
       run: committed --commit-file {1}
 
 pre-push:
-  # `just ci-parallel` runs every gate before the push, but fast: the
-  # cargo gates run serial + cheap-to-expensive (fail-fast) while every
-  # non-cargo gate runs in the background. Parallelism lives INSIDE the
-  # recipe, not at the lefthook level (which would let coverage start
-  # before lint catches a typo), so signing-check still gates first.
-  #
-  # Signing defense is layered: post-commit (re-amends unsigned HEAD),
-  # this signing-check (blocks any unsigned commit at push time), and
-  # GitHub's server-side "Require signed commits" ruleset. All three
-  # are intentional — keep them.
   parallel: false
-  skip:
-    - rebase
+  skip: [rebase]
   commands:
-    # Refuse to push when the about-to-be-pushed range contains an
-    # unsigned commit. Runs first so cheap rejection happens before
-    # the multi-minute `just ci`. The script lives in `scripts/`
-    # (git-tracked) so a fresh `lefthook install` no longer clobbers
-    # the policy. Derives the push range from git refs (no stdin
-    # dependence, see the comment in the script).
     signing-check:
       run: scripts/check-signed-commits.sh
-      fail_text: |
-        Push refused: one or more commits in the range are not signed.
-        Sign with:
-          git commit --amend -S --no-edit                # last commit only
-          git rebase --exec 'git commit --amend --no-edit -S' <base>   # a range
-        Re-run `scripts/check-signed-commits.sh` manually to see which
-        commit failed verification.
-    # Local corpus gates are optional when AOZORA_CORPUS_ROOT is unset.
-    # release-ready always checks out the pinned corpus and cannot skip them.
-    audit-gate:
-      run: just audit-gate
-      fail_text: |
-        Corpus audit failed. Re-run `just audit-gate` for the first document
-        with a panic, internal diagnostic, unknown fallback, or parse failure.
-    # Verbatim-provenance gate (I5): fail the push when any corpus
-    # document's Tree::to_source_verbatim() no longer equals a fresh
-    # sanitize() of its decoded source. Same corpus bind-mount + runtime-
-    # skip (no-op when AOZORA_CORPUS_ROOT unset) as audit-gate.
-    verbatim-gate:
-      run: just verbatim-gate
-      fail_text: |
-        Verbatim-provenance regression: Tree::to_source_verbatim() no longer
-        equals a fresh sanitize() of the source for one or more corpus docs.
-        The I5 verbatim==sanitize invariant must hold byte-exact.
-    render-leak-gate:
-      run: just render-leak-gate
-      fail_text: |
-        Render-leak regression: an aozora notation marker (《…》 / ｜ / ［＃…］)
-        newly survives into visible rendered text. Run
-        `just render-audit` (or `xtask corpus render-audit`) to find the
-        offending document, then fix the classifier/renderer so it resolves.
-    render-correctness-gate:
-      run: just render-correctness-gate
-      fail_text: |
-        Render-correctness regression: a render change left more documents
-        structurally malformed (unbalanced HTML tags or an undeclared class).
-        Run `just render-correctness` (or `xtask corpus render-correctness`) to
-        find the offending document, then fix the renderer.
-    # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
-    # push when the owned lex path's allocation count / bytes (normalized
-    # per-file / per-source-byte) regress beyond corpus/alloc-baseline.json.
-    # Same corpus bind-mount + runtime-skip (no-op when AOZORA_CORPUS_ROOT
-    # unset) as audit-gate; the corpus CI job is the backstop.
-    alloc-gate:
-      run: just alloc-gate
-      fail_text: |
-        Owned-allocation regression: the owned lex producer (lex /
-        Document::lex) now allocates more than corpus/alloc-baseline.json
-        allows. Shrink the owned storage (NodeStore / StrInterner) layout, or —
-        if the increase is intended — re-baseline with `just alloc-gate-update`
-        and attach a `just throughput` run showing wall-clock is in budget.
-    # Mirror every CI job that's reachable from inside the dev image
-    # (lint / build / test / prop / drift-gate / conformance /
-    # smoke-ffi / deny / audit / shear / coverage /
-    # playground-ci / vscode-ci). The three CI-only jobs
-    # that need extra runtime (pandoc-smoke / wasm-build /
-    # python-wheel) stay unreachable here — the dev image
-    # deliberately omits pandoc / maturin (wasm-pack is now baked in
-    # but `just ci` skips the wasm-bundle build to keep the push
-    # under a typical attention budget).
-    #
-    # Push budget: ~6-8 minutes cold cache; ~2-3 minutes warm. The
-    # alternative is "ship a PR, watch GitHub fail, re-push" which
-    # is the failure mode this hook exists to eliminate.
+      fail_text: Push refused because the outgoing range contains an unsigned commit.
     ci:
-      run: just ci-parallel
-      fail_text: |
-        `just ci-parallel` failed. The `::error title=<gate>::` line above
-        names the gate that bombed (a foreground gate aborts immediately;
-        background gates — deny / audit / smoke-ffi /
-        playground-ci / vscode-ci / fmt-check / typos / strict-code — are
-        reaped at the end, each with its captured log).
+      run: just ci
+      fail_text: Re-run the failing fixed CI suite shown above.
+    corpus:
+      run: if [ -n "${AOZORA_CORPUS_ROOT:-}" ]; then just ci-corpus; fi
+      fail_text: Re-run `just ci-corpus` with AOZORA_CORPUS_ROOT configured.
 
-        - Re-run the single gate for a clean repro, e.g. `just clippy`,
-          `just coverage`, `just conformance`.
-        - prop-deep (the 4096-case sweep) runs in the background INSIDE
-          `ci-parallel`. If it trips a pre-existing CORE regression
-          unrelated to your change, opt out with `SKIP_TAGS=deep git push`
-          and file an issue. Do NOT use `LEFTHOOK=0` — it also skips
-          signing-check.
-
-        Re-run `just ci-parallel` directly (not via lefthook) for the
-        unwrapped output if the summary truncates anything important.
-
-# After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
-# may have moved underneath us), surface dependency freshness so the
-# developer sees stale gates without having to remember to ask. This
-# is wired ONLY on post-merge — not post-checkout — because a plain
-# branch switch is too frequent a trigger for a deps-freshness notice.
-#
-# Non-blocking, and quiet on failure:
-#   - `2>/dev/null` drops just's own `error: recipe `deps-status`
-#     failed ...` line, which it emits to stderr whenever the recipe
-#     exits non-zero (stale / never-run). The recipe's friendly notice
-#     goes to stdout and is kept.
-#   - `|| true` makes the exit code non-blocking so the merge still
-#     completes — the notice is informational, not a gate.
 post-merge:
   commands:
     deps-status:

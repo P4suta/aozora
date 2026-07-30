@@ -8,7 +8,7 @@
 //! --workspace` (without the feature) still succeeds; with
 //! `abi3-py311` enabled, pyo3 also builds without discovering a
 //! Python interpreter, so `cargo check -p aozora-py -F
-//! extension-module` works inside the Python-less dev image.
+//! extension-module` works without a Python installation.
 //!
 //! Build the wheel with either:
 //!

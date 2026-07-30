@@ -1,3 +1,9 @@
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "parser state and sanitized source bounds are internal invariants"
+)]
+
 //! Type-state lex pipeline.
 //!
 //! `Pipeline<'src, S>` makes the lex stage order enforceable at compile time.

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the render visitor writes into an infallible String buffer"
+)]
+
 //! Shared PUA-sentinel walk over an [`LexOutput`]'s normalized text.
 //!
 //! Both renderers — [`crate::render::html`] and `serialize`

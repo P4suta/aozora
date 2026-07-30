@@ -1,3 +1,5 @@
+#![expect(clippy::expect_used, reason = "fmt::Write into String is infallible")]
+
 //! HTML rendering over the semantic AST.
 //!
 //! Renders the normalized text in a single forward walk driving a block-level

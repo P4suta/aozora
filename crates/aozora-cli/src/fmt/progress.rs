@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the static progress templates are valid"
+)]
+
 //! Batch UX for directory `fmt`: an [`indicatif`] discovery spinner and
 //! per-file progress bar, plus the localized end-of-run summary.
 //!

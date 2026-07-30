@@ -1,30 +1,3 @@
-# aozora CI
-#
-# Architecture:
-#   - The `dev-image` job builds the dev container image ONCE per run
-#     (via the `setup-dev-image` composite action) from the in-tree
-#     Dockerfile, using the GitHub Actions build-layer cache (`type=gha`)
-#     so the heavy `cargo binstall` layer is reused, never re-fetched
-#     live. It then saves the image to the runner tar cache. No GHCR pull
-#     and no token: building from this checkout's Dockerfile guarantees
-#     the image matches the PR (the stale-`:latest` footgun), and the
-#     live-binstall path was hitting GitHub's unauthenticated API rate
-#     limit (403). `dev-image.yml` still publishes `:latest` to GHCR on
-#     main for local `docker pull` / external use, but CI does not depend
-#     on it.
-#   - Every container job declares `needs: dev-image` and runs the same
-#     `setup-dev-image` action, which restores the tar (cache hit) and
-#     `docker load`s it — so the image build happens at most once per run
-#     and the jobs never race a live binstall.
-#   - Jobs invoke `just <target>` on the runner host; `just` recipes wrap
-#     each command in `docker compose run dev cargo ...` (Justfile policy:
-#     never invoke cargo on the host directly). Running `just` on the
-#     runner — instead of `docker compose run ci just <target>` — avoids
-#     Docker-in-Docker: the previous nested pattern hit `bash: docker:
-#     command not found` because the `ci` container has no docker client.
-#
-# Action SHAs are pinned; Dependabot bumps weekly.
-
 name: ci
 
 on:
@@ -39,435 +12,218 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read
 
 env:
-  DOCKER_BUILDKIT: "1"
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 
 jobs:
-  # Classify the PR diff so the heavy Rust / SIMD / wasm / Python matrix
-  # only runs when code that affects it changed. A docs-only or
-  # playground-only PR skips straight to the lightweight checks + the
-  # `ci-success` gate. Conservative by design: ANY change under crates/,
-  # the Cargo manifests, the toolchain, Docker, the Justfile, or CI wiring
-  # flips `rust` true and runs the full matrix — so a config/CI change is
-  # always validated end-to-end.
-  changes:
+  qualify:
     runs-on: ubuntu-latest
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      playground: ${{ steps.filter.outputs.playground }}
-      vscode: ${{ steps.filter.outputs.vscode }}
-      docs: ${{ steps.filter.outputs.docs }}
-      # A release commit — a `version = ` bump on push, or a `release-plz-*` PR
-      # head — triggers the full `release-ready` workflow, which runs a superset
-      # of ci's Rust gates. The Rust jobs `release-ready` covers gate on
-      # `release != 'true'` so they defer to it (capping the Actions fan-out);
-      # the three gates `release-ready` cannot run (msrv, wasm-test,
-      # pandoc-smoke) stay unconditional here.
-      # version-changed is only honored on push (mirrors release-ready's
-      # qualify): a version bump on a non-release-plz PR is NOT a release
-      # commit there, so ci must not defer its Rust graph for it — otherwise
-      # both workflows would skip and the PR would merge with no Rust CI.
       release: ${{ (github.event_name == 'push' && steps.detect.outputs.version-changed == 'true') || steps.detect.outputs.release-branch == 'true' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # detect-release-commit diffs HEAD^ for the version-line change.
           fetch-depth: 2
-      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706  # v4.0.2
-        id: filter
-        with:
-          filters: |
-            rust:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              # Any root config TOML (deny / rustfmt / clippy / taplo / committed
-              # / release-plz / …). Catch-all so a format/policy drift in any of them
-              # trips the `lint (fmt-check)` taplo gate (crate TOML is already
-              # covered by 'crates/**').
-              - '*.toml'
-              - 'Dockerfile'
-              - 'docker-compose*.yml'
-              - 'Justfile'
-              - '.github/**'
-              # scripts/** hosts ci-classify.sh / check-signed-commits.sh
-              # etc. Their only regression coverage (`ci-fast-selftest`)
-              # lives under `ci-parallel`, so a scripts-only PR must still run
-              # the Rust matrix — classify as `rust` (mirrors ci-classify.sh
-              # treating scripts/* as infra).
-              - 'scripts/**'
-            # The Solid + Vite + WASM frontend. Its parse engine
-            # (`crates/aozora-wasm/**`) already lives under the `rust` filter,
-            # so the `playground-checks` job ORs `rust` to also validate the
-            # playground when the WASM engine changes.
-            playground:
-              - 'playground/**'
-            # The VS Code extension. It inlines the renderer's canonical
-            # stylesheet at build time, so a change to that asset (under
-            # `crates/**` = the `rust` filter, which the `vscode` job ORs)
-            # also re-validates it.
-            vscode:
-              - 'editors/vscode/**'
-            # Prose that `drift-gate` reads: `xtask msrv check` parses the
-            # READMEs and `docs/contrib/**` for the version pins it enforces.
-            # Deliberately coarser than that gate's own path constants — a
-            # superset cannot drift out of sync with them the way a copy of the
-            # list would, and the only cost of being wide is running a gate that
-            # passes.
-            docs:
-              - 'docs/**'
-              - '**/README.md'
+          persist-credentials: false
       - id: detect
         uses: ./.github/actions/detect-release-commit
         with:
           head-ref: ${{ github.event.pull_request.head.ref }}
           same-repo: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
-  msrv:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    # Verify the declared MSRV still builds — the one gate that enforces
-    # the public contract (ADR-0034). Uses the native runner toolchain
-    # rather than the dev image: the image ships rust-toolchain.toml's
-    # channel (latest stable, NOT the MSRV) and has no mechanism to
-    # downgrade, which is exactly why the two must not share a number.
-    #
-    # The version is read out of Cargo.toml rather than pinned here, so
-    # this job cannot drift from the contract it is checking.
-    name: msrv
+  rust:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Read MSRV from Cargo.toml
-        id: msrv
-        run: echo "version=$(awk -F'"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - name: Install Rust ${{ steps.msrv.outputs.version }} (MSRV)
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
-          key: msrv
-      # Two lanes, because the contract is "every feature a crates.io
-      # consumer can turn on" — which the old bare `--all-targets` never
-      # covered (`aozora/schema`, `aozora/pandoc`, … went unchecked).
-      #
-      # `aozora-extism` is excluded from the --all-features lane and
-      # checked on default features instead: it is `publish = false`, and
-      # its dev-only `host-smoke` feature drags in wasmtime, which
-      # DECLARES rust-version 1.91. A dev-only test feature must not get
-      # to set the public floor. (Measured 2026-07-15: wasmtime compiles
-      # fine on the MSRV — its declaration is simply conservative — but
-      # cargo enforces the declaration, so the exclusion is required.)
-      - run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
-      - run: cargo check --locked -p aozora-extism --all-targets
-
-  commitlint:
-    runs-on: ubuntu-latest
-    # Skip for dependabot: its auto-generated subjects/bodies exceed the
-    # 50/72 limits, and its PRs squash-merge with a maintainer subject.
-    # Guard on the PR *author*, not `github.actor`: a maintainer
-    # `gh pr update-branch` on a dependabot PR flips `github.actor` to the
-    # maintainer, which would let the bot's >50-char subjects through to
-    # `committed` and fail the lint (#113).
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+          version: 2026.7.13
+          cache: true
+          install_args: >-
+            rust@1.97.0 just taplo github:crate-ci/typos cargo:cargo-nextest
+            cargo:cargo-llvm-cov tree-sitter npm:quicktype node go
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          fetch-depth: 0
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
+          key: ci-rust
+      - run: just ci-rust
+
+  web:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tool: committed
-      # Lint only the non-merge commits. `committed` flags any merge commit
-      # ("Merge branch 'main' …") as "Missing type" no matter how its
-      # merge_commit setting is toggled, so a `gh pr update-branch` merge
-      # must never be fed to it. Walk --no-merges and check the real
-      # commits individually. With the merge queue, merges should not
-      # reach a PR branch at all; this lint is a backstop.
-      #
-      # `committed` takes a single `[COMMITS]` revspec, so feed the SHAs
-      # one per invocation (`-n1`): a multi-commit PR would otherwise pass
-      # several positionals at once and abort with "unexpected argument".
-      - name: Check Conventional Commits (committed)
-        run: |
-          base='${{ github.event.pull_request.base.sha }}'
-          head='${{ github.event.pull_request.head.sha }}'
-          git rev-list --no-merges "$base..$head" | xargs -rn1 committed
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just bun node cargo:wasm-pack npm:binaryen
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-web
+      - name: Install Playwright system dependencies
+        working-directory: playground
+        run: bun x playwright install --with-deps chromium
+      - run: just ci-web
 
-  reuse:
+  bindings:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just node go npm:binaryen
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-bindings
+      - run: just ci-bindings
 
-  # Block merging a release-plz Release PR until a maintainer flips the
-  # label. release-plz labels its PR `autorelease: pending`
-  # (release-plz.toml `pr_labels`); a release happens only once a
-  # maintainer adds `release: approved`. Labels are read live, so after
-  # labelling, re-running just this job flips the gate green — no full CI
-  # re-run. Every non-release PR passes unconditionally.
-  release-gate:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pull-requests: read
-    steps:
-      - name: Require an explicit approval label on a Release PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')
-          if echo "$labels" | grep -qx "autorelease: pending"; then
-            if echo "$labels" | grep -qx "release: approved"; then
-              echo "Release PR carries 'release: approved' — gate open."
-            else
-              echo "::error::This is a release PR. Add the 'release: approved' label to allow merge."
-              exit 1
-            fi
-          else
-            echo "Not a release PR — gate passes."
-          fi
-
-  # Build the dev image ONCE per run so the heavy `cargo binstall`
-  # (cargo-tools) layer is never re-fetched live across the container
-  # jobs below — the live binstall path was hitting GitHub's
-  # unauthenticated API rate limit (403) and failing `audit (deny)`. This
-  # job runs `setup-dev-image`, which on a tar-cache miss builds the image
-  # from the in-tree Dockerfile through the GHA build-layer cache (no
-  # GHCR, no token) and saves it to the runner tar cache; every
-  # `needs: dev-image` job then restores that tar and `docker load`s it.
-  dev-image:
-    needs: changes
-    if: (needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true') && needs.changes.outputs.release != 'true'
+  repo:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: >-
+            rust@1.97.0 just actionlint shellcheck zizmor github:crate-ci/typos
+            cargo:cargo-deny cargo:cargo-audit cargo:cargo-shear uv pipx:reuse
+      - run: just ci-repo
 
-  # `just lint` is a recipe-deps chain (fmt-check → clippy → typos →
-  # strict-code) that ran serially in a single job, so its wall time
-  # was the sum of the sub-recipes. Split into a matrix so each runs in
-  # parallel; the wall time collapses to whichever is slowest
-  # (clippy-strict in practice). CI runs `clippy-strict` (--all-targets,
-  # incl. bench / example targets) as the authoritative lint backstop —
-  # the per-commit hook runs only the lighter `clippy` so commits stay
-  # fast (see lefthook.yml). The dev image cache and the GHA-backed
-  # sccache make the per-job container start near-free after the first
-  # cache-miss run.
-  lint:
-    name: lint (${{ matrix.target }})
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+  corpus:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [fmt-check, clippy-strict, typos, strict-code]
+    env:
+      AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just ${{ matrix.target }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/load-release-inputs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_CORPUS_SHA }}
+          path: .corpus
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just cargo:cargo-nextest
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-corpus
+      - run: just ci-corpus
 
-  # Single Rust build-test-coverage gate. `just coverage` calls
-  # `cargo llvm-cov nextest run --workspace`, which compiles every test
-  # binary and runs it once — exactly what a separate `just build &&
-  # just test` pair would have done, plus the region-coverage report.
-  # Splitting them into two jobs duplicated the workspace cargo build
-  # for ~3 extra wall-clock minutes per push without adding signal.
-  coverage:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just coverage
-
-  perf-gate:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+  performance:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/setup-dev-image
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y valgrind
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-performance
       - env:
           BASELINE_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: just perf-gate
+        run: just ci-perf
 
-  # Playground (Solid + Vite + WASM frontend) typecheck + vitest. Closes the
-  # CI hole where a `playground/**`-only PR skipped the whole matrix (the
-  # `changes` filter had no `playground` output, and `ci-success` passes on
-  # skipped needs). Reuses the same Dockerized `just playground-ci`
-  # (`tsc --noEmit` + `vitest run`) that pre-push runs, via the dev image. ORs
-  # `rust` so a WASM-engine (`crates/aozora-wasm`) change revalidates the
-  # frontend too. (E2E is a separate job — see #335b.)
-  playground-checks:
-    needs: [changes, dev-image]
-    if: (needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
+  release:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just playground-ci
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: >-
+            rust@1.97.0 just cargo:cargo-semver-checks cargo:wasm-pack
+            node npm:binaryen
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-release
+      - run: just ci-release
 
-  # The in-process LSP (folded into aozora-cli, WS-2) carries integration
-  # suites (smoke / guardian / concurrent_lsp / shuttle / …). This job runs
-  # `-p aozora-cli --all-features` so they execute. Scoped to aozora-cli (not a
-  # blanket `--workspace --all-features`) so it does not flip on feature flags
-  # whose tests need external setup, e.g. aozora-extism's `host-smoke` wasm
-  # artifact (covered by `extism-build`).
-  test-internals:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+  fuzz-build:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just test-internals
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-fuzz
+      - run: just ci-fuzz
 
-  # PR-time rustdoc gate. `docs.yml` builds the API docs with
-  # `RUSTDOCFLAGS=-D warnings` at DEPLOY time, but the workspace denies
-  # all rustdoc lints, so a broken intra-doc link / bad codeblock would
-  # only surface AFTER merge — blocking the Pages deploy — rather than
-  # failing the PR. Run `just doc` here too so doc regressions are caught
-  # at review time. Mirrors the sibling afm repo's `doc` job.
-  doc:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just doc
-
-  # PR-time doctest gate. `coverage` runs `cargo llvm-cov nextest`, and
-  # nextest SKIPS doctests by design — so rustdoc / README code examples
-  # were never compiled in CI and could silently rot out of sync with the
-  # API. This job compiles + runs them: `test-doc` across the workspace
-  # plus `test-doc-all` for the umbrella crate's feature-gated examples.
-  doctest:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just test-doc
-      - run: just test-doc-all
-
-  audit:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [deny, audit, shear]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just ${{ matrix.target }}
-
-  # Phase L4 — drift gate. Every artefact this repo generates, and every fact
-  # it pins by hand, re-derived and compared against what is committed. The
-  # `drift-gate` recipe owns the list of checks; naming them here would be a
-  # second copy of it. Forgetting to regenerate fails the PR instead of
-  # landing silently.
-  #
-  # `docs` is in the condition because the gate reads prose as well as code:
-  # `xtask msrv check` enforces the version pins written in the READMEs and
-  # under `docs/contrib/`, so a docs-only change can break it.
-  drift-gate:
-    needs: [changes, dev-image]
-    if: (needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true') && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just drift-gate
-
-  # PR-scoped assertion-strength probe (ADR-0031 stage 3). Region coverage
-  # proves a changed line RAN; this proves a WRONG result on it would make a
-  # test FAIL. `cargo mutants --in-diff` mutates ONLY the source lines this
-  # PR's diff touches (cost-bounded — one bounded run regardless of repo size)
-  # and reports whether the suite catches each mutation. The weekly full sweep
-  # is the scheduled `mutants.yml`.
-  #
-  # BLOCKING (ADR-0031 stage 3, now that every product crate is armed): this
-  # job is one of `ci-success`'s `needs`, so a surviving mutant on a changed
-  # line fails the merge. `--in-diff` mutates only the PR's changed source
-  # lines (cost-bounded) and is skipped on non-Rust PRs (the `needs.changes` /
-  # `pull_request` guards below), so docs / CI-only PRs still merge.
-  #
-  # KNOWN BLIND SPOT: `--in-diff` runs at the virtual-workspace root on DEFAULT
-  # features and cannot pass `--features`, so aozora's feature-gated modules
-  # (`pandoc`, `fmt`, `json` — aozora's `default = []`) are
-  # cfg-OFF here: their mutant-killing tests do not even compile, so every
-  # mutant on a changed line inside them is a false "missed". They are
-  # `--exclude`d from the step below and covered by the strict featured
-  # `mutants.yml` sweep, which builds them with their features on. The
-  # core default-feature surface plus `aozora-ffi` / `aozora-extism` stay fully
-  # blocking here. Only runs on pull_request — `--in-diff` needs the PR base to
-  # diff against.
   mutants-in-diff:
-    needs: [changes, dev-image]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+    needs: qualify
+    if: github.event_name == 'pull_request' && needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        shard:
-          - "0/8"
-          - "1/8"
-          - "2/8"
-          - "3/8"
-          - "4/8"
-          - "5/8"
-          - "6/8"
-          - "7/8"
+        shard: ["0/8", "1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8"]
     steps:
-      # fetch-depth 0 so the PR base commit is in history for the diff.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/setup-dev-image
-      # Unified git diff of the PR's changes (base..head), written into the
-      # checkout so the dev container sees it at /workspace/pr.diff. `--in-diff`
-      # matches it against the code under test, not the tests, and tests only
-      # the mutants overlapping changed regions — so a docs/CI-only PR (no Rust
-      # source touched) yields zero mutants and passes trivially.
-      - name: Diff vs PR base
-        env:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just cargo:cargo-mutants
+      - env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
-          echo "diff is $(wc -l < pr.diff) lines"
-      # After the 18→3 collapse the LSP folded into aozora-cli with no feature
-      # gate (its mutant-killing test binaries run on default features), so the
-      # former `--features internals` special-case is gone: every changed line
-      # is judged on default features, as everywhere else in the workspace.
-      #
-      # `--exclude` (a cargo-mutants file glob, distinct from `--exclude-re`,
-      # which filters mutant *names*) drops aozora's feature-gated modules —
-      # cfg-off on default features here, so their mutants are false "missed"
-      # (see KNOWN BLIND SPOT above). It is a CLI-only flag layered over
-      # `mutants.toml`, so the weekly `mutants.yml` sweep (same recipe, no such
-      # flag, features on) still mutates these modules and stays authoritative.
-      - name: Mutate the changed lines
-        run: >-
+        run: git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
+      - run: >-
           just mutants --in-diff pr.diff
           --exclude 'crates/aozora/src/pandoc/**'
           --exclude 'crates/aozora/src/fmt.rs'
@@ -475,438 +231,173 @@ jobs:
           --shard '${{ matrix.shard }}'
           --sharding round-robin
 
-  # Phase O4 — WPT-style conformance suite. Runs every fixture
-  # through the parser and asserts every `must`-tier case passes.
-  conformance:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+  arm64:
+    needs: qualify
+    if: needs.qualify.outputs.release != 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ci-arm64
+      - run: just test-aarch64
+
+  msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just conformance
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: msrv
+        run: echo "version=$(awk -F'\"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        with:
+          key: ci-msrv
+      - env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
+      - env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: cargo check --locked -p aozora-extism --all-targets
 
-  # Phase O5 — strict whole-corpus gates over the pinned corpus revision.
-  corpus-audit-gate:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
+  wasm-test:
     runs-on: ubuntu-latest
-    env:
-      AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      # Source the corpus pin from the single source of truth
-      # (.github/release-inputs.env) rather than a local literal, so this
-      # checkout can never drift from the revision release-ready qualifies.
-      - uses: ./.github/actions/load-release-inputs
-      - name: Check out the conformance corpus
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
-          ref: ${{ env.AOZORA_CORPUS_SHA }}
-          path: .corpus
-          fetch-depth: 1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: corpus-audit-gate
-      - name: Strict parser audit
-        run: cargo run -p aozora-xtask -q -- corpus audit-gate --root "$AOZORA_CORPUS_ROOT"
-      - name: Round-trip fixed-point gate (#191)
-        run: cargo test -p aozora --release --test corpus_sweep -- --nocapture
-      - name: Document edit differential gate
-        run: cargo test -p aozora --release --test corpus_document_edits -- --nocapture
-      - name: Owned-allocation-pressure ratchet (#237 P0.2-real)
-        run: cargo run --release -p aozora-bench --example alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/alloc-baseline.json
-      - name: Strict render-leak gate
-        run: cargo run -p aozora-xtask -q -- corpus render-leak-gate --root "$AOZORA_CORPUS_ROOT"
-      - name: Strict render-correctness gate
-        run: cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root "$AOZORA_CORPUS_ROOT"
-      - name: Verbatim==sanitize gate (I5)
-        run: cargo run -p aozora-xtask -q -- corpus verbatim --root "$AOZORA_CORPUS_ROOT"
+          key: ci-wasm-test
+      - run: just test-wasm
 
-  # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
-  # `aozora pandoc input.txt --to html` against a tiny ruby
-  # fixture, and checks the resulting HTML carries the expected
-  # Span class. Catches regressions in either the
-  # `AozoraTree → pandoc_ast::Pandoc` projection or the JSON
-  # round-trip through `pandoc -f json -t html`.
   pandoc-smoke:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
         with:
-          key: pandoc-smoke
-      # Cache a version-pinned pandoc .deb instead of re-resolving it from apt
-      # every run. The upstream release is a near-static binary, so `dpkg -i`
-      # installs it directly (with an apt `-f` fallback should a lib be
-      # missing). Pinning also makes the smoke's pandoc deterministic.
-      - name: Cache pandoc .deb
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 pandoc
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          path: ~/pandoc-deb
-          key: pandoc-${{ runner.os }}-3.10
-      - name: Install pandoc
-        run: |
-          set -euxo pipefail
-          if [ ! -f ~/pandoc-deb/pandoc.deb ]; then
-            mkdir -p ~/pandoc-deb
-            curl -fsSL -o ~/pandoc-deb/pandoc.deb \
-              https://github.com/jgm/pandoc/releases/download/3.10/pandoc-3.10-1-amd64.deb
-          fi
-          sudo dpkg -i ~/pandoc-deb/pandoc.deb || sudo apt-get install -f -y
-      - name: Build aozora CLI
-        run: cargo build --release -p aozora-cli
-      - name: Pandoc round-trip smoke
-        shell: bash
-        run: |
-          set -euxo pipefail
+          key: ci-pandoc
+      - run: cargo build --locked --release -p aozora-cli
+      - run: |
           input='｜青梅《おうめ》'
           html=$(printf '%s' "$input" | ./target/release/aozora pandoc --to html)
-          echo "$html"
-          echo "$html" | grep -F 'aozora-ruby' > /dev/null
-          echo "$html" | grep -F '青梅' > /dev/null
-          echo "$html" | grep -F 'おうめ' > /dev/null
+          grep -F 'aozora-ruby' <<<"$html"
+          grep -F '青梅' <<<"$html"
+          grep -F 'おうめ' <<<"$html"
 
-  # C ABI smoke test — build aozora-ffi as a cdylib, link the C
-  # harness against it, run end-to-end. Validates that
-  # `cargo build -p aozora-ffi` produces a working library AND that
-  # the cbindgen build script generates `aozora.h` cleanly.
-  smoke-ffi:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: smoke-ffi
-      - run: bash crates/aozora-ffi/tests/c_smoke/run.sh
-
-  # Go SDK smoke — builds the Extism wasm and runs gofmt / go vet / go test
-  # against the Go binding (crates/aozora-go). CodeQL only *compiles* the Go
-  # binding; this is the ONLY CI job that executes `go test`, so a Go-SDK
-  # regression is caught here rather than at a contributor's local pre-push.
-  # Runs in the dev image (Go + Extism toolchain live there).
-  smoke-go:
-    needs: [changes, dev-image]
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: ./.github/actions/setup-dev-image
-      - run: just smoke-go
-
-  # WASM build verification — install wasm32 target + wasm-pack, run
-  # `wasm-pack build crates/aozora-wasm --target web --release`.
-  # Build-only: no npm publish.
-  wasm-build:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-          components: clippy
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: wasm
-      # `rust-toolchain.toml` pins the channel, so the
-      # `dtolnay/rust-toolchain` `targets:` parameter — which installs the
-      # std component into `stable` — does NOT add the target to the
-      # toolchain cargo actually selects here. clippy then fails with
-      # `E0463: can't find crate for core`. Add it explicitly for the
-      # pinned toolchain so the lookup is deterministic (mirrors wasm-test).
-      - name: Install wasm32-unknown-unknown target
-        run: rustup target add wasm32-unknown-unknown
-      # Lint the `#[cfg(target_arch = "wasm32")]` binding modules on their
-      # real target. The host `lint` job's clippy builds for the native
-      # target and never compiles them, so their lint debt is otherwise
-      # invisible to CI. Mirrors `just clippy-wasm`.
-      - name: clippy (wasm32-unknown-unknown)
-        run: cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
-        with:
-          tool: wasm-pack@0.15.0
-      - name: Build wasm-pack package
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm
-      # Cross-surface parity gate — wasm channel. Host mirror of
-      # `just parity-wasm`: build the `--target nodejs` package, then walk
-      # every render fixture through it asserting byte-identical output to
-      # the committed golden. Node is preinstalled on the runner.
-      - name: Build wasm-pack package (nodejs, parity walker)
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs
-      - name: Cross-surface parity walk (wasm)
-        run: node crates/aozora-wasm/tests/js/parity.mjs crates/aozora-wasm/pkg-nodejs
-
-  # Playground Playwright E2E (#335 D-5). Builds the WASM engine, installs bun
-  # deps + chromium, and drives a prod `vite preview` build through a real
-  # browser — the vitest suite stubs WASM, so this is the only true end-to-end
-  # WASM smoke. Host runner (NOT the dev image / `setup-dev-image`, which loads
-  # the Rust image) so `playwright install --with-deps` can apt-install the
-  # browser's system libraries. Gated on `playground || rust` (a WASM/render
-  # change can break the preview). Kept out of `ci-parallel` — see the Justfile
-  # `playground-e2e` note (shared-node_modules EEXIST race).
-  e2e:
-    needs: changes
-    if: (needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: e2e
-      - name: Install wasm32-unknown-unknown target
-        run: rustup target add wasm32-unknown-unknown
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
-        with:
-          tool: wasm-pack@0.15.0
-      - name: Build wasm-pack package
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: '1.3.14'
-      # Cache bun's global download store so `bun install` reuses tarballs
-      # across runs. Keyed on the lockfile so a dependency change refreshes it;
-      # `--frozen-lockfile` still enforces integrity against the resolved tree.
-      - name: Cache bun store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('playground/bun.lock') }}
-          restore-keys: |
-            bun-${{ runner.os }}-
-      - name: Install playground deps
-        working-directory: playground
-        run: bun install --frozen-lockfile
-      # Cache the Playwright browser binaries (~150MB chromium). Keyed on the
-      # lockfile, which pins the resolved @playwright/test version, so a bump
-      # busts the cache and never serves a stale browser. On a hit the install
-      # below skips the download and only re-applies the apt system libs.
-      - name: Cache Playwright browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('playground/bun.lock') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-      - name: Install Playwright chromium + system deps
-        working-directory: playground
-        run: bun x playwright install --with-deps chromium
-      - name: Run Playwright E2E
-        working-directory: playground
-        run: bun x playwright test
-
-  # VS Code extension: typecheck + lint + bundle + test. Previously
-  # ungated — the preview / HTML export had drifted to dead class names
-  # (`aozora_gaiji`, `aozora_tcy`) with no CI to catch it. ORs `rust`
-  # because the extension inlines the renderer's canonical stylesheet at
-  # build time (esbuild.mjs), so a change to that asset must re-check.
-  vscode:
-    needs: changes
-    if: (needs.changes.outputs.vscode == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: '1.3.14'
-      - name: Cache bun store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('editors/vscode/bun.lock') }}
-          restore-keys: |
-            bun-${{ runner.os }}-
-      - name: Install deps
-        working-directory: editors/vscode
-        run: bun install --frozen-lockfile
-      - name: Typecheck + lint
-        working-directory: editors/vscode
-        run: bun run check
-      - name: Bundle (inlines the canonical stylesheet)
-        working-directory: editors/vscode
-        run: bun run compile
-      - name: Test
-        working-directory: editors/vscode
-        run: bun run test
-
-  # aarch64 cross-compile + qemu-user execution of the SIMD scanner
-  # tests. The NEON Teddy kernel only builds on `target_arch =
-  # "aarch64"`; this job runs the proptest cross-validation against
-  # NaiveScanner inside qemu so a broken intrinsic mapping lights
-  # up on PR. Build-only on x86 hosts wouldn't catch correctness
-  # regressions.
-  cross-aarch64:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-      - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9  # v2.84.0
-        with:
-          tool: cross
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: cross-aarch64
-      - name: cross test (aarch64-unknown-linux-gnu, aozora)
-        run: cross test --target aarch64-unknown-linux-gnu -p aozora
-
-  # wasm32-wasip1 codegen check for the SIMD scanner. Build-only:
-  # `cargo test` is structurally impossible on wasm32 because the
-  # crate's proptest dev-dep pulls in `rusty-fork` / `wait-timeout`,
-  # both of which require Unix `fork()` / process-control APIs that
-  # wasm32-wasip1 lacks (verified locally: `wait-timeout` fails to
-  # compile on the target). The in-source `#[cfg(test)]` proptests
-  # run on the native host as part of the main `coverage` /
-  # `cross-aarch64` jobs, and the WasmKernel chunk-level proptest
-  # is structurally identical to the NeonKernel one that does run
-  # under qemu-user. The build check here catches regressions in
-  # WASM SIMD intrinsic mapping (`i8x16_swizzle`, `u8x16_shr`,
-  # `u8x16_shuffle` const-index encoding) at the codegen level.
-  wasm-test:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-      # The `targets:` parameter on `dtolnay/rust-toolchain` does
-      # install the rust-std component, but cargo occasionally
-      # cannot find it (`E0463: can't find crate for core`) — most
-      # commonly when a self-hosted runner has a pre-existing
-      # `~/.cargo` from a prior step that pinned a different
-      # toolchain. Running `rustup target add` explicitly after the
-      # toolchain action settles the lookup deterministically.
-      - name: Install wasm32-wasip1 target
-        run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: wasm-test
-      - name: cargo build --target wasm32-wasip1 (aozora)
-        run: cargo build --target wasm32-wasip1 -p aozora
-
-  # Python wheel build + functional test. abi3 (`cp311-abi3`) means ONE
-  # wheel per platform loads on every supported CPython; this job builds
-  # it and runs the pytest suite + `mypy --strict` under both the 3.11
-  # floor and the newest 3.14, proving the abi3 wheel imports and works
-  # across the range (not just compiles). `just smoke-py` is the local
-  # host-side mirror. No PyPI publish (see publish-pypi.yml).
-  python-wheel:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    name: python wheel (py${{ matrix.python }})
+  python:
+    name: python (py${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python: ["3.11", "3.14"]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: stable
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+          persist-credentials: false
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
-        with:
-          key: maturin-${{ matrix.python }}
-      # Reuse downloaded wheels across runs. pip's cache is content-addressed,
-      # so a stable key + restore-keys is safe even though the tool versions
-      # are constraint-ranged rather than pinned; the matrix arm keeps 3.11 and
-      # 3.14 separate.
-      - name: Cache pip wheels
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py${{ matrix.python }}-maturin-pytest-mypy
-          restore-keys: |
-            pip-${{ runner.os }}-py${{ matrix.python }}-
-      - name: Install maturin + test tooling
-        run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
-      - name: Build the abi3 wheel
-        # abi3-py311 makes maturin emit a cp311-abi3 wheel regardless of
-        # the runner's interpreter; debug profile keeps the gate fast
-        # (the release artifact is built in publish-pypi.yml).
-        run: maturin build -F extension-module --manifest-path crates/aozora-py/Cargo.toml -o dist
-      - name: Install the wheel
-        run: pip install --force-reinstall dist/*.whl
-      - name: Type-check the wrapper (mypy --strict)
-        run: mypy --strict crates/aozora-py/python
-      - name: Run the test suite
-        run: pytest crates/aozora-py/tests -q
+          cache: pip
+      - run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
+      - env:
+          AOZORA_PY_VENV: ${{ runner.temp }}/aozora-py-${{ matrix.python }}
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: bash scripts/smoke-py.sh
 
-  # Single required status check. Every ci.yml job feeds in; this gate
-  # passes iff none of them FAILED — a job that change-aware gating
-  # SKIPPED counts as fine. Branch protection requires only `ci-success`
-  # plus the CodeQL contexts, so a docs/playground/CI-only PR that skips
-  # the whole Rust matrix still merges, while any genuine failure (in a
-  # job that did run) blocks the merge.
+  commitlint:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: github:crate-ci/committed
+      - env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git rev-list --no-merges "$BASE_SHA..$HEAD_SHA" | xargs -rn1 committed
+
+  release-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')
+          if grep -qx "autorelease: pending" <<<"$labels"; then
+            grep -qx "release: approved" <<<"$labels" || {
+              echo "::error::add the 'release: approved' label to merge this Release PR"
+              exit 1
+            }
+          fi
+
   ci-success:
     name: ci-success
     if: always()
     needs:
-      - changes
-      - msrv
-      - commitlint
-      - reuse
-      - release-gate
-      - dev-image
-      - lint
-      - coverage
-      - perf-gate
-      - test-internals
-      - doc
-      - doctest
-      - audit
-      - drift-gate
-      - conformance
-      - corpus-audit-gate
-      - pandoc-smoke
-      - smoke-ffi
-      - smoke-go
-      - wasm-build
-      - cross-aarch64
-      - wasm-test
-      - python-wheel
-      - playground-checks
-      - e2e
-      - vscode
+      - qualify
+      - rust
+      - web
+      - bindings
+      - repo
+      - corpus
+      - performance
+      - release
+      - fuzz-build
       - mutants-in-diff
+      - arm64
+      - msrv
+      - wasm-test
+      - pandoc-smoke
+      - python
+      - commitlint
+      - release-gate
     runs-on: ubuntu-latest
     steps:
-      # Fail iff a job that actually RAN ended in failure/cancelled. Jobs
-      # that change-aware gating SKIPPED report "skipped" and are fine.
-      - name: Gate on CI job results
-        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+      - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
-          echo "::error::a required CI job failed or was cancelled — see the job list above"
+          echo "::error::a required CI job failed or was cancelled"
           exit 1
-      - name: All CI jobs passed or were skipped
-        run: echo "ci-success ✔"
+      - run: echo "ci-success"

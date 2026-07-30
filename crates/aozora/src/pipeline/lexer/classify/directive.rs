@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the static directive pattern set is non-empty and valid"
+)]
+
 //! Body-keyword directive classifier.
 //!
 //! The `［＃<keyword>］` body dispatcher: the `BODY_PATTERNS` table and

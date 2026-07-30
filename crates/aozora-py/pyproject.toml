@@ -2,7 +2,7 @@
 #
 # Local build:    maturin build --release -F extension-module
 # Local install:  maturin develop -F extension-module
-# Host smoke:     just smoke-py   (maturin is not in the dev image)
+# Host smoke:     just smoke-py   (requires maturin in the active Python environment)
 # CI:             .github/workflows/publish-pypi.yml (workflow_dispatch)
 #
 # Distribution name `aozora`; users `pip install aozora` then

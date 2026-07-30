@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the worker count is clamped to a non-zero value"
+)]
+
 //! Parallel I/O + decode helpers.
 //!
 //! The default [`crate::CorpusSource::iter`] impl on [`crate::FilesystemCorpus`]

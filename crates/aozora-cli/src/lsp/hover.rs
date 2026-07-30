@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the hover branch establishes the resolved gaiji value"
+)]
+
 //! `textDocument/hover` — gaiji (外字) reference resolution.
 //!
 //! When the cursor sits inside a `※［＃description、mencode］` (or the

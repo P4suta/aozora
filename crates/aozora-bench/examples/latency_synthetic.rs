@@ -8,7 +8,7 @@
 //! distribution lives in `examples/latency_histogram.rs`.
 //!
 //! ```text
-//! just latency   # docker compose run --rm dev cargo run --release -p aozora-bench --example latency_synthetic
+//! just latency
 //! ```
 
 use std::hint::black_box;

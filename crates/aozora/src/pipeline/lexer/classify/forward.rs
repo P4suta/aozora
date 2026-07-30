@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "branch guards and the sanitize-stage size cap establish these invariants"
+)]
+
 //! Forward-reference recognisers.
 //!
 //! The `recognize_annotation` cascade and the per-construct

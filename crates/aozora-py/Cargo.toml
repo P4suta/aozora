@@ -42,7 +42,7 @@ aozora = { workspace = true, features = ["json"] }
 # 3.14 and every future 3.x — no per-version build matrix. abi3 also
 # lets pyo3's build script compile WITHOUT discovering a Python
 # interpreter, so `cargo check -p aozora-py -F extension-module`
-# works in the Python-less dev image. (Free-threaded `3.13t`/`3.14t`
+# works without a Python installation. (Free-threaded `3.13t`/`3.14t`
 # are NOT abi3-compatible — they need a separate non-abi3 build; see
 # publish-pypi.yml.)
 [dependencies.pyo3]

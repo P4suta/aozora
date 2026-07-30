@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "the static Prometheus metric definitions are valid"
+)]
+
 //! Per-document observability metrics.
 //!
 //! # Why this exists

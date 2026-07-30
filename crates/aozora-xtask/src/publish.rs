@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "publish checks operate on validated workspace manifest structures"
+)]
+
 //! crates.io publish-path ledger drift gate.
 //!
 //! Cross-checks the workspace's publishable members against

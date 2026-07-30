@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "store constructors and range ownership establish pool bounds"
+)]
+
 //! Flat backing store for the owned AST.
 //!
 //! Two variable-length payloads — `NonEmpty<Content>` runs and `[Segment]`

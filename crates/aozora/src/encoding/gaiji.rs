@@ -1,3 +1,8 @@
+#![expect(
+    clippy::expect_used,
+    reason = "matched gaiji delimiters establish the checked source offsets"
+)]
+
 //! Gaiji (外字) resolution — mapping `※［＃…、mencode］` references
 //! to real Unicode characters.
 //!

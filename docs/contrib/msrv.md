@@ -39,12 +39,10 @@ needs. A dev-only test feature does not set a public contract.
 Ask clippy, without touching the checked-in config:
 
 ```sh
-docker compose run --rm dev bash -c '
-  mkdir -p /tmp/msrv-probe
-  sed "s/^msrv = .*/msrv = \"1.88.0\"/" clippy.toml > /tmp/msrv-probe/clippy.toml
-  CLIPPY_CONF_DIR=/tmp/msrv-probe cargo clippy \
-    --workspace --all-targets --all-features --exclude aozora-extism
-'
+mkdir -p /tmp/msrv-probe
+sed 's/^msrv = .*/msrv = "1.88.0"/' clippy.toml > /tmp/msrv-probe/clippy.toml
+CLIPPY_CONF_DIR=/tmp/msrv-probe cargo clippy \
+  --workspace --all-targets --all-features --exclude aozora-extism
 ```
 
 `clippy::incompatible_msrv` then names every std API newer than that
