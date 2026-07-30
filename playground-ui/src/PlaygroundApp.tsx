@@ -1671,21 +1671,21 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
           }`}
         >
           <div
-            className={`${desktopPaneStyle} ${
+            className={
               !forceSplit && preferences.layout === 'preview'
                 ? hiddenPaneStyle
-                : ''
-            }`}
+                : desktopPaneStyle
+            }
             hidden={!forceSplit && preferences.layout === 'preview'}
           >
             {editorPane}
           </div>
           <div
-            className={`${desktopPaneStyle} ${
+            className={
               !forceSplit && preferences.layout === 'editor'
                 ? hiddenPaneStyle
-                : ''
-            }`}
+                : desktopPaneStyle
+            }
             hidden={!forceSplit && preferences.layout === 'editor'}
           >
             {previewPane}
