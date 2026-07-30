@@ -219,7 +219,8 @@ describe('shared PlaygroundApp', () => {
       expect(screen.getByText('# Welcome')).toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole('radio', { name: 'Preview only' }));
-    expect(screen.queryByLabelText('Fake editor')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Fake editor')).not.toBeVisible();
+    expect(harness.destroyEditor).not.toHaveBeenCalled();
 
     fireEvent.keyDown(window, {
       key: 'P',
@@ -232,7 +233,7 @@ describe('shared PlaygroundApp', () => {
     });
     expect(palette).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Wrap/ }));
-    await screen.findByLabelText('Fake editor');
+    expect(screen.getByLabelText('Fake editor')).toBeVisible();
     await waitFor(() => {
       expect(harness.runCommand).toHaveBeenCalledWith('wrap');
       expect(harness.focus).toHaveBeenCalled();
@@ -291,9 +292,9 @@ describe('shared PlaygroundApp', () => {
       name: /New warning/,
     });
     fireEvent.click(screen.getByRole('radio', { name: 'Preview only' }));
-    expect(screen.queryByLabelText('Fake editor')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Fake editor')).not.toBeVisible();
     fireEvent.click(warning);
-    await screen.findByLabelText('Fake editor');
+    expect(screen.getByLabelText('Fake editor')).toBeVisible();
     await waitFor(() => {
       expect(harness.revealRange).toHaveBeenCalledWith({ start: 0, end: 7 });
       expect(harness.focus).toHaveBeenCalled();

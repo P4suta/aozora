@@ -166,6 +166,17 @@ const singlePaneStyle = style({
   gridTemplateColumns: 'minmax(0, 1fr)',
 });
 
+const desktopPaneStyle = style({
+  display: 'flex',
+  minHeight: 0,
+  minWidth: 0,
+  overflow: 'hidden',
+});
+
+const hiddenPaneStyle = style({
+  display: 'none',
+});
+
 const paneStyle = style({
   display: 'flex',
   flexDirection: 'column',
@@ -1300,6 +1311,11 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         setPendingJump(range);
         return;
       }
+      if (preferences.layout === 'preview') {
+        setPreference('layout', 'split');
+        setPendingJump(range);
+        return;
+      }
       if (editorController) {
         editorController.revealRange(range);
         editorController.focus();
@@ -1308,17 +1324,22 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         setPendingJump(range);
       }
     },
-    [editorController, isMobile, setPreference],
+    [editorController, isMobile, preferences.layout, setPreference],
   );
 
   const runCommand = useCallback(
     (id: string) => {
       setDialog(null);
       if (isMobile) setMobilePane('editor');
-      if (!editorController && !isMobile) setPreference('layout', 'split');
+      if (
+        !isMobile &&
+        (!editorController || preferences.layout === 'preview')
+      ) {
+        setPreference('layout', 'split');
+      }
       setPendingCommand(id);
     },
-    [editorController, isMobile, setPreference],
+    [editorController, isMobile, preferences.layout, setPreference],
   );
 
   const loadSample = useCallback(
@@ -1600,8 +1621,26 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
               : singlePaneStyle
           }`}
         >
-          {(forceSplit || preferences.layout !== 'preview') && editorPane}
-          {(forceSplit || preferences.layout !== 'editor') && previewPane}
+          <div
+            className={`${desktopPaneStyle} ${
+              !forceSplit && preferences.layout === 'preview'
+                ? hiddenPaneStyle
+                : ''
+            }`}
+            hidden={!forceSplit && preferences.layout === 'preview'}
+          >
+            {editorPane}
+          </div>
+          <div
+            className={`${desktopPaneStyle} ${
+              !forceSplit && preferences.layout === 'editor'
+                ? hiddenPaneStyle
+                : ''
+            }`}
+            hidden={!forceSplit && preferences.layout === 'editor'}
+          >
+            {previewPane}
+          </div>
         </div>
       </div>
     );
