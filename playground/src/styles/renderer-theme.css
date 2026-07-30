@@ -1,0 +1,8 @@
+/*
+ * The renderer owns these content colors. Spectrum owns the surrounding UI,
+ * while this bridge keeps rendered notation readable in the saved dark theme.
+ */
+html[data-color-scheme='dark'] .aozora-notation {
+  --aozora-accent: #6caee8;
+  --aozora-accent-bg: rgb(108 174 232 / 12%);
+}

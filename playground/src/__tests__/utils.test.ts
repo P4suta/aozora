@@ -9,25 +9,25 @@ describe('lowerBoundByStart', () => {
     { span: { start: 20 } },
   ];
 
-  it('空配列では 0 を返す', () => {
+  it('returns zero for an empty array', () => {
     expect(lowerBoundByStart([], 5)).toBe(0);
   });
 
-  it('全要素より小さい値では 0', () => {
+  it('returns zero before every entry', () => {
     expect(lowerBoundByStart(entries, -1)).toBe(0);
   });
 
-  it('完全一致では同じ start のインデックス', () => {
+  it('returns the matching start index for an exact match', () => {
     expect(lowerBoundByStart(entries, 5)).toBe(1);
     expect(lowerBoundByStart(entries, 10)).toBe(2);
   });
 
-  it('間の値では「< byte」を満たす最後の次', () => {
+  it('returns the index after the final entry below the byte offset', () => {
     expect(lowerBoundByStart(entries, 7)).toBe(2); // 5 < 7 < 10
     expect(lowerBoundByStart(entries, 15)).toBe(3); // 10 < 15 < 20
   });
 
-  it('全要素より大きい値では length', () => {
+  it('returns the array length after every entry', () => {
     expect(lowerBoundByStart(entries, 100)).toBe(4);
   });
 });

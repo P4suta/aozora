@@ -1,0 +1,45 @@
+@layer reset, playground, _; /* stylelint-disable-line layer-name-pattern -- Spectrum 2 owns the "_" layer name. */
+
+@layer reset {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+}
+
+@layer playground {
+  .playground-editor-host {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .playground-editor-host .cm-editor,
+  .playground-editor-host .cm-scroller {
+    height: 100%;
+  }
+
+  .playground-editor-host .cm-scroller {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .playground-preview-host {
+    box-sizing: border-box;
+    height: 100%;
+    overflow: auto;
+    padding: 24px;
+  }
+
+  .playground-preview-host[data-writing-direction='vertical'] {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .playground-preview-host .aozora-notation {
+    max-width: 100%;
+  }
+}

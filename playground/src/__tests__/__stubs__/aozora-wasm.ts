@@ -1,41 +1,70 @@
-/**
- * Vitest 用の aozora-wasm スタブ。テストでは Document クラスや
- * `slugs` を実際には呼ばない（純粋関数のみテスト対象）が、
- * 解決対象の import を成功させるためにダミーを export する。
- */
-
 export class Document {
-  constructor(_source: string) {
-    /* no-op */
+  readonly #source: string;
+
+  constructor(source: string) {
+    this.#source = source;
   }
+
   toHtml(): string {
-    return '';
+    const escaped = this.#source
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
+    return `<p>${escaped}</p>`;
   }
+
   toSource(): string {
-    return '';
+    return this.#source;
   }
+
   edit(_edits: unknown[]): void {}
-  nodes(): unknown[] {
+
+  nodes(): Array<{ kind: string; span: { start: number; end: number } }> {
     return [];
   }
-  diagnostics(): unknown[] {
-    return [];
+
+  diagnostics(): Array<{
+    kind: string;
+    severity: 'error';
+    source: 'source';
+    span: { start: number; end: number };
+  }> {
+    const offset = new TextEncoder().encode(
+      this.#source.slice(0, this.#source.indexOf('》')),
+    ).length;
+    return this.#source.includes('》')
+      ? [
+          {
+            kind: 'unmatched_close',
+            severity: 'error',
+            source: 'source',
+            span: { start: offset, end: offset + 3 },
+          },
+        ]
+      : [];
   }
+
   pairs(): unknown[] {
     return [];
   }
+
+  containerPairs(): unknown[] {
+    return [];
+  }
+
   gaiji(): unknown[] {
     return [];
   }
-  gaijiAt(_byte_offset: number): undefined {
+
+  gaijiAt(_byteOffset: number): undefined {
     return undefined;
   }
+
   sourceByteLen(): number {
-    return 0;
+    return new TextEncoder().encode(this.#source).length;
   }
-  free(): void {
-    /* no-op */
-  }
+
+  free(): void {}
 }
 
 export function slugs(): unknown[] {
@@ -48,6 +77,4 @@ export function version(): string {
 
 export function prewarm(): void {}
 
-export default async function init(): Promise<void> {
-  /* no-op */
-}
+export default async function init(): Promise<void> {}

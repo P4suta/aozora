@@ -1,12 +1,12 @@
-import { linter, lintGutter, type Diagnostic } from '@codemirror/lint';
+import { type Diagnostic, linter, lintGutter } from '@codemirror/lint';
 import type { EditorView } from '@codemirror/view';
+import { t, tf } from '../i18n';
 import {
   byteToUtf16,
-  parserStateField,
   type DiagnosticEntry,
   type ParserState,
+  parserStateField,
 } from './parserState';
-import { t, tf } from '../i18n';
 
 /**
  * Map raw diagnostic `kind` from aozora-wasm to a CM6 severity +
@@ -17,7 +17,10 @@ import { t, tf } from '../i18n';
  * `crates/aozora-cli/src/lsp/diagnostics.rs` but tuned for casual
  * playground use rather than typesetter precision.
  */
-function classify(entry: DiagnosticEntry): { severity: Diagnostic['severity']; message: string } {
+function classify(entry: DiagnosticEntry): {
+  severity: Diagnostic['severity'];
+  message: string;
+} {
   switch (entry.kind) {
     case 'unclosed_bracket':
       return { severity: 'error', message: t('lintUnclosed') };

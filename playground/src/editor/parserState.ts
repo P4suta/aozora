@@ -1,5 +1,5 @@
-import { StateField } from '@codemirror/state';
 import type { EditorState, Transaction } from '@codemirror/state';
+import { StateField } from '@codemirror/state';
 import type {
   Diagnostic,
   GaijiResolution,
@@ -17,19 +17,6 @@ export interface ContainerFold {
   closeStart: number;
 }
 
-/** A heading entry surfaced to the outline panel. */
-export interface HeadingEntry {
-  /** UTF-16 code unit offset of the start of the heading span. */
-  from: number;
-  /** UTF-16 code unit offset of the end of the heading span. */
-  to: number;
-  /** Visible text of the heading (sliced from source). */
-  text: string;
-  /** Heading rank from the 大/中/小見出し hint (1/2/3); 1 when no hint.
-   * Annotation-driven, not container-nesting depth. */
-  level: number;
-}
-
 export type NodeEntry = Node;
 export type DiagnosticEntry = Diagnostic;
 export type PairEntry = Pair;
@@ -38,24 +25,16 @@ export type GaijiResolutionEntry = GaijiResolution;
 export interface ParserState {
   doc: Document | null;
   source: string;
-  html: string;
-  serialized: string;
-  /** Raw wire-format JSON kept for the nodes side tab. */
-  nodesJson: string;
   nodes: NodeEntry[];
   diagnostics: DiagnosticEntry[];
   pairs: PairEntry[];
   gaijiResolutions: GaijiResolutionEntry[];
-  parseDurationMs: number;
-  byteLen: number;
   /** index = UTF-16 code unit offset, value = UTF-8 byte offset. Length = source.length + 1. */
   u2b: Uint32Array;
   /** index = UTF-8 byte offset, value = UTF-16 code unit offset. Length = byteLen + 1. */
   b2u: Uint32Array;
   /** Container open/close fold ranges, pre-computed once per parse. */
   containerFolds: ContainerFold[];
-  /** Heading entries for the outline panel, in source order. */
-  headings: HeadingEntry[];
 }
 
 /**
@@ -100,7 +79,11 @@ export function buildOffsetTables(source: string): {
   const b2u = new Uint32Array(byte + 1);
   let utf16 = 0;
   for (let b = 0; b <= byte; b++) {
-    while (utf16 < len && u2b[utf16 + 1] <= b && (utf16 + 1 < len || u2b[utf16 + 1] === b)) {
+    while (
+      utf16 < len &&
+      u2b[utf16 + 1] <= b &&
+      (utf16 + 1 < len || u2b[utf16 + 1] === b)
+    ) {
       utf16++;
     }
     b2u[b] = utf16;
@@ -108,29 +91,12 @@ export function buildOffsetTables(source: string): {
   return { u2b, b2u, byteLen: byte };
 }
 
-export interface ParseCallbacks {
-  /** Called after every successful parse (source change). */
-  onParse?: (payload: ParserState) => void;
-}
-
-let callbacks: ParseCallbacks = {};
-
-export function setParseCallbacks(cb: ParseCallbacks): void {
-  callbacks = cb;
-}
-
-interface SecondaryData {
-  containerFolds: ContainerFold[];
-  headings: HeadingEntry[];
-}
-
-function deriveSecondaryData(
+function deriveContainerFolds(
   source: string,
   nodes: NodeEntry[],
   b2u: Uint32Array,
-): SecondaryData {
+): ContainerFold[] {
   const containerFolds: ContainerFold[] = [];
-  const headings: HeadingEntry[] = [];
   const stack: NodeEntry[] = [];
 
   const utf16At = (b: number): number => {
@@ -138,21 +104,6 @@ function deriveSecondaryData(
     if (b >= b2u.length) return b2u[b2u.length - 1] ?? 0;
     return b2u[b] ?? 0;
   };
-
-  /**
-   * `headingHint` 注記から見出しレベルを推定する。
-   * 大見出し → 1、中見出し → 2、小見出し → 3、その他 → 1。
-   * `headingHint` は `aozoraHeading` の前（block 形式）か後（forward-reference 形式）に
-   * 出現するので、両方のケースで「直近の aozoraHeading」に level を適用する。
-   */
-  function levelFromHint(hintText: string): number {
-    if (hintText.includes('大見出し')) return 1;
-    if (hintText.includes('中見出し')) return 2;
-    if (hintText.includes('小見出し')) return 3;
-    return 1;
-  }
-
-  let pendingLevel: number | null = null;
 
   for (const entry of nodes) {
     if (entry.kind === 'containerOpen') {
@@ -168,31 +119,14 @@ function deriveSecondaryData(
       const nlIdx = source.indexOf('\n', openEndU16);
       const lineEnd = nlIdx === -1 ? openEndU16 : nlIdx;
       if (closeStartU16 > lineEnd) {
-        containerFolds.push({ openLineEnd: lineEnd, closeStart: closeStartU16 });
+        containerFolds.push({
+          openLineEnd: lineEnd,
+          closeStart: closeStartU16,
+        });
       }
-    } else if (entry.kind === 'headingHint') {
-      const from = utf16At(entry.span.start);
-      const to = utf16At(entry.span.end);
-      const text = source.slice(from, to);
-      const lvl = levelFromHint(text);
-      // 直前の aozoraHeading にも level を遡及適用（forward-reference 形式）
-      const prev = headings[headings.length - 1];
-      if (prev && prev.level === 1) {
-        prev.level = lvl;
-      }
-      // 次に来る aozoraHeading 用にも pending（block 形式）
-      pendingLevel = lvl;
-    } else if (entry.kind === 'heading') {
-      const from = utf16At(entry.span.start);
-      const to = utf16At(entry.span.end);
-      const text = source.slice(from, to).trim();
-      if (text.length > 0) {
-        headings.push({ from, to, text, level: pendingLevel ?? 1 });
-      }
-      pendingLevel = null;
     }
   }
-  return { containerFolds, headings };
+  return containerFolds;
 }
 
 function computeParserState(
@@ -200,7 +134,6 @@ function computeParserState(
   source: string,
   edits: WasmTextEdit[] | null,
 ): ParserState {
-  const t0 = performance.now();
   let doc: Document;
   if (prev?.doc && edits) {
     doc = prev.doc;
@@ -214,37 +147,23 @@ function computeParserState(
     prev?.doc?.free();
     doc = new Document(source);
   }
-  const html = doc.toHtml();
-  const parseDurationMs = performance.now() - t0;
-  const serialized = doc.toSource();
   const nodes = Array.from(doc.nodes());
-  const nodesJson = JSON.stringify(nodes, null, 2);
   const diagnostics = Array.from(doc.diagnostics());
   const pairs = Array.from(doc.pairs());
   const gaijiResolutions = Array.from(doc.gaiji());
-  const byteLen = doc.sourceByteLen();
   const tables = buildOffsetTables(source);
 
-  const secondary = deriveSecondaryData(source, nodes, tables.b2u);
-  const ps: ParserState = {
+  return {
     doc,
     source,
-    html,
-    serialized,
-    nodesJson,
     nodes,
     diagnostics,
     pairs,
     gaijiResolutions,
-    parseDurationMs,
-    byteLen,
     u2b: tables.u2b,
     b2u: tables.b2u,
-    containerFolds: secondary.containerFolds,
-    headings: secondary.headings,
+    containerFolds: deriveContainerFolds(source, nodes, tables.b2u),
   };
-  callbacks.onParse?.(ps);
-  return ps;
 }
 
 /**

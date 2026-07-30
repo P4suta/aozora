@@ -1,33 +1,12 @@
-import { defineConfig, type Plugin } from 'vite';
-import solidPlugin from 'vite-plugin-solid';
 import { fileURLToPath } from 'node:url';
+import optimizeLocales from '@react-aria/optimize-locales-plugin';
+import react from '@vitejs/plugin-react';
+import macros from 'unplugin-parcel-macros';
+import type { Plugin } from 'vite';
+import { defineConfig } from 'vitest/config';
 
-// Strict Content-Security-Policy for the production bundle. This is
-// defense-in-depth layered *on top of* the renderer's escaping: every
-// preview is mounted via `innerHTML` (HtmlPreview.tsx), but
-// the aozora renderer already entity-escapes all text and never emits
-// `<script>` / `on*=` / external `href`, so the CSP is a belt to the
-// renderer's braces — a second wall if a future renderer regression ever
-// let active markup through.
-//
-// Directive rationale (kept as tight as the app allows):
-//   default-src 'self'            — same-origin baseline for everything.
-//   script-src 'self'             — our bundle only…
-//     'wasm-unsafe-eval'          — …plus WebAssembly.instantiate for the
-//                                   parser wasm (no JS eval / unsafe-eval).
-//   style-src 'self'              — hashed CSS assets…
-//     'unsafe-inline'             — …plus the runtime <style> tags Solid
-//                                   and CodeMirror inject (no nonce path).
-//   img-src 'self' data:          — favicon + inline data: URIs.
-//   font-src 'self'               — no external/CDN fonts are loaded.
-//   connect-src 'self'            — covers the same-origin fetch() that
-//                                   instantiateStreaming() uses to pull
-//                                   `aozora_wasm_bg.wasm` (no data:/blob:).
-//   object-src 'none'             — no <object>/<embed>/<applet>.
-//   base-uri 'self'               — block <base> tag hijacking.
-//   frame-ancestors 'none'        — disallow embedding (clickjacking).
-// GitHub-issue navigations are <a target="_blank"> link clicks, which are
-// navigations (not subresource loads) and need no allowlist here.
+// frame-ancestors is response-header-only; including it in a meta policy would
+// claim clickjacking protection that GitHub Pages cannot actually enforce.
 const PROD_CSP = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
@@ -37,13 +16,8 @@ const PROD_CSP = [
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
-  "frame-ancestors 'none'",
 ].join('; ');
 
-// Inject the Content-Security-Policy meta tag only into the production
-// build. In dev mode Vite needs an HMR WebSocket back to localhost which
-// a strict `connect-src 'self'` would block; a `<meta>` CSP cannot be
-// relaxed per-environment, so it is emitted at build time only.
 function cspInProd(): Plugin {
   return {
     name: 'csp-in-prod',
@@ -60,31 +34,208 @@ function cspInProd(): Plugin {
   };
 }
 
-export default defineConfig({
-  base: '/aozora/playground/',
-  plugins: [solidPlugin(), cspInProd()],
+const OFFLINE_SPECTRUM_FONTS = '\0offline-spectrum-fonts';
+
+function offlineSpectrumFonts(): Plugin {
+  return {
+    name: 'offline-spectrum-fonts',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      if (
+        importer?.includes('@react-spectrum/s2/') &&
+        /\/Provider\.(?:mjs|tsx)$/.test(importer) &&
+        /^\.\/Fonts(?:\.mjs)?$/.test(source)
+      ) {
+        return OFFLINE_SPECTRUM_FONTS;
+      }
+      return null;
+    },
+    load(id) {
+      return id === OFFLINE_SPECTRUM_FONTS
+        ? 'export function Fonts() { return null; }'
+        : null;
+    },
+  };
+}
+
+type MacroPlugin = Plugin & {
+  transformInclude?: (id: string) => boolean;
+};
+
+function spectrumMacros(): Plugin {
+  const plugin = macros.vite() as MacroPlugin;
+  plugin.transformInclude = (id) =>
+    /\.(?:js|jsx|ts|tsx)$/.test(id) &&
+    !(id.includes('/playground-ui/src/') && !id.includes('/node_modules/')) &&
+    (!id.includes('/node_modules/') ||
+      id.includes('/node_modules/@aozora/playground-ui/'));
+  return plugin;
+}
+
+const root = new URL('.', import.meta.url);
+const wasm = new URL('../crates/aozora-wasm/pkg/aozora_wasm.js', root);
+const wasmStub = new URL(
+  './src/__tests__/__stubs__/aozora-wasm.ts',
+  import.meta.url,
+);
+const spectrumStyleStub = new URL(
+  './src/__tests__/__stubs__/s2-style.ts',
+  import.meta.url,
+);
+
+export default defineConfig(({ command, isPreview, mode }) => ({
+  base: command === 'build' || isPreview ? '/aozora/playground/' : '/',
+  plugins: [
+    offlineSpectrumFonts(),
+    spectrumMacros(),
+    react(),
+    {
+      ...optimizeLocales.vite({ locales: ['en', 'ja'] }),
+      enforce: 'pre',
+    },
+    cspInProd(),
+  ],
+  resolve: {
+    dedupe: [
+      '@react-spectrum/s2',
+      '@testing-library/react',
+      '@testing-library/user-event',
+      'lz-string',
+      'react',
+      'react-dom',
+    ],
+    preserveSymlinks: true,
+    alias: [
+      ...(mode === 'test'
+        ? [
+            {
+              find: /^@react-spectrum\/s2\/style$/,
+              replacement: fileURLToPath(spectrumStyleStub),
+            },
+            {
+              find: /^@aozora\/playground-ui$/,
+              replacement: fileURLToPath(
+                new URL('../playground-ui/src/index.ts', root),
+              ),
+            },
+            {
+              find: /^@aozora\/playground-ui\/storage$/,
+              replacement: fileURLToPath(
+                new URL('../playground-ui/src/storage.ts', root),
+              ),
+            },
+            {
+              find: /^@aozora\/playground-ui\/testing$/,
+              replacement: fileURLToPath(
+                new URL(
+                  '../playground-ui/src/testing/adapterContract.ts',
+                  root,
+                ),
+              ),
+            },
+          ]
+        : []),
+      {
+        find: /^lz-string$/,
+        replacement: fileURLToPath(
+          new URL('./node_modules/lz-string/libs/lz-string.js', root),
+        ),
+      },
+      {
+        find: /^aozora-wasm$/,
+        replacement: fileURLToPath(mode === 'test' ? wasmStub : wasm),
+      },
+    ],
+  },
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
+    fs: { allow: ['..'] },
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
+  },
   build: {
+    target: ['es2022', 'safari16.2'],
+    cssTarget: 'safari16.2',
+    sourcemap: false,
+    assetsInlineLimit: 0,
+    cssCodeSplit: false,
+    cssMinify: 'lightningcss',
     rollupOptions: {
-      // Two SPA entries, one per HTML file (no client router): the editor
-      // playground (index.html → src/main.tsx) and the notation gallery
-      // (gallery.html → src/gallery.tsx). Each is a Rollup input so `vite
-      // build` emits both pages under the `base` path.
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         gallery: fileURLToPath(new URL('./gallery.html', import.meta.url)),
       },
+      output: {
+        manualChunks(id) {
+          if (
+            /macro-(.*)\.css$/.test(id) ||
+            /@react-spectrum\/s2\/.*\.css$/.test(id)
+          ) {
+            return 's2-styles';
+          }
+          if (
+            id.includes('node_modules/@codemirror/') ||
+            id.includes('node_modules/@lezer/') ||
+            id.includes('node_modules/codemirror/')
+          ) {
+            return 'vendor-codemirror';
+          }
+          if (
+            id.includes('node_modules/react/') ||
+            id.includes('node_modules/react-dom/')
+          ) {
+            return 'vendor-react';
+          }
+          if (id.includes('node_modules/lz-string/')) {
+            return 'vendor-lz-string';
+          }
+          return undefined;
+        },
+      },
     },
   },
-  resolve: {
-    alias: {
-      'aozora-wasm': fileURLToPath(
-        new URL('../crates/aozora-wasm/pkg/aozora_wasm.js', import.meta.url),
-      ),
+  test: {
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      '../playground-ui/src/**/*.test.{ts,tsx}',
+    ],
+    exclude: [],
+    environment: 'happy-dom',
+    setupFiles: ['src/test-setup.ts'],
+    server: {
+      deps: {
+        inline: [/@react-spectrum\/s2/],
+      },
+    },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      allowExternal: true,
+      exclude: [],
+      include: [
+        'src/adapter-engine.ts',
+        'src/adapter.ts',
+        'src/editor-controller.ts',
+        'src/gallery-fixtures.ts',
+        'src/editor/fuzzy.ts',
+        'src/editor/parserState.ts',
+        'src/editor/utils.ts',
+        '**/playground-ui/src/catalog.ts',
+        '**/playground-ui/src/PlaygroundApp.tsx',
+        '**/playground-ui/src/share.ts',
+        '**/playground-ui/src/storage.ts',
+      ],
+      thresholds: {
+        statements: 85,
+        branches: 75,
+        functions: 90,
+        lines: 85,
+      },
     },
   },
-  server: {
-    fs: {
-      allow: ['..'],
-    },
-  },
-});
+}));

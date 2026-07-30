@@ -1,16 +1,16 @@
 import { RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
-  EditorView,
-  ViewPlugin,
   type DecorationSet,
+  type EditorView,
+  ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
 import {
   byteToUtf16,
+  type ParserState,
   parserStateField,
   utf16ToByte,
-  type ParserState,
 } from './parserState';
 import { lowerBoundByStart } from './utils';
 

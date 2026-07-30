@@ -1,36 +1,40 @@
-import { Annotation, Compartment, EditorState } from '@codemirror/state';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
+import { searchKeymap } from '@codemirror/search';
 import {
-  EditorView,
-  keymap,
+  Annotation,
+  Compartment,
+  EditorState,
+  type Extension,
+} from '@codemirror/state';
+import {
   drawSelection,
+  EditorView,
   highlightActiveLine,
   highlightSpecialChars,
+  keymap,
   lineNumbers,
   placeholder,
   rectangularSelection,
 } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
-import { searchKeymap } from '@codemirror/search';
-import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { parserStateField, setParseCallbacks, type ParserState } from './parserState';
-import { aozoraDecorations } from './decorations';
-import { aozoraTheme } from './theme';
-import { aozoraLinter, aozoraLintGutter } from './linter';
-import { aozoraCompletion } from './completion';
-import { aozoraHover } from './hover';
-import { linkedRangesFilter } from './linkedRanges';
-import { aozoraFolding } from './folding';
-import { halfToFullWidthFilter } from './onType';
-import { aozoraWrapKeymap } from './wrapCommands';
-import { aozoraInlayHints } from './inlayHints';
 import { t } from '../i18n';
+import { aozoraCompletion } from './completion';
+import { aozoraDecorations } from './decorations';
+import { aozoraFolding } from './folding';
+import { aozoraHover } from './hover';
+import { aozoraInlayHints } from './inlayHints';
+import { linkedRangesFilter } from './linkedRanges';
+import { aozoraLinter, aozoraLintGutter } from './linter';
+import { halfToFullWidthFilter } from './onType';
+import { parserStateField } from './parserState';
+import { aozoraTheme } from './theme';
+import { aozoraWrapKeymap } from './wrapCommands';
 
 export interface AozoraEditorOptions {
   parent: HTMLElement;
   initialValue: string;
   onChange?: (next: string) => void;
-  onParse?: (payload: ParserState) => void;
   /** Open the command palette (bound to Mod-Shift-p). */
   onOpenPalette?: () => void;
 }
@@ -43,6 +47,7 @@ export interface AozoraEditorOptions {
  */
 export const halfWidthCompartment = new Compartment();
 export const inlayHintsCompartment = new Compartment();
+export const engineFeaturesCompartment = new Compartment();
 
 /**
  * Tag transactions that come from `Editor.tsx`'s external setValue
@@ -51,14 +56,6 @@ export const inlayHintsCompartment = new Compartment();
  */
 export const externalUpdate = Annotation.define<true>();
 
-/**
- * 自動括弧閉じの対象セット。`closeBrackets()` のデフォルトは ASCII
- * `() [] {} '' "" ``` のみなので、aozora 用に全角括弧を上書きする。
- *
- * 入力に対するクローズ：
- *   《 → 《》       「 → 「」      〔 → 〔〕
- *   （ → （）      ［ → ［］
- */
 const aozoraCloseBracketsConfig = EditorState.languageData.of(() => [
   {
     closeBrackets: {
@@ -67,6 +64,20 @@ const aozoraCloseBracketsConfig = EditorState.languageData.of(() => [
   },
 ]);
 
+export function aozoraEngineExtensions(inlayHintsEnabled: boolean): Extension {
+  return [
+    parserStateField,
+    aozoraDecorations,
+    aozoraLintGutter,
+    aozoraLinter,
+    aozoraCompletion,
+    aozoraHover,
+    linkedRangesFilter,
+    aozoraFolding,
+    inlayHintsCompartment.of(inlayHintsEnabled ? aozoraInlayHints : []),
+  ];
+}
+
 /**
  * Build a CodeMirror 6 editor for Aozora notation. The configuration
  * is intentionally split into one extension array so that subsequent
@@ -74,8 +85,6 @@ const aozoraCloseBracketsConfig = EditorState.languageData.of(() => [
  * be added in a single place as Phase 2 progresses.
  */
 export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
-  setParseCallbacks({ onParse: options.onParse });
-
   const state = EditorState.create({
     doc: options.initialValue,
     extensions: [
@@ -90,20 +99,15 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
       EditorState.allowMultipleSelections.of(true),
       EditorState.tabSize.of(2),
       EditorView.lineWrapping,
+      EditorView.contentAttributes.of({
+        'aria-label': t('editorPaneTitle'),
+      }),
       placeholder(t('editorPlaceholder')),
       closeBrackets(),
       aozoraCloseBracketsConfig,
-      parserStateField,
       aozoraTheme,
-      aozoraDecorations,
-      aozoraLintGutter,
-      aozoraLinter,
-      aozoraCompletion,
-      aozoraHover,
-      linkedRangesFilter,
       halfWidthCompartment.of(halfToFullWidthFilter),
-      aozoraFolding,
-      inlayHintsCompartment.of(aozoraInlayHints),
+      engineFeaturesCompartment.of([]),
       keymap.of([
         ...aozoraWrapKeymap,
         {
@@ -117,12 +121,7 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
           preventDefault: true,
         },
         ...closeBracketsKeymap,
-        // 注意：indentWithTab は **入れない**。
-        //   - 青空文庫記法では tab インデントは使わず全角スペースで字下げするのが流儀
-        //   - tab を奪うと、`｜` トリガーで出た補完候補（ruby snippet 等）の
-        //     Tab accept や、スニペット展開後のタブストップ送り（${1} → ${2}）が
-        //     横取りされてしまう（autocompletion の defaultKeymap が動かなくなる）
-        // 同じ理由で <code>indentMore / indentLess</code> も入れない。
+        // Tab must remain available to completion and snippet keymaps.
         ...defaultKeymap,
         ...historyKeymap,
         ...foldKeymap,
@@ -133,7 +132,8 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
         // Skip if any of the contributing transactions was marked as
         // external — that's how `Editor.tsx` mirrors `props.value`
         // into the editor without bouncing back through `onChange`.
-        if (update.transactions.some((tr) => tr.annotation(externalUpdate))) return;
+        if (update.transactions.some((tr) => tr.annotation(externalUpdate)))
+          return;
         options.onChange?.(update.state.doc.toString());
       }),
     ],
@@ -143,13 +143,12 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
 }
 
 export type {
-  ParserState,
-  HeadingEntry,
   ContainerFold,
-  NodeEntry,
   DiagnosticEntry,
-  PairEntry,
   GaijiResolutionEntry,
+  NodeEntry,
+  PairEntry,
+  ParserState,
 } from './parserState';
-export { parserStateField, utf16ToByte, byteToUtf16 } from './parserState';
-export { WRAP_PALETTE, getWrapCommand, WRAP_SHAPES } from './wrapCommands';
+export { byteToUtf16, parserStateField, utf16ToByte } from './parserState';
+export { getWrapCommand, WRAP_SHAPES } from './wrapCommands';

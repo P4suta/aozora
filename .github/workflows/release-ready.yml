@@ -791,9 +791,12 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: release-ready-artifacts
+      - name: Install web dependencies
+        working-directory: playground
+        run: bun install --frozen-lockfile
       - name: Install Playwright system dependencies
         working-directory: playground
-        run: bun x playwright install --with-deps chromium
+        run: bun x --no-install playwright install --with-deps chromium firefox webkit
       - name: Resolve immutable release identity
         run: |
           set -euo pipefail
@@ -808,10 +811,23 @@ jobs:
           just smoke-extism
           just smoke-go
           just parity-wasm
-          just playground-ci
           just playground-all
-          just playground-e2e
+          cd playground
+          bun x --no-install playwright test
+          bun run lighthouse
+          cd ..
           just vscode-ci
+      - name: Upload failed web test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-web-test-reports-${{ github.sha }}
+          path: |
+            playground/playwright-report/
+            playground/test-results/
+            playground/.lighthouseci/reports/
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Build npm, CLI, C, and playground artifacts
         run: |
           cargo run -p aozora-xtask -q -- artifacts crates

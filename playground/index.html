@@ -3,35 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- A strict Content-Security-Policy meta tag is injected here at
-         build time only (see PROD_CSP in vite.config.ts): defense-in-depth
-         over the renderer's escaping — the HTML preview is mounted via
-         innerHTML, but the aozora renderer already entity-escapes all text and
-         emits no <script>/on*=/external href. It is build-time-only because
-         dev mode needs an HMR WebSocket that connect-src 'self' would block
-         and a <meta> CSP cannot be relaxed per-environment. -->
-
     <title>Aozora Playground — 青空文庫記法 リアルタイムパーサー</title>
     <meta
       name="description"
-      content="青空文庫記法をブラウザでリアルタイムにパースして、HTML プレビュー・診断・ノード JSON を確認できるプレイグラウンド。"
+      content="青空文庫記法をブラウザで執筆し、横書き・縦書きのHTMLプレビューと人間向け診断を確認できるプレイグラウンド。"
     />
-
-    <!-- Aozora pink (--accent) を OS UI / モバイルブラウザのアドレスバーに反映 -->
-    <meta name="theme-color" content="#b8336a" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#16161b" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
 
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="apple-touch-icon" href="./favicon.svg" />
 
-    <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Aozora Playground" />
     <meta property="og:title" content="Aozora Playground — 青空文庫記法 リアルタイムパーサー" />
     <meta
       property="og:description"
-      content="Rust + WebAssembly 製の高速パーサーで、青空文庫記法をブラウザ上でリアルタイムに HTML 化。エディタ機能・診断・縦書きプレビュー・性能プロファイル付き。"
+      content="Rust + WebAssembly製のパーサーで、青空文庫記法を執筆しながらHTMLプレビューと診断を確認できます。"
     />
     <meta property="og:image" content="https://p4suta.github.io/aozora/playground/og-card.png" />
     <meta property="og:image:width" content="1200" />
@@ -40,7 +27,6 @@
     <meta property="og:url" content="https://p4suta.github.io/aozora/playground/" />
     <meta property="og:locale" content="ja_JP" />
 
-    <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Aozora Playground" />
     <meta
@@ -48,6 +34,7 @@
       content="青空文庫記法をブラウザでリアルタイムにパースするプレイグラウンド。Rust + WebAssembly。"
     />
     <meta name="twitter:image" content="https://p4suta.github.io/aozora/playground/og-card.png" />
+    <link rel="canonical" href="https://p4suta.github.io/aozora/playground/" />
   </head>
   <body>
     <div id="root"></div>

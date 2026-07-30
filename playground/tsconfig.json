@@ -10,19 +10,19 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsx": "react-jsx",
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "types": ["vite/client"],
+    "preserveSymlinks": true,
+    "types": ["vite/client", "vitest/globals"],
     "paths": {
-      "aozora-wasm": ["../crates/aozora-wasm/pkg/aozora_wasm"]
+      "aozora-wasm": ["../crates/aozora-wasm/pkg/aozora_wasm"],
+      "lz-string": ["./node_modules/lz-string"]
     }
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src"]
 }

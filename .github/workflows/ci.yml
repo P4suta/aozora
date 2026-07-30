@@ -70,10 +70,24 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-web
+      - name: Install web dependencies
+        working-directory: playground
+        run: bun install --frozen-lockfile
       - name: Install Playwright system dependencies
         working-directory: playground
-        run: bun x playwright install --with-deps chromium
+        run: bun x --no-install playwright install --with-deps chromium firefox webkit
       - run: just ci-web
+      - name: Upload web test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-test-reports-${{ github.sha }}
+          path: |
+            playground/playwright-report/
+            playground/test-results/
+            playground/.lighthouseci/reports/
+          retention-days: 14
+          if-no-files-found: ignore
 
   bindings:
     needs: qualify
