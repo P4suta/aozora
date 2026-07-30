@@ -7,10 +7,12 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ToastQueue } from '@react-spectrum/s2/Toast';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PlaygroundApp } from './PlaygroundApp';
+import { encodeSourceHash } from './share';
 import { loadPreferences } from './storage';
 import type {
   EditorController,
@@ -276,7 +278,7 @@ describe('shared PlaygroundApp', () => {
     expect(screen.queryByText('older')).not.toBeInTheDocument();
   });
 
-  it('expands only a newly introduced warning and jumps to its UTF-16 range', async () => {
+  it('jumps from an expanded diagnostic to its UTF-16 editor range', async () => {
     const harness = fakeHarness();
     render(<PlaygroundApp adapter={harness.adapter} />);
 
@@ -296,6 +298,74 @@ describe('shared PlaygroundApp', () => {
       expect(harness.revealRange).toHaveBeenCalledWith({ start: 0, end: 7 });
       expect(harness.focus).toHaveBeenCalled();
     });
+  });
+
+  it('expands diagnostics only when a new warning or error appears', async () => {
+    const analyze: PlaygroundAdapter['analyze'] = async (source) => {
+      const diagnostics: PlaygroundAnalysis['diagnostics'] = [];
+      if (source.includes('info')) {
+        diagnostics.push({
+          severity: 'info',
+          message: { ja: '参考情報', en: 'Helpful context' },
+          range: { start: 0, end: 1 },
+          code: 'fake::info',
+        });
+      }
+      if (source.includes('warning')) {
+        diagnostics.push({
+          severity: 'warning',
+          message: { ja: '確認してください', en: 'Check input' },
+          range: { start: 0, end: 1 },
+          code: 'fake::warning',
+        });
+      }
+      if (source.includes('error')) {
+        diagnostics.push({
+          severity: 'error',
+          message: { ja: '壊れています', en: 'Broken input' },
+          range: { start: 0, end: 1 },
+          code: 'fake::error',
+        });
+      }
+      return result(source, diagnostics);
+    };
+    const harness = fakeHarness({ analyze });
+    render(<PlaygroundApp adapter={harness.adapter} />);
+
+    const editor = await screen.findByLabelText('Fake editor');
+    await waitFor(() => expect(harness.analyze).toHaveBeenCalledTimes(1));
+
+    fireEvent.input(editor, { target: { value: 'info' } });
+    const informationOnly = await screen.findByRole('button', {
+      name: 'Diagnostics (1)',
+    });
+    expect(informationOnly).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.input(editor, { target: { value: 'info warning' } });
+    const newWarning = await screen.findByRole('button', {
+      name: 'Diagnostics (2)',
+    });
+    await waitFor(() =>
+      expect(newWarning).toHaveAttribute('aria-expanded', 'true'),
+    );
+
+    fireEvent.click(newWarning);
+    expect(newWarning).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.input(editor, { target: { value: 'info warning unchanged' } });
+    await waitFor(() => expect(harness.analyze).toHaveBeenCalledTimes(4));
+    expect(
+      screen.getByRole('button', { name: 'Diagnostics (2)' }),
+    ).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.input(editor, {
+      target: { value: 'info warning unchanged error' },
+    });
+    const newError = await screen.findByRole('button', {
+      name: 'Diagnostics (3)',
+    });
+    await waitFor(() =>
+      expect(newError).toHaveAttribute('aria-expanded', 'true'),
+    );
   });
 
   it('labels every diagnostic severity for sighted and assistive users', async () => {
@@ -400,6 +470,99 @@ describe('shared PlaygroundApp', () => {
     await user.click(screen.getByRole('button', { name: 'Share' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     expect(location.hash).toMatch(/^#src=/);
+  });
+
+  it('reports an invalid share URL with a localized Spectrum toast', async () => {
+    history.replaceState(null, '', '/#src=not-valid');
+    const negative = vi.spyOn(ToastQueue, 'negative');
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+
+    await waitFor(() =>
+      expect(negative).toHaveBeenCalledWith(
+        'The share URL could not be read.',
+      ),
+    );
+  });
+
+  it('reports clipboard rejection without claiming that sharing succeeded', async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error('clipboard denied');
+    });
+    vi.stubGlobal('navigator', {
+      language: 'en-US',
+      clipboard: { writeText },
+    });
+    const positive = vi.spyOn(ToastQueue, 'positive');
+    const negative = vi.spyOn(ToastQueue, 'negative');
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    await screen.findByLabelText('Fake editor');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    await waitFor(() =>
+      expect(negative).toHaveBeenCalledWith(
+        'The share link could not be copied.',
+      ),
+    );
+    expect(positive).not.toHaveBeenCalledWith('Share link copied.');
+  });
+
+  it('rejects an overlong share URL before accessing the clipboard', async () => {
+    let state = 0x12345678;
+    const longSource = Array.from({ length: 8_000 }, () => {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+      return String.fromCharCode(33 + (state % 94));
+    }).join('');
+    expect(encodeSourceHash(longSource).length).toBeGreaterThan(3_500);
+
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', {
+      language: 'en-US',
+      clipboard: { writeText },
+    });
+    const negative = vi.spyOn(ToastQueue, 'negative');
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    fireEvent.input(editor, { target: { value: longSource } });
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    await waitFor(() =>
+      expect(negative).toHaveBeenCalledWith(
+        'This draft is too long to create a reliable share link.',
+      ),
+    );
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates repeated draft storage failure toasts', async () => {
+    const negative = vi.spyOn(ToastQueue, 'negative');
+    const readableStorage = globalThis.localStorage;
+    vi.stubGlobal('localStorage', {
+      getItem: readableStorage.getItem.bind(readableStorage),
+      setItem() {
+        throw new Error('storage denied');
+      },
+    });
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    await waitFor(() =>
+      expect(negative).toHaveBeenCalledWith(
+        'The draft could not be saved.',
+      ),
+    );
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+    fireEvent.input(editor, { target: { value: 'another draft' } });
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+
+    expect(
+      negative.mock.calls.filter(
+        ([text]) => text === 'The draft could not be saved.',
+      ),
+    ).toHaveLength(1);
   });
 
   it('updates theme, locale, title, and product editor settings', async () => {
