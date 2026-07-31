@@ -76,6 +76,10 @@ jobs:
       - name: Install Playwright system dependencies
         working-directory: playground
         run: bun x --no-install playwright install --with-deps chromium firefox webkit
+      - name: Install deterministic screenshot fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-noto-core fonts-takao-gothic
       - run: just ci-web
       - name: Upload web test reports
         if: always()
