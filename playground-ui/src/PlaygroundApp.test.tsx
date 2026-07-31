@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -41,6 +42,7 @@ function result(
 interface FakeHarness {
   readonly analyze: Mock;
   readonly adapter: PlaygroundAdapter;
+  readonly createEditor: Mock;
   readonly destroyEditor: Mock;
   readonly focus: Mock;
   readonly initialize: Mock;
@@ -77,9 +79,39 @@ function fakeHarness(options?: {
         return result(source, diagnostics);
       }),
   );
+  const createEditor = vi.fn(
+    (
+      parent: HTMLElement,
+      initialValue: string,
+      onChange: (value: string) => void,
+    ): EditorController => {
+      const textarea = document.createElement('textarea');
+      textarea.setAttribute('aria-label', 'Fake editor');
+      textarea.value = initialValue;
+      textarea.addEventListener('input', () => onChange(textarea.value));
+      parent.append(textarea);
+      return {
+        setValue(value: string) {
+          textarea.value = value;
+        },
+        focus() {
+          textarea.focus();
+          focus();
+        },
+        revealRange,
+        runCommand,
+        setSetting,
+        destroy() {
+          destroyEditor();
+          textarea.remove();
+        },
+      };
+    },
+  );
 
   return {
     analyze,
+    createEditor,
     destroyEditor,
     focus,
     initialize,
@@ -138,26 +170,7 @@ function fakeHarness(options?: {
       setLocale,
       initialize,
       analyze,
-      createEditor(parent, initialValue, onChange): EditorController {
-        const textarea = document.createElement('textarea');
-        textarea.setAttribute('aria-label', 'Fake editor');
-        textarea.value = initialValue;
-        textarea.addEventListener('input', () => onChange(textarea.value));
-        parent.append(textarea);
-        return {
-          setValue(value: string) {
-            textarea.value = value;
-          },
-          focus,
-          revealRange,
-          runCommand,
-          setSetting,
-          destroy() {
-            destroyEditor();
-            textarea.remove();
-          },
-        };
-      },
+      createEditor,
       createPreview(parent): PreviewController {
         return {
           update(html) {
@@ -184,6 +197,64 @@ function selectNativeOption(label: string): void {
     throw new Error(`Select not found for option: ${label}`);
   }
   fireEvent.change(select, { target: { value: option.value } });
+}
+
+function controllableMatchMedia(initialWidth: number): {
+  readonly matchMedia: (query: string) => MediaQueryList;
+  readonly setWidth: (width: number) => Promise<void>;
+} {
+  let width = initialWidth;
+  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  const matches = (query: string) => {
+    const maximum = /max-width:\s*(\d+)px/.exec(query);
+    return maximum ? width <= Number(maximum[1]) : false;
+  };
+  const matchMedia = (query: string): MediaQueryList => {
+    const queryListeners =
+      listeners.get(query) ?? new Set<EventListenerOrEventListenerObject>();
+    listeners.set(query, queryListeners);
+    return {
+      get matches() {
+        return matches(query);
+      },
+      media: query,
+      onchange: null,
+      addEventListener(_type, listener) {
+        queryListeners.add(listener);
+      },
+      removeEventListener(_type, listener) {
+        queryListeners.delete(listener);
+      },
+      addListener(listener) {
+        queryListeners.add(listener as EventListener);
+      },
+      removeListener(listener) {
+        queryListeners.delete(listener as EventListener);
+      },
+      dispatchEvent(event) {
+        for (const listener of queryListeners) {
+          if (typeof listener === 'function') listener(event);
+          else listener.handleEvent(event);
+        }
+        return true;
+      },
+    };
+  };
+  return {
+    matchMedia,
+    async setWidth(nextWidth) {
+      width = nextWidth;
+      await act(async () => {
+        for (const queryListeners of listeners.values()) {
+          for (const listener of queryListeners) {
+            const event = new Event('change');
+            if (typeof listener === 'function') listener(event);
+            else listener.handleEvent(event);
+          }
+        }
+      });
+    },
+  };
 }
 
 describe('shared PlaygroundApp', () => {
@@ -238,6 +309,138 @@ describe('shared PlaygroundApp', () => {
       expect(harness.runCommand).toHaveBeenCalledWith('wrap');
       expect(harness.focus).toHaveBeenCalled();
     });
+  });
+
+  it('retains one editor across mobile tabs and breakpoint changes', async () => {
+    const media = controllableMatchMedia(900);
+    vi.stubGlobal('matchMedia', media.matchMedia);
+    const user = userEvent.setup();
+    const harness = fakeHarness();
+    const view = render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+    expect(harness.createEditor).toHaveBeenCalledTimes(1);
+
+    editor.focus();
+    await media.setWidth(320);
+    await screen.findByRole('tab', { name: 'Editor' });
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(
+      document.querySelectorAll('[aria-label="Fake editor"]'),
+    ).toHaveLength(1);
+
+    await user.click(screen.getByRole('tab', { name: 'Preview' }));
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
+    expect(editor.closest('[data-inert="true"]')).not.toBeNull();
+    expect(harness.createEditor).toHaveBeenCalledTimes(1);
+    expect(harness.destroyEditor).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('tab', { name: 'Editor' }));
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
+    expect(editor).toBeVisible();
+
+    editor.focus();
+    await media.setWidth(900);
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'Editor' })).toBeNull(),
+    );
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(harness.createEditor).toHaveBeenCalledTimes(1);
+    expect(harness.destroyEditor).not.toHaveBeenCalled();
+
+    await media.setWidth(320);
+    await screen.findByRole('tab', { name: 'Editor' });
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(harness.createEditor).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    expect(harness.destroyEditor).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restore editor focus into a hidden desktop preview-only pane', async () => {
+    const media = controllableMatchMedia(1_200);
+    vi.stubGlobal('matchMedia', media.matchMedia);
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Preview only' }));
+    expect(editor.closest('[hidden]')).not.toBeNull();
+    expect(editor.isConnected).toBe(true);
+
+    await media.setWidth(320);
+    await screen.findByRole('tab', { name: 'Editor' });
+    editor.focus();
+    harness.focus.mockClear();
+
+    await media.setWidth(1_200);
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'Editor' })).toBeNull(),
+    );
+    expect(editor.closest('[hidden]')).not.toBeNull();
+    expect(editor.isConnected).toBe(true);
+    expect(harness.focus).not.toHaveBeenCalled();
+  });
+
+  it('does not restore editor focus into the inert mobile preview tab', async () => {
+    const media = controllableMatchMedia(320);
+    vi.stubGlobal('matchMedia', media.matchMedia);
+    const user = userEvent.setup();
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    await user.click(screen.getByRole('tab', { name: 'Preview' }));
+    expect(editor.closest('[data-inert="true"]')).not.toBeNull();
+
+    await media.setWidth(900);
+    await waitFor(() =>
+      expect(screen.queryByRole('tab', { name: 'Preview' })).toBeNull(),
+    );
+    editor.focus();
+    harness.focus.mockClear();
+
+    await media.setWidth(320);
+    await screen.findByRole('tab', { name: 'Preview', selected: true });
+    expect(editor.closest('[data-inert="true"]')).not.toBeNull();
+    expect(editor.isConnected).toBe(true);
+    expect(harness.focus).not.toHaveBeenCalled();
+  });
+
+  it('destroys an editor that resolves after unmount exactly once', async () => {
+    let resolveEditor!: (controller: EditorController) => void;
+    const pendingEditor = new Promise<EditorController>((resolve) => {
+      resolveEditor = resolve;
+    });
+    const destroy = vi.fn();
+    const controller: EditorController = {
+      setValue: vi.fn(),
+      focus: vi.fn(),
+      revealRange: vi.fn(),
+      runCommand: vi.fn(() => true),
+      setSetting: vi.fn(),
+      destroy,
+    };
+    const harness = fakeHarness();
+    const createEditor = vi.fn(() => pendingEditor);
+    const adapter: PlaygroundAdapter = {
+      ...harness.adapter,
+      createEditor,
+    };
+    const view = render(<PlaygroundApp adapter={adapter} />);
+
+    await waitFor(() => expect(createEditor).toHaveBeenCalledOnce());
+    view.unmount();
+    await act(async () => {
+      resolveEditor(controller);
+      await pendingEditor;
+    });
+
+    await waitFor(() => expect(destroy).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('shows a retryable Spectrum alert and recovers after initialization fails', async () => {
