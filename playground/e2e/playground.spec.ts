@@ -561,6 +561,84 @@ test.describe('mobile authoring workspace', () => {
     expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
   });
 
+  test('preserves editor state across tabs and breakpoint changes', async ({
+    page,
+  }) => {
+    await openPlayground(page);
+    const editor = page.locator('.cm-content');
+    const editorShell = page.locator('.cm-editor');
+    await replaceEditor(page, sampleText('indent'));
+    await editor.press('Control+End');
+    await page.keyboard.insertText('\nmobile history marker');
+    await editor.press('Control+Home');
+    await editor.press('Control+Shift+BracketLeft');
+    await expect(page.getByLabel('folded code')).toBeVisible();
+    await editor.press('Control+End');
+    await editor.press('Shift+Home');
+    expect(await page.evaluate(() => getSelection()?.toString())).toBe(
+      'mobile history marker',
+    );
+    const originalEditor = await editorShell.elementHandle();
+    expect(originalEditor).not.toBeNull();
+
+    await page.getByRole('tab', { name: 'Preview' }).click();
+    await expect(editorShell).toBeHidden();
+    expect(
+      await editor.evaluate(
+        (element) => element.closest('[data-inert="true"]') !== null,
+      ),
+    ).toBe(true);
+    await expectNoAxeViolations(page);
+
+    await page.getByRole('tab', { name: 'Editor' }).click();
+    await expect(editorShell).toBeVisible();
+    const returnedEditor = await editorShell.elementHandle();
+    expect(
+      await originalEditor?.evaluate(
+        (original, returned) => original.isSameNode(returned),
+        returnedEditor,
+      ),
+    ).toBe(true);
+    await editor.focus();
+    expect(await page.evaluate(() => getSelection()?.toString())).toBe(
+      'mobile history marker',
+    );
+    await expect(page.getByLabel('folded code')).toBeVisible();
+
+    await page.setViewportSize({ width: 900, height: 800 });
+    await expect(page.getByRole('tab', { name: 'Editor' })).toHaveCount(0);
+    const desktopEditor = await editorShell.elementHandle();
+    expect(
+      await originalEditor?.evaluate(
+        (original, desktop) => original.isSameNode(desktop),
+        desktopEditor,
+      ),
+    ).toBe(true);
+    await expect(editor).toBeFocused();
+    expect(await page.evaluate(() => getSelection()?.toString())).toBe(
+      'mobile history marker',
+    );
+    await expect(page.getByLabel('folded code')).toBeVisible();
+
+    await page.setViewportSize({ width: 320, height: 720 });
+    await expect(page.getByRole('tab', { name: 'Editor' })).toBeVisible();
+    const mobileEditor = await editorShell.elementHandle();
+    expect(
+      await originalEditor?.evaluate(
+        (original, mobile) => original.isSameNode(mobile),
+        mobileEditor,
+      ),
+    ).toBe(true);
+    await expect(editor).toBeFocused();
+    expect(await page.evaluate(() => getSelection()?.toString())).toBe(
+      'mobile history marker',
+    );
+
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect(editor).not.toContainText('mobile history marker');
+    await expect(page.getByLabel('folded code')).toBeVisible();
+  });
+
   test('ships a stable 320px visual state', async ({ page }) => {
     await openPlayground(page);
     await page.evaluate(() => document.fonts.ready);
