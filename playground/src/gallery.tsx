@@ -1,142 +1,204 @@
-/* @refresh reload */
-import { render } from 'solid-js/web';
-import { For } from 'solid-js';
-import { bootstrapTheme } from './theme';
-import { bootstrapLang } from './i18n';
-import { ensureWasmReady, Document } from './wasm-loader';
-import './styles.css';
-// レンダラ所有の正準記法スタイルシート（単一の権威）。main.tsx と同じ二枚を
-// 同順で読み込み、ギャラリーも実 render 出力を実 CSS で表示する。テーマ橋渡しと
-// 枠のレイアウトは続く aozora.css が上書きする。
+// biome-ignore-all lint/security/noDangerouslySetInnerHtml: Renderer-owned HTML is mounted only at the gallery preview trust boundary.
+import '@react-spectrum/s2/page.css';
+
+import { loadPreferences } from '@aozora/playground-ui/storage';
+import { Button } from '@react-spectrum/s2/Button';
+import { Content, Heading } from '@react-spectrum/s2/Dialog';
+import { InlineAlert } from '@react-spectrum/s2/InlineAlert';
+import { Link } from '@react-spectrum/s2/Link';
+import { ProgressCircle } from '@react-spectrum/s2/ProgressCircle';
+import { Provider } from '@react-spectrum/s2/Provider';
+import { style } from '@react-spectrum/s2/style' with { type: 'macro' };
+import { StrictMode, useCallback, useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import '../../crates/aozora/assets/aozora-notation.css';
-import './aozora.css';
+import { GALLERY_CATALOG } from './gallery-catalog';
+import type { GalleryPanel } from './gallery-engine';
 import './gallery.css';
+import './styles/renderer-theme.css';
 
-// 各「見えて装飾される」記法ファミリ（hidden な aozora-directive は除く）を
-// 一つずつ demonstrate する fixture。文字列は samples.ts と同じく 青空文庫の
-// パブリックドメイン作品由来の実抜粋で、いずれも診断ゼロで render される。
-interface Fixture {
-  /** `<section data-family>` のフック。E2E セレクタの安定キー。 */
-  family: string;
-  /** 日本語ラベル（samples.ts の title と同様、i18n カタログには載せない）。 */
-  label: string;
-  /** 青空文庫記法のソース。`new Document(text).toHtml()` に渡す。 */
-  text: string;
+const GALLERY_LOAD_DELAY_MS = 100;
+
+const pageStyle = style({
+  color: 'neutral',
+  display: 'flex',
+  flexDirection: 'column',
+  marginX: 'auto',
+  maxWidth: 1200,
+  padding: 32,
+  rowGap: 24,
+});
+
+const headerStyle = style({
+  display: 'flex',
+  flexDirection: 'column',
+  rowGap: 8,
+});
+
+const titleStyle = style({
+  font: 'heading-xl',
+  margin: 0,
+});
+
+const descriptionStyle = style({
+  color: 'gray-700',
+  font: 'body-lg',
+  margin: 0,
+});
+
+const loadingStyle = style({
+  alignItems: 'center',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  minHeight: 240,
+  rowGap: 12,
+});
+
+const sectionStyle = style({
+  display: 'flex',
+  flexDirection: 'column',
+  rowGap: 12,
+});
+
+const sectionTitleStyle = style({
+  font: 'heading-lg',
+  margin: 0,
+});
+
+function useSystemDark(): boolean {
+  const [dark, setDark] = useState(
+    () =>
+      globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  );
+  useEffect(() => {
+    const media = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return;
+    const update = () => setDark(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  return dark;
 }
 
-const FIXTURES: Fixture[] = [
-  {
-    family: 'ruby',
-    label: 'ルビ',
-    text: '悟浄《ごじょう》の肉体はもはや疲れ切っていた。',
-  },
-  {
-    family: 'bouten',
-    label: '傍点',
-    text: 'ふらんす［＃「ふらんす」に傍点］はあまりに遠し',
-  },
-  {
-    family: 'tcy',
-    label: '縦中横',
-    text: '（10［＃「10」は縦中横］）「かいともし、とうよ」',
-  },
-  {
-    family: 'kaeriten',
-    label: '返り点',
-    text: '漢文［＃上二］また［＃下二］。',
-  },
-  {
-    family: 'gaiji',
-    label: '外字',
-    text: '美女、瞳を※［＃「目＋爭」、第3水準1-88-85］《みは》る。',
-  },
-  {
-    family: 'angle-quote',
-    label: '二重山括弧',
-    text: '≪風は冷気をつつんでゐる≫',
-  },
-  {
-    family: 'warichu',
-    label: '割り注',
-    text: '一、乳油［＃割り注］洋名バタ［＃割り注終わり］',
-  },
-];
+function GalleryApp() {
+  const [preferences] = useState(loadPreferences);
+  const [panels, setPanels] = useState<readonly GalleryPanel[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const systemDark = useSystemDark();
+  const locale = preferences.locale;
+  const text = GALLERY_CATALOG[locale];
+  const colorScheme =
+    preferences.colorScheme === 'auto'
+      ? systemDark
+        ? 'dark'
+        : 'light'
+      : preferences.colorScheme;
 
-interface Panel {
-  family: string;
-  label: string;
-  html: string;
-}
+  const load = useCallback(() => {
+    setFailed(false);
+    setPanels(null);
+    void import('./gallery-engine')
+      .then(({ renderGallery }) => renderGallery())
+      .then(setPanels, () => setFailed(true));
+  }, []);
 
-/**
- * Parse one fixture to HTML through the real WASM engine. Mirrors the
- * parserState.ts call pattern: construct a `Document`, serialize to HTML, then
- * `free()` the wasm-owned handle so the parser arena is released immediately.
- */
-function renderFixture(text: string): string {
-  const doc = new Document(text);
-  const html = doc.toHtml();
-  doc.free();
-  return html;
-}
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.documentElement.dataset.colorScheme = colorScheme;
+    document.title = text.title;
+  }, [colorScheme, locale, text.title]);
 
-/**
- * The gallery page. Each family renders one `<section data-family>` with a
- * Japanese `<h2>` label and two side-by-side previews of the identical renderer
- * HTML: horizontal (base `.aozora-notation`) and vertical (`.aozora-vertical`).
- * Both mount via `innerHTML` — the same escaped, script-free output
- * `HtmlPreview.tsx` uses — so the canonical sheet is exercised in both writing
- * modes.
- */
-function Gallery(props: { panels: Panel[] }) {
+  useEffect(() => {
+    let secondFrame = 0;
+    let timer = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        timer = globalThis.setTimeout(load, GALLERY_LOAD_DELAY_MS);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+      globalThis.clearTimeout(timer);
+    };
+  }, [load]);
+
   return (
-    <main class="gallery">
-      <h1 class="gallery-title">青空文庫記法ギャラリー</h1>
-      <p class="gallery-lead">
-        主要な記法ファミリを、実レンダラ出力で横書き・縦書きの両方に表示します。
-      </p>
-      <For each={props.panels}>
-        {(panel) => (
-          <section class="gallery-section" data-family={panel.family}>
-            <h2 class="gallery-family-label">{panel.label}</h2>
-            <div class="gallery-columns">
-              <div class="gallery-h">
-                <span class="gallery-mode">横書き</span>
-                <div class="html-preview aozora-notation" innerHTML={panel.html} />
-              </div>
-              <div class="gallery-v">
-                <span class="gallery-mode">縦書き</span>
+    <Provider
+      background="base"
+      colorScheme={colorScheme}
+      locale={locale === 'ja' ? 'ja-JP' : 'en-US'}
+    >
+      <main className={pageStyle}>
+        <header className={headerStyle}>
+          <h1 className={titleStyle}>{text.title}</h1>
+          <p className={descriptionStyle}>{text.description}</p>
+          <Link href="./">{text.back}</Link>
+        </header>
+
+        {failed && (
+          <div className={loadingStyle}>
+            <InlineAlert variant="negative">
+              <Heading>{text.failure}</Heading>
+              <Content>{text.retryHint}</Content>
+            </InlineAlert>
+            <Button onPress={load} variant="accent">
+              {text.retry}
+            </Button>
+          </div>
+        )}
+
+        {!failed && panels === null && (
+          <div className={loadingStyle} role="status">
+            <ProgressCircle aria-label={text.loadingLabel} isIndeterminate />
+            <span>{text.loading}</span>
+          </div>
+        )}
+
+        {panels?.map((panel) => (
+          <section
+            className={sectionStyle}
+            data-family={panel.family}
+            key={panel.family}
+          >
+            <h2 className={sectionTitleStyle}>{panel.label[locale]}</h2>
+            <div className="gallery-columns">
+              <section
+                aria-label={`${panel.label[locale]} — ${text.horizontal}`}
+                className="gallery-h"
+              >
+                <span className="gallery-mode">{text.horizontal}</span>
                 <div
-                  class="html-preview aozora-notation aozora-vertical"
-                  innerHTML={panel.html}
+                  className="gallery-preview html-preview aozora-notation"
+                  dangerouslySetInnerHTML={{ __html: panel.html }}
                 />
-              </div>
+              </section>
+              <section
+                aria-label={`${panel.label[locale]} — ${text.vertical}`}
+                className="gallery-v"
+              >
+                <span className="gallery-mode">{text.vertical}</span>
+                <div
+                  className="gallery-preview html-preview aozora-notation aozora-vertical"
+                  dangerouslySetInnerHTML={{ __html: panel.html }}
+                />
+              </section>
             </div>
           </section>
-        )}
-      </For>
-    </main>
+        ))}
+      </main>
+    </Provider>
   );
 }
 
-bootstrapTheme();
-bootstrapLang();
-
 const root = document.getElementById('root');
-if (!root) {
-  throw new Error('Missing #root element');
+if (root === null) {
+  throw new Error('#root missing from gallery.html');
 }
 
-// The gallery is static — no per-keystroke reparse — so every fixture is parsed
-// once, up front, after the parser is ready, and then the page mounts. Awaiting
-// ensureWasmReady() before constructing any `Document` mirrors how App.tsx gates
-// the editor on wasmReady; the first rendered element (the ルビ section) doubles
-// as the E2E's "engine ready" signal.
-void ensureWasmReady().then(() => {
-  const panels: Panel[] = FIXTURES.map((f) => ({
-    family: f.family,
-    label: f.label,
-    html: renderFixture(f.text),
-  }));
-  render(() => <Gallery panels={panels} />, root);
-});
+createRoot(root).render(
+  <StrictMode>
+    <GalleryApp />
+  </StrictMode>,
+);

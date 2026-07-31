@@ -2,17 +2,13 @@ export interface Sample {
   id: string;
   title: string;
   text: string;
-  /**
-   * Provenance of the excerpt (著者『作品』). Every sample is a short passage
-   * from a public-domain work on 青空文庫 (copyright expired), so it is safe to
-   * ship verbatim; the citation is shown in the picker.
-   */
+  /** Provenance of the public-domain Aozora Bunko excerpt. */
   source: string;
 }
 
 /**
  * Demo samples for the playground. Each is a real, copyright-safe excerpt from
- * 青空文庫 chosen to demonstrate one notation feature, verified to render with
+ * Aozora Bunko chosen to demonstrate one notation feature, verified to render with
  * zero diagnostics. Prefer real corpus text over invented strings so the demo
  * is both authentic and self-documenting.
  */
@@ -20,8 +16,7 @@ export const SAMPLES: Sample[] = [
   {
     id: 'ruby',
     title: 'ルビ（明示）',
-    // 雑司ヶ谷 contains ヶ, so automatic base detection stops short — the ｜
-    // delimiter is required to make the whole word the ruby base.
+    // The place name contains small katakana, so an explicit delimiter is required.
     text: '「先生｜雑司ヶ谷《ぞうしがや》の銀杏はもう散ってしまったでしょうか」',
     source: '夏目漱石『こころ』',
   },
@@ -40,8 +35,6 @@ export const SAMPLES: Sample[] = [
   {
     id: 'ruby-bouten',
     title: 'ルビ＋傍点',
-    // ruby on 閑《しづか》 coexists with a forward bouten on a *different* word
-    // (しみ入る) — both render cleanly.
     text: '閑《しづか》さや岩にしみ入る［＃「しみ入る」に傍点］蝉の声',
     source: '芥川竜之介『芭蕉雑記』',
   },
@@ -131,4 +124,4 @@ export const SAMPLES: Sample[] = [
   },
 ];
 
-export const DEFAULT_SAMPLE_ID = 'ruby-bouten';
+export const DEFAULT_SAMPLE_ID = 'angle-quote';

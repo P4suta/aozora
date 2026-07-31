@@ -3,31 +3,31 @@ import { fuzzyMatch, fuzzyRank } from '../editor/fuzzy';
 
 describe('fuzzy', () => {
   describe('fuzzyMatch', () => {
-    it('部分列に一致すればスコアと一致位置を返す', () => {
+    it('returns a score and positions for a subsequence match', () => {
       const m = fuzzyMatch('rb', 'ruby');
       expect(m).not.toBeNull();
       expect(m!.indices).toEqual([0, 2]);
     });
 
-    it('部分列でなければ null', () => {
+    it('returns null when the query is not a subsequence', () => {
       expect(fuzzyMatch('xyz', 'ruby')).toBeNull();
     });
 
-    it('大文字小文字を無視する', () => {
+    it('ignores letter case', () => {
       expect(fuzzyMatch('RUBY', 'ruby')).not.toBeNull();
     });
 
-    it('空クエリは全一致（スコア0）', () => {
+    it('matches an empty query with a zero score', () => {
       expect(fuzzyMatch('', 'anything')).toEqual({ score: 0, indices: [] });
     });
 
-    it('連続一致は語頭飛び一致よりスコアが高い', () => {
+    it('scores contiguous matches above scattered word-start matches', () => {
       const contiguous = fuzzyMatch('ru', 'ruby')!;
       const scattered = fuzzyMatch('ru', 'rocky_underground')!;
       expect(contiguous.score).toBeGreaterThan(scattered.score);
     });
 
-    it('日本語の部分列も一致する', () => {
+    it('matches Japanese subsequences', () => {
       expect(fuzzyMatch('ルビ', 'ルビ')).not.toBeNull();
       expect(fuzzyMatch('点', '傍点')).not.toBeNull();
     });
@@ -39,23 +39,26 @@ describe('fuzzy', () => {
       { id: 'aozora.wrap.bouten', description: '傍点' },
       { id: 'aozora.wrap.chuki', description: '注記で囲む' },
     ];
-    const key = (i: { id: string; description: string }) => `${i.id} ${i.description}`;
+    const key = (i: { id: string; description: string }) =>
+      `${i.id} ${i.description}`;
 
-    it('romaji クエリで id に一致する項目を先頭に返す', () => {
+    it('ranks an ID match first for a romaji query', () => {
       const r = fuzzyRank('ruby', items, key);
       expect(r[0]!.id).toBe('aozora.wrap.ruby');
     });
 
-    it('日本語クエリで description に一致する', () => {
+    it('matches descriptions for Japanese queries', () => {
       const r = fuzzyRank('傍点', items, key);
       expect(r[0]!.id).toBe('aozora.wrap.bouten');
     });
 
-    it('空クエリは全項目を順序保持で返す', () => {
-      expect(fuzzyRank('', items, key).map((i) => i.id)).toEqual(items.map((i) => i.id));
+    it('preserves item order for an empty query', () => {
+      expect(fuzzyRank('', items, key).map((i) => i.id)).toEqual(
+        items.map((i) => i.id),
+      );
     });
 
-    it('一致しないクエリは空配列', () => {
+    it('returns an empty array when nothing matches', () => {
       expect(fuzzyRank('zzzz', items, key)).toHaveLength(0);
     });
   });

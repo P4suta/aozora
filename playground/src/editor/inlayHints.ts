@@ -1,12 +1,12 @@
 import {
   Decoration,
-  EditorView,
-  ViewPlugin,
-  WidgetType,
   type DecorationSet,
+  type EditorView,
+  ViewPlugin,
   type ViewUpdate,
+  WidgetType,
 } from '@codemirror/view';
-import { byteToUtf16, parserStateField, type ParserState } from './parserState';
+import { byteToUtf16, type ParserState, parserStateField } from './parserState';
 
 class GaijiInlayWidget extends WidgetType {
   constructor(
@@ -57,7 +57,11 @@ function buildInlays(view: EditorView): DecorationSet {
     if (pos < 0 || pos > docLen) continue;
     items.push({
       pos,
-      widget: new GaijiInlayWidget(r.resolved, r.codepoint ?? null, r.description),
+      widget: new GaijiInlayWidget(
+        r.resolved,
+        r.codepoint ?? null,
+        r.description,
+      ),
     });
   }
   items.sort((a, b) => a.pos - b.pos);

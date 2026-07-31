@@ -1,54 +1,42 @@
 import { EditorView } from '@codemirror/view';
 
-/**
- * CM6 theme that ties into the playground's existing `:root` CSS
- * variables so the editor follows light/dark mode in sync with the
- * surrounding shell.
- *
- * The `.cm-aozora-*` token classes are emitted by
- * `decorations.ts` based on typed nodes from the WASM parser.
- */
 export const aozoraTheme = EditorView.theme({
   '&': {
     height: '100%',
     fontSize: '14px',
-    background: 'var(--bg-elev)',
-    color: 'var(--fg)',
+    background: 'Canvas',
+    color: 'CanvasText',
   },
-  // Bump font-size on narrow viewports so iOS Safari does not zoom
-  // the page when focusing the editor (any input < 16px triggers the
-  // auto-zoom). Also helps readability on small phones.
-  '@media (max-width: 760px)': {
+  '@media (max-width: 767px)': {
     '&': { fontSize: '16px' },
     '.cm-scroller': { lineHeight: '1.8' },
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
-    fontFamily:
-      'var(--font-mono)',
+    fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace",
     lineHeight: '1.75',
   },
   '.cm-content': {
     padding: '0.75rem 0',
-    caretColor: 'var(--accent)',
+    caretColor: 'CanvasText',
   },
   '.cm-gutters': {
-    background: 'var(--bg)',
-    color: 'var(--fg-muted)',
-    borderRight: '1px solid var(--border)',
+    background: 'Canvas',
+    color: 'GrayText',
+    borderRight: '1px solid color-mix(in srgb, CanvasText 20%, transparent)',
   },
-  '.cm-activeLine': { background: 'var(--accent-bg)' },
-  '.cm-activeLineGutter': { background: 'var(--accent-bg)' },
+  '.cm-activeLine, .cm-activeLineGutter': {
+    background: 'color-mix(in srgb, Highlight 12%, transparent)',
+  },
   '.cm-selectionBackground, .cm-content ::selection': {
-    background: 'var(--accent-selection)',
+    background: 'Highlight',
+    color: 'HighlightText',
   },
-  '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--accent)' },
+  '&.cm-focused .cm-cursor': { borderLeftColor: 'CanvasText' },
   '.cm-tooltip': {
-    background: 'var(--bg-elev)',
-    color: 'var(--fg)',
-    border: '1px solid var(--border)',
-    borderRadius: '4px',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+    background: 'Canvas',
+    color: 'CanvasText',
+    border: '1px solid color-mix(in srgb, CanvasText 24%, transparent)',
   },
   '.cm-tooltip-aozora-gaiji': {
     padding: '0.5rem 0.75rem',
@@ -56,78 +44,42 @@ export const aozoraTheme = EditorView.theme({
     fontSize: '13px',
     lineHeight: '1.55',
   },
-  '.cm-tooltip-aozora-gaiji strong': {
-    color: 'var(--token-gaiji)',
-  },
-  '.cm-tooltip-aozora-gaiji .muted': {
-    color: 'var(--fg-muted)',
-    fontFamily: "'Menlo', 'Consolas', monospace",
-    fontSize: '0.85em',
-  },
-
-  // ===== node kind markers =====
-  '.cm-aozora-ruby': {
-    color: 'var(--token-ruby)',
-    fontWeight: '600',
-  },
-  '.cm-aozora-angle-quote': {
-    color: 'var(--token-ruby)',
+  '.cm-tooltip-aozora-gaiji strong, .cm-aozora-ruby, .cm-aozora-angle-quote': {
+    color: 'LinkText',
     fontWeight: '700',
-    background: 'var(--accent-bg)',
-    borderRadius: '2px',
   },
+  '.cm-tooltip-aozora-gaiji .muted, .cm-aozora-directive, .cm-aozora-heading-hint, .cm-aozora-container-marker':
+    {
+      color: 'GrayText',
+      fontStyle: 'italic',
+    },
   '.cm-aozora-bouten': {
-    color: 'var(--token-bouten)',
-    background: 'var(--token-bouten-bg)',
+    textDecoration: 'underline dotted',
     fontStyle: 'italic',
   },
+  '.cm-aozora-gaiji, .cm-aozora-inlay': {
+    background: 'Mark',
+    color: 'MarkText',
+  },
   '.cm-aozora-gaiji': {
-    color: 'var(--token-gaiji)',
-    background: 'var(--token-gaiji-bg)',
-    borderBottom: '1px dotted var(--token-gaiji-border)',
+    borderBottom: '1px dotted currentColor',
   },
   '.cm-aozora-combine-upright': { textDecoration: 'underline dotted' },
-  '.cm-aozora-illustration': { color: 'var(--success)', fontStyle: 'italic' },
-  '.cm-aozora-warichu': {
+  '.cm-aozora-illustration': { fontStyle: 'italic' },
+  '.cm-aozora-warichu, .cm-aozora-kaeriten': {
     fontSize: '0.9em',
-    color: 'var(--fg-muted)',
-    background: 'rgba(160, 160, 170, 0.08)',
+    color: 'GrayText',
   },
-  '.cm-aozora-kaeriten': {
-    fontSize: '0.85em',
-    color: 'var(--accent)',
-    verticalAlign: 'super',
-  },
-  '.cm-aozora-directive': { color: 'var(--fg-muted)', fontStyle: 'italic' },
+  '.cm-aozora-kaeriten': { verticalAlign: 'super' },
   '.cm-aozora-aozora-heading': {
-    color: 'var(--accent)',
     fontWeight: '700',
     textDecoration: 'underline',
   },
-  '.cm-aozora-heading-hint': {
-    color: 'var(--fg-muted)',
-    fontStyle: 'italic',
+  '.cm-aozora-section-break, .cm-aozora-page-break': {
+    background: 'color-mix(in srgb, CanvasText 8%, transparent)',
+    color: 'GrayText',
   },
-  '.cm-aozora-section-break': {
-    color: 'var(--fg-muted)',
-    background: 'rgba(160, 160, 170, 0.08)',
-    fontWeight: '500',
-  },
-  '.cm-aozora-page-break': {
-    color: 'var(--fg-muted)',
-    background: 'rgba(160, 160, 170, 0.12)',
-    fontWeight: '500',
-  },
-  '.cm-aozora-container-marker': {
-    color: 'var(--fg-muted)',
-    fontStyle: 'italic',
-    fontWeight: '500',
-  },
-
-  // ===== gaiji inlay (Section 13) =====
   '.cm-aozora-inlay': {
-    color: 'var(--token-gaiji)',
-    background: 'var(--token-gaiji-bg)',
     borderRadius: '3px',
     padding: '0 0.25em',
     margin: '0 0.15em',

@@ -1,9 +1,9 @@
-import { Annotation, EditorState, type ChangeSpec } from '@codemirror/state';
+import { Annotation, type ChangeSpec, EditorState } from '@codemirror/state';
 import {
   byteToUtf16,
-  parserStateField,
   type PairEntry,
   type ParserState,
+  parserStateField,
 } from './parserState';
 
 /** Tag follow-up transactions so the filter does not recurse. */

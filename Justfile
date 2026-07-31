@@ -1222,8 +1222,8 @@ ci-web:
     just clippy-wasm
     just parity-wasm
     just playground-ci
-    just playground-build
     just playground-e2e
+    cd playground && bun run lighthouse
     just vscode-ci
 
 ci-bindings:
@@ -1319,7 +1319,7 @@ watch-headless JOB="check":
 hooks:
     lefthook install
 
-# --- playground (Solid + Vite + WASM frontend) -------------------------------
+# --- playground (React Spectrum + Vite + WASM frontend) ----------------------
 
 # Build the WASM `pkg/` that `vite.config.ts`'s alias targets. Must run
 # before `playground-build` (when `.d.ts` is missing or stale).
@@ -1344,18 +1344,19 @@ _playground-ensure:
 playground-typecheck: _playground-ensure
     cd playground && bun run typecheck
 
-# Run vitest unit tests for the playground
-# (share / storage / parserState / utils — see src/__tests__/).
+# Run the playground and canonical shared-package unit suites with coverage.
 playground-test: _playground-ensure
-    cd playground && bun run test
+    cd playground && bun run test:coverage
 
 # Combined playground gate: ensure deps once, then typecheck, test, and lint.
 # `lint:css` runs stylelint over the playground CSS *and* the canonical
-# aozora-notation.css from the repository root; this
+# aozora-notation.css from the repository root.
 playground-ci: _playground-ensure
     cd playground && bun run typecheck
-    cd playground && bun run test
+    cd playground && bun run test:coverage
+    cd playground && bun run lint
     cd playground && bun run lint:css
+    cd playground && bun run check:legacy
 
 # Production build of the playground. Regenerates the WASM bundle
 # first so the vite alias target is always fresh; `_playground-ensure`
@@ -1363,16 +1364,21 @@ playground-ci: _playground-ensure
 # can empty `dist`.
 playground-build: playground-wasm _playground-ensure
     cd playground && bun run build
+    cd playground && bun run check:bundle
 
 # All playground gates in one shot and export the production tree.
-playground-all: playground-typecheck playground-test playground-build
+playground-all: playground-ci playground-build
     bash -euc 'destination=target/release-ready-build/playground; rm -rf "$destination"; mkdir -p "$destination"; cp -R playground/dist/. "$destination/"; test -s "$destination/index.html"'
 
-# Playwright E2E smoke suite. CI installs browser system dependencies before
+# Production Playwright suite. CI installs browser system dependencies before
 # calling this recipe; local hosts must provide them through their package manager.
-playground-e2e: playground-wasm _playground-ensure
-    cd playground && bun x playwright install chromium
+playground-e2e: playground-build
+    cd playground && bun x playwright install chromium firefox webkit
     cd playground && bun x playwright test
+
+playground-lighthouse: playground-build
+    cd playground && bun x playwright install chromium
+    cd playground && bun run lighthouse
 
 # --- VS Code extension (TypeScript, esbuild-bundled) --------------------------
 #

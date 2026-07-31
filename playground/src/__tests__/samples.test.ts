@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SAMPLE_ID, SAMPLES } from '../samples';
 
 describe('samples.ts', () => {
-  it('全サンプルの id が一意', () => {
+  it('uses a unique ID for every sample', () => {
     const ids = SAMPLES.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('全サンプルが非空の id / title / text / source を持つ', () => {
+  it('gives every sample a non-empty ID, title, text, and source', () => {
     for (const s of SAMPLES) {
       expect(s.id).toBeTruthy();
       expect(s.title.length).toBeGreaterThan(0);
@@ -17,7 +17,7 @@ describe('samples.ts', () => {
     }
   });
 
-  it('DEFAULT_SAMPLE_ID は実在するサンプルを指す', () => {
+  it('points DEFAULT_SAMPLE_ID to an existing sample', () => {
     expect(SAMPLES.some((s) => s.id === DEFAULT_SAMPLE_ID)).toBe(true);
   });
 });

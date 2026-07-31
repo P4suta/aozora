@@ -116,21 +116,9 @@ jobs:
         # re-export pages. Matches the `just doc` recipe's fix.
         run: cargo doc --workspace --no-deps --all-features --jobs 1
 
-      - name: Build aozora-wasm
-        if: needs.detect.outputs.mode != 'release'
-        run: CARGO_PROFILE_RELEASE_OPT_LEVEL=z wasm-pack build --target web --release crates/aozora-wasm
-
       - name: Build playground
         if: needs.detect.outputs.mode != 'release'
-        working-directory: playground
-        run: |
-          set -euo pipefail
-          if [ -f bun.lock ]; then
-            bun install --frozen-lockfile
-          else
-            bun install
-          fi
-          bun run build
+        run: just playground-build
 
       - name: Download qualified release artifacts
         if: needs.detect.outputs.mode == 'release'

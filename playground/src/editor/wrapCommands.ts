@@ -1,31 +1,36 @@
-import { snippet } from '@codemirror/autocomplete';
-import { EditorView, type Command, type KeyBinding } from '@codemirror/view';
+import type { Command, EditorView, KeyBinding } from '@codemirror/view';
 
 export interface WrapShape {
   /** Stable id for this wrap action. */
   id: string;
   /** Snippet template with `BASE` for the selection and `${0}` for the final cursor. */
   template: string;
-  /** Short Japanese label for command palette / menu surfaces. */
-  description: string;
 }
 
-/**
- * The playground's 6 selection-wrap actions. Ruby always emits a
- * leading `｜` so its span is unambiguous.
- */
+/** Ruby emits a leading `｜` so its span is unambiguous. */
 export const WRAP_SHAPES: readonly WrapShape[] = [
-  { id: 'aozora.wrap.ruby', template: '｜BASE《${0}》', description: 'ルビ' },
-  { id: 'aozora.wrap.angleQuote', template: '≪BASE≫${0}', description: '二重山括弧' },
-  { id: 'aozora.wrap.bouten', template: 'BASE［＃「BASE」に傍点］${0}', description: '傍点' },
-  { id: 'aozora.wrap.kagikakko', template: '「BASE」${0}', description: '鉤括弧で囲む' },
-  { id: 'aozora.wrap.kikkou', template: '〔BASE〕${0}', description: '亀甲括弧で囲む' },
-  { id: 'aozora.wrap.chuki', template: '［＃BASE］${0}', description: '注記で囲む' },
+  { id: 'aozora.wrap.ruby', template: '｜BASE《${0}》' },
+  {
+    id: 'aozora.wrap.angleQuote',
+    template: '≪BASE≫${0}',
+  },
+  {
+    id: 'aozora.wrap.bouten',
+    template: 'BASE［＃「BASE」に傍点］${0}',
+  },
+  {
+    id: 'aozora.wrap.kagikakko',
+    template: '「BASE」${0}',
+  },
+  {
+    id: 'aozora.wrap.kikkou',
+    template: '〔BASE〕${0}',
+  },
+  {
+    id: 'aozora.wrap.chuki',
+    template: '［＃BASE］${0}',
+  },
 ] as const;
-
-function escapeSnippet(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/\$/g, '\\$').replace(/\}/g, '\\}');
-}
 
 /**
  * Build a CM6 `Command` that applies the given wrap template to the
@@ -37,29 +42,31 @@ export function wrapCommand(shape: WrapShape): Command {
   return (view: EditorView) => {
     const sel = view.state.selection.main;
     const selected = view.state.sliceDoc(sel.from, sel.to);
-    const body = shape.template.split('BASE').join(escapeSnippet(selected));
-    const insert = snippet(body);
-    // CM6 の snippet() が返す関数は (view, completion, from, to) を取り、
-    // 内部的に completion は autocomplete 経由の文脈情報を渡すためだけに
-    // 使われる。keymap から直接呼ぶ場合は completion 情報が無く、また
-    // snippet 展開そのものはこの引数を使わないので `null` で問題ない。
-    // 型は `Completion` 必須なので `null as never` でアサート。
-    insert(view, null as never, sel.from, sel.to);
+    const marker = '${0}';
+    const markerOffset = shape.template.indexOf(marker);
+    const beforeMarker =
+      markerOffset < 0 ? shape.template : shape.template.slice(0, markerOffset);
+    const afterMarker =
+      markerOffset < 0
+        ? ''
+        : shape.template.slice(markerOffset + marker.length);
+    const beforeCursor = beforeMarker.split('BASE').join(selected);
+    const replacement = beforeCursor + afterMarker.split('BASE').join(selected);
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: replacement },
+      selection: {
+        anchor:
+          sel.from +
+          (markerOffset < 0 ? replacement.length : beforeCursor.length),
+      },
+      scrollIntoView: true,
+    });
     return true;
   };
 }
 
 const SHAPE_BY_ID: Record<string, WrapShape> = Object.fromEntries(
   WRAP_SHAPES.map((s) => [s.id, s]),
-);
-
-/**
- * Resolved command palette entries — surfaced to the playground UI
- * so users can invoke wrap actions whose keybindings (e.g. the
- * full-width brackets) are not typeable.
- */
-export const WRAP_PALETTE: ReadonlyArray<{ id: string; description: string }> = WRAP_SHAPES.map(
-  (s) => ({ id: s.id, description: s.description }),
 );
 
 export function getWrapCommand(id: string): Command | null {

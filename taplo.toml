@@ -3,8 +3,8 @@
 # Validity alone (`taplo check`) is not enough — formatting is part of the
 # convention, matching the find-my-files reference repo's taplo policy.
 
-# taplo does not honor .gitignore, so exclude the build directory explicitly.
-exclude = ["target/**"]
+# taplo does not honor .gitignore, so exclude generated directories explicitly.
+exclude = ["target/**", "**/node_modules/**"]
 
 [formatting]
 align_entries = false # no `=` alignment — taplo default, matches find-my-files

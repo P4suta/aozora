@@ -1,0 +1,125 @@
+import type { Locale } from './types';
+
+const ja = {
+  about: 'この Playground について',
+  aboutEngine: 'エンジン',
+  aboutRepository: 'リポジトリ',
+  analyzeFailed: 'プレビューの生成に失敗しました。',
+  close: '閉じる',
+  commandEmpty: '一致するコマンドがありません。',
+  commandPalette: 'コマンドパレット',
+  commandSearch: 'コマンドを検索',
+  commands: '記法コマンド',
+  diagnosticError: 'エラー',
+  diagnosticInfo: '情報',
+  diagnosticWarning: '警告',
+  diagnostics: '診断',
+  diagnosticsEmpty: '警告やエラーはありません。',
+  direction: '組方向',
+  editor: 'エディタ',
+  guide: 'ガイド',
+  initializationFailed: 'WebAssembly の初期化に失敗しました。',
+  initializationHint:
+    'ブラウザの WebAssembly または Content Security Policy の設定を確認して、再試行してください。',
+  initializing: 'WebAssembly を初期化しています…',
+  language: '言語',
+  languageEnglish: '英語',
+  languageJapanese: '日本語',
+  layout: 'レイアウト',
+  layoutEditor: 'エディタのみ',
+  layoutPreview: 'プレビューのみ',
+  layoutSplit: '分割',
+  more: 'その他',
+  outline: 'アウトライン',
+  outlineEmpty: '見出しがありません。',
+  outlineEntryLabel: '{text}、見出しレベル {level}',
+  preview: 'プレビュー',
+  retry: '再試行',
+  sample: 'サンプル',
+  sampleLoaded: 'サンプルを読み込みました。',
+  settings: '設定',
+  share: '共有',
+  shareCopied: '共有リンクをコピーしました。',
+  shareFailed: '共有リンクをコピーできませんでした。',
+  shareTooLong: '原稿が長すぎるため、共有リンクを作成できませんでした。',
+  storageFailed: '下書きを保存できませんでした。',
+  theme: 'テーマ',
+  themeAuto: 'OS 設定',
+  themeDark: 'ダーク',
+  themeLight: 'ライト',
+  urlInvalid: '共有 URL を読み込めませんでした。',
+  writingHorizontal: '横書き',
+  writingVertical: '縦書き',
+} as const;
+
+export type MessageKey = keyof typeof ja;
+
+const en: Record<MessageKey, string> = {
+  about: 'About this playground',
+  aboutEngine: 'Engine',
+  aboutRepository: 'Repository',
+  analyzeFailed: 'The preview could not be generated.',
+  close: 'Close',
+  commandEmpty: 'No matching commands.',
+  commandPalette: 'Command palette',
+  commandSearch: 'Search commands',
+  commands: 'Notation commands',
+  diagnosticError: 'Error',
+  diagnosticInfo: 'Information',
+  diagnosticWarning: 'Warning',
+  diagnostics: 'Diagnostics',
+  diagnosticsEmpty: 'No warnings or errors.',
+  direction: 'Writing direction',
+  editor: 'Editor',
+  guide: 'Guide',
+  initializationFailed: 'WebAssembly failed to initialize.',
+  initializationHint:
+    'Check your browser WebAssembly and Content Security Policy settings, then retry.',
+  initializing: 'Initializing WebAssembly…',
+  language: 'Language',
+  languageEnglish: 'English',
+  languageJapanese: 'Japanese',
+  layout: 'Layout',
+  layoutEditor: 'Editor only',
+  layoutPreview: 'Preview only',
+  layoutSplit: 'Split',
+  more: 'More',
+  outline: 'Outline',
+  outlineEmpty: 'No headings.',
+  outlineEntryLabel: '{text}, heading level {level}',
+  preview: 'Preview',
+  retry: 'Retry',
+  sample: 'Sample',
+  sampleLoaded: 'Sample loaded.',
+  settings: 'Settings',
+  share: 'Share',
+  shareCopied: 'Share link copied.',
+  shareFailed: 'The share link could not be copied.',
+  shareTooLong: 'This draft is too long to create a reliable share link.',
+  storageFailed: 'The draft could not be saved.',
+  theme: 'Theme',
+  themeAuto: 'Use system setting',
+  themeDark: 'Dark',
+  themeLight: 'Light',
+  urlInvalid: 'The share URL could not be read.',
+  writingHorizontal: 'Horizontal',
+  writingVertical: 'Vertical',
+};
+
+const catalog: Record<Locale, Record<MessageKey, string>> = { ja, en };
+
+export const messageKeys = Object.keys(ja) as MessageKey[];
+
+export function message(locale: Locale, key: MessageKey): string {
+  return catalog[locale][key];
+}
+
+export function formatMessage(
+  locale: Locale,
+  key: MessageKey,
+  parameters: Readonly<Record<string, string | number>>,
+): string {
+  return message(locale, key).replace(/\{(\w+)\}/g, (match, name: string) =>
+    name in parameters ? String(parameters[name]) : match,
+  );
+}

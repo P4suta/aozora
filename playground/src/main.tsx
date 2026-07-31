@@ -1,20 +1,19 @@
-/* @refresh reload */
-import { render } from 'solid-js/web';
-import App from './App';
-import { bootstrapTheme } from './theme';
-import { bootstrapLang } from './i18n';
-import './styles.css';
-// レンダラ所有の正準記法スタイルシート（単一の権威）。テーマ橋渡しと枠の
-// レイアウトは続く aozora.css が上書きする。
-import '../../crates/aozora/assets/aozora-notation.css';
-import './aozora.css';
+import '@react-spectrum/s2/page.css';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 
-bootstrapTheme();
-bootstrapLang();
+import '../../crates/aozora/assets/aozora-notation.css';
+import App from './App';
+import './styles/renderer-theme.css';
+import './styles/workspace.css';
 
 const root = document.getElementById('root');
-if (!root) {
-  throw new Error('Missing #root element');
+if (root === null) {
+  throw new Error('#root missing from index.html');
 }
 
-render(() => <App />, root);
+createRoot(root).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

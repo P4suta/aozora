@@ -1,6 +1,11 @@
 import { hoverTooltip, type Tooltip } from '@codemirror/view';
-import { byteToUtf16, parserStateField, utf16ToByte, type ParserState } from './parserState';
 import { t } from '../i18n';
+import {
+  byteToUtf16,
+  type ParserState,
+  parserStateField,
+  utf16ToByte,
+} from './parserState';
 
 function formatCodepoint(cp: number | undefined): string {
   if (cp === undefined) return '';
