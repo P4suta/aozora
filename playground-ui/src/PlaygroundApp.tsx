@@ -432,14 +432,12 @@ function initialSource(adapter: PlaygroundAdapter): {
 
 function EditorMount({
   adapter,
-  locale,
   onChange,
   onController,
   settingValues,
   value,
 }: {
   readonly adapter: PlaygroundAdapter;
-  readonly locale: Locale;
   readonly onChange: (value: string) => void;
   readonly onController: (controller: EditorController | null) => void;
   readonly settingValues: Readonly<Record<string, boolean>>;
@@ -460,7 +458,6 @@ function EditorMount({
     let secondFrame = 0;
     let timer = 0;
     const mountEditor = () => {
-      adapter.setLocale?.(locale);
       void Promise.resolve(
         adapter.createEditor(parent, initialValueRef.current, onChange),
       ).then((controller) => {
@@ -499,7 +496,7 @@ function EditorMount({
       controllerRef.current?.destroy();
       controllerRef.current = null;
     };
-  }, [adapter, locale, onChange, onController]);
+  }, [adapter, onChange, onController]);
 
   useEffect(() => {
     controllerRef.current?.setValue(value);
@@ -1042,7 +1039,6 @@ function EditorPane({
       </div>
       <EditorMount
         adapter={adapter}
-        locale={locale}
         onChange={onChange}
         onController={onController}
         settingValues={settingValues}
@@ -1104,7 +1100,9 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
   const colorScheme = useEffectiveColorScheme(preferences.colorScheme);
   const revisionRef = useRef(0);
   const initializationRevisionRef = useRef(0);
-  const previousAttentionDiagnostics = useRef<Set<string> | null>(null);
+  const previousAttentionDiagnostics = useRef<Map<string, number> | null>(
+    null,
+  );
   const storageFailureShownRef = useRef(false);
   const dialogReturnFocusRef = useRef<{
     readonly element: HTMLElement | null;
@@ -1164,7 +1162,18 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       // after two frames makes the explicit, locale-safe target the final
       // destination in browsers where the Provider replaced the trigger.
       globalThis.requestAnimationFrame(() => {
-        globalThis.requestAnimationFrame(() => target.focus());
+        globalThis.requestAnimationFrame(() => {
+          const activeElement = document.activeElement;
+          if (
+            activeElement instanceof HTMLElement &&
+            activeElement !== document.body &&
+            activeElement !== document.documentElement &&
+            activeElement !== target
+          ) {
+            return;
+          }
+          target.focus();
+        });
       });
     });
   }, []);
@@ -1183,14 +1192,20 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
 
   useEffect(() => {
     document.documentElement.lang = locale;
-    document.documentElement.dataset.colorScheme = colorScheme;
     document.title = `${adapter.product.name} — ${localized(
       adapter.product.description,
       locale,
     )}`;
     adapter.setLocale?.(locale);
+  }, [adapter, locale]);
+
+  useEffect(() => {
+    document.documentElement.dataset.colorScheme = colorScheme;
+  }, [colorScheme]);
+
+  useEffect(() => {
     reportStorageResult(savePreferences(preferences));
-  }, [adapter, colorScheme, locale, preferences, reportStorageResult]);
+  }, [preferences, reportStorageResult]);
 
   useEffect(() => {
     const pending = globalThis.setTimeout(() => {
@@ -1263,18 +1278,26 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
           if (abort.signal.aborted || revision !== revisionRef.current) return;
           setAnalysis(result);
           setAnalysisError(false);
-          const attentionDiagnostics = new Set(
-            result.diagnostics
-              .filter((diagnostic) => diagnostic.severity !== 'info')
-              .map(
-                (diagnostic) =>
-                  `${diagnostic.severity}:${diagnostic.code ?? ''}:${diagnostic.range.start}:${diagnostic.range.end}:${diagnostic.message.ja}:${diagnostic.message.en}`,
-              ),
-          );
+          const attentionDiagnostics = new Map<string, number>();
+          for (const diagnostic of result.diagnostics) {
+            if (diagnostic.severity === 'info') continue;
+            const key = JSON.stringify([
+              diagnostic.severity,
+              diagnostic.code ?? '',
+              diagnostic.message.ja,
+              diagnostic.message.en,
+            ]);
+            attentionDiagnostics.set(
+              key,
+              (attentionDiagnostics.get(key) ?? 0) + 1,
+            );
+          }
           const previous = previousAttentionDiagnostics.current;
           if (
             previous !== null &&
-            [...attentionDiagnostics].some((key) => !previous.has(key))
+            [...attentionDiagnostics].some(
+              ([key, count]) => count > (previous.get(key) ?? 0),
+            )
           ) {
             setDiagnosticsExpanded(true);
           }

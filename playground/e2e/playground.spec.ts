@@ -158,6 +158,49 @@ test.describe('desktop authoring workspace', () => {
     await expect(page.locator('.cm-content')).toContainText('花の頃');
   });
 
+  test('preserves editor history and folds while changing language', async ({
+    page,
+  }) => {
+    await replaceEditor(page, sampleText('indent'));
+    await page.keyboard.press('Control+End');
+    await page.keyboard.insertText('\nlocale history marker');
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('Control+Shift+BracketLeft');
+    const originalEditor = await page.locator('.cm-editor').elementHandle();
+    expect(originalEditor).not.toBeNull();
+    await expect(page.getByLabel('folded code')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('button', { name: /Language/ }).click();
+    const japanese = page.getByRole('option', { name: 'Japanese' });
+    await japanese.click();
+    await expect(japanese).toBeHidden();
+    const localizedSettings = page.getByRole('dialog', { name: '設定' });
+    await expect(localizedSettings).toBeVisible();
+    await localizedSettings.getByRole('button', { name: '閉じる' }).click();
+    await expect(localizedSettings).toBeHidden();
+
+    const localizedEditor = page.getByRole('textbox', {
+      name: '入力（青空文庫記法）',
+    });
+    await expect(localizedEditor).toBeVisible();
+    const updatedEditor = await page.locator('.cm-editor').elementHandle();
+    expect(
+      await originalEditor?.evaluate(
+        (original, updated) => original.isSameNode(updated),
+        updatedEditor,
+      ),
+    ).toBe(true);
+    await expect(page.getByLabel('folded code')).toBeVisible();
+
+    await localizedEditor.click();
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect(localizedEditor).not.toContainText('locale history marker');
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await expect(localizedEditor).toContainText('locale history marker');
+  });
+
   test('keeps full-width conversion and gaiji inlay assistance configurable', async ({
     page,
   }) => {
@@ -187,8 +230,7 @@ test.describe('desktop authoring workspace', () => {
     await replaceEditor(page, '');
     await page.locator('.cm-content').click();
     await page.keyboard.type('[');
-    await expect(page.locator('.cm-content')).toContainText('[');
-    await expect(page.locator('.cm-content')).not.toContainText('［');
+    await expect(page.locator('.cm-content')).toHaveText('[');
   });
 
   test('shows human diagnostics and selects astral-safe ranges from preview-only mode', async ({
@@ -237,6 +279,28 @@ test.describe('desktop authoring workspace', () => {
         (element) => getComputedStyle(element).textCombineUpright,
       ),
     ).toBe('all');
+  });
+
+  test('changes writing direction without replacing the rendered document', async ({
+    page,
+  }) => {
+    await replaceEditor(page, sampleText('ruby'));
+    const ruby = page.locator('.playground-preview-host ruby').first();
+    const originalRuby = await ruby.elementHandle();
+    expect(originalRuby).not.toBeNull();
+
+    await page.getByRole('radio', { name: 'Vertical' }).click();
+    await expect(page.locator('.playground-preview-host')).toHaveAttribute(
+      'data-writing-direction',
+      'vertical',
+    );
+    const updatedRuby = await ruby.elementHandle();
+    expect(
+      await originalRuby?.evaluate(
+        (original, updated) => original.isSameNode(updated),
+        updatedRuby,
+      ),
+    ).toBe(true);
   });
 
   test('creates a reloadable hash only when Share is invoked', async ({
@@ -594,6 +658,6 @@ test.describe('boot compatibility and production policy', () => {
     expect(
       await page.locator('script[type="module"]').getAttribute('src'),
     ).toMatch(/^\/aozora\/playground\/assets\//);
-    expect([...origins]).toEqual(['http://127.0.0.1:5173']);
+    expect([...origins]).toEqual([new URL(page.url()).origin]);
   });
 });

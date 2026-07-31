@@ -1,14 +1,18 @@
 import type { EditorController, TextRange } from '@aozora/playground-ui';
+import { forceLinting } from '@codemirror/lint';
+import { Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 
 import {
   aozoraEngineExtensions,
+  aozoraLocaleExtensions,
   createAozoraEditor,
   engineFeaturesCompartment,
   externalUpdate,
   getWrapCommand,
   halfWidthCompartment,
   inlayHintsCompartment,
+  localeCompartment,
   parserStateField,
 } from './editor';
 import { aozoraInlayHints } from './editor/inlayHints';
@@ -16,6 +20,7 @@ import { halfToFullWidthFilter } from './editor/onType';
 
 export interface EngineAwareEditorController extends EditorController {
   enableEngineFeatures(): void;
+  refreshLocale(): void;
 }
 
 export function createEditor(
@@ -45,12 +50,21 @@ export function createEditor(
 
   return {
     enableEngineFeatures,
+    refreshLocale() {
+      view.dispatch({
+        effects: localeCompartment.reconfigure(aozoraLocaleExtensions()),
+      });
+      forceLinting(view);
+    },
     setValue(value: string) {
       const current = view.state.doc.toString();
       if (current === value) return;
       view.dispatch({
         changes: { from: 0, to: current.length, insert: value },
-        annotations: externalUpdate.of(true),
+        annotations: [
+          externalUpdate.of(true),
+          Transaction.addToHistory.of(false),
+        ],
       });
     },
     focus: () => view.focus(),

@@ -305,12 +305,38 @@ describe('Aozora PlaygroundAdapter', () => {
     const preview = aozoraPlaygroundAdapter.createPreview(host);
 
     preview.update('<ruby>青空<rt>あおぞら</rt></ruby>', 'vertical');
-    expect(host.querySelector('.aozora-notation')?.innerHTML).toContain(
-      '<ruby>',
-    );
+    const ruby = host.querySelector('.aozora-notation ruby');
+    expect(ruby?.innerHTML).toContain('青空');
     expect(host.querySelector('.aozora-vertical')).not.toBeNull();
+
+    preview.update('<ruby>青空<rt>あおぞら</rt></ruby>', 'horizontal');
+    expect(host.querySelector('.aozora-notation ruby')).toBe(ruby);
+    expect(host.querySelector('.aozora-vertical')).toBeNull();
 
     preview.destroy();
     expect(host.childElementCount).toBe(0);
+  });
+
+  it('updates the active editor locale without replacing its view', async () => {
+    aozoraPlaygroundAdapter.setLocale?.('en');
+    const host = document.createElement('div');
+    const editor = await aozoraPlaygroundAdapter.createEditor(host, '', () => {
+      throw new Error('locale refresh must not edit the document');
+    });
+    const content = host.querySelector('.cm-content');
+    expect(content?.getAttribute('aria-label')).toBe('Aozora notation source');
+    expect(host.querySelector('.cm-placeholder')?.textContent).toBe(
+      'Type Aozora notation…',
+    );
+
+    aozoraPlaygroundAdapter.setLocale?.('ja');
+    expect(host.querySelector('.cm-content')).toBe(content);
+    expect(content?.getAttribute('aria-label')).toBe('入力（青空文庫記法）');
+    expect(host.querySelector('.cm-placeholder')?.textContent).toBe(
+      '青空文庫記法を入力…',
+    );
+
+    editor.destroy();
+    aozoraPlaygroundAdapter.setLocale?.('en');
   });
 });

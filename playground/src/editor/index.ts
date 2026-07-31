@@ -48,10 +48,11 @@ export interface AozoraEditorOptions {
 export const halfWidthCompartment = new Compartment();
 export const inlayHintsCompartment = new Compartment();
 export const engineFeaturesCompartment = new Compartment();
+export const localeCompartment = new Compartment();
 
 /**
- * Tag transactions that come from `Editor.tsx`'s external setValue
- * effect (e.g. SampleLoader, share-URL restore) so `onChange` does
+ * Tag transactions that come from `EditorController.setValue`
+ * (e.g. sample or share-URL restoration) so `onChange` does
  * not echo them back to the parent and create a feedback loop.
  */
 export const externalUpdate = Annotation.define<true>();
@@ -78,6 +79,15 @@ export function aozoraEngineExtensions(inlayHintsEnabled: boolean): Extension {
   ];
 }
 
+export function aozoraLocaleExtensions(): Extension {
+  return [
+    EditorView.contentAttributes.of({
+      'aria-label': t('editorPaneTitle'),
+    }),
+    placeholder(t('editorPlaceholder')),
+  ];
+}
+
 /**
  * Build a CodeMirror 6 editor for Aozora notation. The configuration
  * is intentionally split into one extension array so that subsequent
@@ -99,10 +109,7 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
       EditorState.allowMultipleSelections.of(true),
       EditorState.tabSize.of(2),
       EditorView.lineWrapping,
-      EditorView.contentAttributes.of({
-        'aria-label': t('editorPaneTitle'),
-      }),
-      placeholder(t('editorPlaceholder')),
+      localeCompartment.of(aozoraLocaleExtensions()),
       closeBrackets(),
       aozoraCloseBracketsConfig,
       aozoraTheme,
@@ -130,7 +137,7 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
         // Skip if any of the contributing transactions was marked as
-        // external — that's how `Editor.tsx` mirrors `props.value`
+        // external — that's how the controller mirrors application state
         // into the editor without bouncing back through `onChange`.
         if (update.transactions.some((tr) => tr.annotation(externalUpdate)))
           return;

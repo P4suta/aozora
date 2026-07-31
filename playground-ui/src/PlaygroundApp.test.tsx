@@ -369,6 +369,60 @@ describe('shared PlaygroundApp', () => {
     );
   });
 
+  it('ignores moved diagnostic ranges but expands for another matching diagnostic', async () => {
+    const analyze: PlaygroundAdapter['analyze'] = async (source) => {
+      const diagnostics: PlaygroundAnalysis['diagnostics'] = [];
+      if (source.includes('warning')) {
+        diagnostics.push({
+          severity: 'warning',
+          message: { ja: '確認してください', en: 'Check input' },
+          range: source.includes('shifted')
+            ? { start: 4, end: 5 }
+            : { start: 0, end: 1 },
+          code: 'fake::warning',
+        });
+      }
+      if (source.includes('duplicate')) {
+        diagnostics.push({
+          severity: 'warning',
+          message: { ja: '確認してください', en: 'Check input' },
+          range: { start: 8, end: 9 },
+          code: 'fake::warning',
+        });
+      }
+      return result(source, diagnostics);
+    };
+    const harness = fakeHarness({ analyze });
+    render(<PlaygroundApp adapter={harness.adapter} />);
+
+    const editor = await screen.findByLabelText('Fake editor');
+    await waitFor(() => expect(harness.analyze).toHaveBeenCalledOnce());
+    fireEvent.input(editor, { target: { value: 'warning' } });
+    const initialWarning = await screen.findByRole('button', {
+      name: 'Diagnostics (1)',
+    });
+    await waitFor(() =>
+      expect(initialWarning).toHaveAttribute('aria-expanded', 'true'),
+    );
+    fireEvent.click(initialWarning);
+
+    fireEvent.input(editor, { target: { value: 'shifted warning' } });
+    await waitFor(() => expect(harness.analyze).toHaveBeenCalledTimes(3));
+    expect(
+      screen.getByRole('button', { name: 'Diagnostics (1)' }),
+    ).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.input(editor, {
+      target: { value: 'shifted warning duplicate' },
+    });
+    const duplicateWarning = await screen.findByRole('button', {
+      name: 'Diagnostics (2)',
+    });
+    await waitFor(() =>
+      expect(duplicateWarning).toHaveAttribute('aria-expanded', 'true'),
+    );
+  });
+
   it('labels every diagnostic severity for sighted and assistive users', async () => {
     const harness = fakeHarness({
       analyze: async (source) =>
@@ -570,23 +624,28 @@ describe('shared PlaygroundApp', () => {
     const user = userEvent.setup();
     const harness = fakeHarness();
     render(<PlaygroundApp adapter={harness.adapter} />);
-    await screen.findByLabelText('Fake editor');
+    const editor = await screen.findByLabelText('Fake editor');
     await waitFor(() => expect(harness.analyze).toHaveBeenCalledOnce());
     expect(document.title).toBe('Fake Writer — Fake engine');
+    const initialLocaleUpdates = harness.setLocale.mock.calls.length;
 
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     selectNativeOption('Dark');
     await waitFor(() =>
       expect(document.documentElement.dataset.colorScheme).toBe('dark'),
     );
+    expect(harness.setLocale).toHaveBeenCalledTimes(initialLocaleUpdates);
 
     selectNativeOption('Japanese');
     await waitFor(() => {
       expect(document.documentElement.lang).toBe('ja');
       expect(document.title).toBe('Fake Writer — 偽エンジン');
       expect(harness.setLocale).toHaveBeenLastCalledWith('ja');
+      expect(harness.setLocale).toHaveBeenCalledTimes(initialLocaleUpdates + 1);
       expect(harness.analyze).toHaveBeenCalledTimes(2);
     });
+    expect(harness.destroyEditor).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Fake editor')).toBe(editor);
 
     await user.click(screen.getByRole('switch', { name: '入力支援' }));
     expect(harness.setSetting).toHaveBeenLastCalledWith('assist', false);
@@ -599,6 +658,23 @@ describe('shared PlaygroundApp', () => {
       colorScheme: 'dark',
       locale: 'ja',
     });
+  });
+
+  it('does not override focus chosen after dismissing a dialog', async () => {
+    const user = userEvent.setup();
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.keyboard('{Escape}');
+    editor.focus();
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull(),
+    );
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+    expect(editor).toHaveFocus();
   });
 
   it('closes a mobile outline before restoring editor focus', async () => {

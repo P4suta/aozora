@@ -165,7 +165,10 @@ export const aozoraPlaygroundAdapter: PlaygroundAdapter = {
     },
   ],
   createEditorDuringInitialization: true,
-  setLocale: setEditorLocale,
+  setLocale(locale) {
+    setEditorLocale(locale);
+    for (const editor of activeEditors) editor.refreshLocale();
+  },
   async initialize() {
     const engine = await loadEngine();
     await engine.initializeEngine();
@@ -192,10 +195,14 @@ export const aozoraPlaygroundAdapter: PlaygroundAdapter = {
     const root = document.createElement('div');
     root.className = 'aozora-notation';
     parent.replaceChildren(root);
+    let previousHtml: string | null = null;
     return {
       update(html, direction) {
         root.classList.toggle('aozora-vertical', direction === 'vertical');
-        root.innerHTML = html;
+        if (html !== previousHtml) {
+          root.innerHTML = html;
+          previousHtml = html;
+        }
       },
       destroy() {
         root.remove();

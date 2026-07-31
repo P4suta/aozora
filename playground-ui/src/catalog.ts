@@ -52,7 +52,7 @@ const ja = {
   writingVertical: '縦書き',
 } as const;
 
-type MessageKey = keyof typeof ja;
+export type MessageKey = keyof typeof ja;
 
 const en: Record<MessageKey, string> = {
   about: 'About this playground',
@@ -107,6 +107,8 @@ const en: Record<MessageKey, string> = {
 };
 
 const catalog: Record<Locale, Record<MessageKey, string>> = { ja, en };
+
+export const messageKeys = Object.keys(ja) as MessageKey[];
 
 export function message(locale: Locale, key: MessageKey): string {
   return catalog[locale][key];

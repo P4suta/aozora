@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "bun run typecheck && vite build",
     "preview": "vite preview",
-    "preview:lighthouse": "bun scripts/serve-production.ts",
+    "preview:production": "bun scripts/serve-production.ts",
     "typecheck": "tsc --noEmit && tsc --project tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

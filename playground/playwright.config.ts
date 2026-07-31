@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = 'http://127.0.0.1:5173/aozora/playground/';
+const port = process.env.PLAYGROUND_PORT ?? '5173';
+const baseURL = `http://127.0.0.1:${port}/aozora/playground/`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -32,7 +33,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run preview',
+    command: 'bun run preview:production',
     url: baseURL,
     reuseExistingServer: false,
     timeout: 180_000,
