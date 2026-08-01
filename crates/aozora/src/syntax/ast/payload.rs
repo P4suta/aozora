@@ -13,7 +13,8 @@ use crate::encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 
 use crate::syntax::format::{ForwardAttr, ForwardOrigin, LineFormat};
 use crate::syntax::{
-    DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, NodeKind, RubySide, SectionKind,
+    DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, NodeKind, RubyBaseClass, RubySide,
+    SectionKind, ruby_base_class,
 };
 
 use super::intern::StrId;
@@ -40,6 +41,74 @@ pub(crate) enum Segment {
     Gaiji(Gaiji),
     /// Nested generic annotation.
     Directive(Directive),
+    Node(Node),
+}
+
+pub(crate) const fn node_is_content_segment(node: Node) -> bool {
+    matches!(
+        node,
+        Node::Format(_)
+            | Node::HeadingHint(_)
+            | Node::Illustration(_)
+            | Node::Kaeriten(_)
+            | Node::AngleQuote(_)
+            | Node::MarginNote(_)
+    )
+}
+
+pub(crate) fn content_ruby_base_class(
+    contents: &[Content],
+    store: &NodeStore,
+) -> Option<RubyBaseClass> {
+    let mut class = None;
+    for content in contents {
+        match *content {
+            Content::Plain(id) => absorb_text_class(store.resolve_str(id), &mut class)?,
+            Content::Segments(range) => {
+                for segment in store.resolve_seg_range(range) {
+                    match *segment {
+                        Segment::Text(id) => absorb_text_class(store.resolve_str(id), &mut class)?,
+                        Segment::Gaiji(gaiji) => {
+                            absorb_class(gaiji_ruby_base_class(gaiji, store)?, &mut class)?;
+                        }
+                        Segment::Directive(_) | Segment::Node(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+    class
+}
+
+pub(crate) fn gaiji_ruby_base_class(gaiji: Gaiji, store: &NodeStore) -> Option<RubyBaseClass> {
+    match gaiji.resolve(store)? {
+        Resolved::Char(ch) => ruby_base_class(ch),
+        Resolved::Multi(text) => {
+            let mut class = None;
+            for ch in text.chars().filter_map(ruby_base_class) {
+                absorb_class(ch, &mut class)?;
+            }
+            class
+        }
+    }
+}
+
+fn absorb_text_class(text: &str, class: &mut Option<RubyBaseClass>) -> Option<()> {
+    for ch in text.chars() {
+        absorb_class(ruby_base_class(ch)?, class)?;
+    }
+    Some(())
+}
+
+fn absorb_class(candidate: RubyBaseClass, class: &mut Option<RubyBaseClass>) -> Option<()> {
+    match class {
+        Some(current) if *current != candidate => None,
+        Some(_) => Some(()),
+        slot @ None => {
+            *slot = Some(candidate);
+            Some(())
+        }
+    }
 }
 
 impl GaijiCanonicalOwned {
@@ -143,6 +212,7 @@ pub(crate) enum ForwardPayload {
     None,
     NestedSource,
     AccentBody(StrId),
+    QuotedTarget(StrId),
 }
 
 /// Forward-reference emphasis.
@@ -234,7 +304,7 @@ pub(crate) struct Illustration {
 /// Generic annotation (注記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Directive {
-    /// Raw bytes between `［＃` and `］`.
+    /// Verbatim bracketed directive.
     pub raw: StrId,
     /// Classification.
     pub kind: DirectiveKind,

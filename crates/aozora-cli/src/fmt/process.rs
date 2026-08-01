@@ -15,7 +15,8 @@ use aozora::SerializeOptions;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-use crate::fmt::encoding::{self, Encoding};
+use crate::atomic_write;
+use crate::fmt::encoding::{self, Encoding, FileEncoding};
 use crate::fmt::source;
 use aozora::fmt::format_source_with;
 
@@ -30,6 +31,7 @@ pub(crate) struct Formatted {
     pub new: String,
     /// Parser diagnostics in original-source byte coordinates.
     pub diagnostics: Vec<aozora::Diagnostic>,
+    encoding: FileEncoding,
 }
 
 impl Formatted {
@@ -55,13 +57,14 @@ pub(crate) fn read_and_format(
     encoding: Encoding,
 ) -> Result<Formatted> {
     let raw = source::read_file(path)?;
-    let old =
-        encoding::decode(&raw, encoding).with_context(|| format!("decoding {}", path.display()))?;
-    let (new, diagnostics) = format_with_diagnostics(&old, opts)?;
+    let decoded = encoding::decode_with_encoding(&raw, encoding)
+        .with_context(|| format!("decoding {}", path.display()))?;
+    let (new, diagnostics) = format_with_diagnostics(&decoded.text, opts)?;
     Ok(Formatted {
-        old,
+        old: decoded.text,
         new,
         diagnostics,
+        encoding: decoded.encoding,
     })
 }
 
@@ -143,7 +146,9 @@ pub(crate) fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -
             path.display()
         );
     }
-    fs::write(path, &fmt.new).with_context(|| format!("writing {}", path.display()))
+    let encoded = encoding::encode(&fmt.new, fmt.encoding)
+        .with_context(|| format!("encoding {}", path.display()))?;
+    atomic_write::replace(path, &encoded).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Marker error returned by [`guard`] when the wrapped closure panicked.
@@ -283,11 +288,13 @@ mod tests {
             old: "x".to_owned(),
             new: "x".to_owned(),
             diagnostics: Vec::new(),
+            encoding: FileEncoding::Utf8,
         };
         let diff = Formatted {
             old: "x".to_owned(),
             new: "y".to_owned(),
             diagnostics: Vec::new(),
+            encoding: FileEncoding::Utf8,
         };
         assert!(!same.changed());
         assert!(diff.changed());
@@ -402,6 +409,7 @@ mod tests {
             old: "same".to_owned(),
             new: "same".to_owned(),
             diagnostics: Vec::new(),
+            encoding: FileEncoding::Utf8,
         };
         write_back(&path, &fmt, SerializeOptions::default()).expect("noop write_back");
         assert!(
@@ -423,6 +431,43 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 
+    #[test]
+    fn write_back_preserves_shift_jis_for_detected_and_explicit_input() {
+        let (raw, _, had_errors) = encoding_rs::SHIFT_JIS.encode("｜日本《にほん》");
+        assert!(!had_errors);
+        let (expected, _, had_errors) = encoding_rs::SHIFT_JIS.encode("日本《にほん》");
+        assert!(!had_errors);
+
+        for selected in [Encoding::Auto, Encoding::Sjis] {
+            let path = scratch("write-sjis.afm");
+            fs::write(&path, raw.as_ref()).expect("seed file");
+            let fmt =
+                read_and_format(&path, SerializeOptions::default(), selected).expect("read+format");
+            write_back(&path, &fmt, SerializeOptions::default()).expect("write_back");
+            assert_eq!(fs::read(&path).expect("read back"), expected.as_ref());
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn write_back_rejects_unrepresentable_shift_jis_before_writing() {
+        let path = scratch("unrepresentable-sjis.afm");
+        fs::write(&path, "original").expect("seed file");
+        let fmt = Formatted {
+            old: "original".to_owned(),
+            new: "\u{1f980}".to_owned(),
+            diagnostics: Vec::new(),
+            encoding: FileEncoding::ShiftJis,
+        };
+        let err = write_back(&path, &fmt, SerializeOptions::default()).unwrap_err();
+        assert!(
+            err.to_string().contains(&path.display().to_string()),
+            "encoding error must identify its input: {err:#}",
+        );
+        assert_eq!(fs::read(&path).expect("read back"), b"original");
+        fs::remove_file(&path).ok();
+    }
+
     /// The idempotency guard is the formatter's anti-corruption seatbelt:
     /// if a (hypothetically non-idempotent) canonical form does not survive
     /// a second pass, `write_back` must refuse to write rather than persist
@@ -439,6 +484,7 @@ mod tests {
             // so format_guarded(new) != new.
             new: "｜日本《にほん》".to_owned(),
             diagnostics: Vec::new(),
+            encoding: FileEncoding::Utf8,
         };
         let err = write_back(&path, &fmt, SerializeOptions::default())
             .expect_err("non-idempotent output must be refused");

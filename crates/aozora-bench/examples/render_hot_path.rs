@@ -44,7 +44,6 @@ use std::process;
 use std::time::Instant;
 
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
-use aozora_corpus::CorpusItem;
 const NS_PER_S: f64 = 1_000_000_000.0;
 
 fn main() {
@@ -65,26 +64,38 @@ fn main() {
     eprintln!("render_hot_path: starting (limit = {limit:?}, repeat = {repeat})");
 
     let load_start = Instant::now();
-    let items: Vec<CorpusItem> = corpus
-        .iter()
-        .take(limit.unwrap_or(usize::MAX))
-        .filter_map(Result::ok)
-        .collect();
+    let mut items = Vec::new();
+    let mut io_errors = 0;
+    for item in corpus.iter().take(limit.unwrap_or(usize::MAX)) {
+        match item {
+            Ok(item) => items.push(item),
+            Err(_) => io_errors += 1,
+        }
+    }
     eprintln!("render_hot_path: loaded {} items, bucketing…", items.len());
-    let banded = corpus_size_bands(items);
+    let mut banded = corpus_size_bands(items);
+    banded.io_errors = io_errors;
     let load_secs = load_start.elapsed().as_secs_f64();
     eprintln!(
-        "render_hot_path: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
+        "render_hot_path: bucketed (small={}, medium={}, large={}, path={}, decode_err={}, io_err={})",
         banded.small.len(),
         banded.medium.len(),
         banded.large.len(),
         banded.pathological.len(),
         banded.decode_errors,
+        banded.io_errors,
     );
     eprintln!(
         "render_hot_path: load wall {load_secs:.2}s (Shift-JIS decode + bucketing — \
          excluded from render measurements)"
     );
+    if banded.io_errors != 0 {
+        eprintln!(
+            "render_hot_path: refusing a partial-corpus measurement after {} I/O error(s)",
+            banded.io_errors
+        );
+        process::exit(2);
+    }
 
     let measure_start = Instant::now();
     let report = measure_all(&banded, repeat);
@@ -188,9 +199,10 @@ fn print_report(
     println!("=== render_hot_path ===");
     println!();
     println!(
-        "Corpus: {} docs across 4 bands; {} decode errors",
+        "Corpus: {} docs across 4 bands; {} decode errors; {} I/O errors",
         banded.total_docs(),
         banded.decode_errors,
+        banded.io_errors,
     );
     println!(
         "Wall:    load {load_secs:.2}s   measure {measure_secs:.2}s ({repeat} render{plural} per doc)",

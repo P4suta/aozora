@@ -29,6 +29,7 @@ use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
 use crate::config::ConfigFile;
+use crate::output;
 use crate::wire::Envelope;
 use aozora::InternalCheckCode;
 use aozora::{
@@ -189,7 +190,7 @@ fn kind_tables() -> Vec<KindTable> {
 /// JSON envelope per `--format`.
 pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     let tables = kind_tables();
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     match args.format.resolved() {
         // `resolved()` never returns `Auto`, but match exhaustively.
         OutputFormat::Human | OutputFormat::Auto => {
@@ -230,7 +231,7 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     };
     let pretty =
         serde_json::to_string_pretty(&value).context("failed to serialize schema as JSON")?;
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     writeln!(stdout, "{pretty}").context("write schema to stdout")?;
     Ok(ExitCode::SUCCESS)
 }
@@ -239,7 +240,7 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
 /// envelope. Reads no document input; byte-identical to every binding's
 /// `slugs_json()` output.
 pub(crate) fn run_slugs() -> Result<ExitCode> {
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     writeln!(stdout, "{}", json::slugs()).context("write slugs to stdout")?;
     Ok(ExitCode::SUCCESS)
 }
@@ -252,7 +253,7 @@ pub(crate) fn run_slugs() -> Result<ExitCode> {
 pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     match resolve_explain(&args.kind, lang) {
         Some(text) => {
-            let mut stdout = io::stdout().lock();
+            let mut stdout = output::stdout();
             writeln!(stdout, "{text}").context("write explain to stdout")?;
             Ok(ExitCode::SUCCESS)
         }

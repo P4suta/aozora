@@ -46,8 +46,10 @@
 //! inspection up through `Paired` works freely; the final pass is atomic.
 
 use core::ops::Range;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
+use crate::encoding::gaiji::Resolved;
 use crate::pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify_range, pair, sanitize, tokenize,
 };
@@ -55,12 +57,37 @@ use crate::spec::{Diagnostic, PairLink};
 
 use crate::syntax::alloc::Allocator;
 use crate::syntax::ast::{
-    ContainerPair, LexOutput, Node, NodeStore, RegionOutput, Registry, SanitizedText,
+    ContainerPair, Content, ContentRange, ForwardFormat, ForwardPayload, Gaiji, LexOutput, Node,
+    NodeStore, RegionOutput, Registry, Ruby, SanitizedText, Segment, content_ruby_base_class,
+    gaiji_ruby_base_class, node_is_content_segment,
 };
 use crate::syntax::format::ForwardOrigin;
-use crate::syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
+use crate::syntax::{
+    ForwardAttr, RegionClose, RegionFormat, RubyBaseClass, RubySide, Span, ruby_base_class,
+};
 
 use crate::pipeline::fold::{Normalizer, Recorder};
+
+#[derive(Clone, Copy)]
+enum PlannedSegment {
+    Text(Span),
+    Ready(Segment),
+}
+
+type SegmentPlan = SmallVec<[PlannedSegment; 8]>;
+type MaterializedSegments = SmallVec<[Segment; 8]>;
+
+#[derive(Clone, Copy)]
+struct StructuredForwardCandidate {
+    idx: usize,
+    format: ForwardFormat,
+}
+
+#[derive(Clone, Copy)]
+struct StructuredRubyCandidate {
+    idx: usize,
+    ruby: Ruby,
+}
 
 // =====================================================================
 // State markers (field-bound — each state carries the stage output it is
@@ -348,11 +375,11 @@ fn build_paired(
         let spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
         let mut classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
         drop(classify_stream);
-        let (lowered, ruby_base_decorated) = lower_spans(spans, source, &mut alloc);
-        if !ruby_base_decorated.is_empty() {
+        let (lowered, decorated_forward) = lower_spans(spans, source, &mut alloc);
+        if !decorated_forward.is_empty() {
             classify_diagnostics.retain(|diagnostic| {
                 !(matches!(diagnostic, Diagnostic::ForwardReferentNotStylable { .. })
-                    && ruby_base_decorated.contains(&diagnostic.span()))
+                    && decorated_forward.contains(&diagnostic.span()))
             });
         }
         for span in &lowered {
@@ -483,9 +510,9 @@ fn build_region_output(
 /// pathology; the surviving [`ForwardOrigin`] on each forward leaf is necessary
 /// provenance (#202).
 ///
-/// Returns the lowered spans and the set of forward-directive spans the
-/// ruby-base emphasis phase (#384) decorated — the builder suppresses those
-/// directives' `forward_referent_not_stylable` warnings.
+/// Returns the lowered spans and the set of forward-directive spans decorated
+/// during lowering, so the builder can suppress their stale
+/// `forward_referent_not_stylable` warnings.
 fn lower_spans(
     spans: Vec<ClassifiedSpan>,
     source: &str,
@@ -494,6 +521,7 @@ fn lower_spans(
     // Phase 0: resolve forward heading hints whose referent is the bare line
     // directly above the directive into promoted `Heading` nodes.
     let mut spans = promote_headings(spans, source, alloc);
+    let mut decorated = merge_structured_content(&mut spans, source, alloc);
     let mut out_len = 0;
     for read in 0..spans.len() {
         let span = spans[read].clone();
@@ -521,8 +549,435 @@ fn lower_spans(
     let mut out = fold_inline_emphasis(spans, source, alloc);
     // Third phase: apply a declined forward emphasis onto a preceding ruby base
     // it uniquely names (#384).
-    let decorated = decorate_ruby_bases(&mut out, source, alloc.store());
+    decorated.extend(decorate_ruby_bases(&mut out, source, alloc.store()));
     (out, decorated)
+}
+
+fn merge_structured_content(
+    spans: &mut [ClassifiedSpan],
+    source: &str,
+    alloc: &mut Allocator,
+) -> Vec<Span> {
+    let mut decorated = Vec::new();
+    for idx in 0..spans.len() {
+        match spans[idx].kind {
+            SpanKind::Aozora(Node::Ruby(ruby)) => {
+                let candidate = StructuredRubyCandidate { idx, ruby };
+                merge_structured_ruby_base(spans, candidate, source, alloc);
+            }
+            SpanKind::Aozora(Node::Format(format)) => {
+                let candidate = StructuredForwardCandidate { idx, format };
+                if let Some(span) = merge_structured_forward_target(spans, candidate, source, alloc)
+                {
+                    decorated.push(span);
+                }
+            }
+            _ => {}
+        }
+    }
+    decorated
+}
+
+fn merge_structured_forward_target(
+    spans: &mut [ClassifiedSpan],
+    candidate: StructuredForwardCandidate,
+    source: &str,
+    alloc: &mut Allocator,
+) -> Option<Span> {
+    let StructuredForwardCandidate {
+        idx: format_idx,
+        format,
+    } = candidate;
+    if !matches!(
+        format.origin,
+        ForwardOrigin::SelfContained | ForwardOrigin::Referenced
+    ) || !matches!(
+        format.payload,
+        ForwardPayload::None | ForwardPayload::NestedSource
+    ) {
+        return None;
+    }
+    let [Content::Plain(quoted_target)] = alloc.store().resolve_content_range(format.target) else {
+        return None;
+    };
+    let quoted_target = *quoted_target;
+    let planned = {
+        let store = alloc.store();
+        let target = store.resolve_str(quoted_target);
+        match spans[..format_idx].last()?.kind {
+            SpanKind::Plain => {
+                let text = spans[format_idx - 1].source_span.slice(source);
+                if !target.ends_with(text) && !text.ends_with(target) {
+                    return None;
+                }
+            }
+            SpanKind::Aozora(Node::Gaiji(_) | Node::AngleQuote(_) | Node::Kaeriten(_)) => {}
+            _ => return None,
+        }
+        structured_forward_prefix(&spans[..format_idx], target, source, store)
+    };
+    let (source_start, plan) = planned?;
+    let segments = materialize_segments(&plan, source, alloc);
+    let content = alloc.content_segments(&segments);
+    let Node::Format(mut merged) =
+        alloc.forward_format(format.attr, content, ForwardOrigin::Reclaimed)
+    else {
+        unreachable!("forward format allocator returns a format node");
+    };
+    merged.payload = ForwardPayload::QuotedTarget(quoted_target);
+    let directive_span = spans[format_idx].source_span;
+    spans[format_idx].kind = SpanKind::Aozora(Node::Format(merged));
+    spans[format_idx].source_span.start = source_start;
+    Some(directive_span)
+}
+
+fn structured_forward_prefix(
+    spans: &[ClassifiedSpan],
+    target: &str,
+    source: &str,
+    store: &NodeStore,
+) -> Option<(u32, SegmentPlan)> {
+    let mut remaining = target;
+    let mut reversed = SegmentPlan::new();
+    let mut source_start = spans.last()?.source_span.end;
+    let mut cursor = spans.len();
+    let mut contains_structured = false;
+
+    while !remaining.is_empty() {
+        let previous_idx = cursor.checked_sub(1)?;
+        let previous = &spans[previous_idx];
+        if previous.source_span.end != source_start {
+            return None;
+        }
+        match previous.kind {
+            SpanKind::Plain => {
+                let text = previous.source_span.slice(source);
+                if remaining.ends_with(text) {
+                    reversed.push(PlannedSegment::Text(previous.source_span));
+                    remaining = &remaining[..remaining.len() - text.len()];
+                    source_start = previous.source_span.start;
+                    cursor = previous_idx;
+                } else if text.ends_with(remaining) {
+                    let consumed = remaining;
+                    source_start = previous.source_span.end.saturating_sub(
+                        u32::try_from(consumed.len()).expect("source span offset fits u32"),
+                    );
+                    reversed.push(PlannedSegment::Text(Span::new(
+                        source_start,
+                        previous.source_span.end,
+                    )));
+                    remaining = "";
+                } else {
+                    return None;
+                }
+            }
+            SpanKind::Aozora(Node::Gaiji(gaiji)) => {
+                let stripped = strip_structured_gaiji_suffix(remaining, gaiji, store)?;
+                reversed.push(PlannedSegment::Ready(Segment::Gaiji(gaiji)));
+                remaining = stripped;
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            SpanKind::Aozora(node @ (Node::AngleQuote(_) | Node::Kaeriten(_))) => {
+                let stripped = strip_structured_forward_node_suffix(remaining, node, store)?;
+                reversed.push(PlannedSegment::Ready(Segment::Node(node)));
+                remaining = stripped;
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            _ => return None,
+        }
+    }
+    if !contains_structured {
+        return None;
+    }
+    reversed.reverse();
+    Some((source_start, reversed))
+}
+
+fn strip_structured_gaiji_suffix<'a>(
+    text: &'a str,
+    gaiji: Gaiji,
+    store: &NodeStore,
+) -> Option<&'a str> {
+    match gaiji.resolve(store) {
+        Some(Resolved::Char(ch)) => text.strip_suffix(ch),
+        Some(Resolved::Multi(value)) => text.strip_suffix(value),
+        None => text.strip_suffix(store.resolve_str(gaiji.hint)),
+    }
+}
+
+fn strip_structured_forward_node_suffix<'a>(
+    text: &'a str,
+    node: Node,
+    store: &NodeStore,
+) -> Option<&'a str> {
+    match node {
+        Node::AngleQuote(quote) => {
+            let text = text.strip_suffix('》')?;
+            let text = strip_structured_forward_content_suffix(text, quote.content, store)?;
+            text.strip_suffix('《')
+        }
+        Node::Kaeriten(kaeriten) => text.strip_suffix(store.resolve_str(kaeriten.mark)),
+        _ => None,
+    }
+}
+
+fn strip_structured_forward_content_suffix<'a>(
+    mut text: &'a str,
+    range: ContentRange,
+    store: &NodeStore,
+) -> Option<&'a str> {
+    for content in store.resolve_content_range(range).iter().rev() {
+        match *content {
+            Content::Plain(id) => text = text.strip_suffix(store.resolve_str(id))?,
+            Content::Segments(segments) => {
+                for segment in store.resolve_seg_range(segments).iter().rev() {
+                    match *segment {
+                        Segment::Text(id) => text = text.strip_suffix(store.resolve_str(id))?,
+                        Segment::Gaiji(gaiji) => {
+                            text = strip_structured_gaiji_suffix(text, gaiji, store)?;
+                        }
+                        Segment::Directive(_) | Segment::Node(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+    Some(text)
+}
+
+fn merge_structured_ruby_base(
+    spans: &mut [ClassifiedSpan],
+    candidate: StructuredRubyCandidate,
+    source: &str,
+    alloc: &mut Allocator,
+) {
+    let StructuredRubyCandidate {
+        idx: ruby_idx,
+        ruby,
+    } = candidate;
+    let ruby_source = spans[ruby_idx].source_span.slice(source);
+    if ruby.side != RubySide::Right || ruby_source.starts_with('｜') {
+        return;
+    }
+    let reading_only = ruby_source.starts_with('《');
+    let Some((source_start, plan)) = explicit_ruby_prefix(spans, ruby_idx, source, alloc.store())
+        .or_else(|| {
+            (!reading_only).then(|| implicit_ruby_prefix(spans, ruby_idx, source, alloc.store()))?
+        })
+    else {
+        return;
+    };
+    if reading_only
+        && let Some(base) = alloc.store().content_range_as_plain(ruby.base)
+        && plain_plan_matches(&plan, base, source)
+    {
+        spans[ruby_idx].source_span.start = source_start;
+        return;
+    }
+    let mut prefix = materialize_segments(&plan, source, alloc);
+    if !reading_only {
+        match alloc.store().resolve_content_range(ruby.base)[0] {
+            Content::Plain(id) => prefix.push(Segment::Text(id)),
+            Content::Segments(range) => {
+                prefix.extend_from_slice(alloc.store().resolve_seg_range(range));
+            }
+        }
+    }
+    let reading = alloc.store().resolve_content_range(ruby.reading)[0];
+    let merged_base = alloc.content_segments(&prefix);
+    let Node::Ruby(mut merged) = alloc.ruby(merged_base, reading) else {
+        unreachable!("ruby allocator returns a ruby node");
+    };
+    merged.base_emphasis = ruby.base_emphasis;
+    spans[ruby_idx].kind = SpanKind::Aozora(Node::Ruby(merged));
+    spans[ruby_idx].source_span.start = source_start;
+}
+
+fn plain_plan_matches(plan: &[PlannedSegment], mut remaining: &str, source: &str) -> bool {
+    for segment in plan {
+        let PlannedSegment::Text(span) = segment else {
+            return false;
+        };
+        let Some(rest) = remaining.strip_prefix(span.slice(source)) else {
+            return false;
+        };
+        remaining = rest;
+    }
+    remaining.is_empty()
+}
+
+fn explicit_ruby_prefix(
+    spans: &[ClassifiedSpan],
+    ruby_idx: usize,
+    source: &str,
+    store: &NodeStore,
+) -> Option<(u32, SegmentPlan)> {
+    let SpanKind::Aozora(Node::Ruby(ruby)) = spans[ruby_idx].kind else {
+        return None;
+    };
+    let mut reversed = SegmentPlan::new();
+    let mut source_start = spans[ruby_idx].source_span.start;
+    let mut cursor = ruby_idx;
+    let mut contains_structured = content_range_contains_structured(ruby.base, store);
+    let reclaim_plain = spans[ruby_idx].source_span.slice(source).starts_with('《');
+
+    while let Some(previous_idx) = cursor.checked_sub(1) {
+        let previous = &spans[previous_idx];
+        if previous.source_span.end != source_start {
+            return None;
+        }
+        match previous.kind {
+            SpanKind::Aozora(Node::Gaiji(gaiji)) => {
+                reversed.push(PlannedSegment::Ready(Segment::Gaiji(gaiji)));
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            SpanKind::Aozora(Node::Directive(directive)) => {
+                reversed.push(PlannedSegment::Ready(Segment::Directive(directive)));
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            SpanKind::Aozora(node) if node_is_content_segment(node) => {
+                reversed.push(PlannedSegment::Ready(Segment::Node(node)));
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            SpanKind::Plain => {
+                let text = previous.source_span.slice(source);
+                if let Some(bar_start) = text.rfind('｜') {
+                    let base_start = bar_start + '｜'.len_utf8();
+                    if base_start < text.len() {
+                        let text_start = previous.source_span.start.saturating_add(
+                            u32::try_from(base_start).expect("source span offset fits u32"),
+                        );
+                        reversed.push(PlannedSegment::Text(Span::new(
+                            text_start,
+                            previous.source_span.end,
+                        )));
+                    }
+                    if contains_structured || reclaim_plain {
+                        reversed.reverse();
+                        return Some((
+                            previous.source_span.start.saturating_add(
+                                u32::try_from(bar_start).expect("source span offset fits u32"),
+                            ),
+                            reversed,
+                        ));
+                    }
+                    return None;
+                }
+                if !text.is_empty() {
+                    reversed.push(PlannedSegment::Text(previous.source_span));
+                }
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn implicit_ruby_prefix(
+    spans: &[ClassifiedSpan],
+    ruby_idx: usize,
+    source: &str,
+    store: &NodeStore,
+) -> Option<(u32, SegmentPlan)> {
+    let SpanKind::Aozora(Node::Ruby(ruby)) = spans[ruby_idx].kind else {
+        return None;
+    };
+    let class = content_ruby_base_class(store.resolve_content_range(ruby.base), store)?;
+    let mut reversed = SegmentPlan::new();
+    let mut source_start = spans[ruby_idx].source_span.start;
+    let mut cursor = ruby_idx;
+    let mut contains_structured = content_range_contains_structured(ruby.base, store);
+
+    while let Some(previous_idx) = cursor.checked_sub(1) {
+        let previous = &spans[previous_idx];
+        if previous.source_span.end != source_start {
+            break;
+        }
+        match previous.kind {
+            SpanKind::Aozora(Node::Gaiji(gaiji))
+                if gaiji_ruby_base_class(gaiji, store) == Some(class) =>
+            {
+                reversed.push(PlannedSegment::Ready(Segment::Gaiji(gaiji)));
+                source_start = previous.source_span.start;
+                cursor = previous_idx;
+                contains_structured = true;
+            }
+            SpanKind::Plain => {
+                let text = previous.source_span.slice(source);
+                let suffix_start = trailing_class_start(text, class);
+                if suffix_start == text.len() {
+                    break;
+                }
+                source_start = previous.source_span.start.saturating_add(
+                    u32::try_from(suffix_start).expect("source span offset fits u32"),
+                );
+                reversed.push(PlannedSegment::Text(Span::new(
+                    source_start,
+                    previous.source_span.end,
+                )));
+                if suffix_start != 0 {
+                    break;
+                }
+                cursor = previous_idx;
+            }
+            _ => break,
+        }
+    }
+    if !contains_structured {
+        return None;
+    }
+    reversed.reverse();
+    Some((source_start, reversed))
+}
+
+fn content_range_contains_structured(range: ContentRange, store: &NodeStore) -> bool {
+    store
+        .resolve_content_range(range)
+        .iter()
+        .any(|content| match *content {
+            Content::Plain(_) => false,
+            Content::Segments(segments) => store
+                .resolve_seg_range(segments)
+                .iter()
+                .any(|segment| !matches!(segment, Segment::Text(_))),
+        })
+}
+
+fn materialize_segments(
+    plan: &[PlannedSegment],
+    source: &str,
+    alloc: &mut Allocator,
+) -> MaterializedSegments {
+    plan.iter()
+        .map(|planned| match *planned {
+            PlannedSegment::Text(span) => alloc.seg_text(span.slice(source)),
+            PlannedSegment::Ready(Segment::Node(node)) => alloc.seg_node(node),
+            PlannedSegment::Ready(segment) => segment,
+        })
+        .collect()
+}
+
+fn trailing_class_start(text: &str, class: RubyBaseClass) -> usize {
+    let mut start = text.len();
+    for (idx, ch) in text.char_indices().rev() {
+        if ruby_base_class(ch) != Some(class) {
+            break;
+        }
+        start = idx;
+    }
+    start
 }
 
 /// Whether a forward attribute decorates a whole run as a single emphasis
@@ -825,6 +1280,477 @@ mod tests {
             chain.registry.count_kind(Sentinel::Inline),
             oneshot.registry.count_kind(Sentinel::Inline)
         );
+    }
+
+    #[test]
+    fn implicit_ruby_reclaims_resolved_gaiji_and_plain_text() {
+        let source = "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀多《かんだた》";
+        let output = Pipeline::run_to_completion(source);
+        assert!(output.diagnostics.is_empty());
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(
+            entry.source_span,
+            Span::new(0, u32::try_from(source.len()).expect("fixture fits u32"))
+        );
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [Segment::Gaiji(gaiji), Segment::Text(text)] = output.store.resolve_seg_range(*range)
+        else {
+            panic!("expected gaiji followed by plain text in the ruby base");
+        };
+        assert_eq!(
+            gaiji.resolve(&output.store).and_then(Resolved::as_char),
+            Some('犍')
+        );
+        assert_eq!(output.store.resolve_str(*text), "陀多");
+        assert_eq!(
+            output.store.content_range_as_plain(ruby.reading),
+            Some("かんだた")
+        );
+    }
+
+    #[test]
+    fn implicit_ruby_extends_a_structured_existing_base() {
+        let source = "川※［＃「くさかんむり／弓」、第3水準1-90-62］《せんきゅう》";
+        let output = Pipeline::run_to_completion(source);
+        assert!(output.diagnostics.is_empty());
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(entry.source_span.slice(source), source);
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [Segment::Text(text), Segment::Gaiji(gaiji)] = output.store.resolve_seg_range(*range)
+        else {
+            panic!("expected text followed by gaiji in the ruby base");
+        };
+        assert_eq!(output.store.resolve_str(*text), "川");
+        assert_eq!(
+            gaiji.resolve(&output.store).and_then(Resolved::as_char),
+            Some('芎')
+        );
+        assert_eq!(
+            output.store.content_range_as_plain(ruby.reading),
+            Some("せんきゅう")
+        );
+    }
+
+    #[test]
+    fn explicit_ruby_reclaims_text_and_gaiji_without_class_constraints() {
+        let source = "前｜A※［＃「特のへん＋廴＋聿」、第3水準1-87-71］漢《r》後";
+        let output = Pipeline::run_to_completion(source);
+        assert!(output.diagnostics.is_empty());
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(
+            entry.source_span.slice(source),
+            "｜A※［＃「特のへん＋廴＋聿」、第3水準1-87-71］漢《r》"
+        );
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [
+            Segment::Text(first),
+            Segment::Gaiji(gaiji),
+            Segment::Text(last),
+        ] = output.store.resolve_seg_range(*range)
+        else {
+            panic!("expected text, gaiji, text in the ruby base");
+        };
+        assert_eq!(output.store.resolve_str(*first), "A");
+        assert_eq!(
+            gaiji.resolve(&output.store).and_then(Resolved::as_char),
+            Some('犍')
+        );
+        assert_eq!(output.store.resolve_str(*last), "漢");
+    }
+
+    #[test]
+    fn explicit_ruby_preserves_semantic_nodes_inside_its_base() {
+        let source = "｜瑞岩東畔命［＃二］軽舟［＃一］《ずいがんとうはんめいずけいしうを》";
+        let output = Pipeline::run_to_completion(source);
+        assert!(output.diagnostics.is_empty());
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(entry.source_span.slice(source), source);
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [
+            Segment::Text(first),
+            Segment::Node(Node::Kaeriten(two)),
+            Segment::Text(second),
+            Segment::Node(Node::Kaeriten(one)),
+        ] = output.store.resolve_seg_range(*range)
+        else {
+            panic!(
+                "expected text and kaeriten segments, got {:?}",
+                output.store.resolve_seg_range(*range)
+            );
+        };
+        assert_eq!(output.store.resolve_str(*first), "瑞岩東畔命");
+        assert_eq!(output.store.resolve_str(two.mark), "二");
+        assert_eq!(output.store.resolve_str(*second), "軽舟");
+        assert_eq!(output.store.resolve_str(one.mark), "一");
+    }
+
+    #[test]
+    fn ruby_reading_preserves_reclaimed_forward_format() {
+        let source = "折口《ツムレ［＃「ムレ」に白丸傍点］》";
+        let output = Pipeline::run_to_completion(source);
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.reading) else {
+            panic!("expected a segmented ruby reading");
+        };
+        let [Segment::Text(prefix), Segment::Node(Node::Format(format))] =
+            output.store.resolve_seg_range(*range)
+        else {
+            panic!(
+                "expected text and format segments, got {:?}",
+                output.store.resolve_seg_range(*range)
+            );
+        };
+        assert_eq!(output.store.resolve_str(*prefix), "ツ");
+        assert_eq!(
+            output.store.content_range_as_plain(format.target),
+            Some("ムレ")
+        );
+        assert!(matches!(format.origin, ForwardOrigin::Reclaimed));
+        assert!(matches!(
+            format.attr,
+            ForwardAttr::Bouten {
+                kind: BoutenKind::WhiteCircle,
+                position: BoutenPosition::Right
+            }
+        ));
+    }
+
+    #[test]
+    fn failed_explicit_ruby_probe_does_not_intern_text() {
+        let source = "前文漢《かん》";
+        let ruby_start = u32::try_from("前文".len()).expect("fixture fits u32");
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("漢");
+        let reading = alloc.content_plain("かん");
+        let ruby = alloc.ruby(base, reading);
+        let spans = [
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(0, ruby_start),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(
+                    ruby_start,
+                    u32::try_from(source.len()).expect("fixture fits u32"),
+                ),
+            },
+        ];
+        let before = (
+            alloc.store().interner.len(),
+            alloc.store().interner.stats.calls,
+            alloc.store().interner.stats.allocs,
+        );
+
+        assert!(explicit_ruby_prefix(&spans, 1, source, alloc.store()).is_none());
+        assert_eq!(
+            (
+                alloc.store().interner.len(),
+                alloc.store().interner.stats.calls,
+                alloc.store().interner.stats.allocs,
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn ordinary_ruby_does_not_rebuild_the_store() {
+        let source = "前漢《かん》";
+        let ruby_start = u32::try_from("前".len()).expect("fixture fits u32");
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("漢");
+        let reading = alloc.content_plain("かん");
+        let ruby = alloc.ruby(base, reading);
+        let mut spans = [
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(0, ruby_start),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(
+                    ruby_start,
+                    u32::try_from(source.len()).expect("fixture fits u32"),
+                ),
+            },
+        ];
+        let original = spans.clone();
+        let before = (
+            alloc.store().interner.len(),
+            alloc.store().interner.stats.calls,
+            alloc.store().interner.stats.allocs,
+        );
+
+        let decorated = merge_structured_content(&mut spans, source, &mut alloc);
+
+        assert!(decorated.is_empty());
+        assert_eq!(spans, original);
+        assert_eq!(
+            (
+                alloc.store().interner.len(),
+                alloc.store().interner.stats.calls,
+                alloc.store().interner.stats.allocs,
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn streamed_plain_explicit_ruby_only_expands_its_span() {
+        let source = "｜〔canapé〕《長椅子》";
+        let base_start = u32::try_from("｜".len()).expect("fixture fits u32");
+        let ruby_start = u32::try_from("｜〔canapé〕".len()).expect("fixture fits u32");
+        let source_end = u32::try_from(source.len()).expect("fixture fits u32");
+        let mut alloc = Allocator::new();
+        let base = alloc.content_plain("〔canapé〕");
+        let reading = alloc.content_plain("長椅子");
+        let ruby = alloc.ruby(base, reading);
+        let mut spans = [
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(0, base_start),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(base_start, ruby_start),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(ruby_start, source_end),
+            },
+        ];
+        let original_ruby = spans[2].kind.clone();
+        let before = (
+            alloc.store().interner.len(),
+            alloc.store().interner.stats.calls,
+            alloc.store().interner.stats.allocs,
+        );
+
+        let decorated = merge_structured_content(&mut spans, source, &mut alloc);
+
+        assert!(decorated.is_empty());
+        assert_eq!(spans[2].source_span, Span::new(0, source_end));
+        assert_eq!(spans[2].kind, original_ruby);
+        assert_eq!(
+            (
+                alloc.store().interner.len(),
+                alloc.store().interner.stats.calls,
+                alloc.store().interner.stats.allocs,
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn failed_structured_forward_probe_does_not_intern_partial_match() {
+        let directive = "［＃改ページ］";
+        let source = format!("{directive}末");
+        let boundary = u32::try_from(directive.len()).expect("fixture fits u32");
+        let spans = [
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(Node::PageBreak),
+                source_span: Span::new(0, boundary),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(
+                    boundary,
+                    u32::try_from(source.len()).expect("fixture fits u32"),
+                ),
+            },
+        ];
+        let alloc = Allocator::new();
+        let before = (
+            alloc.store().interner.len(),
+            alloc.store().interner.stats.calls,
+            alloc.store().interner.stats.allocs,
+        );
+
+        assert!(structured_forward_prefix(&spans, "前末", &source, alloc.store()).is_none());
+        assert_eq!(
+            (
+                alloc.store().interner.len(),
+                alloc.store().interner.stats.calls,
+                alloc.store().interner.stats.allocs,
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn explicit_ruby_bar_does_not_cross_a_boundary_or_failed_ruby() {
+        for source in [
+            "｜捨て\n甲［＃二］《こう》",
+            "｜捨て［＃改ページ］甲［＃二］《こう》",
+            "｜A《》B［＃二］《b》",
+        ] {
+            let output = Pipeline::run_to_completion(source);
+            assert!(
+                output
+                    .source_nodes
+                    .iter()
+                    .all(|entry| !matches!(entry.node, NodeRef::Inline(Node::Ruby(_)))),
+                "stale bar formed a ruby in {source:?}: {:?}",
+                output.source_nodes
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_ruby_reclaims_unresolved_gaiji() {
+        let source = "｜陀※［＃「架空の字」］多《r》";
+        let output = Pipeline::run_to_completion(source);
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(entry.source_span.slice(source), source);
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [
+            Segment::Text(first),
+            Segment::Gaiji(gaiji),
+            Segment::Text(last),
+        ] = output.store.resolve_seg_range(*range)
+        else {
+            panic!("expected text, gaiji, text in the ruby base");
+        };
+        assert_eq!(output.store.resolve_str(*first), "陀");
+        assert!(gaiji.resolve(&output.store).is_none());
+        assert_eq!(output.store.resolve_str(*last), "多");
+        assert!(matches!(
+            output.diagnostics.as_slice(),
+            [Diagnostic::UnresolvedGaiji { .. }]
+        ));
+    }
+
+    #[test]
+    fn explicit_ruby_uses_the_latest_marker() {
+        let source = "文｜｜※［＃「特のへん＋廴＋聿」、第3水準1-87-71］《r》";
+        let output = Pipeline::run_to_completion(source);
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(
+            entry.source_span.slice(source),
+            "｜※［＃「特のへん＋廴＋聿」、第3水準1-87-71］《r》"
+        );
+    }
+
+    #[test]
+    fn implicit_ruby_reclaims_alternating_resolved_gaiji_and_text() {
+        let source = "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀※［＃「特のへん＋廴＋聿」、第3水準1-87-71］多《r》";
+        let output = Pipeline::run_to_completion(source);
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        assert_eq!(entry.source_span.slice(source), source);
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(range)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        assert!(matches!(
+            output.store.resolve_seg_range(*range),
+            [
+                Segment::Gaiji(_),
+                Segment::Text(_),
+                Segment::Gaiji(_),
+                Segment::Text(_)
+            ]
+        ));
+    }
+
+    #[test]
+    fn unresolved_gaiji_does_not_guess_an_implicit_ruby_class() {
+        let before = "※［＃「架空の字」］陀多《r》";
+        let before_output = Pipeline::run_to_completion(before);
+        assert!(matches!(
+            before_output.source_nodes.as_slice(),
+            [
+                SourceNode {
+                    node: NodeRef::Inline(Node::Gaiji(_)),
+                    ..
+                },
+                SourceNode {
+                    node: NodeRef::Inline(Node::Ruby(_)),
+                    ..
+                }
+            ]
+        ));
+
+        let after = "陀多※［＃「架空の字」］《r》";
+        let after_output = Pipeline::run_to_completion(after);
+        let [entry] = after_output.source_nodes.as_slice() else {
+            panic!(
+                "expected one ruby node, got {:?}",
+                after_output.source_nodes
+            );
+        };
+        assert_eq!(entry.source_span.slice(after), "※［＃「架空の字」］《r》");
+    }
+
+    #[test]
+    fn reading_gaiji_stays_in_the_reading_while_the_base_is_reclaimed() {
+        let source = "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀《かん※［＃「特のへん＋廴＋聿」、第3水準1-87-71］》";
+        let output = Pipeline::run_to_completion(source);
+        let [entry] = output.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", output.source_nodes);
+        };
+        let NodeRef::Inline(Node::Ruby(ruby)) = entry.node else {
+            panic!("expected ruby node, got {:?}", entry.node);
+        };
+        let [Content::Segments(base)] = output.store.resolve_content_range(ruby.base) else {
+            panic!("expected a segmented ruby base");
+        };
+        let [Content::Segments(reading)] = output.store.resolve_content_range(ruby.reading) else {
+            panic!("expected a segmented ruby reading");
+        };
+        assert!(matches!(
+            output.store.resolve_seg_range(*base),
+            [Segment::Gaiji(_), Segment::Text(_)]
+        ));
+        assert!(matches!(
+            output.store.resolve_seg_range(*reading),
+            [Segment::Text(_), Segment::Gaiji(_)]
+        ));
     }
 
     #[test]

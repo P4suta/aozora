@@ -4,7 +4,7 @@
 //! [`crate`] call [`run_engine`]; this module owns everything above the pure
 //! canonicalising core.
 
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -15,6 +15,7 @@ use crate::i18n::LanguageIdentifier;
 use crate::{
     DiagnosticPolicy, DiagnosticReport, DocumentOutcome, diagnostics_render, report_diagnostics,
 };
+use crate::{output, output::is_broken_pipe};
 
 mod cli;
 mod discover;
@@ -37,24 +38,6 @@ pub(crate) use source::{MAX_SOURCE_BYTES, OversizeInput};
 use cli::{CheckReport, Mode};
 use progress::{Printer, Tally};
 use report::{FileOutcome, Outcome, auto_stdout};
-
-/// Does `err`, or any error in its `source` chain, carry a broken-pipe
-/// [`io::Error`]?
-///
-/// When a downstream reader closes the pipe early — the canonical
-/// `aozora render big.txt | head` — the next write to stdout fails with
-/// [`io::ErrorKind::BrokenPipe`]. The CLI treats that as a normal,
-/// silent success (exit 0) rather than an error, matching `ripgrep` and `bat`.
-/// The error may be wrapped by `anyhow` context, so the whole chain is
-/// searched. See ADR-0029.
-#[must_use]
-pub(crate) fn is_broken_pipe(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        cause
-            .downcast_ref::<io::Error>()
-            .is_some_and(|io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
-    })
-}
 
 /// The caller-injected human-output presentation policy for a run.
 ///
@@ -172,13 +155,13 @@ fn run_stdin(args: &FmtArgs, ctx: &Ctx, mode: &Mode) -> Result<Outcome> {
 
     let mode_outcome = match mode {
         Mode::Stdout => {
-            io::stdout().write_all(new.as_bytes())?;
+            output::stdout().write_all(new.as_bytes())?;
             Ok(Outcome::Ok)
         }
         Mode::Write { .. } => bail!("--write requires a file path, not stdin"),
         Mode::List => {
             if old != new {
-                writeln!(io::stdout(), "<stdin>")?;
+                writeln!(output::stdout(), "<stdin>")?;
             }
             Ok(Outcome::Ok)
         }
@@ -272,7 +255,7 @@ fn run_stdout(ctx: &Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<
             if diagnostics == Outcome::Internal {
                 return Ok(base.max(diagnostics));
             }
-            io::stdout().write_all(fmt.new.as_bytes())?;
+            output::stdout().write_all(fmt.new.as_bytes())?;
             Ok(base.max(diagnostics))
         }
         files => bail!(
@@ -291,7 +274,7 @@ fn run_write(ctx: &Ctx, files: &[PathBuf], list: bool, opts: SerializeOptions) -
         write_back(path, &fmt, opts)?;
         let changed = fmt.changed();
         if list && changed {
-            printer.suspend(|| writeln!(io::stdout(), "{}", path.display()))?;
+            printer.suspend(|| writeln!(output::stdout(), "{}", path.display()))?;
         }
         Ok(FileOutcome::new(diagnostics, changed))
     })
@@ -305,7 +288,7 @@ fn run_list(ctx: &Ctx, files: &[PathBuf], opts: SerializeOptions) -> Result<Outc
         }
         let changed = fmt.changed();
         if changed {
-            printer.suspend(|| writeln!(io::stdout(), "{}", path.display()))?;
+            printer.suspend(|| writeln!(output::stdout(), "{}", path.display()))?;
         }
         // gofmt -l is informational: a clean exit even when files are listed.
         Ok(FileOutcome::new(diagnostics, changed))
@@ -438,7 +421,7 @@ fn discovery_base(ctx: &Ctx, resolved: &Resolved) -> Outcome {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, io};
 
     use aozora::DirectiveNormalization;
     use aozora::fmt::{format_source, format_source_with};
@@ -446,17 +429,31 @@ mod tests {
     use super::*;
     use crate::i18n::resolve;
 
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    fn stdout_broken_pipe_error() -> anyhow::Error {
+        let mut stdout = output::guard(BrokenPipeWriter);
+        anyhow::Error::new(stdout.write_all(b"x").unwrap_err())
+    }
+
     #[test]
     fn empty_input_formats_to_empty() {
         assert_eq!(format_source(""), "");
     }
 
     #[test]
-    fn is_broken_pipe_finds_epipe_through_context() {
-        // The io::Error is wrapped in an anyhow context, mirroring the CLI's
-        // `write_all(..).context("failed to write to stdout")?` path.
-        let err = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe))
-            .context("failed to write to stdout");
+    fn is_broken_pipe_finds_marked_epipe_through_context() {
+        let err = stdout_broken_pipe_error().context("failed to write to stdout");
         assert!(is_broken_pipe(&err));
     }
 
@@ -475,12 +472,18 @@ mod tests {
         // the error code 2. With the `is_broken_pipe` guard forced false the
         // pipe error would fall to the logging arm and return 2, so pinning 0
         // kills that mutant (and the whole-body mutant that returns 1).
-        let pipe = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe));
+        let pipe = stdout_broken_pipe_error();
         assert_eq!(
             err_exit_code(&pipe, "aozora fmt"),
             0,
             "a broken output pipe is a silent success (exit 0)",
         );
+    }
+
+    #[test]
+    fn err_exit_code_is_two_for_unmarked_broken_pipe() {
+        let pipe = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(err_exit_code(&pipe, "aozora fmt"), 2);
     }
 
     #[test]
@@ -597,9 +600,7 @@ mod tests {
             SerializeOptions::default(),
             |_path, _formatted, _printer| {
                 calls += 1;
-                Err(anyhow::Error::new(io::Error::from(
-                    io::ErrorKind::BrokenPipe,
-                )))
+                Err(stdout_broken_pipe_error())
             },
         );
         let err = result.expect_err("broken pipe must propagate as Err, not fold into an Outcome");

@@ -40,16 +40,17 @@ import {
   type Disposable,
   type ExtensionContext,
   Range,
+  type TextDocument,
   type TextEditor,
   type TextEditorDecorationType,
   ThemeColor,
-  type Position as VsPosition,
   window,
   workspace,
 } from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
-import type { GaijiSpansResponse, GaijiSpanWire } from "./lspWire";
+import { AsyncGeneration, anyPositionInRange, type PositionLike } from "./extensionLogic";
+import { type GaijiSpansResponse, type GaijiSpanWire, parseGaijiSpansResponse } from "./lspWire";
 
 const GAIJI_SPANS_REQUEST = "aozora/gaijiSpans" as const;
 const CONFIG_NAMESPACE = "aozora.gaijiFold" as const;
@@ -60,6 +61,8 @@ const CONFIG_NAMESPACE = "aozora.gaijiFold" as const;
 class FoldState implements Disposable {
   private readonly hideDecoration: TextEditorDecorationType;
   private readonly glyphDecorations = new Map<string, TextEditorDecorationType>();
+  private readonly refreshes = new WeakMap<TextEditor, AsyncGeneration>();
+  private disposed = false;
   /**
    * Per-resolved-glyph "active inlay" decorations — emit an
    * `after` annotation reading "→ X" when the cursor sits inside
@@ -81,24 +84,50 @@ class FoldState implements Disposable {
    *  on every selection / didChange / config event. */
   async refresh(editor: TextEditor, client: LanguageClient): Promise<void> {
     if (editor.document.languageId !== "aozora") {
+      this.clear(editor);
       return;
     }
     if (!isEnabled()) {
       this.clear(editor);
       return;
     }
+    const document = editor.document;
+    const version = document.version;
+    const refresh = this.refreshes.get(editor) ?? new AsyncGeneration();
+    this.refreshes.set(editor, refresh);
+    const generation = refresh.begin();
     let response: GaijiSpansResponse;
     try {
-      response = await client.sendRequest<GaijiSpansResponse>(GAIJI_SPANS_REQUEST, {
-        uri: editor.document.uri.toString(),
-      });
+      response = parseGaijiSpansResponse(
+        await client.sendRequest<unknown>(GAIJI_SPANS_REQUEST, {
+          uri: editor.document.uri.toString(),
+        }),
+      );
     } catch {
-      // Server is briefly unavailable (start-up, mid-restart) — skip
-      // this refresh; the next event will retry.
+      if (
+        !this.disposed &&
+        refresh.isCurrent(generation) &&
+        editor.document === document &&
+        document.version === version
+      ) {
+        this.clear(editor);
+      }
       return;
     }
-    const cursor = editor.selection.active;
-    const { hideRanges, glyphBuckets, activeInlayBuckets } = bucket(response.spans, cursor);
+    if (
+      this.disposed ||
+      !refresh.isCurrent(generation) ||
+      editor.document !== document ||
+      document.version !== version
+    ) {
+      return;
+    }
+    if (!spansFitDocument(document, response.spans)) {
+      this.clear(editor);
+      return;
+    }
+    const cursors = editor.selections.map((selection) => selection.active);
+    const { hideRanges, glyphBuckets, activeInlayBuckets } = bucket(response.spans, cursors);
     editor.setDecorations(this.hideDecoration, hideRanges);
     this.applyBuckets(editor, this.glyphDecorations, glyphBuckets, createGlyphDecoration);
     this.applyBuckets(
@@ -111,6 +140,7 @@ class FoldState implements Disposable {
 
   /** Clear every decoration this state owns from `editor`. */
   clear(editor: TextEditor): void {
+    this.refreshes.get(editor)?.invalidate();
     editor.setDecorations(this.hideDecoration, []);
     for (const deco of this.glyphDecorations.values()) {
       editor.setDecorations(deco, []);
@@ -121,6 +151,7 @@ class FoldState implements Disposable {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.hideDecoration.dispose();
     for (const deco of this.glyphDecorations.values()) {
       deco.dispose();
@@ -163,9 +194,21 @@ class FoldState implements Disposable {
   }
 }
 
+function spansFitDocument(document: TextDocument, spans: ReadonlyArray<GaijiSpanWire>): boolean {
+  return spans.every((span) => {
+    const range = new Range(
+      span.range.start.line,
+      span.range.start.character,
+      span.range.end.line,
+      span.range.end.character,
+    );
+    return range.isEqual(document.validateRange(range));
+  });
+}
+
 function bucket(
   spans: ReadonlyArray<GaijiSpanWire>,
-  cursor: VsPosition,
+  cursors: ReadonlyArray<PositionLike>,
 ): {
   hideRanges: Range[];
   glyphBuckets: Map<string, Range[]>;
@@ -181,7 +224,7 @@ function bucket(
       span.range.end.line,
       span.range.end.character,
     );
-    if (range.contains(cursor)) {
+    if (anyPositionInRange(cursors, range)) {
       // Cursor sits inside — span stays unfolded, but we still
       // want a confirmation of what it resolves to. Render an
       // `after` decoration on a zero-width range at the closing
@@ -246,15 +289,23 @@ export function registerGaijiFold(context: ExtensionContext, client: LanguageCli
   context.subscriptions.push(
     window.onDidChangeActiveTextEditor((editor) => refresh(editor)),
     workspace.onDidChangeTextDocument((event) => {
-      const editor = window.activeTextEditor;
-      if (editor && editor.document === event.document) {
+      for (const editor of window.visibleTextEditors) {
+        if (editor.document === event.document) {
+          refresh(editor);
+        }
+      }
+    }),
+    window.onDidChangeVisibleTextEditors((editors) => {
+      for (const editor of editors) {
         refresh(editor);
       }
     }),
     window.onDidChangeTextEditorSelection((event) => refresh(event.textEditor)),
     workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CONFIG_NAMESPACE)) {
-        refresh(window.activeTextEditor);
+        for (const editor of window.visibleTextEditors) {
+          refresh(editor);
+        }
       }
     }),
   );

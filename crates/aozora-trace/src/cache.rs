@@ -13,25 +13,26 @@
 //! ## Invalidation
 //!
 //! The cache stores the trace's source path and the binary
-//! `debug_id` (build-id) per library. A `load`-then-validate cycle
-//! refuses to use a cache whose debug-ids don't match the current
+//! binary identity per library. A `load`-then-validate cycle
+//! refuses to use a cache whose identifiers don't match the current
 //! trace's libs — this catches "binary was rebuilt, addresses
 //! shifted, the cache is now lying" silently.
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::Trace;
 
-/// On-disk cache form. Keyed by library name; the stored `debug_id`
+/// On-disk cache form. Keyed by library name; the stored identity
 /// is validated on apply (a mismatched build-id is rejected),
 /// catching a rebuilt-binary stale cache.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SymbolCache {
-    /// Map: library `name` → (`debug_id`, addr → resolved function name).
+    /// Map: library `name` → (binary identity, addr → resolved function name).
     pub libs: HashMap<String, CachedLibrary>,
 }
 
@@ -47,7 +48,7 @@ pub struct CachedLibrary {
 #[derive(Debug, thiserror::Error)]
 pub enum CacheError {
     #[error("cache file io: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     #[error("cache file json: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -73,21 +74,41 @@ impl SymbolCache {
     /// Load from sidecar path, returning `Ok(None)` when the file
     /// doesn't exist (a clean "no cache yet" condition).
     pub fn load(path: &Path) -> Result<Option<Self>, CacheError> {
-        if !path.exists() {
-            return Ok(None);
-        }
-        let bytes = fs::read(path)?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         let cache: Self = serde_json::from_slice(&bytes)?;
         Ok(Some(cache))
     }
 
-    /// Persist atomically: write to `<path>.tmp`, then rename. A
-    /// crashed write leaves the previous cache untouched.
+    /// Persist atomically. A crashed write leaves the previous cache untouched.
     pub fn write(&self, path: &Path) -> Result<(), CacheError> {
-        let tmp = path.with_extension("symbols.json.tmp");
         let bytes = serde_json::to_vec_pretty(self)?;
-        fs::write(&tmp, bytes)?;
-        fs::rename(&tmp, path)?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let permissions = match fs::metadata(path) {
+            Ok(metadata) => Some(metadata.permissions()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(fs::Permissions::from_mode(0o666))
+        };
+        let mut temporary = builder.tempfile_in(parent)?;
+        if let Some(permissions) = permissions {
+            temporary.as_file().set_permissions(permissions)?;
+        }
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        sync_directory(parent)?;
         Ok(())
     }
 
@@ -97,13 +118,18 @@ impl SymbolCache {
     pub fn apply(&self, trace: &mut Trace) -> usize {
         let mut count = 0;
         // Build a quick "lib_idx → cached library entry" mapping
-        // restricted to libs whose debug_id matches.
+        // restricted to libs whose binary identity matches.
         let mut lib_lookup: Vec<Option<&CachedLibrary>> = Vec::with_capacity(trace.libs.len());
         for lib in &trace.libs {
+            let identity = if lib.code_id.is_empty() {
+                lib.debug_id.as_str()
+            } else {
+                lib.code_id.as_str()
+            };
             let cached = self
                 .libs
                 .get(&lib.name)
-                .filter(|c| c.debug_id == lib.debug_id || c.debug_id.is_empty());
+                .filter(|cached| same_identity(&cached.debug_id, identity));
             lib_lookup.push(cached);
         }
         for thread in &mut trace.threads {
@@ -135,15 +161,42 @@ impl SymbolCache {
                 debug_id: lib.debug_id.to_owned(),
                 by_address: HashMap::new(),
             });
+        if !same_identity(&entry.debug_id, lib.debug_id) {
+            entry.by_address.clear();
+        }
         entry.debug_id.clear();
         entry.debug_id.push_str(lib.debug_id);
         entry.by_address.insert(address.to_string(), name);
     }
 }
 
+fn same_identity(left: &str, right: &str) -> bool {
+    let left = normalise_identity(left);
+    let right = normalise_identity(right);
+    !left.is_empty() && left == right
+}
+
+fn normalise_identity(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 /// Library identity passed to [`SymbolCache::record`].
 ///
-/// Bundles the `(name, debug_id)` pair so the cache write API takes
+/// Bundles the `(name, binary identity)` pair so the cache write API takes
 /// one logical argument instead of two parallel string slices —
 /// clearer at call sites *and* keeps clippy's `too_many_arguments`
 /// lint happy.
@@ -151,7 +204,7 @@ impl SymbolCache {
 pub struct LibIdent<'a> {
     /// Library name — the cache map key (matches `Library.name`).
     pub name: &'a str,
-    /// The library's debug-id (build-id), stored so a later
+    /// The library's code-id, or debug-id fallback, stored so a later
     /// [`SymbolCache::apply`] can reject a cache entry whose binary
     /// has since been rebuilt.
     pub debug_id: &'a str,

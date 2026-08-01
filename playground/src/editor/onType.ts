@@ -1,5 +1,6 @@
 import {
   Annotation,
+  ChangeSet,
   type ChangeSpec,
   EditorSelection,
   EditorState,
@@ -38,7 +39,7 @@ export const halfToFullWidthFilter = EditorState.transactionFilter.of((tr) => {
   if (tr.isUserEvent('input.compose')) return tr;
 
   const replacements: ChangeSpec[] = [];
-  let cursorAfter: number | null = null;
+  const cursorOffsets = new Map<number, number>();
   tr.changes.iterChanges((fromA, toA, fromB, _toB, inserted) => {
     if (toA !== fromA) return; // pure insertion only
     if (inserted.length !== 1) return;
@@ -51,16 +52,25 @@ export const halfToFullWidthFilter = EditorState.transactionFilter.of((tr) => {
       to: fromB + text.length,
       insert: spec.insert,
     });
-    cursorAfter = fromB + spec.cursorOffset;
+    cursorOffsets.set(fromB + text.length, spec.cursorOffset);
   });
 
   if (replacements.length === 0) return tr;
+  const rewritten = ChangeSet.of(replacements, tr.newDoc.length);
+  const mappedSelection = tr.newSelection.map(rewritten);
+  const ranges = tr.newSelection.ranges.map((range, index) => {
+    const cursorOffset = range.empty
+      ? cursorOffsets.get(range.head)
+      : undefined;
+    if (cursorOffset === undefined) return mappedSelection.ranges[index]!;
+    const start = rewritten.mapPos(range.head - 1, -1);
+    return EditorSelection.cursor(start + cursorOffset);
+  });
   return [
     tr,
     {
-      changes: replacements,
-      selection:
-        cursorAfter !== null ? EditorSelection.cursor(cursorAfter) : undefined,
+      changes: rewritten,
+      selection: EditorSelection.create(ranges, tr.newSelection.mainIndex),
       annotations: ON_TYPE.of(true),
       sequential: true,
     },

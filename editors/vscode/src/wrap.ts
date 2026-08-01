@@ -20,11 +20,13 @@ import {
   commands,
   type ExtensionContext,
   Range,
-  type Selection,
+  Selection,
   SnippetString,
   type TextEditor,
   window,
 } from "vscode";
+
+import { documentVersionMatches, expandWrapText, finalCursorOffsets } from "./extensionLogic";
 
 /**
  * One wrap action. The template body uses two placeholders:
@@ -91,17 +93,54 @@ async function runWrap(shape: WrapShape): Promise<void> {
     void window.showInformationMessage("ルビをふる文字列を先にドラッグで選択してください。");
     return;
   }
-  // `insertSnippet` accepts one location at a time; loop selections
-  // so multi-cursor users still get one wrap per cursor.
-  for (const sel of targets) {
-    await applyOne(editor, shape, sel);
+  if (targets.length === 1) {
+    const target = targets[0];
+    if (target) {
+      await applyOne(editor, shape, target);
+    }
+    return;
   }
+  await applyMany(editor, shape, targets);
 }
 
 async function applyOne(editor: TextEditor, shape: WrapShape, sel: Selection): Promise<void> {
   const range = new Range(sel.start, sel.end);
   const body = expandTemplate(shape.template, editor.document.getText(range));
   await editor.insertSnippet(new SnippetString(body), range);
+}
+
+async function applyMany(
+  editor: TextEditor,
+  shape: WrapShape,
+  selections: ReadonlyArray<Selection>,
+): Promise<void> {
+  const document = editor.document;
+  const version = document.version;
+  const replacements = selections.map((selection) => {
+    const range = new Range(selection.start, selection.end);
+    return {
+      range,
+      start: document.offsetAt(range.start),
+      end: document.offsetAt(range.end),
+      ...expandWrapText(shape.template, document.getText(range)),
+    };
+  });
+  const cursorOffsets = finalCursorOffsets(replacements);
+  const applied = await editor.edit((builder) => {
+    for (const replacement of replacements) {
+      builder.replace(replacement.range, replacement.text);
+    }
+  });
+  if (!applied) {
+    return;
+  }
+  if (editor.document !== document || !documentVersionMatches(version + 1, document.version)) {
+    return;
+  }
+  editor.selections = cursorOffsets.map((offset) => {
+    const position = document.positionAt(offset);
+    return new Selection(position, position);
+  });
 }
 
 /**

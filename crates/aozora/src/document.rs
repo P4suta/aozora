@@ -1011,7 +1011,15 @@ impl Document {
             return None;
         }
         let source = self.state.source();
-        let source_region = source_sanitization_region(source, &edit.range);
+        let mut source_region = source_sanitization_region(source, &edit.range);
+        let mut fragment = edited_fragment(source, edit, source_region.clone())?;
+        if fragment.starts_with('\n')
+            && source_region.start != 0
+            && source.as_bytes()[source_region.start - 1] == b'\r'
+        {
+            source_region.start -= 1;
+            fragment = edited_fragment(source, edit, source_region.clone())?;
+        }
         // Accent decomposition rewrites ASCII digraphs only inside a `〔…〕`
         // span. When such a span crosses a blank line, the re-sanitized
         // fragment for an interior paragraph never sees the enclosing span,
@@ -1026,7 +1034,6 @@ impl Document {
             .source_to_sanitized(source_region.start)
             .zip(map.source_to_sanitized(source_region.end))
             .map(|(start, end)| start.get() as usize..end.get() as usize)?;
-        let fragment = edited_fragment(source, edit, source_region.clone())?;
         let source_start = source_region.start;
         if source_start != 0 && fragment.starts_with('\u{FEFF}') {
             return None;
@@ -2363,6 +2370,18 @@ mod tests {
     }
 
     #[test]
+    fn incremental_edit_creating_cr_cr_lf_matches_full_parse() {
+        let source = "\r\rX";
+        let edit = TextEdit::new(2..3, "\n");
+        let mut document = parse(source).expect("document");
+        document.edit([edit.clone()]).expect("valid edit");
+
+        let full =
+            parse(apply_edits_to_source(source, slice::from_ref(&edit))).expect("full parse");
+        assert_snapshots_match(&document.snapshot(), &full.snapshot());
+    }
+
+    #[test]
     fn incremental_edit_inside_accent_span_across_blank_line_matches_full_parse() {
         // A `〔…〕` accent-decomposition span crossing blank lines: an edit
         // in its interior yields a fragment with no `〔`/`〕`, so a
@@ -2769,6 +2788,34 @@ mod tests {
         tail.edit([TextEdit::new(len..len, "-POST")])
             .expect("zero-length span at len");
         assert_eq!(tail.source(), "middle-POST");
+    }
+
+    #[test]
+    fn edit_introducing_structured_forward_target_matches_full_parse() {
+        let gaiji = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let directive = "［＃「枘」に傍点］";
+        let mut document = Document::new(gaiji);
+        document
+            .edit([TextEdit::new(gaiji.len()..gaiji.len(), directive)])
+            .expect("in-bounds insertion");
+        let expected = Document::new(format!("{gaiji}{directive}"));
+        assert_snapshots_match(&document.snapshot(), &expected.snapshot());
+    }
+
+    #[test]
+    fn edit_removing_structured_forward_target_matches_full_parse() {
+        let gaiji = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let directive = "［＃「枘」に傍点］";
+        let source = format!("{gaiji}{directive}");
+        let mut document = Document::new(source);
+        document
+            .edit([TextEdit::new(
+                gaiji.len()..gaiji.len() + directive.len(),
+                "",
+            )])
+            .expect("in-bounds removal");
+        let expected = Document::new(gaiji);
+        assert_snapshots_match(&document.snapshot(), &expected.snapshot());
     }
 
     #[test]

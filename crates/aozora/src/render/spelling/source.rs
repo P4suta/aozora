@@ -61,11 +61,9 @@ pub(crate) fn container_close_source(open: RegionFormat) -> String {
 
 /// Wraps the serialize output and remembers the last `char` emitted.
 ///
-/// `emit_ruby` reads it to decide whether a bare `《reading》` would
-/// re-parse to the *same* base (drop `｜`) or a different one (keep `｜`)
-/// — ADR 0002. The predecessor may be a preceding NODE (e.g. a kaeriten
-/// `二`, which is a ruby-base char) and not just text, so the last char
-/// must be tracked at the writer, not per `on_text`.
+/// `emit_ruby` reads it as a defensive check for an immediately preceding
+/// literal `｜`. Semantic predecessor classes live in `SerializeSink`, because
+/// a gaiji's emitted source ends in `］` rather than its resolved glyph.
 pub(crate) struct TrackingWriter<W: Write> {
     inner: W,
     last: Option<char>,
@@ -78,8 +76,7 @@ impl<W: Write> TrackingWriter<W> {
         Self { inner, last: None }
     }
 
-    /// The last `char` written so far, if any. `emit_ruby` reads it to
-    /// decide whether a bare `《reading》` drops the explicit `｜` (ADR 0002).
+    /// The last `char` written so far, if any.
     pub(crate) const fn last(&self) -> Option<char> {
         self.last
     }
@@ -139,10 +136,9 @@ pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
 /// a `…は<style><level>見出し` directive (empty for the standard style).
 pub(crate) const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
     match style {
+        HeadingStyle::Standard => "",
         HeadingStyle::SameLine => "同行",
         HeadingStyle::Window => "窓",
-        // Standard and any future style serialize without a prefix.
-        _ => "",
     }
 }
 
@@ -150,19 +146,18 @@ pub(crate) const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
 /// heading, the hint, and the paired / block [`RegionFormat::Heading`].
 pub(crate) const fn heading_level_word(kind: HeadingKind) -> &'static str {
     match kind {
+        HeadingKind::Large => "大見出し",
         HeadingKind::Medium => "中見出し",
         HeadingKind::Small => "小見出し",
-        // 大見出し and any future level fall back to the 大見出し form.
-        _ => "大見出し",
     }
 }
 
 /// `左に` left-side prefix for a bouten range marker, or `""`.
 const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
     match position {
+        BoutenPosition::Right => "",
         BoutenPosition::Left => "左に",
         BoutenPosition::Both => "両側に",
-        _ => "",
     }
 }
 
@@ -314,8 +309,8 @@ fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
 /// 小書き side keyword: `右` / `左`.
 const fn small_script_side_word(side: BoutenPosition) -> &'static str {
     match side {
+        BoutenPosition::Right | BoutenPosition::Both => "右",
         BoutenPosition::Left => "左",
-        _ => "右",
     }
 }
 
@@ -380,10 +375,7 @@ pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) ->
         RegionClose::Warichu => out.write_str("［＃ここで割り注終わり］"),
         RegionClose::Framed(_) => out.write_str("［＃罫囲み終わり］"),
         RegionClose::AlignEnd => out.write_str("［＃ここで地付き終わり］"),
-        // The generic `字下げ終わり` — the `Indent { kumi_width: None }` close
-        // (plain / 字詰め / 折り返して / 中央 indents) and the `#[non_exhaustive]`
-        // forward-compat fallback.
-        _ => out.write_str("［＃ここで字下げ終わり］"),
+        RegionClose::Indent { kumi_width: None } => out.write_str("［＃ここで字下げ終わり］"),
     }
 }
 
@@ -1189,10 +1181,6 @@ mod tests {
         assert_eq!(w.into_string(), "x\n\ny");
     }
 
-    /// `TrackingWriter::last` must remember the final char written — `emit_ruby`
-    /// reads it to decide whether a bare `《reading》` drops the explicit `｜`
-    /// (ADR 0002), so a `-> None` stub would silently keep every bar. UFCS
-    /// `write_str` to hit the `Write` impl without importing the trait.
     #[test]
     fn tracking_writer_last_remembers_final_char() {
         let mut buf = String::new();

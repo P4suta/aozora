@@ -495,6 +495,19 @@ lsp-action-delete-pua = Delete private-use character U+{$codepoint}
 # Completion detail / documentation fragments.
 lsp-completion-half-to-full-hint = (half-width → full-width)
 lsp-completion-takes-param = (takes a parameter)
+lsp-completion-family-page-break = Page break
+lsp-completion-family-section = Section break
+lsp-completion-family-block-open = Block start
+lsp-completion-family-block-close = Block end
+lsp-completion-family-leaf-align = Line alignment
+lsp-completion-family-bouten = Emphasis marks
+lsp-completion-family-illustration = Illustration
+lsp-completion-family-framed = Framed text
+lsp-completion-family-warichu = Warichu
+lsp-completion-family-combine-upright = Tate-chu-yoko
+lsp-completion-family-kaeriten-single = Kaeriten
+lsp-completion-family-kaeriten-compound = Compound kaeriten
+lsp-completion-family-other = Directive
 
 # Half-width → full-width "emmet" completion details. Each names the target
 # and the half-width trigger that produces it.

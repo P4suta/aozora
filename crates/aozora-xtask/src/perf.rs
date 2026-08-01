@@ -58,7 +58,13 @@ fn check() -> Result<(), String> {
             errors.push(format!("::error title=perf-gate::{error}"));
             continue;
         }
-        let instructions = parse_callgrind(&read_file(&callgrind)?)?;
+        let Some(instructions) = collect_measurement(
+            name,
+            read_file(&callgrind).and_then(|text| parse_callgrind(&text)),
+            &mut errors,
+        ) else {
+            continue;
+        };
         println!("{name:<24} {instructions:>10} instructions (ceiling {ceiling:>10})");
         if instructions > *ceiling {
             errors.push(format!(
@@ -67,7 +73,7 @@ fn check() -> Result<(), String> {
         }
         actual.insert(name.as_str(), instructions);
     }
-    check_speedups(&actual, &mut errors)?;
+    check_speedups_collecting_error(&actual, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -79,6 +85,26 @@ fn check() -> Result<(), String> {
             "performance gate failed with {} error(s)",
             errors.len()
         ))
+    }
+}
+
+fn check_speedups_collecting_error(actual: &BTreeMap<&str, u64>, errors: &mut Vec<String>) {
+    if let Err(error) = check_speedups(actual, errors) {
+        errors.push(format!("::error title=perf-gate::{error}"));
+    }
+}
+
+fn collect_measurement(
+    name: &str,
+    result: Result<u64, String>,
+    errors: &mut Vec<String>,
+) -> Option<u64> {
+    match result {
+        Ok(instructions) => Some(instructions),
+        Err(error) => {
+            errors.push(format!("::error title=perf-gate::{name}: {error}"));
+            None
+        }
     }
 }
 
@@ -178,7 +204,9 @@ fn workspace_root() -> Result<PathBuf, String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{check_speedups, parse_callgrind};
+    use super::{
+        check_speedups, check_speedups_collecting_error, collect_measurement, parse_callgrind,
+    };
 
     #[test]
     fn callgrind_summary_is_parsed() {
@@ -209,5 +237,30 @@ mod tests {
         ]);
         check_speedups(&regressed, &mut errors).unwrap();
         assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn execution_failure_is_not_masked_by_missing_measurements() {
+        let mut errors = vec!["run Callgrind edit-single: valgrind not found".to_owned()];
+        check_speedups_collecting_error(&BTreeMap::new(), &mut errors);
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0], "run Callgrind edit-single: valgrind not found");
+        assert!(errors[1].contains("edit-single"));
+
+        let mut errors = Vec::new();
+        check_speedups_collecting_error(&BTreeMap::new(), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("edit-single"));
+    }
+
+    #[test]
+    fn malformed_measurement_is_collected_with_other_failures() {
+        let mut errors = vec!["prior failure".to_owned()];
+        assert_eq!(
+            collect_measurement("edit-single", Err("no summary".to_owned()), &mut errors),
+            None
+        );
+        assert_eq!(errors.len(), 2);
+        assert!(errors[1].contains("edit-single: no summary"));
     }
 }

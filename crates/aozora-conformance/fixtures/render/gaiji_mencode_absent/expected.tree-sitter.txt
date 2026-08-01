@@ -1,0 +1,1 @@
+(document (gaiji) (newline))

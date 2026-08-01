@@ -7,6 +7,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Ship the optional canonical notation stylesheet with the `aozora-wasm` npm package.
+
+### Fixed
+
+- Emit resolved Unicode gaiji text in Pandoc projections instead of Rust debug representations.
+- Preserve structured gaiji and inline annotations in ruby, forward-reference, side-note, and illustration-caption content across HTML, Pandoc, and source serialization.
+- Resolve implicit ruby bases that mix gaiji with ordinary text, while keeping explicit ruby markers stable across repeated formatting.
+- Keep nested gaiji discovery ordered and free of duplicate diagnostics.
+- Keep gaiji resolution candidates line-scoped across CR, LF, and CRLF input.
+- Produce balanced semantic HTML and Pandoc structures for inline regions, warichu, Gothic text, block-only annotations, and recursively parsed nested source.
+- Keep inline-container stack updates active in optimized builds so release HTML remains structurally balanced across paragraph boundaries.
+- Preserve detected or explicitly selected Shift_JIS when `fmt --write` and `lint --fix` rewrite files, rejecting unrepresentable output before writing.
+- Keep incremental parsing equivalent to a full parse across CR/CRLF boundaries and structured forward-reference edits.
+- Emit non-overlapping LSP semantic tokens for ruby whose bases or readings contain gaiji and directives.
+- Keep LSP quick-fix pair tags exhaustive and diagnostics free of internal Rust enum names.
+- Preserve half-open gaiji ranges when deciding whether the VS Code cursor should suppress folding.
+- Fail loudly on impossible JSON and Pandoc serialization errors instead of disguising them as valid output.
+- Treat only broken stdout pipes as silent CLI success, including output forwarded from Pandoc, without hiding file, stderr, or child-stdin failures.
+- Clear a supplied C ABI document output slot on every constructor failure, as required by its existing contract.
+- Reject oversized Python string inputs before they reach the parser's `u32` span boundary.
+- Apply warning colors only to unresolved gaiji in the optional reference stylesheet.
+- Localize LSP completion family labels instead of exposing Rust enum variant names.
+- Preserve Callgrind execution failures in performance-gate diagnostics.
+- Accept current Gecko/fxprof trace shapes while rejecting malformed table references, prefix cycles, invalid sentinels, and overflowing sample weights.
+- Leave caller-owned buffers unchanged when Shift_JIS decoding fails.
+- Recover nested unclosed annotation frames at a stray bracket newline without consuming valid notation on following lines.
+- Replace files atomically during formatter and TUI writes, restore terminal state on every TUI exit path, and surface watcher backend failures.
+- Reject inconsistent or oversized corpus archives, prevent filesystem-corpus symlink escapes, and make concurrent archive publication atomic.
+- Surface corpus traversal and read failures in conformance, packaging, ratchet, and benchmark tooling instead of accepting partial results.
+- Include representative work labels and defects when the corpus HTML-structure gate fails.
+- Keep Playground UTF-8 positions, linked edits, multi-cursor input, persisted settings, shared documents, and editor initialization valid at browser API boundaries.
+- Keep VS Code half-open ranges, multi-selection wrapping, preview refreshes, gaiji insertion, auto-detection errors, and lint process streams and arguments faithful to their source operations.
+- Pin release tooling and publication actions to reproducible versions and audit the resolved dependency trees.
+- Compare zero-tolerance allocation baselines as exact integer ratios so a freshly written baseline cannot fail from JSON float rounding.
+- Reject non-finite or out-of-range benchmark thresholds and fail the allocation gate when its configured corpus root is unusable.
+- Replace project scaffold files and allocation baselines atomically.
+
 ## [0.5.0] - 2026-07-21
 
 > ⚠ **Breaking changes.** 0.5.0 collapses the workspace to three published

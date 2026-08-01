@@ -14,6 +14,7 @@
 //! single-source.
 
 use core::fmt::{self, Write};
+use std::collections::VecDeque;
 
 use crate::spec::roman_slug;
 use crate::syntax::{
@@ -23,6 +24,20 @@ use crate::syntax::{
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render::classes;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineScope {
+    Region(RegionFormat),
+    Warichu,
+}
+
+fn render_inline_scope<W: Write>(scope: InlineScope, entering: bool, out: &mut W) -> fmt::Result {
+    match scope {
+        InlineScope::Region(kind) => render_container(Container { kind }, entering, out),
+        InlineScope::Warichu if entering => out.write_str(r#"<span class="aozora-warichu">"#),
+        InlineScope::Warichu => out.write_str("</span>"),
+    }
+}
 
 /// Block-level walker state. Tracks paragraph and block-separator boundaries so
 /// consecutive inline runs collapse into one paragraph and adjacent block-leaf
@@ -46,15 +61,8 @@ pub(crate) struct RenderState {
     /// the next paragraph — keeping the stack consistent so the eventual close
     /// still pairs. A never-closed inline container renders balanced in each
     /// paragraph to EOF (#420).
-    reopen_after_para: Vec<RegionFormat>,
-    /// Count of open inline-warichu spans (`［＃割り注］`) awaiting their close
-    /// (`［＃割り注終わり］`). A warichu span is phrasing content, so it must
-    /// never straddle a `</p>` or `</div>`: [`Self::close_paragraph`] drains any
-    /// still-open span before closing the paragraph, and [`Self::close_warichu`]
-    /// absorbs a stray close with no matching open. Sources that mismatch the
-    /// block- and inline-warichu forms (9 corpus works, #415) rely on this to
-    /// stay balanced.
-    warichu_depth: u32,
+    reopen_after_para: VecDeque<RegionFormat>,
+    inline_stack: Vec<InlineScope>,
 }
 
 impl RenderState {
@@ -80,37 +88,34 @@ impl RenderState {
             // nesting; re-pushing onto `open_stack` keeps the eventual close
             // paired. This runs only for real paragraphs — the `in_heading`
             // early return above skips it.
-            while let Some(kind) = self.reopen_after_para.pop() {
+            while let Some(kind) = self.reopen_after_para.pop_back() {
                 render_container(Container { kind }, true, out)?;
                 self.open_stack.push(kind);
+                self.inline_stack.push(InlineScope::Region(kind));
             }
         }
         Ok(())
     }
 
     pub(crate) fn close_paragraph<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        // A warichu span is phrasing content that must close before the
-        // enclosing paragraph (#415, Case 2): drain any still-open span here,
-        // the single choke-point every block-leaf and container path uses.
-        self.drain_open_warichu(out)?;
         if self.in_paragraph {
-            // An inline container is phrasing content and sits at the TOP of
-            // `open_stack` (any block container is below it), so it must not
-            // straddle `</p>` either (#420). Close each open inline container
-            // top-down here and remember it, so `ensure_in_paragraph` can reopen
-            // it in the next paragraph — re-pushing onto `open_stack` keeps a
-            // later close marker paired.
-            while let Some(&kind) = self.open_stack.last() {
-                if !kind.is_inline() {
-                    break;
+            while let Some(scope) = self.inline_stack.pop() {
+                render_inline_scope(scope, false, out)?;
+                if let InlineScope::Region(kind) = scope {
+                    let open = self.open_stack.pop();
+                    debug_assert_eq!(
+                        open,
+                        Some(kind),
+                        "inline and container region stacks diverged"
+                    );
+                    self.reopen_after_para.push_back(kind);
                 }
-                self.open_stack.pop();
-                render_container(Container { kind }, false, out)?;
-                self.reopen_after_para.push(kind);
             }
             out.write_str("</p>\n")?;
             self.in_paragraph = false;
             self.pending_block_separator = false;
+        } else {
+            self.drain_open_warichu(out)?;
         }
         Ok(())
     }
@@ -134,13 +139,16 @@ impl RenderState {
         kind: RegionFormat,
         out: &mut W,
     ) -> fmt::Result {
-        self.open_stack.push(kind);
         let container = Container { kind };
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
-            return render_container(container, true, out);
+            render_container(container, true, out)?;
+            self.open_stack.push(kind);
+            self.inline_stack.push(InlineScope::Region(kind));
+            return Ok(());
         }
         self.before_block_emit(out)?;
+        self.open_stack.push(kind);
         render_container(container, true, out)?;
         if kind.content_is_phrasing() {
             self.in_heading = true;
@@ -168,8 +176,7 @@ impl RenderState {
         // is the innermost (closed first), matching the inner-first close
         // order; a *block* close (`closing_inline == false`) still pops its
         // region off the stack as usual, so block markup is unaffected.
-        if closing_inline && !self.reopen_after_para.is_empty() {
-            self.reopen_after_para.remove(0);
+        if closing_inline && self.reopen_after_para.pop_front().is_some() {
             return Ok(());
         }
         let Some(kind) = self.open_stack.pop() else {
@@ -178,9 +185,17 @@ impl RenderState {
         let container = Container { kind };
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
-            return render_container(container, false, out);
+            if let Some(index) = self
+                .inline_stack
+                .iter()
+                .rposition(|scope| *scope == InlineScope::Region(kind))
+            {
+                self.close_inline_scope_at(index, out)?;
+            }
+            return Ok(());
         }
         if kind.content_is_phrasing() {
+            self.drain_open_warichu(out)?;
             self.in_heading = false;
         } else {
             self.before_block_emit(out)?;
@@ -195,8 +210,8 @@ impl RenderState {
     /// balanced. The byte spelling matches the per-node fallback in
     /// [`crate::render::render_node`], so well-formed warichu output is unchanged.
     pub(crate) fn open_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        out.write_str(r#"<span class="aozora-warichu">"#)?;
-        self.warichu_depth += 1;
+        render_inline_scope(InlineScope::Warichu, true, out)?;
+        self.inline_stack.push(InlineScope::Warichu);
         Ok(())
     }
 
@@ -205,9 +220,12 @@ impl RenderState {
     /// forms (#415, Case 1) — is absorbed as a no-op rather than emitting a stray
     /// `</span>`.
     pub(crate) fn close_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        if let Some(depth) = self.warichu_depth.checked_sub(1) {
-            out.write_str("</span>")?;
-            self.warichu_depth = depth;
+        if let Some(index) = self
+            .inline_stack
+            .iter()
+            .rposition(|scope| matches!(scope, InlineScope::Warichu))
+        {
+            self.close_inline_scope_at(index, out)?;
         }
         Ok(())
     }
@@ -216,9 +234,28 @@ impl RenderState {
     /// an inline `［＃割り注］` with no matching inline close (#415, Case 2). The
     /// span renders as extending to the paragraph boundary.
     pub(crate) fn drain_open_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        while let Some(depth) = self.warichu_depth.checked_sub(1) {
-            out.write_str("</span>")?;
-            self.warichu_depth = depth;
+        while let Some(index) = self
+            .inline_stack
+            .iter()
+            .rposition(|scope| matches!(scope, InlineScope::Warichu))
+        {
+            self.close_inline_scope_at(index, out)?;
+        }
+        Ok(())
+    }
+
+    fn close_inline_scope_at<W: Write>(&mut self, index: usize, out: &mut W) -> fmt::Result {
+        let mut reopen = Vec::new();
+        while self.inline_stack.len() > index.saturating_add(1) {
+            let scope = self.inline_stack.pop().expect("scope above target");
+            render_inline_scope(scope, false, out)?;
+            reopen.push(scope);
+        }
+        let target = self.inline_stack.pop().expect("target scope");
+        render_inline_scope(target, false, out)?;
+        for scope in reopen.into_iter().rev() {
+            render_inline_scope(scope, true, out)?;
+            self.inline_stack.push(scope);
         }
         Ok(())
     }
@@ -231,6 +268,7 @@ impl RenderState {
             render_container(Container { kind }, false, out)?;
             closed = true;
         }
+        self.inline_stack.clear();
         if closed {
             out.write_char('\n')?;
         }
@@ -444,8 +482,8 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
                 pos = classes::bouten_position_slug(position),
             )
         }
-        // 太字 / 斜体. The bare inline range (`block: false`) uses the
-        // same presentational `<b>` / `<i>` element as the
+        // 太字 / ゴシック体 / 斜体. The bare inline range (`block: false`) uses the
+        // same presentational element as the
         // forward-reference [`render_emphasis`] leaf. The ここから-block
         // form (`block: true`) wraps whole paragraphs, so it takes a
         // block `<div>` (an inline `<b>` around `<p>` would be invalid),
@@ -453,7 +491,7 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
         // `aozora-container-futoji` / `-shatai` class carries the styling.
         RegionFormat::Bold { padded: false } => writer.write_str(r#"<b class="aozora-futoji">"#),
         RegionFormat::Gothic { padded: false } => {
-            writer.write_str(r#"<b class="aozora-goshikku">"#)
+            writer.write_str(r#"<span class="aozora-goshikku">"#)
         }
         RegionFormat::Italic { padded: false } => writer.write_str(r#"<i class="aozora-shatai">"#),
         RegionFormat::Bold { padded: true } => {
@@ -510,16 +548,31 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
 /// Emit a container's closing tag — `</em>` / `</b>` / `</i>` for the inline
 /// range forms, the heading element for a block heading, `</div>` otherwise.
 fn render_container_close<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::Result {
-    match kind {
-        RegionFormat::Heading { level, style, .. } => write_heading_close(level, style, writer),
-        _ => writer.write_str(match kind {
-            RegionFormat::Bouten { .. } => "</em>",
-            RegionFormat::Bold { padded: false } | RegionFormat::Gothic { padded: false } => "</b>",
-            RegionFormat::Italic { padded: false } => "</i>",
-            RegionFormat::SmallScript(_) | RegionFormat::Caption { padded: false } => "</span>",
-            _ => "</div>",
-        }),
-    }
+    let close = match kind {
+        RegionFormat::Heading { level, style, .. } => {
+            return write_heading_close(level, style, writer);
+        }
+        RegionFormat::Bouten { .. } => "</em>",
+        RegionFormat::Bold { padded: false } => "</b>",
+        RegionFormat::Italic { padded: false } => "</i>",
+        RegionFormat::Gothic { padded: false }
+        | RegionFormat::SmallScript(_)
+        | RegionFormat::Caption { padded: false } => "</span>",
+        RegionFormat::Bold { padded: true }
+        | RegionFormat::Gothic { padded: true }
+        | RegionFormat::Italic { padded: true }
+        | RegionFormat::Caption { padded: true }
+        | RegionFormat::Indent(_)
+        | RegionFormat::Warichu
+        | RegionFormat::Framed(_)
+        | RegionFormat::AlignEnd { .. }
+        | RegionFormat::LineWidth(_)
+        | RegionFormat::Columns(_)
+        | RegionFormat::Table
+        | RegionFormat::Horizontal
+        | RegionFormat::FontSize(_) => "</div>",
+    };
+    writer.write_str(close)
 }
 
 /// Render a `［＃挿絵（file）入る］` illustration as a semantic
@@ -542,9 +595,9 @@ fn heading_tag(kind: HeadingKind, style: HeadingStyle) -> &'static str {
         "div"
     } else {
         match kind {
+            HeadingKind::Large => "h1",
             HeadingKind::Medium => "h2",
             HeadingKind::Small => "h3",
-            _ => "h1",
         }
     }
 }
@@ -963,6 +1016,38 @@ mod tests {
     }
 
     #[test]
+    fn deep_gap_closes_drain_pending_inline_scopes() {
+        let depth = 4_096;
+        let mut state = RenderState::default();
+        let mut out = String::new();
+        let bold = RegionFormat::Bold { padded: false };
+        for _ in 0..depth {
+            state
+                .open_container(bold, &mut out)
+                .expect("render into String is infallible");
+        }
+        state
+            .close_paragraph(&mut out)
+            .expect("render into String is infallible");
+        for _ in 0..depth {
+            state
+                .close_container(true, &mut out)
+                .expect("render into String is infallible");
+        }
+        assert!(state.reopen_after_para.is_empty());
+        assert!(state.open_stack.is_empty());
+
+        let suffix = out.len();
+        state
+            .ensure_in_paragraph(&mut out)
+            .expect("render into String is infallible");
+        state
+            .finish(&mut out)
+            .expect("render into String is infallible");
+        assert_eq!(&out[suffix..], "<p></p>\n");
+    }
+
+    #[test]
     fn block_container_flushes_paragraph_then_wraps_body() {
         let html = render("前文\n\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
         assert!(html.contains("<p>前文</p>\n"), "leading paragraph: {html}");
@@ -1104,6 +1189,10 @@ mod tests {
                 r#"<div class="aozora-container aozora-container-goshikku">"#,
             ),
             (
+                RegionFormat::Gothic { padded: false },
+                r#"<span class="aozora-goshikku">"#,
+            ),
+            (
                 RegionFormat::Horizontal,
                 r#"<div class="aozora-container aozora-container-yokogumi">"#,
             ),
@@ -1145,6 +1234,7 @@ mod tests {
             (RegionFormat::SmallScript(BoutenPosition::Right), "</span>"),
             (RegionFormat::SmallScript(BoutenPosition::Left), "</span>"),
             (RegionFormat::Caption { padded: false }, "</span>"),
+            (RegionFormat::Gothic { padded: false }, "</span>"),
         ];
         for (kind, expected) in cases {
             assert_eq!(close_tag(kind), expected, "close {kind:?}");

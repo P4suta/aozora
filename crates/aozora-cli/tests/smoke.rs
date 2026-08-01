@@ -15,6 +15,7 @@
 //! Pure stdlib so the test crate stays dep-light. `assert_cmd` would
 //! be a step up if the suite grows; for now `Command` reads cleanly.
 
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process::{ExitStatus, Stdio};
@@ -267,6 +268,21 @@ fn fmt_write_overwrites_file_on_disk() {
 }
 
 #[test]
+fn fmt_write_preserves_explicit_shift_jis_encoding() {
+    let f = write_temp("");
+    let (raw, _, had_errors) = encoding_rs::SHIFT_JIS.encode("｜日本《にほん》");
+    assert!(!had_errors);
+    fs::write(f.path(), raw.as_ref()).expect("seed sjis");
+    let path = f.path().to_str().unwrap();
+    let (status, stdout, stderr) = run(&["fmt", "--write", "-E", "sjis", path], None);
+    assert!(status.success(), "fmt --write must succeed: {stderr:?}");
+    assert!(stdout.is_empty());
+    let (expected, _, had_errors) = encoding_rs::SHIFT_JIS.encode("日本《にほん》");
+    assert!(!had_errors);
+    assert_eq!(fs::read(path).expect("read back"), expected.as_ref());
+}
+
+#[test]
 fn fmt_list_reports_only_dirty_stdin() {
     let (dirty_status, dirty_stdout, dirty_stderr) =
         run(&["fmt", "--list"], Some("｜日本《にほん》"));
@@ -316,6 +332,95 @@ fn pandoc_without_output_format_emits_json() {
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("Pandoc JSON");
     assert!(value.get("pandoc-api-version").is_some());
     assert!(value.get("blocks").is_some());
+}
+
+#[test]
+fn pandoc_json_emits_resolved_gaiji_as_unicode() {
+    let source = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+    let (status, stdout, stderr) = run(&["pandoc"], Some(source));
+    assert!(status.success(), "pandoc projection failed: {stderr:?}");
+    assert!(stdout.contains(r#""c":"枘""#), "Pandoc JSON: {stdout:?}");
+    assert!(!stdout.contains("Char("), "Pandoc JSON: {stdout:?}");
+    assert!(!stdout.contains("Multi("), "Pandoc JSON: {stdout:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn pandoc_child_stdin_broken_pipe_is_not_silent_success() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fake_bin = tempfile::tempdir().expect("fake bin dir");
+    let fake_pandoc = fake_bin.path().join("pandoc");
+    fs::write(&fake_pandoc, "#!/bin/sh\nexec 0<&-\nsleep 1\nexit 17\n").expect("fake pandoc");
+    fs::set_permissions(&fake_pandoc, fs::Permissions::from_mode(0o755))
+        .expect("executable fake pandoc");
+    let mut paths = vec![fake_bin.path().to_path_buf()];
+    paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let path = env::join_paths(paths).expect("test PATH");
+
+    let mut child = common::hermetic_command()
+        .args(["pandoc", "--to", "plain"])
+        .env("PATH", path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aozora");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all("青空｜文庫《ぶんこ》\n".repeat(100_000).as_bytes())
+        .expect("write source");
+    let output = child.wait_with_output().expect("wait");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[cfg(unix)]
+#[test]
+fn pandoc_child_stdout_broken_pipe_is_silent_success() {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+
+    let fake_bin = tempfile::tempdir().expect("fake bin dir");
+    let fake_pandoc = fake_bin.path().join("pandoc");
+    fs::write(
+        &fake_pandoc,
+        "#!/bin/sh\ncat >/dev/null\nexec yes aozora-pandoc-output\n",
+    )
+    .expect("fake pandoc");
+    fs::set_permissions(&fake_pandoc, fs::Permissions::from_mode(0o755))
+        .expect("executable fake pandoc");
+    let mut paths = vec![fake_bin.path().to_path_buf()];
+    paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let path = env::join_paths(paths).expect("test PATH");
+
+    let mut child = common::hermetic_command()
+        .args(["pandoc", "--to", "html"])
+        .env("PATH", path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aozora");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(b"aozora\n")
+        .expect("write source");
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut prefix = [0_u8; 64];
+    stdout.read_exact(&mut prefix).expect("read output prefix");
+    drop(stdout);
+
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "closed downstream stdout must be success: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -397,6 +502,16 @@ fn lint_reports_non_canonical_directive() {
 }
 
 #[test]
+fn lint_json_diagnostics_are_written_only_to_stderr() {
+    let (status, stdout, stderr) = run(&["lint", "--format", "json"], Some("あ［＃字下げ終わり］"));
+    assert!(status.success(), "non-strict lint remains successful");
+    assert!(stdout.is_empty(), "diagnostic JSON must not use stdout");
+    let report: serde_json::Value = serde_json::from_str(&stderr).expect("diagnostic JSON");
+    assert_eq!(report["schemaVersion"], SCHEMA_VERSION);
+    assert_eq!(report["data"][0]["kind"], "non_canonical_directive");
+}
+
+#[test]
 fn lint_clean_input_is_silent_and_succeeds() {
     let (status, stdout, stderr) = run(&["lint"], Some("ただの本文"));
     assert!(status.success(), "clean input exits 0: {stderr:?}");
@@ -434,6 +549,21 @@ fn lint_fix_rewrites_file_then_relints_clean() {
     // Re-linting the fixed file is clean.
     let (status, _, _) = run(&["lint", "--strict", path], None);
     assert!(status.success(), "fixed file must re-lint clean");
+}
+
+#[test]
+fn lint_fix_preserves_auto_detected_shift_jis_encoding() {
+    let f = write_temp("");
+    let (raw, _, had_errors) = encoding_rs::SHIFT_JIS.encode("あ［＃字下げ終わり］");
+    assert!(!had_errors);
+    fs::write(f.path(), raw.as_ref()).expect("seed sjis");
+    let path = f.path().to_str().unwrap();
+    let (status, _, stderr) = run(&["lint", "--fix", path], None);
+    assert!(status.success(), "lint --fix must succeed: {stderr:?}");
+    let (expected, _, had_errors) =
+        encoding_rs::SHIFT_JIS.encode("あ\n\n［＃ここで字下げ終わり］\n\n");
+    assert!(!had_errors);
+    assert_eq!(fs::read(path).expect("read back"), expected.as_ref());
 }
 
 #[test]
@@ -659,6 +789,29 @@ fn fmt_exits_zero_and_silent_on_broken_pipe() {
         stderr.is_empty(),
         "a broken pipe must stay silent on stderr: {stderr:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_broken_pipe_is_an_operational_error() {
+    let mut child = common::hermetic_command()
+        .args(["check", "--strict", "--format", "json", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aozora");
+
+    drop(child.stderr.take());
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all("bad \u{E001} char\n".as_bytes())
+        .expect("write diagnostic source");
+
+    let status = child.wait().expect("wait");
+    assert_eq!(status.code(), Some(2));
 }
 
 #[test]

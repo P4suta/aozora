@@ -231,6 +231,7 @@ test.describe('desktop authoring workspace', () => {
     await page.locator('.cm-content').click();
     await page.keyboard.type('[');
     await expect(page.locator('.cm-content')).toHaveText('[');
+    await expect(page.locator('.cm-content')).not.toHaveText(/［＃］$/);
   });
 
   test('shows human diagnostics and selects astral-safe ranges from preview-only mode', async ({

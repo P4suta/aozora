@@ -16,8 +16,6 @@
 name: Scorecard supply-chain security
 
 on:
-  # Re-run when branch protection settings change (feeds Branch-Protection).
-  branch_protection_rule:
   schedule:
     - cron: "23 5 * * 1" # weekly, Monday 05:23 UTC
   push:

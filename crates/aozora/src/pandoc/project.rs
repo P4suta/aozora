@@ -13,23 +13,27 @@
 //! block construct as documented in [`crate`]. Payload text is resolved
 //! through the output's [`NodeStore`].
 
+use core::mem;
+
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
+use crate::Snapshot;
 use crate::pandoc::AOZORA_CLASS_PREFIX;
+use crate::pipeline::lex;
+use crate::render::MAX_NESTED_SOURCE_DEPTH;
 use crate::spec::roman_slug;
-#[cfg(test)]
-use crate::syntax::ast::ForwardPayload;
+use crate::syntax::accent::{compose_accent, compose_accent_dots};
 use crate::syntax::ast::{
-    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, Heading, HeadingHint,
-    Illustration, Kaeriten, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment, SourceNode,
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji, Heading,
+    HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment,
+    SourceNode,
 };
 use crate::syntax::format::Format;
 use crate::syntax::{
-    AbsoluteSize, AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
-    ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat, RegionFormat,
-    SectionKind,
+    AbsoluteSize, AccentMark, BoutenKind, BoutenPosition, DirectiveKind, EnclosureKind, FontShift,
+    ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
+    MarginNoteKind, RegionFormat, RubySide, SectionKind,
 };
-use crate::{Snapshot, Span};
 
 /// Lift a parsed [`Snapshot`] to a [`pandoc_ast::Pandoc`] document.
 ///
@@ -41,7 +45,7 @@ pub fn to_pandoc(snapshot: &Snapshot) -> Pandoc {
     // user-supplied source. The owned lex output carries exactly that buffer
     // in `sanitized`, so the slice base already matches the source-node
     // coordinate system — no re-sanitize is needed.
-    let mut converter = Converter::new(&out.sanitized, &out.source_nodes, &out.store);
+    let mut converter = Converter::new(&out.sanitized, &out.source_nodes, &out.store, 0);
     converter.run();
     Pandoc {
         meta: pandoc_ast::Map::new(),
@@ -56,22 +60,13 @@ pub fn to_pandoc(snapshot: &Snapshot) -> Pandoc {
 // Walker
 // ---------------------------------------------------------------------
 
-/// Block-context frame. The implicit outermost frame is the document
-/// root; each container open pushes a new frame, container close
-/// pops and wraps the accumulated blocks in a Pandoc Div.
-struct Frame {
-    /// Closed blocks accumulated under this container (Para nodes
-    /// emitted as inline runs flush, plus block-leaf children).
+struct BlockFrame {
     blocks: Vec<Block>,
-    /// In-flight inline accumulator for the current paragraph.
-    /// `None` means "no open paragraph" (after a flush).
     inlines: Option<Vec<Inline>>,
-    /// Container kind for the wrapping `Div` (if any). The root
-    /// frame carries `None`.
     container: Option<RegionFormat>,
 }
 
-impl Frame {
+impl BlockFrame {
     fn root() -> Self {
         Self {
             blocks: Vec::new(),
@@ -80,7 +75,7 @@ impl Frame {
         }
     }
 
-    fn child(kind: RegionFormat) -> Self {
+    fn container(kind: RegionFormat) -> Self {
         Self {
             blocks: Vec::new(),
             inlines: None,
@@ -92,15 +87,35 @@ impl Frame {
         self.inlines.get_or_insert_with(Vec::new)
     }
 
-    /// Close the in-flight paragraph (if any). Trailing whitespace
-    /// is trimmed by Pandoc's writer; we keep the Inline list as-is.
     fn flush_paragraph(&mut self) {
-        if let Some(inlines) = self.inlines.take()
-            && !inlines.is_empty()
+        if let Some(mut inlines) = self.inlines.take()
+            && {
+                while matches!(inlines.last(), Some(Inline::SoftBreak)) {
+                    inlines.pop();
+                }
+                !inlines.is_empty()
+            }
         {
             self.blocks.push(Block::Para(inlines));
         }
     }
+}
+
+struct InlineFrame {
+    container: InlineContainer,
+    inlines: Vec<Inline>,
+    emitted: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InlineContainer {
+    Region(RegionFormat),
+    Warichu,
+}
+
+enum Frame {
+    Block(BlockFrame),
+    Inline(InlineFrame),
 }
 
 struct Converter<'src> {
@@ -108,44 +123,65 @@ struct Converter<'src> {
     nodes: &'src [SourceNode],
     /// Backing store the owned nodes' `StrId` / range payloads resolve against.
     store: &'src NodeStore,
-    /// Stack of block frames. Always non-empty; the bottom frame is
-    /// the document root.
     stack: Vec<Frame>,
     /// Cursor into `source` (byte offset).
     cursor: usize,
+    pending_newlines: usize,
+    nested_depth: usize,
+    inline_source: bool,
     /// Final document blocks, populated by [`Converter::run`] from
     /// the root frame on completion.
     blocks: Vec<Block>,
 }
 
 impl<'src> Converter<'src> {
-    fn new(source: &'src str, nodes: &'src [SourceNode], store: &'src NodeStore) -> Self {
+    fn new(
+        source: &'src str,
+        nodes: &'src [SourceNode],
+        store: &'src NodeStore,
+        nested_depth: usize,
+    ) -> Self {
         Self {
             source,
             nodes,
             store,
-            stack: vec![Frame::root()],
+            stack: vec![Frame::Block(BlockFrame::root())],
             cursor: 0,
+            pending_newlines: 0,
+            nested_depth,
+            inline_source: false,
             blocks: Vec::new(),
         }
+    }
+
+    fn inline_source(
+        source: &'src str,
+        nodes: &'src [SourceNode],
+        store: &'src NodeStore,
+        nested_depth: usize,
+    ) -> Self {
+        let mut converter = Self::new(source, nodes, store, nested_depth);
+        converter.inline_source = true;
+        converter
     }
 
     fn run(&mut self) {
         for entry in self.nodes {
             // Plain run between previous cursor and this node.
             self.flush_plain(entry.source_span.start as usize);
+            self.resolve_pending_newlines();
             self.dispatch_node(entry);
             self.cursor = entry.source_span.end as usize;
         }
         self.flush_plain(self.source.len());
-        // Pop any unclosed containers (defensive — well-formed input
-        // never reaches here, but unclosed-bracket diagnostics let
-        // the document still parse).
         while self.stack.len() > 1 {
             let frame = self.stack.pop().expect("non-empty stack");
             self.close_frame(frame);
         }
-        let mut root = self.stack.pop().expect("root frame");
+        self.flush_paragraph();
+        let Frame::Block(mut root) = self.stack.pop().expect("root frame") else {
+            unreachable!("the bottom frame is always the document root")
+        };
         root.flush_paragraph();
         self.blocks = root.blocks;
     }
@@ -158,105 +194,272 @@ impl<'src> Converter<'src> {
             return;
         }
         let chunk = &self.source[self.cursor..end];
-        for (idx, line) in chunk.split('\n').enumerate() {
-            if idx > 0 {
-                // Blank line (preceded by another `\n`) closes the
-                // paragraph; non-blank line emits a soft break.
-                if line.is_empty() {
-                    self.current_frame_mut().flush_paragraph();
-                } else {
-                    self.current_frame_mut().paragraph().push(Inline::SoftBreak);
+        if self.inline_source {
+            let mut text_start = 0;
+            for (offset, _) in chunk.match_indices('\n') {
+                if text_start < offset {
+                    self.push_inline(Inline::Str(chunk[text_start..offset].to_owned()));
                 }
+                if self.cursor.saturating_add(offset).saturating_add(1) < self.source.len() {
+                    self.push_inline(Inline::LineBreak);
+                }
+                text_start = offset.saturating_add(1);
             }
-            if !line.is_empty() {
-                self.current_frame_mut()
-                    .paragraph()
-                    .push(Inline::Str(line.to_owned()));
+            if text_start < chunk.len() {
+                self.push_inline(Inline::Str(chunk[text_start..].to_owned()));
             }
+            self.cursor = end;
+            return;
+        }
+        let mut text_start = 0;
+        for (offset, _) in chunk.match_indices('\n') {
+            if text_start < offset {
+                self.resolve_pending_newlines();
+                self.push_inline(Inline::Str(chunk[text_start..offset].to_owned()));
+            }
+            self.pending_newlines += 1;
+            text_start = offset + 1;
+        }
+        if text_start < chunk.len() {
+            self.resolve_pending_newlines();
+            self.push_inline(Inline::Str(chunk[text_start..].to_owned()));
         }
         self.cursor = end;
     }
 
-    fn current_frame_mut(&mut self) -> &mut Frame {
-        self.stack.last_mut().expect("stack always non-empty")
+    fn resolve_pending_newlines(&mut self) {
+        match mem::take(&mut self.pending_newlines) {
+            0 => {}
+            1 if self.current_inline_is_empty() => {}
+            1 => self.push_inline(Inline::SoftBreak),
+            _ => self.flush_paragraph(),
+        }
+    }
+
+    fn current_inline_is_empty(&self) -> bool {
+        let block_index = self.current_block_index();
+        self.stack[block_index..].iter().all(|frame| match frame {
+            Frame::Block(frame) => frame.inlines.as_ref().is_none_or(Vec::is_empty),
+            Frame::Inline(frame) => frame.inlines.is_empty(),
+        })
+    }
+
+    fn push_inline(&mut self, inline: Inline) {
+        let index = self.stack.len().checked_sub(1).expect("root frame");
+        self.push_inline_at(index, inline);
+    }
+
+    fn push_inline_at(&mut self, index: usize, inline: Inline) {
+        match &mut self.stack[index] {
+            Frame::Block(frame) => frame.paragraph().push(inline),
+            Frame::Inline(frame) => frame.inlines.push(inline),
+        }
+    }
+
+    fn current_block_index(&self) -> usize {
+        self.stack
+            .iter()
+            .rposition(|frame| matches!(frame, Frame::Block(_)))
+            .expect("root frame")
+    }
+
+    fn materialize_inline_fragments(&mut self) {
+        let block_index = self.current_block_index();
+        for index in (block_index + 1..self.stack.len()).rev() {
+            let Frame::Inline(frame) = &mut self.stack[index] else {
+                unreachable!("the nearest block bounds a run of inline frames")
+            };
+            let inlines = mem::take(&mut frame.inlines);
+            if inlines.is_empty() && frame.emitted {
+                continue;
+            }
+            frame.emitted = true;
+            let inline = inline_container(frame.container, inlines);
+            self.push_inline_at(index - 1, inline);
+        }
+    }
+
+    fn flush_paragraph(&mut self) {
+        self.materialize_inline_fragments();
+        let index = self.current_block_index();
+        let Frame::Block(frame) = &mut self.stack[index] else {
+            unreachable!("current_block_index returns a block frame")
+        };
+        frame.flush_paragraph();
+    }
+
+    fn push_block(&mut self, block: Block) {
+        let index = self.current_block_index();
+        let Frame::Block(frame) = &mut self.stack[index] else {
+            unreachable!("current_block_index returns a block frame")
+        };
+        frame.blocks.push(block);
     }
 
     fn dispatch_node(&mut self, entry: &SourceNode) {
         match entry.node {
-            NodeRef::Inline(node) => self.dispatch_inline_node(node, entry.source_span),
-            NodeRef::BlockLeaf(node) => self.dispatch_block_leaf(node, entry.source_span),
+            NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => self.dispatch_leaf(node),
             NodeRef::BlockOpen(kind) => self.open_container(kind),
-            NodeRef::BlockClose(_) => self.close_container(),
+            NodeRef::BlockClose(close) => self.close_container(close.is_inline()),
         }
     }
 
-    fn dispatch_inline_node(&mut self, node: Node, _span: Span) {
-        if let Some(inline) = node_inline(node, self.store) {
-            self.current_frame_mut().paragraph().push(inline);
-        }
-    }
-
-    fn dispatch_block_leaf(&mut self, node: Node, _span: Span) {
+    fn dispatch_leaf(&mut self, node: Node) {
         use Node as N;
-        // Block-leaf nodes close any in-flight paragraph and emit a
-        // standalone block.
-        self.current_frame_mut().flush_paragraph();
+        if let N::Directive(directive) = node {
+            match directive.kind {
+                DirectiveKind::WarichuOpen => {
+                    self.open_warichu();
+                    return;
+                }
+                DirectiveKind::WarichuClose if self.close_warichu() => return,
+                _ => {}
+            }
+        }
         let store = self.store;
         let block = match node {
-            N::PageBreak => Block::HorizontalRule,
-            // 本文終わり — a distinct structural marker Div (a colophon follows).
-            N::BodyEnd => Block::Div(
+            N::PageBreak => Some(Block::HorizontalRule),
+            N::BodyEnd => Some(Block::Div(
                 (
                     String::new(),
                     vec![format!("{AOZORA_CLASS_PREFIX}body-end")],
                     Vec::new(),
                 ),
                 Vec::new(),
-            ),
-            N::SectionBreak(k) => section_break_block(k),
-            N::Heading(h) => aozora_heading_block(h, store),
-            N::Illustration(s) => sashie_block(s, store),
-            // Inline-typed variants here would mean the pipeline tagged
-            // an inline node as a block leaf; emit them inside a singleton
-            // Para so the document stays renderable.
-            other => Block::Para(vec![Inline::Span(
-                Attr::default(),
-                vec![Inline::Str(format!("{other:?}"))],
-            )]),
+            )),
+            N::SectionBreak(kind) => Some(section_break_block(kind)),
+            N::Heading(heading) => Some(aozora_heading_block(heading, store, self.nested_depth)),
+            N::Illustration(illustration) => {
+                Some(sashie_block(illustration, store, self.nested_depth))
+            }
+            N::Ruby(_)
+            | N::Format(_)
+            | N::Gaiji(_)
+            | N::Line(_)
+            | N::ForcedBreak
+            | N::HeadingHint(_)
+            | N::Kaeriten(_)
+            | N::Directive(_)
+            | N::AngleQuote(_)
+            | N::MarginNote(_) => None,
         };
-        self.current_frame_mut().blocks.push(block);
+        if let Some(block) = block {
+            self.flush_paragraph();
+            self.push_block(block);
+        } else if let Some(inline) = node_inline(node, store, self.nested_depth) {
+            self.push_inline(inline);
+        }
     }
 
     fn open_container(&mut self, kind: RegionFormat) {
-        // A new container starts a new block context; flush any
-        // in-flight paragraph in the current frame first.
-        self.current_frame_mut().flush_paragraph();
-        self.stack.push(Frame::child(kind));
+        if kind.is_inline() {
+            self.stack.push(Frame::Inline(InlineFrame {
+                container: InlineContainer::Region(kind),
+                inlines: Vec::new(),
+                emitted: false,
+            }));
+        } else {
+            self.flush_paragraph();
+            self.stack.push(Frame::Block(BlockFrame::container(kind)));
+        }
     }
 
-    fn close_container(&mut self) {
-        // Adversarial / malformed input can emit a BlockClose without
-        // a matching open (the lex pipeline emits a diagnostic but
-        // still surfaces the close in `source_nodes`). Popping the
-        // root frame would leave the converter with an empty stack
-        // and panic on the next `current_frame_mut`. Bottom-of-stack
-        // is the document root, so we keep at least one frame.
+    fn open_warichu(&mut self) {
+        self.stack.push(Frame::Inline(InlineFrame {
+            container: InlineContainer::Warichu,
+            inlines: Vec::new(),
+            emitted: false,
+        }));
+    }
+
+    fn close_warichu(&mut self) -> bool {
+        let Some(index) = self.stack.iter().rposition(|frame| {
+            matches!(
+                frame,
+                Frame::Inline(InlineFrame {
+                    container: InlineContainer::Warichu,
+                    ..
+                })
+            )
+        }) else {
+            return false;
+        };
+        self.close_frame_at(index)
+    }
+
+    fn close_container(&mut self, closing_inline: bool) {
         if self.stack.len() <= 1 {
             return;
         }
-        let frame = self.stack.pop().expect("len > 1 above ⇒ pop yields Some");
-        self.close_frame(frame);
+        if closing_inline {
+            if let Some(index) = self.stack.iter().rposition(|frame| {
+                matches!(
+                    frame,
+                    Frame::Inline(InlineFrame {
+                        container: InlineContainer::Region(_),
+                        ..
+                    })
+                )
+            }) {
+                self.close_frame_at(index);
+            }
+            return;
+        }
+        if let Some(index) = self.stack.iter().rposition(|frame| {
+            matches!(
+                frame,
+                Frame::Block(BlockFrame {
+                    container: Some(_),
+                    ..
+                })
+            )
+        }) {
+            self.close_frame_at(index);
+        }
     }
 
-    fn close_frame(&mut self, mut frame: Frame) {
-        frame.flush_paragraph();
-        if let Some(kind) = frame.container {
-            let div = Block::Div(container_attr(kind), frame.blocks);
-            self.current_frame_mut().blocks.push(div);
-        } else {
-            // Closing the root frame is handled in `run` — getting
-            // here means a stack-balance bug.
-            self.current_frame_mut().blocks.extend(frame.blocks);
+    fn close_frame_at(&mut self, index: usize) -> bool {
+        if self.stack[index + 1..]
+            .iter()
+            .any(|frame| matches!(frame, Frame::Block(_)))
+        {
+            return false;
+        }
+        let mut reopen = Vec::new();
+        while self.stack.len() > index.saturating_add(1) {
+            let frame = self.stack.pop().expect("inline frame above target");
+            let Frame::Inline(inline) = frame else {
+                unreachable!("block frames above the target were rejected")
+            };
+            reopen.push(inline.container);
+            self.close_frame(Frame::Inline(inline));
+        }
+        let frame = self.stack.pop().expect("target inline frame");
+        self.close_frame(frame);
+        for container in reopen.into_iter().rev() {
+            self.stack.push(Frame::Inline(InlineFrame {
+                container,
+                inlines: Vec::new(),
+                emitted: false,
+            }));
+        }
+        true
+    }
+
+    fn close_frame(&mut self, frame: Frame) {
+        match frame {
+            Frame::Inline(frame) => {
+                if !frame.inlines.is_empty() || !frame.emitted {
+                    self.push_inline(inline_container(frame.container, frame.inlines));
+                }
+            }
+            Frame::Block(mut frame) => {
+                frame.flush_paragraph();
+                let kind = frame
+                    .container
+                    .expect("only the root block frame has no container");
+                self.push_block(region_block(kind, frame.blocks));
+            }
         }
     }
 }
@@ -283,23 +486,47 @@ fn class_attr_kv(class: &str, kvs: Vec<(String, String)>) -> Attr {
 
 /// Resolve a [`ContentRange`] payload field (ruby base/reading, forward
 /// target, …) to its Pandoc inlines.
-fn content_range_to_inlines(range: ContentRange, store: &NodeStore) -> Vec<Inline> {
+fn content_range_to_inlines(
+    range: ContentRange,
+    store: &NodeStore,
+    nested_depth: usize,
+) -> Vec<Inline> {
     let mut buf = Vec::new();
     for &content in store.resolve_content_range(range) {
-        push_content_inlines(content, store, &mut buf);
+        push_content_inlines(content, store, nested_depth, &mut buf);
     }
     buf
 }
 
 /// Resolve a bare [`Content`] payload field (warichu upper/lower,
 /// sashie caption) to its Pandoc inlines.
-fn content_to_inlines(content: Content, store: &NodeStore) -> Vec<Inline> {
+fn content_to_inlines(content: Content, store: &NodeStore, nested_depth: usize) -> Vec<Inline> {
     let mut buf = Vec::new();
-    push_content_inlines(content, store, &mut buf);
+    push_content_inlines(content, store, nested_depth, &mut buf);
     buf
 }
 
-fn push_content_inlines(content: Content, store: &NodeStore, buf: &mut Vec<Inline>) {
+fn nested_content_to_inlines(
+    content: Content,
+    store: &NodeStore,
+    nested_depth: usize,
+) -> Vec<Inline> {
+    if nested_depth < MAX_NESTED_SOURCE_DEPTH
+        && let Content::Plain(id) = content
+        && let Some(inlines) =
+            nested_source_to_inlines(store.resolve_str(id), nested_depth.saturating_add(1))
+    {
+        return inlines;
+    }
+    content_to_inlines(content, store, nested_depth)
+}
+
+fn push_content_inlines(
+    content: Content,
+    store: &NodeStore,
+    nested_depth: usize,
+    buf: &mut Vec<Inline>,
+) {
     match content {
         Content::Plain(id) => buf.push(Inline::Str(store.resolve_str(id).to_owned())),
         Content::Segments(range) => {
@@ -310,13 +537,25 @@ fn push_content_inlines(content: Content, store: &NodeStore, buf: &mut Vec<Inlin
                     }
                     Segment::Gaiji(g) => buf.push(gaiji_inline(g, store)),
                     Segment::Directive(a) => buf.push(annotation_inline(a, store)),
+                    Segment::Node(node) => {
+                        if let Some(inline) = nested_node_inline(node, store, nested_depth) {
+                            buf.push(inline);
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-fn node_inline(node: Node, store: &NodeStore) -> Option<Inline> {
+fn nested_node_inline(node: Node, store: &NodeStore, nested_depth: usize) -> Option<Inline> {
+    match node {
+        Node::Illustration(illustration) => Some(sashie_inline(illustration, store, nested_depth)),
+        _ => node_inline(node, store, nested_depth),
+    }
+}
+
+fn node_inline(node: Node, store: &NodeStore, nested_depth: usize) -> Option<Inline> {
     use Node as N;
     if let N::Format(f) = node
         && matches!(f.origin, ForwardOrigin::Referenced)
@@ -324,38 +563,80 @@ fn node_inline(node: Node, store: &NodeStore) -> Option<Inline> {
         return None;
     }
     Some(match node {
-        N::Ruby(r) => ruby_inline(r, store),
-        N::MarginNote(s) => side_note_inline(s, store),
-        N::Format(f) => format_inline(f, store),
+        N::Ruby(r) => ruby_inline(r, store, nested_depth),
+        N::MarginNote(s) => side_note_inline(s, store, nested_depth),
+        N::Format(f) => format_inline(f, store, nested_depth),
         N::Gaiji(g) => gaiji_inline(g, store),
         N::Line(lf) => line_inline(lf),
         N::Directive(a) => annotation_inline(a, store),
         N::Kaeriten(k) => kaeriten_inline(k, store),
-        N::AngleQuote(d) => angle_quote_inline(d, store),
+        N::AngleQuote(d) => angle_quote_inline(d, store, nested_depth),
         N::HeadingHint(h) => heading_hint_inline(h, store),
         N::ForcedBreak => Inline::LineBreak,
-        other => Inline::Span(Attr::default(), vec![Inline::Str(format!("{other:?}"))]),
+        N::PageBreak | N::SectionBreak(_) | N::BodyEnd | N::Heading(_) | N::Illustration(_) => {
+            return None;
+        }
     })
 }
 
-fn ruby_inline(r: Ruby, store: &NodeStore) -> Inline {
-    let base_inlines = content_range_to_inlines(r.base, store);
-    let reading_inlines = content_range_to_inlines(r.reading, store);
+fn ruby_inline(r: Ruby, store: &NodeStore, nested_depth: usize) -> Inline {
+    let base_inlines = r.base_emphasis.map_or_else(
+        || content_range_to_inlines(r.base, store, nested_depth),
+        |attr| {
+            vec![format_inline(
+                ForwardFormat {
+                    attr,
+                    target: r.base,
+                    origin: ForwardOrigin::SelfContained,
+                    payload: ForwardPayload::None,
+                },
+                store,
+                nested_depth,
+            )]
+        },
+    );
+    let reading_inlines = content_range_to_inlines(r.reading, store, nested_depth);
     let inner = vec![
         Inline::Span(class_attr("ruby-base"), base_inlines),
         Inline::Span(class_attr("ruby-reading"), reading_inlines),
     ];
-    Inline::Span(class_attr("ruby"), inner)
+    Inline::Span(
+        class_attr_kv(
+            "ruby",
+            vec![(
+                "side".to_owned(),
+                match r.side {
+                    RubySide::Right => "right",
+                    RubySide::Left => "left",
+                }
+                .to_owned(),
+            )],
+        ),
+        inner,
+    )
 }
 
-fn side_note_inline(s: MarginNote, store: &NodeStore) -> Inline {
-    let base_inlines = content_range_to_inlines(s.base, store);
-    let note_inlines = content_range_to_inlines(s.note, store);
+fn side_note_inline(s: MarginNote, store: &NodeStore, nested_depth: usize) -> Inline {
+    let base_inlines = content_range_to_inlines(s.base, store, nested_depth);
+    let note_inlines = content_range_to_inlines(s.note, store, nested_depth);
     let inner = vec![
         Inline::Span(class_attr("sidenote-base"), base_inlines),
         Inline::Span(class_attr("sidenote-note"), note_inlines),
     ];
-    Inline::Span(class_attr("sidenote"), inner)
+    Inline::Span(
+        class_attr_kv(
+            "sidenote",
+            vec![(
+                "kind".to_owned(),
+                match s.kind {
+                    MarginNoteKind::Gloss => "gloss",
+                    MarginNoteKind::Marginal => "marginal",
+                }
+                .to_owned(),
+            )],
+        ),
+        inner,
+    )
 }
 
 /// Project a forward-reference emphasis node to its Pandoc inline.
@@ -371,8 +652,8 @@ fn side_note_inline(s: MarginNote, store: &NodeStore) -> Inline {
 /// The match is exhaustive (no `_` arm): a new [`ForwardAttr`] variant is
 /// compiler-flagged here rather than silently falling through to an empty or
 /// debug placeholder.
-fn format_inline(f: ForwardFormat, store: &NodeStore) -> Inline {
-    let target = content_range_to_inlines(f.target, store);
+fn format_inline(f: ForwardFormat, store: &NodeStore, nested_depth: usize) -> Inline {
+    let target = format_target_inlines(f, store, nested_depth);
     match f.attr {
         ForwardAttr::Bold => Inline::Strong(target),
         ForwardAttr::Italic => Inline::Emph(target),
@@ -449,6 +730,73 @@ fn format_inline(f: ForwardFormat, store: &NodeStore) -> Inline {
     }
 }
 
+fn format_target_inlines(f: ForwardFormat, store: &NodeStore, nested_depth: usize) -> Vec<Inline> {
+    if matches!(f.payload, ForwardPayload::NestedSource)
+        && let Some(source) = store.content_range_as_plain(f.target)
+        && nested_depth < MAX_NESTED_SOURCE_DEPTH
+        && let Some(inlines) = nested_source_to_inlines(source, nested_depth + 1)
+    {
+        return inlines;
+    }
+
+    match (f.attr, f.payload, store.content_range_as_plain(f.target)) {
+        (ForwardAttr::AccentDot, ForwardPayload::AccentBody(body), Some(run)) => {
+            compose_accent_dots(run, store.resolve_str(body)).map_or_else(
+                || content_range_to_inlines(f.target, store, nested_depth),
+                |text| vec![Inline::Str(text)],
+            )
+        }
+        (ForwardAttr::Accent(mark), _, Some(run)) => compose_single_accent(run, mark).map_or_else(
+            || content_range_to_inlines(f.target, store, nested_depth),
+            |glyph| vec![Inline::Str(glyph.to_string())],
+        ),
+        _ => content_range_to_inlines(f.target, store, nested_depth),
+    }
+}
+
+fn compose_single_accent(run: &str, mark: AccentMark) -> Option<char> {
+    let mut characters = run.chars();
+    let letter = characters.next()?;
+    if characters.next().is_some() {
+        return None;
+    }
+    compose_accent(letter, mark)
+}
+
+fn nested_source_to_inlines(source: &str, nested_depth: usize) -> Option<Vec<Inline>> {
+    let output = lex(source);
+    if output.source_nodes.iter().any(|entry| match entry.node {
+        NodeRef::Inline(_) => false,
+        NodeRef::BlockLeaf(_) | NodeRef::BlockOpen(_) | NodeRef::BlockClose(_) => true,
+    }) {
+        return None;
+    }
+    let mut converter = Converter::inline_source(
+        &output.sanitized,
+        &output.source_nodes,
+        &output.store,
+        nested_depth,
+    );
+    converter.run();
+    flatten_blocks(converter.blocks)
+}
+
+fn flatten_blocks(blocks: Vec<Block>) -> Option<Vec<Inline>> {
+    let mut output = Vec::new();
+    for block in blocks {
+        let mut next = match block {
+            Block::Plain(inlines) | Block::Para(inlines) | Block::Header(_, _, inlines) => inlines,
+            Block::Div(_, blocks) => flatten_blocks(blocks)?,
+            _ => return None,
+        };
+        if !output.is_empty() && !next.is_empty() {
+            output.push(Inline::SoftBreak);
+        }
+        output.append(&mut next);
+    }
+    Some(output)
+}
+
 fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     match p {
         BoutenPosition::Right => "right",
@@ -499,6 +847,11 @@ fn gaiji_inline(g: Gaiji, store: &NodeStore) -> Inline {
         "description".to_owned(),
         store.resolve_str(g.hint).to_owned(),
     )];
+    kvs.push(("standalone".to_owned(), g.standalone.to_string()));
+    kvs.push((
+        "mencode-separator".to_owned(),
+        g.mencode_separator.to_string(),
+    ));
     if g.canonical.has_mencode() {
         let mut mencode = String::new();
         g.canonical
@@ -506,9 +859,24 @@ fn gaiji_inline(g: Gaiji, store: &NodeStore) -> Inline {
             .expect("write_mencode into String is infallible");
         kvs.push(("mencode".to_owned(), mencode));
     }
-    let inner = g.resolve(store).map_or_else(
+    let resolved = g.resolve(store).map(|value| {
+        let mut text = String::new();
+        value
+            .write_to(&mut text)
+            .expect("write resolved gaiji into String");
+        text
+    });
+    if let Some(text) = &resolved {
+        let codepoints = text
+            .chars()
+            .map(|character| format!("U+{:04X}", character as u32))
+            .collect::<Vec<_>>()
+            .join(" ");
+        kvs.push(("codepoint".to_owned(), codepoints));
+    }
+    let inner = resolved.map_or_else(
         || vec![Inline::Str("〓".to_owned())],
-        |resolved| vec![Inline::Str(format!("{resolved:?}"))],
+        |text| vec![Inline::Str(text)],
     );
     Inline::Span(class_attr_kv("gaiji", kvs), inner)
 }
@@ -526,22 +894,79 @@ fn line_inline(lf: LineFormat) -> Inline {
         LineFormat::AlignEnd { offset } => {
             class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
         }
-        LineFormat::Center { .. } => class_attr_kv("center", Vec::new()),
-        _ => Attr::default(),
+        LineFormat::Center { page } => {
+            class_attr_kv("center", vec![("page".to_owned(), page.to_string())])
+        }
+        LineFormat::Gothic => class_attr("line-gothic"),
+        LineFormat::FontSizeAbsolute { size, bold } => class_attr_kv(
+            "line-font-absolute",
+            vec![
+                ("size".to_owned(), absolute_size_slug(size).to_owned()),
+                ("bold".to_owned(), bold.to_string()),
+            ],
+        ),
     };
     Inline::Span(attr, Vec::new())
 }
 
 fn annotation_inline(a: Directive, store: &NodeStore) -> Inline {
+    let raw = store.resolve_str(a.raw);
+    let content = match a.kind {
+        DirectiveKind::EditorNote => {
+            let number = raw
+                .strip_prefix("［＃入力者注(")
+                .and_then(|rest| rest.strip_suffix(")］"))
+                .unwrap_or(raw);
+            vec![Inline::Str(format!("注{number}"))]
+        }
+        DirectiveKind::RubyAttached | DirectiveKind::RubyRetarget => {
+            vec![Inline::Str("ルビ".to_owned())]
+        }
+        DirectiveKind::RubyPairOpen => vec![Inline::Str("左ルビ".to_owned())],
+        DirectiveKind::RubyPairClose => {
+            let reading = raw
+                .strip_prefix("［＃左に「")
+                .and_then(|rest| rest.strip_suffix("」のルビ付き終わり］"))
+                .unwrap_or(raw);
+            vec![Inline::Str(format!("左ルビ「{reading}」"))]
+        }
+        DirectiveKind::MarginNotePairOpen => vec![Inline::Str(
+            if raw.starts_with("［＃左に") {
+                "左注記"
+            } else {
+                "注記"
+            }
+            .to_owned(),
+        )],
+        DirectiveKind::MarginNotePairClose => {
+            let (label, prefix) = if raw.starts_with("［＃左に「") {
+                ("左注記", "［＃左に「")
+            } else {
+                ("注記", "［＃「")
+            };
+            let note = raw
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix("」の注記付き終わり］"))
+                .unwrap_or(raw);
+            vec![Inline::Str(format!("{label}「{note}」"))]
+        }
+        DirectiveKind::NonCanonical
+        | DirectiveKind::Editorial
+        | DirectiveKind::Sic
+        | DirectiveKind::BaseTextVariant
+        | DirectiveKind::WarichuOpen
+        | DirectiveKind::WarichuClose
+        | DirectiveKind::Empty => Vec::new(),
+    };
     Inline::Span(
         class_attr_kv(
             "annotation",
             vec![
                 ("kind".to_owned(), annotation_kind_slug(a.kind).to_owned()),
-                ("raw".to_owned(), store.resolve_str(a.raw).to_owned()),
+                ("raw".to_owned(), raw.to_owned()),
             ],
         ),
-        Vec::new(),
+        content,
     )
 }
 
@@ -551,6 +976,9 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::Editorial => "editorial",
         DirectiveKind::Sic => "sic",
         DirectiveKind::BaseTextVariant => "base-text-variant",
+        DirectiveKind::WarichuOpen => "warichu-open",
+        DirectiveKind::WarichuClose => "warichu-close",
+        DirectiveKind::Empty => "empty",
         DirectiveKind::EditorNote => "editor-note",
         DirectiveKind::RubyAttached => "ruby-attached",
         DirectiveKind::RubyRetarget => "ruby-retarget",
@@ -558,25 +986,22 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::RubyPairClose => "ruby-pair-close",
         DirectiveKind::MarginNotePairOpen => "margin-note-pair-open",
         DirectiveKind::MarginNotePairClose => "margin-note-pair-close",
-        _ => "other",
     }
 }
 
 fn kaeriten_inline(k: Kaeriten, store: &NodeStore) -> Inline {
+    let mark = store.resolve_str(k.mark).to_owned();
     Inline::Span(
-        class_attr_kv(
-            "kaeriten",
-            vec![("mark".to_owned(), store.resolve_str(k.mark).to_owned())],
-        ),
-        Vec::new(),
+        class_attr_kv("kaeriten", vec![("mark".to_owned(), mark.clone())]),
+        vec![Inline::Str(mark)],
     )
 }
 
-fn angle_quote_inline(d: AngleQuote, store: &NodeStore) -> Inline {
-    Inline::Span(
-        class_attr("angle-quote"),
-        content_range_to_inlines(d.content, store),
-    )
+fn angle_quote_inline(d: AngleQuote, store: &NodeStore, nested_depth: usize) -> Inline {
+    let mut content = vec![Inline::Str("《".to_owned())];
+    content.extend(content_range_to_inlines(d.content, store, nested_depth));
+    content.push(Inline::Str("》".to_owned()));
+    Inline::Span(class_attr("angle-quote"), content)
 }
 
 fn heading_hint_inline(h: HeadingHint, store: &NodeStore) -> Inline {
@@ -588,16 +1013,14 @@ fn heading_hint_inline(h: HeadingHint, store: &NodeStore) -> Inline {
     } else {
         Vec::new()
     };
-    Inline::Span(
-        class_attr_kv(
-            "heading-hint",
-            vec![
-                ("level".to_owned(), h.level.outline_level().to_string()),
-                ("target".to_owned(), target),
-            ],
-        ),
-        content,
-    )
+    let mut kvs = vec![
+        ("level".to_owned(), h.level.outline_level().to_string()),
+        ("target".to_owned(), target),
+    ];
+    if let Some(style) = heading_style_slug(h.style) {
+        kvs.push(("style".to_owned(), style.to_owned()));
+    }
+    Inline::Span(class_attr_kv("heading-hint", kvs), content)
 }
 
 fn section_break_block(k: SectionKind) -> Block {
@@ -615,7 +1038,7 @@ fn section_break_block(k: SectionKind) -> Block {
     )
 }
 
-fn aozora_heading_block(h: Heading, store: &NodeStore) -> Block {
+fn aozora_heading_block(h: Heading, store: &NodeStore, nested_depth: usize) -> Block {
     let level: i64 = match h.kind {
         HeadingKind::Large => 1,
         HeadingKind::Medium => 2,
@@ -630,7 +1053,7 @@ fn aozora_heading_block(h: Heading, store: &NodeStore) -> Block {
     Block::Header(
         level,
         class_attr_kv("heading", kv),
-        content_range_to_inlines(h.text, store),
+        content_range_to_inlines(h.text, store, nested_depth),
     )
 }
 
@@ -648,89 +1071,229 @@ fn heading_style_slug(s: HeadingStyle) -> Option<&'static str> {
     match s {
         HeadingStyle::SameLine => Some("same-line"),
         HeadingStyle::Window => Some("window"),
-        // Standard (and any future `#[non_exhaustive]` style) adds no attr.
-        _ => None,
+        HeadingStyle::Standard => None,
     }
 }
 
-fn sashie_block(s: Illustration, store: &NodeStore) -> Block {
+fn sashie_block(s: Illustration, store: &NodeStore, nested_depth: usize) -> Block {
+    let caption = s.caption.map_or_else(Vec::new, |content| {
+        vec![Block::Plain(nested_content_to_inlines(
+            content,
+            store,
+            nested_depth,
+        ))]
+    });
+    Block::Figure(
+        illustration_attr(s, store),
+        (None, caption),
+        vec![Block::Plain(vec![sashie_inline(s, store, nested_depth)])],
+    )
+}
+
+fn sashie_inline(s: Illustration, store: &NodeStore, nested_depth: usize) -> Inline {
     // The general form's leading description is the alt; otherwise the
     // keyword 挿絵 form's trailing 「caption」 is the next-best alt text.
     let alt = s.description.map_or_else(
         || {
             s.caption
-                .map(|c| content_to_inlines(c, store))
+                .map(|c| nested_content_to_inlines(c, store, nested_depth))
                 .unwrap_or_default()
         },
         |description| vec![Inline::Str(store.resolve_str(description).to_owned())],
     );
     let target = (store.resolve_str(s.file).to_owned(), String::new());
-    Block::Para(vec![Inline::Image(class_attr("sashie"), alt, target)])
+    Inline::Image(illustration_attr(s, store), alt, target)
+}
+
+fn illustration_attr(s: Illustration, store: &NodeStore) -> Attr {
+    let mut kvs = Vec::new();
+    if let Some(number) = s.number {
+        kvs.push(("number".to_owned(), store.resolve_str(number).to_owned()));
+    }
+    if let Some(dimensions) = s.dimensions {
+        kvs.push((
+            "dimensions".to_owned(),
+            store.resolve_str(dimensions).to_owned(),
+        ));
+    }
+    class_attr_kv("illustration", kvs)
+}
+
+fn inline_container(kind: InlineContainer, inlines: Vec<Inline>) -> Inline {
+    match kind {
+        InlineContainer::Region(region) => region_inline(region, inlines),
+        InlineContainer::Warichu => Inline::Span(class_attr("warichu"), inlines),
+    }
+}
+
+fn region_inline(kind: RegionFormat, inlines: Vec<Inline>) -> Inline {
+    let content = match kind {
+        RegionFormat::Bold { .. } => vec![Inline::Strong(inlines)],
+        RegionFormat::Italic { .. } => vec![Inline::Emph(inlines)],
+        _ => inlines,
+    };
+    Inline::Span(container_attr(kind), content)
+}
+
+fn region_block(kind: RegionFormat, blocks: Vec<Block>) -> Block {
+    if let RegionFormat::Heading { level, .. } = kind
+        && blocks.iter().all(|block| matches!(block, Block::Para(_)))
+    {
+        let mut inlines = Vec::new();
+        for block in blocks {
+            let Block::Para(mut paragraph) = block else {
+                unreachable!("the heading block shape was checked above")
+            };
+            if !inlines.is_empty() && !paragraph.is_empty() {
+                inlines.push(Inline::SoftBreak);
+            }
+            inlines.append(&mut paragraph);
+        }
+        return Block::Header(
+            i64::from(level.outline_level()),
+            container_attr(kind),
+            inlines,
+        );
+    }
+    Block::Div(container_attr(kind), blocks)
 }
 
 fn container_attr(kind: RegionFormat) -> Attr {
     let (slug, kvs): (&str, Vec<(String, String)>) = match kind {
-        RegionFormat::Indent(IndentBlock {
-            amount,
-            wrap,
-            center,
-            layout,
-            styles,
-        }) => {
-            let mut kvs = vec![("amount".to_owned(), amount.to_string())];
-            if let Some(w) = wrap {
-                kvs.push(("wrap".to_owned(), w.to_string()));
-            }
-            if center {
-                kvs.push(("center".to_owned(), "true".to_owned()));
-            }
-            match layout {
-                IndentLayout::Kumi(kumi) => {
-                    kvs.push(("kumi-lines".to_owned(), kumi.lines.to_string()));
-                    kvs.push(("kumi-width".to_owned(), kumi.width.to_string()));
-                }
-                IndentLayout::LineWidth(width) => {
-                    kvs.push(("width".to_owned(), width.0.to_string()));
-                }
-                IndentLayout::None => {}
-            }
-            // #78 co-applied styles — a space-joined `modifiers` value (the
-            // Format identity tags, canonical order), mirroring the HTML
-            // class list. Open-ended: a new style adds a token, not a kv key.
-            let modifiers: Vec<&str> = styles.iter_formats().map(Format::as_json_tag).collect();
-            if !modifiers.is_empty() {
-                kvs.push(("modifiers".to_owned(), modifiers.join(" ")));
-            }
-            ("container-indent", kvs)
-        }
+        RegionFormat::Indent(indent) => return indent_container_attr(indent),
         RegionFormat::Warichu => ("container-warichu", Vec::new()),
-        RegionFormat::Framed(_) => ("container-keigakomi", Vec::new()),
+        RegionFormat::Framed(enclosure) => (
+            "container-keigakomi",
+            vec![("kind".to_owned(), enclosure_kind_slug(enclosure).to_owned())],
+        ),
         RegionFormat::AlignEnd { offset } => (
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
         ),
-        RegionFormat::Bouten { kind, position } => {
-            let mut kvs = vec![(
-                "variant".to_owned(),
-                roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
-            )];
-            match position {
-                BoutenPosition::Left => {
-                    kvs.push(("position".to_owned(), "left".to_owned()));
-                }
-                BoutenPosition::Both => {
-                    kvs.push(("position".to_owned(), "both".to_owned()));
-                }
-                _ => {}
-            }
-            ("container-bouten", kvs)
-        }
-        _ => ("container-unknown", Vec::new()),
+        RegionFormat::LineWidth(width) => (
+            "container-line-width",
+            vec![("width".to_owned(), width.0.to_string())],
+        ),
+        RegionFormat::Bouten { kind, position } => return bouten_container_attr(kind, position),
+        RegionFormat::Bold { padded } => (
+            "container-bold",
+            vec![("padded".to_owned(), padded.to_string())],
+        ),
+        RegionFormat::Gothic { padded } => (
+            "container-gothic",
+            vec![("padded".to_owned(), padded.to_string())],
+        ),
+        RegionFormat::Italic { padded } => (
+            "container-italic",
+            vec![("padded".to_owned(), padded.to_string())],
+        ),
+        RegionFormat::Heading {
+            level,
+            style,
+            padded,
+        } => return heading_container_attr(level, style, padded),
+        RegionFormat::Columns(count) => (
+            "container-columns",
+            vec![("count".to_owned(), count.0.to_string())],
+        ),
+        RegionFormat::Table => ("container-table", Vec::new()),
+        RegionFormat::Horizontal => ("container-horizontal", Vec::new()),
+        RegionFormat::FontSize(shift) => return font_size_container_attr(shift),
+        RegionFormat::SmallScript(position) => (
+            "container-small-script",
+            vec![(
+                "position".to_owned(),
+                bouten_position_slug(position).to_owned(),
+            )],
+        ),
+        RegionFormat::Caption { padded } => (
+            "container-caption",
+            vec![("padded".to_owned(), padded.to_string())],
+        ),
     };
     (
         String::new(),
         vec![format!("{AOZORA_CLASS_PREFIX}{slug}")],
         kvs,
+    )
+}
+
+fn indent_container_attr(indent: IndentBlock) -> Attr {
+    let IndentBlock {
+        amount,
+        wrap,
+        center,
+        layout,
+        styles,
+    } = indent;
+    let mut kvs = vec![("amount".to_owned(), amount.to_string())];
+    if let Some(wrap) = wrap {
+        kvs.push(("wrap".to_owned(), wrap.to_string()));
+    }
+    if center {
+        kvs.push(("center".to_owned(), "true".to_owned()));
+    }
+    match layout {
+        IndentLayout::Kumi(kumi) => {
+            kvs.push(("kumi-lines".to_owned(), kumi.lines.to_string()));
+            kvs.push(("kumi-width".to_owned(), kumi.width.to_string()));
+        }
+        IndentLayout::LineWidth(width) => {
+            kvs.push(("width".to_owned(), width.0.to_string()));
+        }
+        IndentLayout::None => {}
+    }
+    let modifiers = styles
+        .iter_formats()
+        .map(Format::as_json_tag)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !modifiers.is_empty() {
+        kvs.push(("modifiers".to_owned(), modifiers));
+    }
+    class_attr_kv("container-indent", kvs)
+}
+
+fn bouten_container_attr(kind: BoutenKind, position: BoutenPosition) -> Attr {
+    class_attr_kv(
+        "container-bouten",
+        vec![
+            (
+                "variant".to_owned(),
+                roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
+            ),
+            (
+                "position".to_owned(),
+                bouten_position_slug(position).to_owned(),
+            ),
+        ],
+    )
+}
+
+fn heading_container_attr(level: HeadingKind, style: HeadingStyle, padded: bool) -> Attr {
+    class_attr_kv(
+        "container-heading",
+        vec![
+            ("level".to_owned(), heading_kind_slug(level).to_owned()),
+            (
+                "style".to_owned(),
+                heading_style_slug(style).unwrap_or("standard").to_owned(),
+            ),
+            ("padded".to_owned(), padded.to_string()),
+        ],
+    )
+}
+
+fn font_size_container_attr(shift: FontShift) -> Attr {
+    class_attr_kv(
+        "container-font-size",
+        vec![
+            (
+                "direction".to_owned(),
+                if shift.larger() { "larger" } else { "smaller" }.to_owned(),
+            ),
+            ("steps".to_owned(), shift.magnitude().to_string()),
+        ],
     )
 }
 
@@ -742,7 +1305,8 @@ fn container_attr(kind: RegionFormat) -> Attr {
 mod tests {
     use super::*;
     use crate::Document;
-    use crate::syntax::{BlockStyles, BoutenKind};
+    use crate::syntax::BlockStyles;
+    use crate::syntax::ast::GaijiCanonicalOwned;
 
     #[test]
     fn wire_slugs_cover_every_projected_variant() {
@@ -804,6 +1368,100 @@ mod tests {
                 "first para should carry a SoftBreak"
             );
         }
+        assert_eq!(
+            &pandoc.blocks[1],
+            &Block::Para(vec![Inline::Str("Two.".to_owned())])
+        );
+    }
+
+    #[test]
+    fn single_newline_is_one_soft_break() {
+        assert_eq!(
+            project("One\nTwo"),
+            vec![Block::Para(vec![
+                Inline::Str("One".to_owned()),
+                Inline::SoftBreak,
+                Inline::Str("Two".to_owned()),
+            ])]
+        );
+    }
+
+    #[test]
+    fn triple_newline_has_no_leading_break_in_second_paragraph() {
+        assert_eq!(
+            project("One\n\n\nTwo"),
+            vec![
+                Block::Para(vec![Inline::Str("One".to_owned())]),
+                Block::Para(vec![Inline::Str("Two".to_owned())]),
+            ]
+        );
+    }
+
+    #[test]
+    fn trailing_newlines_do_not_emit_breaks_or_empty_paragraphs() {
+        for source in ["One\n", "One\n\n", "One\n\n\n"] {
+            assert_eq!(
+                project(source),
+                vec![Block::Para(vec![Inline::Str("One".to_owned())])],
+                "{source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn newline_run_before_inline_node_resolves_once() {
+        let single = project("One\n｜青梅《おうめ》");
+        let Some(Block::Para(single)) = single.first() else {
+            panic!("expected one paragraph: {single:?}")
+        };
+        assert!(matches!(single.get(1), Some(Inline::SoftBreak)));
+        assert!(matches!(single.get(2), Some(Inline::Span(attr, _)) if has_class(attr, "ruby")));
+
+        let double = project("One\n\n｜青梅《おうめ》");
+        assert_eq!(double.len(), 2, "{double:?}");
+        let Block::Para(second) = &double[1] else {
+            panic!("expected second paragraph: {double:?}")
+        };
+        assert!(matches!(second.first(), Some(Inline::Span(attr, _)) if has_class(attr, "ruby")));
+        assert!(
+            !second
+                .iter()
+                .any(|inline| matches!(inline, Inline::SoftBreak))
+        );
+    }
+
+    #[test]
+    fn newline_after_inline_node_is_not_lost() {
+        let blocks = project("｜青梅《おうめ》\nTwo");
+        let Some(Block::Para(inlines)) = blocks.first() else {
+            panic!("expected one paragraph: {blocks:?}")
+        };
+        assert!(matches!(inlines.first(), Some(Inline::Span(attr, _)) if has_class(attr, "ruby")));
+        assert!(matches!(inlines.get(1), Some(Inline::SoftBreak)));
+        assert_eq!(inlines.get(2), Some(&Inline::Str("Two".to_owned())));
+    }
+
+    #[test]
+    fn newline_is_not_dropped_when_new_inline_frame_is_empty() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.push_inline(Inline::Str("before".to_owned()));
+        converter.open_container(RegionFormat::Caption { padded: false });
+        converter.pending_newlines = 1;
+        converter.resolve_pending_newlines();
+        converter.push_inline(Inline::Str("after".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        let [Block::Para(inlines)] = converter.blocks.as_slice() else {
+            panic!("expected one paragraph: {:?}", converter.blocks)
+        };
+        assert_eq!(inlines.first(), Some(&Inline::Str("before".to_owned())));
+        let Some(Inline::Span(_, content)) = inlines.get(1) else {
+            panic!("expected caption span: {inlines:?}")
+        };
+        assert!(matches!(content.first(), Some(Inline::SoftBreak)));
+        assert_eq!(content.get(1), Some(&Inline::Str("after".to_owned())));
     }
 
     /// Ruby with explicit delimiter projects to a Span.aozora-ruby
@@ -919,6 +1577,9 @@ mod tests {
                         walk_inlines(inlines, suffix)
                     }
                     Block::Div(_, inner) => walk_blocks(inner, suffix),
+                    Block::Figure(_, (_, caption), inner) => {
+                        walk_blocks(caption, suffix).or_else(|| walk_blocks(inner, suffix))
+                    }
                     _ => None,
                 };
                 if found.is_some() {
@@ -963,6 +1624,9 @@ mod tests {
                         walk_inlines(inlines, pred)
                     }
                     Block::Div(_, inner) => walk_blocks(inner, pred),
+                    Block::Figure(_, (_, caption), inner) => {
+                        walk_blocks(caption, pred).or_else(|| walk_blocks(inner, pred))
+                    }
                     _ => None,
                 };
                 if found.is_some() {
@@ -995,6 +1659,18 @@ mod tests {
     }
 
     #[test]
+    fn implicit_ruby_projects_gaiji_and_text_as_one_base() {
+        let blocks = project("※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀多《かんだた》");
+        let (_, base) = find_span(&blocks, "ruby-base").expect("ruby base span");
+        let [Inline::Span(gaiji_attr, gaiji), Inline::Str(text)] = base else {
+            panic!("expected gaiji and text in one ruby base, got {base:?}");
+        };
+        assert!(has_class(gaiji_attr, "gaiji"));
+        assert_eq!(gaiji, &[Inline::Str("犍".to_owned())]);
+        assert_eq!(text, "陀多");
+    }
+
+    #[test]
     fn explicit_ruby_projects_as_ruby_span() {
         let blocks = project("｜青梅《おうめ》\n");
         let (_, inner) = find_span(&blocks, "ruby").expect("ruby span");
@@ -1002,9 +1678,44 @@ mod tests {
     }
 
     #[test]
+    fn ruby_base_keeps_semantic_kaeriten_segments() {
+        let blocks =
+            project("｜瑞岩東畔命［＃二］軽舟［＃一］《ずいがんとうはんめいずけいしうを》");
+        let (_, base) = find_span(&blocks, "ruby-base").expect("ruby base span");
+        let [
+            Inline::Str(first),
+            Inline::Span(two_attr, two),
+            Inline::Str(second),
+            Inline::Span(one_attr, one),
+        ] = base
+        else {
+            panic!("expected text/kaeriten/text/kaeriten, got {base:?}");
+        };
+        assert_eq!(first, "瑞岩東畔命");
+        assert!(has_class(two_attr, "kaeriten"));
+        assert_eq!(two, &[Inline::Str("二".to_owned())]);
+        assert_eq!(second, "軽舟");
+        assert!(has_class(one_attr, "kaeriten"));
+        assert_eq!(one, &[Inline::Str("一".to_owned())]);
+    }
+
+    #[test]
+    fn ruby_reading_keeps_nested_forward_format() {
+        let blocks = project("折口《ツムレ［＃「ムレ」に白丸傍点］》");
+        let (_, reading) = find_span(&blocks, "ruby-reading").expect("ruby reading span");
+        let [Inline::Str(prefix), Inline::Span(attr, target)] = reading else {
+            panic!("expected text and bouten reading, got {reading:?}");
+        };
+        assert_eq!(prefix, "ツ");
+        assert!(has_class(attr, "bouten"));
+        assert_eq!(target, &[Inline::Str("ムレ".to_owned())]);
+    }
+
+    #[test]
     fn left_ruby_projects_as_ruby_span() {
         let blocks = project("未［＃「未」の左に「ザル」のルビ］んとす。\n");
-        let (_, inner) = find_span(&blocks, "ruby").expect("left ruby span");
+        let (attr, inner) = find_span(&blocks, "ruby").expect("left ruby span");
+        assert_eq!(kv(attr, "side"), Some("left"));
         let (_, base) = inner
             .iter()
             .find_map(|i| match i {
@@ -1016,9 +1727,33 @@ mod tests {
     }
 
     #[test]
+    fn left_ruby_keeps_gaiji_in_base_and_reading() {
+        for (source, field) in [
+            (
+                "銅※［＃「金＋拔のつくり」、第3水準1-93-6］子［＃「銅※［＃「金＋拔のつくり」、第3水準1-93-6］子」の左に「どびょうし」のルビ］",
+                "ruby-base",
+            ),
+            (
+                "未［＃「未」の左に「※［＃「特のへん＋廴＋聿」、第3水準1-87-71］」のルビ］",
+                "ruby-reading",
+            ),
+        ] {
+            let blocks = project(source);
+            let (_, inlines) = find_span(&blocks, field).expect("ruby field span");
+            assert!(
+                inlines.iter().any(
+                    |inline| matches!(inline, Inline::Span(attr, _) if has_class(attr, "gaiji"))
+                ),
+                "gaiji missing from {field}: {inlines:?}"
+            );
+        }
+    }
+
+    #[test]
     fn side_note_projects_base_and_note_subspans() {
         let blocks = project("未来［＃「未来」の左に「みらい」の注記］を見る。\n");
-        let (_, inner) = find_span(&blocks, "sidenote").expect("sidenote span");
+        let (attr, inner) = find_span(&blocks, "sidenote").expect("sidenote span");
+        assert_eq!(kv(attr, "kind"), Some("gloss"));
         assert!(
             inner.iter().any(|i| matches!(
                 i,
@@ -1033,6 +1768,38 @@ mod tests {
             )),
             "sidenote has note sub-span: {inner:?}"
         );
+    }
+
+    #[test]
+    fn marginal_note_kind_is_not_collapsed_into_gloss() {
+        let blocks = project("伏字［＃「伏字」に「×」の傍記］\n");
+        let (attr, _) = find_span(&blocks, "sidenote").expect("sidenote span");
+        assert_eq!(kv(attr, "kind"), Some("marginal"));
+    }
+
+    #[test]
+    fn side_note_keeps_a_structured_gaiji_base() {
+        let blocks = project(
+            "※［＃「てへん＋僉」、第3水準1-84-94］［＃「※［＃「てへん＋僉」、第3水準1-84-94］」の左に「アラタムル」の注記］",
+        );
+        let (_, base) = find_span(&blocks, "sidenote-base").expect("sidenote base span");
+        assert!(matches!(
+            base,
+            [Inline::Span(attr, _)] if has_class(attr, "gaiji")
+        ));
+    }
+
+    #[test]
+    fn ruby_base_keeps_nested_margin_note() {
+        let blocks = project("｜短尺［＃「尺」に「（冊）」の注記］《タンシヤク》");
+        let (_, base) = find_span(&blocks, "ruby-base").expect("ruby base span");
+        let [Inline::Str(prefix), Inline::Span(attr, _)] = base else {
+            panic!("expected text and sidenote, got {base:?}");
+        };
+        assert_eq!(prefix, "短");
+        assert!(has_class(attr, "sidenote"));
+        let (_, note) = find_span(&blocks, "sidenote-note").expect("nested note span");
+        assert_eq!(note, &[Inline::Str("（冊）".to_owned())]);
     }
 
     #[test]
@@ -1112,13 +1879,19 @@ mod tests {
             "gaiji description"
         );
         assert_eq!(kv(attr, "mencode"), Some("第3水準1-85-54"), "gaiji mencode");
-        match inner {
-            [Inline::Str(s)] => assert!(
-                s.starts_with("Char("),
-                "resolved gaiji renders the debug Char(...) form, got {s:?}"
-            ),
-            other => panic!("expected single Str for resolved gaiji, got {other:?}"),
-        }
+        assert_eq!(kv(attr, "codepoint"), Some("U+6798"));
+        assert_eq!(kv(attr, "standalone"), Some("false"));
+        assert_eq!(kv(attr, "mencode-separator"), Some("true"));
+        assert_eq!(inner, &[Inline::Str("枘".to_owned())]);
+    }
+
+    #[test]
+    fn resolved_gaiji_emits_combining_sequence() {
+        let blocks = project("※［＃「か半濁点」、第3水準1-4-87］");
+        let (attr, inner) = find_span(&blocks, "gaiji").expect("gaiji span");
+        assert_eq!(kv(attr, "mencode"), Some("第3水準1-4-87"));
+        assert_eq!(kv(attr, "codepoint"), Some("U+304B U+309A"));
+        assert_eq!(inner, &[Inline::Str("か゚".to_owned())]);
     }
 
     #[test]
@@ -1133,17 +1906,84 @@ mod tests {
     }
 
     #[test]
+    fn gaiji_projection_retains_standalone_and_separator_provenance() {
+        let mut store = NodeStore::new();
+        let hint = store.intern("字形");
+        let inline = gaiji_inline(
+            Gaiji {
+                hint,
+                canonical: GaijiCanonicalOwned::Unicode('字'),
+                mencode_separator: false,
+                standalone: true,
+            },
+            &store,
+        );
+        let Inline::Span(attr, content) = inline else {
+            panic!("gaiji projects to Span")
+        };
+        assert_eq!(kv(&attr, "standalone"), Some("true"));
+        assert_eq!(kv(&attr, "mencode-separator"), Some("false"));
+        assert_eq!(kv(&attr, "codepoint"), Some("U+5B57"));
+        assert_eq!(content, vec![Inline::Str("字".to_owned())]);
+    }
+
+    #[test]
     fn angle_quote_projects_to_span() {
         let blocks = project("≪重要≫な記述。\n");
         let (_, inner) = find_span(&blocks, "angle-quote").expect("angle-quote span");
-        assert_eq!(inner, &[Inline::Str("重要".to_owned())], "angle-quote text");
+        assert_eq!(
+            inner,
+            &[
+                Inline::Str("《".to_owned()),
+                Inline::Str("重要".to_owned()),
+                Inline::Str("》".to_owned()),
+            ],
+            "angle-quote display text"
+        );
+    }
+
+    #[test]
+    fn angle_quote_keeps_nested_gaiji_and_italic_target() {
+        let blocks = project(
+            "≪前※［＃「特のへん＋廴＋聿」、第3水準1-87-71］l'oiseau royal［＃「l'oiseau royal」は斜体］後≫",
+        );
+        let (_, inner) = find_span(&blocks, "angle-quote").expect("angle quote span");
+        assert!(
+            inner
+                .iter()
+                .any(|inline| matches!(inline, Inline::Span(attr, _) if has_class(attr, "gaiji")))
+        );
+        assert!(inner.iter().any(|inline| {
+            matches!(inline, Inline::Emph(content) if content == &[Inline::Str("l'oiseau royal".to_owned())])
+        }));
+    }
+
+    #[test]
+    fn ruby_base_illustration_projects_as_an_inline_image() {
+        let blocks = project(
+            "｜［＃底本が「オム」とルビを付した梵字（fig1317_17.png、横23×縦22）入る］《オム》",
+        );
+        let (_, base) = find_span(&blocks, "ruby-base").expect("ruby base span");
+        let [Inline::Image(attr, _, (file, _))] = base else {
+            panic!("expected inline illustration, got {base:?}");
+        };
+        assert!(has_class(attr, "illustration"));
+        assert_eq!(file, "fig1317_17.png");
     }
 
     #[test]
     fn kaeriten_re_mark_projects_to_span() {
         let blocks = project("天［＃（レ）］地\n");
-        let (attr, _) = find_span(&blocks, "kaeriten").expect("kaeriten span");
+        let (attr, inner) = find_span(&blocks, "kaeriten").expect("kaeriten span");
         assert_eq!(kv(attr, "mark"), Some("（レ）"), "kaeriten mark text");
+        assert_eq!(inner, &[Inline::Str("（レ）".to_owned())]);
+    }
+
+    #[test]
+    fn ruby_base_emphasis_projects_inside_the_base() {
+        let blocks = project("我《われ》の名は［＃「我」に傍点］");
+        let (_, inner) = find_span(&blocks, "bouten").expect("ruby-base bouten span");
+        assert_eq!(inner, &[Inline::Str("我".to_owned())]);
     }
 
     #[test]
@@ -1154,6 +1994,23 @@ mod tests {
             inner.is_empty(),
             "center is an empty marker span: {inner:?}"
         );
+    }
+
+    #[test]
+    fn line_gothic_projects_to_semantic_marker() {
+        let blocks = project("本文。［＃この行はゴシック体］\n");
+        let (_, inner) = find_span(&blocks, "line-gothic").expect("line-gothic span");
+        assert!(inner.is_empty(), "line marker has no inline content");
+    }
+
+    #[test]
+    fn line_font_size_projects_size_and_weight() {
+        let blocks = project("見出し行［＃大文字、太字］\n");
+        let (attr, inner) =
+            find_span(&blocks, "line-font-absolute").expect("line-font-absolute span");
+        assert_eq!(kv(attr, "size"), Some("large"));
+        assert_eq!(kv(attr, "bold"), Some("true"));
+        assert!(inner.is_empty(), "line marker has no inline content");
     }
 
     #[test]
@@ -1169,6 +2026,7 @@ mod tests {
         let blocks = project("萩原朔太郎［＃「萩原朔太郎」は同行中見出し］\u{3000}二十年の友。\n");
         let (attr, _) = find_span(&blocks, "heading-hint").expect("heading-hint span");
         assert_eq!(kv(attr, "target"), Some("萩原朔太郎"), "same-line target");
+        assert_eq!(kv(attr, "style"), Some("same-line"));
     }
 
     #[test]
@@ -1201,12 +2059,99 @@ mod tests {
     }
 
     #[test]
-    fn other_annotation_kind_slug() {
-        // `［＃割り注］` inline classifies as a non-Unknown, non-correction
-        // annotation → the `other` slug arm.
+    fn visible_annotation_kinds_keep_their_reader_facing_labels() {
+        for (kind, raw, expected) in [
+            (DirectiveKind::EditorNote, "［＃入力者注(12)］", "注12"),
+            (DirectiveKind::RubyAttached, "［＃「X」にルビ］", "ルビ"),
+            (
+                DirectiveKind::RubyRetarget,
+                "［＃ルビは「X」にかかる］",
+                "ルビ",
+            ),
+            (DirectiveKind::RubyPairOpen, "［＃左にルビ付き］", "左ルビ"),
+            (
+                DirectiveKind::RubyPairClose,
+                "［＃左に「よみ」のルビ付き終わり］",
+                "左ルビ「よみ」",
+            ),
+            (
+                DirectiveKind::MarginNotePairOpen,
+                "［＃左に注記付き］",
+                "左注記",
+            ),
+            (
+                DirectiveKind::MarginNotePairClose,
+                "［＃「注」の注記付き終わり］",
+                "注記「注」",
+            ),
+        ] {
+            let mut store = NodeStore::new();
+            let raw = store.intern(raw);
+            let Inline::Span(attr, content) = annotation_inline(Directive { raw, kind }, &store)
+            else {
+                panic!("annotation must be a Span")
+            };
+            assert_eq!(kv(&attr, "kind"), Some(annotation_kind_slug(kind)));
+            assert_eq!(content, vec![Inline::Str(expected.to_owned())]);
+        }
+    }
+
+    #[test]
+    fn hidden_annotation_kinds_have_no_visible_children() {
+        for kind in [
+            DirectiveKind::NonCanonical,
+            DirectiveKind::Editorial,
+            DirectiveKind::Sic,
+            DirectiveKind::BaseTextVariant,
+            DirectiveKind::Empty,
+        ] {
+            let mut store = NodeStore::new();
+            let raw = store.intern("［＃raw］");
+            let Inline::Span(_, content) = annotation_inline(Directive { raw, kind }, &store)
+            else {
+                panic!("annotation must be a Span")
+            };
+            assert!(content.is_empty(), "{kind:?}: {content:?}");
+        }
+    }
+
+    #[test]
+    fn warichu_annotations_form_one_structural_span() {
         let blocks = project("［＃割り注］上の段／下の段［＃割り注終わり］\n");
-        let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
-        assert_eq!(kv(attr, "kind"), Some("other"), "割り注 → other kind");
+        let (_, inner) = find_span(&blocks, "warichu").expect("warichu span");
+        assert_eq!(inner, &[Inline::Str("上の段／下の段".to_owned())]);
+        assert!(find_span(&blocks, "annotation").is_none());
+    }
+
+    #[test]
+    fn crossed_warichu_and_region_scopes_split_without_annotations() {
+        for (source, warichu_count, bold_count) in [
+            (
+                "［＃割り注］［＃太字］X［＃割り注終わり］Y［＃太字終わり］",
+                1,
+                2,
+            ),
+            (
+                "［＃太字］［＃割り注］X［＃太字終わり］Y［＃割り注終わり］",
+                2,
+                1,
+            ),
+        ] {
+            let json = serde_json::to_string(&project(source)).expect("serialize blocks");
+            assert_eq!(
+                json.matches("aozora-warichu").count(),
+                warichu_count,
+                "{json}"
+            );
+            assert_eq!(
+                json.matches("aozora-container-bold").count(),
+                bold_count,
+                "{json}"
+            );
+            assert!(!json.contains("warichu-close"), "{json}");
+            assert_eq!(json.matches("\"X\"").count(), 1, "{json}");
+            assert_eq!(json.matches("\"Y\"").count(), 1, "{json}");
+        }
     }
 
     // -----------------------------------------------------------------
@@ -1223,6 +2168,22 @@ mod tests {
             &Inline::Strong(vec![Inline::Str("甲".to_owned())]),
             "Strong carries the real target text"
         );
+    }
+
+    #[test]
+    fn bouten_projects_structured_gaiji_target_once() {
+        let blocks =
+            project("※［＃「木＋吶のつくり」、第3水準1-85-54］陀多［＃「枘陀多」に傍点］\n");
+        let (_, inner) = find_span(&blocks, "bouten").expect("bouten span");
+        assert_eq!(inner.len(), 2);
+        assert!(matches!(
+            &inner[0],
+            Inline::Span(attr, glyph)
+                if has_class(attr, "gaiji") && glyph == &[Inline::Str("枘".to_owned())]
+        ));
+        assert_eq!(inner[1], Inline::Str("陀多".to_owned()));
+        let json = serde_json::to_string(&blocks).expect("serialize blocks");
+        assert_eq!(json.matches("枘").count(), 1);
     }
 
     #[test]
@@ -1334,7 +2295,8 @@ mod tests {
         }
         fn cover_segment(s: Segment) {
             match s {
-                Segment::Text(_) | Segment::Gaiji(_) | Segment::Directive(_) => {}
+                Segment::Text(_) | Segment::Gaiji(_) | Segment::Directive(_) | Segment::Node(_) => {
+                }
             }
         }
 
@@ -1374,7 +2336,7 @@ mod tests {
                 origin: ForwardOrigin::SelfContained,
                 payload: ForwardPayload::None,
             };
-            let inline = format_inline(f, &store);
+            let inline = format_inline(f, &store, 0);
             // Every attribute resolves its target text; none returns an
             // empty-class placeholder span.
             let json = serde_json::to_string(&inline).expect("serialise inline");
@@ -1389,6 +2351,169 @@ mod tests {
         }
         let mut store = NodeStore::new();
         cover_segment(Segment::Text(store.intern("x")));
+    }
+
+    #[test]
+    fn forward_payload_variants_project_semantic_content() {
+        fn cover(payload: ForwardPayload) {
+            match payload {
+                ForwardPayload::None
+                | ForwardPayload::NestedSource
+                | ForwardPayload::AccentBody(_)
+                | ForwardPayload::QuotedTarget(_) => {}
+            }
+        }
+
+        let mut store = NodeStore::new();
+        let plain = store.intern("X");
+        let plain_target = store.push_contents(&[Content::Plain(plain)]);
+        let none = ForwardPayload::None;
+        cover(none);
+        assert_eq!(
+            format_inline(
+                ForwardFormat {
+                    attr: ForwardAttr::Bold,
+                    target: plain_target,
+                    origin: ForwardOrigin::SelfContained,
+                    payload: none,
+                },
+                &store,
+                0,
+            ),
+            Inline::Strong(vec![Inline::Str("X".to_owned())])
+        );
+
+        let run = store.intern("Sam");
+        let body = store.intern("mは上ドット付き");
+        let accent_target = store.push_contents(&[Content::Plain(run)]);
+        let accent = ForwardPayload::AccentBody(body);
+        cover(accent);
+        let Inline::Span(_, composed) = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::AccentDot,
+                target: accent_target,
+                origin: ForwardOrigin::SelfContained,
+                payload: accent,
+            },
+            &store,
+            0,
+        ) else {
+            panic!("accent dot must be a Span")
+        };
+        assert_eq!(composed, vec![Inline::Str("Saṁ".to_owned())]);
+
+        let nested_text = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let nested = store.intern(nested_text);
+        let nested_target = store.push_contents(&[Content::Plain(nested)]);
+        cover(ForwardPayload::NestedSource);
+        let inline = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::Bouten {
+                    kind: BoutenKind::Goma,
+                    position: BoutenPosition::Right,
+                },
+                target: nested_target,
+                origin: ForwardOrigin::SelfContained,
+                payload: ForwardPayload::NestedSource,
+            },
+            &store,
+            0,
+        );
+        let json = serde_json::to_string(&inline).expect("serialize nested projection");
+        assert!(json.contains("aozora-gaiji"), "{json}");
+        assert!(json.contains('枘'), "{json}");
+        assert!(!json.contains("Char("), "{json}");
+    }
+
+    #[test]
+    fn multi_character_accent_target_falls_back_verbatim() {
+        let mut store = NodeStore::new();
+        let text = store.intern("ex");
+        let target = store.push_contents(&[Content::Plain(text)]);
+        let Inline::Span(_, content) = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::Accent(AccentMark::Acute),
+                target,
+                origin: ForwardOrigin::SelfContained,
+                payload: ForwardPayload::None,
+            },
+            &store,
+            0,
+        ) else {
+            panic!("accent must be a Span")
+        };
+        assert_eq!(content, vec![Inline::Str("ex".to_owned())]);
+    }
+
+    #[test]
+    fn nested_source_depth_limit_falls_back_to_verbatim_source() {
+        let mut store = NodeStore::new();
+        let raw = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let text = store.intern(raw);
+        let target = store.push_contents(&[Content::Plain(text)]);
+        let Inline::Span(_, content) = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::Bouten {
+                    kind: BoutenKind::Goma,
+                    position: BoutenPosition::Right,
+                },
+                target,
+                origin: ForwardOrigin::SelfContained,
+                payload: ForwardPayload::NestedSource,
+            },
+            &store,
+            MAX_NESTED_SOURCE_DEPTH,
+        ) else {
+            panic!("bouten must be a Span")
+        };
+        assert_eq!(content, vec![Inline::Str(raw.to_owned())]);
+    }
+
+    #[test]
+    fn block_nested_source_falls_back_to_verbatim_source() {
+        let mut store = NodeStore::new();
+        let raw = "［＃改ページ］";
+        let text = store.intern(raw);
+        let target = store.push_contents(&[Content::Plain(text)]);
+        let inline = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::Bold,
+                target,
+                origin: ForwardOrigin::SelfContained,
+                payload: ForwardPayload::NestedSource,
+            },
+            &store,
+            0,
+        );
+
+        assert_eq!(inline, Inline::Strong(vec![Inline::Str(raw.to_owned())]));
+    }
+
+    #[test]
+    fn nested_source_preserves_each_internal_newline() {
+        let mut store = NodeStore::new();
+        let text = store.intern("a\n\nb");
+        let target = store.push_contents(&[Content::Plain(text)]);
+        let inline = format_inline(
+            ForwardFormat {
+                attr: ForwardAttr::Bold,
+                target,
+                origin: ForwardOrigin::SelfContained,
+                payload: ForwardPayload::NestedSource,
+            },
+            &store,
+            0,
+        );
+
+        assert_eq!(
+            inline,
+            Inline::Strong(vec![
+                Inline::Str("a".to_owned()),
+                Inline::LineBreak,
+                Inline::LineBreak,
+                Inline::Str("b".to_owned()),
+            ])
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1462,7 +2587,7 @@ mod tests {
     }
 
     #[test]
-    fn sashie_keyword_form_with_caption_uses_caption_alt() {
+    fn sashie_keyword_form_with_caption_emits_figure_caption() {
         let blocks = project("ある日、［＃挿絵（cover.png）「図一」入る］その地に至る。\n");
         let img = find_image(&blocks).expect("sashie image");
         assert_eq!(
@@ -1470,6 +2595,78 @@ mod tests {
             &[Inline::Str("図一".to_owned())],
             "caption becomes alt text"
         );
+        let figure = blocks.iter().find_map(|block| match block {
+            Block::Figure(attr, caption, _) => Some((attr, caption)),
+            _ => None,
+        });
+        let (attr, (short, caption)) = figure.expect("semantic Figure block");
+        assert!(has_class(attr, "illustration"));
+        assert!(short.is_none());
+        assert_eq!(
+            caption,
+            &vec![Block::Plain(vec![Inline::Str("図一".to_owned())])]
+        );
+    }
+
+    #[test]
+    fn sashie_caption_keeps_structured_gaiji() {
+        let blocks =
+            project("［＃「※［＃ローマ数字1、1-13-21］」のキャプション付きの図（fig.png）入る］");
+        let (_, caption) = blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Figure(attr, (_, caption), _) => Some((attr, caption)),
+                _ => None,
+            })
+            .expect("Figure block");
+        let [Block::Plain(inlines)] = caption.as_slice() else {
+            panic!("expected structured gaiji caption, got {caption:?}");
+        };
+        let [Inline::Span(attr, content)] = inlines.as_slice() else {
+            panic!("expected one gaiji inline, got {inlines:?}");
+        };
+        assert!(has_class(attr, "gaiji"));
+        assert_eq!(content, &[Inline::Str("Ⅰ".to_owned())]);
+    }
+
+    #[test]
+    fn sashie_trailing_plain_caption_reparses_nested_gaiji() {
+        let blocks = project("［＃挿絵（cover.png）「※［＃「々」］」入る］");
+        let (_, caption) = blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Figure(attr, (_, caption), _) => Some((attr, caption)),
+                _ => None,
+            })
+            .expect("Figure block");
+        let [Block::Plain(inlines)] = caption.as_slice() else {
+            panic!("expected structured gaiji caption: {caption:?}")
+        };
+        let [Inline::Span(attr, content)] = inlines.as_slice() else {
+            panic!("expected structured gaiji caption: {inlines:?}")
+        };
+        assert!(has_class(attr, "gaiji"));
+        assert_eq!(content, &[Inline::Str("々".to_owned())]);
+
+        let (_, alt, _) = find_image(&blocks).expect("captioned image");
+        assert!(matches!(alt, [Inline::Span(attr, _)] if has_class(attr, "gaiji")));
+    }
+
+    #[test]
+    fn sashie_number_and_dimensions_are_structured_attributes() {
+        let blocks = project("［＃挿絵1（fig.png、横100×縦200）「図一」入る］\n");
+        let (figure_attr, _) = blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Figure(attr, (_, caption), _) => Some((attr, caption)),
+                _ => None,
+            })
+            .expect("Figure block");
+        assert_eq!(kv(figure_attr, "number"), Some("1"));
+        assert_eq!(kv(figure_attr, "dimensions"), Some("横100×縦200"));
+        let (image_attr, _, _) = find_image(&blocks).expect("figure image");
+        assert_eq!(kv(image_attr, "number"), Some("1"));
+        assert_eq!(kv(image_attr, "dimensions"), Some("横100×縦200"));
     }
 
     #[test]
@@ -1484,13 +2681,26 @@ mod tests {
         assert_eq!(img.2.0, "fig.png", "image target file");
     }
 
-    /// Find the first `Image` inline in any `Para` block.
     fn find_image(blocks: &[Block]) -> Option<(&Attr, &[Inline], &(String, String))> {
-        blocks.iter().find_map(|b| match b {
-            Block::Para(inlines) => inlines.iter().find_map(|i| match i {
+        fn find_inlines(inline_list: &[Inline]) -> Option<(&Attr, &[Inline], &(String, String))> {
+            inline_list.iter().find_map(|inline| match inline {
                 Inline::Image(attr, alt, target) => Some((attr, alt.as_slice(), target)),
+                Inline::Span(_, nested)
+                | Inline::Emph(nested)
+                | Inline::Strong(nested)
+                | Inline::Superscript(nested)
+                | Inline::Subscript(nested) => find_inlines(nested),
                 _ => None,
-            }),
+            })
+        }
+        blocks.iter().find_map(|block| match block {
+            Block::Plain(content) | Block::Para(content) | Block::Header(_, _, content) => {
+                find_inlines(content)
+            }
+            Block::Div(_, nested) => find_image(nested),
+            Block::Figure(_, (_, caption), nested) => {
+                find_image(caption).or_else(|| find_image(nested))
+            }
             _ => None,
         })
     }
@@ -1560,47 +2770,200 @@ mod tests {
     #[test]
     fn bouten_range_container_carries_variant() {
         let blocks = project("本文［＃傍点］甲《こう》［＃傍点終わり］。");
-        let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
+        let (attr, _) = find_span(&blocks, "container-bouten").expect("bouten range span");
         assert_eq!(kv(attr, "variant"), Some("goma"), "default bouten variant");
-        assert!(
-            kv(attr, "position").is_none(),
-            "right-side range omits the position kv"
-        );
+        assert_eq!(kv(attr, "position"), Some("right"));
     }
 
     #[test]
     fn bouten_range_left_position_kv() {
         let blocks = project("本文［＃左に傍線］丙《へい》［＃左に傍線終わり］。");
-        let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
+        let (attr, _) = find_span(&blocks, "container-bouten").expect("bouten range span");
         assert_eq!(kv(attr, "variant"), Some("bosen"), "傍線 variant slug");
         assert_eq!(kv(attr, "position"), Some("left"), "left-side range kv");
     }
 
     #[test]
-    fn unknown_container_falls_through_to_unknown_class() {
-        // 段組 (columns) has no dedicated container_attr arm → `container-unknown`.
+    fn columns_container_carries_count() {
         let blocks =
             project("前文。\n［＃ここから2段組み］\n左右。\n［＃ここで段組み終わり］\n後文。\n");
-        let div = find_div(&blocks, "container-unknown");
-        assert!(div.is_some(), "columns → container-unknown div: {blocks:?}");
+        let (attr, _) = find_div(&blocks, "container-columns").expect("columns div");
+        assert_eq!(kv(attr, "count"), Some("2"));
     }
 
     #[test]
-    fn table_container_falls_through_to_unknown_class() {
+    fn table_container_has_semantic_class() {
         let blocks = project("［＃ここから表］\n項目\u{3000}値\n［＃ここで表終わり］\n");
+        assert!(find_div(&blocks, "container-table").is_some(), "{blocks:?}");
+    }
+
+    #[test]
+    fn bold_block_container_carries_padding() {
+        let blocks = project("［＃ここから太字］\n強調する段落。\n［＃ここで太字終わり］\n");
+        let (attr, _) = find_div(&blocks, "container-bold").expect("bold div");
+        assert_eq!(kv(attr, "padded"), Some("true"));
+    }
+
+    #[test]
+    fn inline_region_remains_inside_one_paragraph() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Bold { padded: false });
+        converter.push_inline(Inline::Str("inside".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        let [Block::Para(inlines)] = converter.blocks.as_slice() else {
+            panic!("inline region must remain a Para: {:?}", converter.blocks)
+        };
+        assert!(matches!(
+            inlines.as_slice(),
+            [Inline::Span(attr, content)]
+                if has_class(attr, "container-bold")
+                    && matches!(content.as_slice(), [Inline::Strong(_)])
+        ));
+    }
+
+    #[test]
+    fn gothic_region_is_a_typeface_span_not_bold() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Gothic { padded: false });
+        converter.push_inline(Inline::Str("gothic".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        let (_, content) = find_span(&converter.blocks, "container-gothic").expect("gothic span");
+        assert_eq!(content, &[Inline::Str("gothic".to_owned())]);
         assert!(
-            find_div(&blocks, "container-unknown").is_some(),
-            "table → container-unknown: {blocks:?}"
+            !content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Strong(_)))
         );
     }
 
     #[test]
-    fn bold_block_container_falls_through_to_unknown_class() {
-        let blocks = project("［＃ここから太字］\n強調する段落。\n［＃ここで太字終わり］\n");
-        assert!(
-            find_div(&blocks, "container-unknown").is_some(),
-            "bold block → container-unknown: {blocks:?}"
-        );
+    fn nested_inline_regions_preserve_nesting_order() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Bold { padded: false });
+        converter.push_inline(Inline::Str("outer-before".to_owned()));
+        converter.open_container(RegionFormat::Italic { padded: false });
+        converter.push_inline(Inline::Str("inner".to_owned()));
+        converter.close_container(true);
+        converter.push_inline(Inline::Str("outer-after".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        let (_, outer) = find_span(&converter.blocks, "container-bold").expect("outer span");
+        let [Inline::Strong(outer)] = outer else {
+            panic!("bold native wrapper missing: {outer:?}")
+        };
+        assert_eq!(outer.first(), Some(&Inline::Str("outer-before".to_owned())));
+        assert!(matches!(
+            outer.get(1),
+            Some(Inline::Span(attr, _)) if has_class(attr, "container-italic")
+        ));
+        assert_eq!(outer.get(2), Some(&Inline::Str("outer-after".to_owned())));
+    }
+
+    #[test]
+    fn inline_region_reopens_across_paragraph_boundaries() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Italic { padded: false });
+        converter.push_inline(Inline::Str("first".to_owned()));
+        converter.flush_paragraph();
+        converter.push_inline(Inline::Str("second".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        assert_eq!(converter.blocks.len(), 2, "{:?}", converter.blocks);
+        for block in &converter.blocks {
+            let Block::Para(inlines) = block else {
+                panic!("expected paragraph: {block:?}")
+            };
+            assert!(matches!(
+                inlines.as_slice(),
+                [Inline::Span(attr, _)] if has_class(attr, "container-italic")
+            ));
+        }
+    }
+
+    #[test]
+    fn empty_inline_region_emits_exactly_one_empty_span() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Caption { padded: false });
+        converter.close_container(true);
+        converter.run();
+
+        let [Block::Para(inlines)] = converter.blocks.as_slice() else {
+            panic!("empty inline marker belongs to one paragraph")
+        };
+        assert!(matches!(
+            inlines.as_slice(),
+            [Inline::Span(attr, content)]
+                if has_class(attr, "container-caption") && content.is_empty()
+        ));
+    }
+
+    #[test]
+    fn block_nested_in_inline_region_preserves_source_order() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Bold { padded: false });
+        converter.push_inline(Inline::Str("before".to_owned()));
+        converter.open_container(RegionFormat::Indent(IndentBlock {
+            amount: 2,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
+        }));
+        converter.push_inline(Inline::Str("block".to_owned()));
+        converter.close_container(false);
+        converter.push_inline(Inline::Str("after".to_owned()));
+        converter.close_container(true);
+        converter.run();
+
+        assert_eq!(converter.blocks.len(), 3, "{:?}", converter.blocks);
+        assert!(matches!(&converter.blocks[0], Block::Para(_)));
+        assert!(matches!(
+            &converter.blocks[1],
+            Block::Div(attr, _) if has_class(attr, "container-indent")
+        ));
+        assert!(matches!(&converter.blocks[2], Block::Para(_)));
+        let json = serde_json::to_string(&converter.blocks).expect("serialize blocks");
+        let before = json.find("before").expect("before text");
+        let block = json.find("block").expect("block text");
+        let after = json.find("after").expect("after text");
+        assert!(before < block && block < after, "{json}");
+    }
+
+    #[test]
+    fn heading_region_with_phrasing_content_becomes_header() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Heading {
+            level: HeadingKind::Medium,
+            style: HeadingStyle::Window,
+            padded: true,
+        });
+        converter.push_inline(Inline::Str("heading".to_owned()));
+        converter.close_container(false);
+        converter.run();
+
+        let [Block::Header(level, attr, content)] = converter.blocks.as_slice() else {
+            panic!(
+                "heading region should become Header: {:?}",
+                converter.blocks
+            )
+        };
+        assert_eq!(*level, 2);
+        assert_eq!(kv(attr, "style"), Some("window"));
+        assert_eq!(kv(attr, "padded"), Some("true"));
+        assert_eq!(content, &[Inline::Str("heading".to_owned())]);
     }
 
     #[test]
@@ -1715,14 +3078,14 @@ mod tests {
 
     #[test]
     fn annotation_kind_slug_covers_all_named_arms() {
-        // Every named arm maps to its own slug; deleting any one arm would
-        // collapse that variant into the `_ => "other"` fallthrough. Pin each
-        // slug so no arm can silently drop out.
         for (kind, slug) in [
             (DirectiveKind::NonCanonical, "non-canonical"),
             (DirectiveKind::Editorial, "editorial"),
             (DirectiveKind::Sic, "sic"),
             (DirectiveKind::BaseTextVariant, "base-text-variant"),
+            (DirectiveKind::WarichuOpen, "warichu-open"),
+            (DirectiveKind::WarichuClose, "warichu-close"),
+            (DirectiveKind::Empty, "empty"),
             (DirectiveKind::EditorNote, "editor-note"),
             (DirectiveKind::RubyAttached, "ruby-attached"),
             (DirectiveKind::RubyRetarget, "ruby-retarget"),
@@ -1771,7 +3134,7 @@ mod tests {
             style: HeadingStyle::SameLine,
             text,
         };
-        match aozora_heading_block(heading, &store) {
+        match aozora_heading_block(heading, &store, 0) {
             Block::Header(level, attr, inlines) => {
                 assert_eq!(level, 3, "小見出し → level 3");
                 assert_eq!(kv(&attr, "kind"), Some("small"), "small kind slug");
@@ -1842,7 +3205,7 @@ mod tests {
             Segment::Directive(directive),
         ]);
         let mut buf = Vec::new();
-        push_content_inlines(Content::Segments(seg), &store, &mut buf);
+        push_content_inlines(Content::Segments(seg), &store, 0, &mut buf);
 
         assert_eq!(buf.len(), 3, "one inline per segment: {buf:?}");
         assert_eq!(
@@ -1926,5 +3289,15 @@ mod tests {
             kv(&plain, "modifiers").is_none(),
             "a style-free indent emits no modifiers kv"
         );
+    }
+
+    #[test]
+    fn every_region_format_has_a_named_projection() {
+        for region in RegionFormat::ALL {
+            let attr = container_attr(region);
+            assert_eq!(attr.1.len(), 1, "{region:?}: {attr:?}");
+            assert!(attr.1[0].starts_with(AOZORA_CLASS_PREFIX), "{region:?}");
+            assert!(!attr.1[0].contains("unknown"), "{region:?}: {attr:?}");
+        }
     }
 }

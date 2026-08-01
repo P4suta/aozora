@@ -38,7 +38,7 @@ jobs:
           ref: ${{ env.QUALIFIED_SHA }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "lts/*"
+          node-version: "24.16.0"
           registry-url: "https://registry.npmjs.org"
       - name: Download qualified package
         env:
@@ -75,6 +75,14 @@ jobs:
           # the step's `set -o pipefail` fails it. A here-string has no pipe.
           members="$(tar -tzf npm-dist/*.tgz)"
           grep -Fxq "package/$main" <<<"$members"
+          grep -Fxq "package/aozora-notation.css" <<<"$members"
+          jq -e '.files | index("aozora-notation.css") != null' \
+            <<<"$package_json" >/dev/null
+          jq -e '.sideEffects | index("./aozora-notation.css") != null' \
+            <<<"$package_json" >/dev/null
+          cmp \
+            <(tar -xOf npm-dist/*.tgz package/aozora-notation.css) \
+            crates/aozora/assets/aozora-notation.css
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: qualified-npm
@@ -93,13 +101,12 @@ jobs:
     steps:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "lts/*"
+          node-version: "24.16.0"
           registry-url: "https://registry.npmjs.org"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: qualified-npm
           path: pkg
-      - run: npm install -g npm@latest
       - name: Resolve registry state
         id: registry
         run: |

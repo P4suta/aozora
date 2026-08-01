@@ -5,7 +5,7 @@
 
 //! `xtask release check` — offline source-integrity for the release path.
 //!
-//! Four facts that today live only in server-side / tag-time state, checked
+//! Facts that live only in server-side / tag-time state are checked
 //! against the committed source so a drift fails at PR time (in `drift-gate`)
 //! instead of silently, or only at the real tag push:
 //!
@@ -14,8 +14,10 @@
 //!   canonical silent gate. The tag ruleset must keep its immutability rules,
 //!   and the main-branch ruleset must keep `release-ready` + `ci-success`
 //!   required, or a release could merge / a tag could move unchecked.
+//! * **Pinned release inputs.** Corpus and specification repositories must use
+//!   owner/name identifiers and full commit SHAs, with no duplicate authority.
 //! * **Native-SBOM path mirror.** `release.yml` (tag time) and
-//!   `release-ready.yml` (PR time) each hard-code the six per-target SBOM
+//!   `release-ready.yml` (PR time) each hard-code the per-target SBOM
 //!   filenames. They must agree, or the PR-time assertion stops mirroring the
 //!   tag-time expectation — exactly the B1 layout drift that would hard-fail
 //!   only at tag push.
@@ -39,13 +41,12 @@ pub(super) fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let mut violations = Vec::new();
     ruleset_integrity(&root, &mut violations);
+    release_inputs_integrity(&root, &mut violations);
     sbom_mirror_parity(&root, &mut violations);
     release_always_enabled(&root, &mut violations);
     detached_head_attach_guard(&root, &mut violations);
     if violations.is_empty() {
-        eprintln!(
-            "xtask release check: tag ruleset + SBOM mirror + release_always + detached-HEAD attach intact"
-        );
+        eprintln!("xtask release check: release source-integrity intact");
         Ok(())
     } else {
         Err(format!(
@@ -137,17 +138,63 @@ fn ruleset_integrity(root: &Path, violations: &mut Vec<String>) {
         }
     }
 
-    // The two release gates must stay required on main, or a release could
-    // merge without release-ready / ci-success ever having to be green.
+    // These external checks are not represented by a local job fan-in.
     if let Ok(ruleset) = load_ruleset(&root.join(".github/rulesets/main-branch.json")) {
         let contexts = status_check_contexts(&ruleset);
-        for required in ["release-ready", "ci-success"] {
+        for required in [
+            "release-ready",
+            "ci-success",
+            "codeql (actions)",
+            "dependency review",
+        ] {
             if !contexts.contains(required) {
                 violations.push(format!(
                     "main-branch.json: `{required}` is not a required status check"
                 ));
             }
         }
+    }
+}
+
+fn release_input_violations(text: &str) -> Vec<String> {
+    let repository = Regex::new(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+$")
+        .expect("static repository regex");
+    let sha = Regex::new(r"^[0-9a-f]{40}$").expect("static SHA regex");
+    let mut violations = Vec::new();
+    for key in [
+        "AOZORA_CORPUS_REPOSITORY",
+        "AOZORA_CORPUS_SHA",
+        "AOZORA_SPEC_REPOSITORY",
+        "AOZORA_SPEC_SHA",
+    ] {
+        let prefix = format!("{key}=");
+        let matches: Vec<_> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix(&prefix))
+            .collect();
+        if matches.len() != 1 {
+            violations.push(format!(
+                "release-inputs.env: `{key}` must occur exactly once"
+            ));
+            continue;
+        }
+        let value = matches[0];
+        let valid = if key.ends_with("_REPOSITORY") {
+            repository.is_match(value)
+        } else {
+            sha.is_match(value)
+        };
+        if !valid {
+            violations.push(format!("release-inputs.env: `{key}` has an invalid value"));
+        }
+    }
+    violations
+}
+
+fn release_inputs_integrity(root: &Path, violations: &mut Vec<String>) {
+    match fs::read_to_string(root.join(".github/release-inputs.env")) {
+        Err(err) => violations.push(format!("read .github/release-inputs.env: {err}")),
+        Ok(text) => violations.extend(release_input_violations(&text)),
     }
 }
 
@@ -309,6 +356,29 @@ mod tests {
         });
         let contexts = status_check_contexts(&ruleset);
         assert!(contexts.contains("ci-success") && contexts.contains("release-ready"));
+    }
+
+    #[test]
+    fn release_inputs_require_unique_typed_values() {
+        let valid = "\
+AOZORA_CORPUS_REPOSITORY=P4suta/aozorabunko_text\n\
+AOZORA_CORPUS_SHA=b1ec9a7fa46de8dd5acc33378428c899e86bfb32\n\
+AOZORA_SPEC_REPOSITORY=P4suta/aozora-notation-spec\n\
+AOZORA_SPEC_SHA=a5473069f219000f7306a012e79e3ea393406680\n";
+        assert!(release_input_violations(valid).is_empty());
+
+        let duplicate = format!("{valid}AOZORA_SPEC_SHA={}", "0".repeat(40));
+        assert!(
+            release_input_violations(&duplicate)
+                .iter()
+                .any(|violation| violation.contains("exactly once"))
+        );
+
+        let mutable = valid
+            .replace("P4suta/aozora-notation-spec", "main")
+            .replace("a5473069f219000f7306a012e79e3ea393406680", "release");
+        let violations = release_input_violations(&mutable);
+        assert_eq!(violations.len(), 2, "repository and SHA are both rejected");
     }
 
     #[test]

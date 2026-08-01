@@ -103,6 +103,8 @@ pub const FLAG_ZSTD: u32 = 1 << 0;
 /// [`crate::CorpusItem::bytes`] in the directory-walker path.
 pub const FLAG_UTF8: u32 = 1 << 1;
 
+const SUPPORTED_FLAGS: u32 = FLAG_ZSTD | FLAG_UTF8;
+
 /// Length of a per-entry index record's fixed header. The label
 /// (variable-length) follows.
 const INDEX_FIXED_LEN: usize = 8 + 4 + 4 + 8 + 32 + 4;
@@ -131,6 +133,8 @@ pub enum ArchiveError {
     BadMagic,
     /// File version is newer than this binary supports.
     UnsupportedVersion(u32),
+    /// Header contains flag bits this format version does not define.
+    UnsupportedFlags(u32),
     /// File is shorter than the declared header / index / payload
     /// would require.
     Truncated {
@@ -141,20 +145,27 @@ pub enum ArchiveError {
     Decompress(io::Error),
     /// Label bytes are not valid UTF-8.
     BadLabel,
-    /// A header field declares a size that cannot fit in the
-    /// archive (entry count too large, declared decoded length
-    /// exceeds the per-entry budget, etc.). Distinct from
-    /// [`Self::Truncated`] because the file might be intact —
-    /// it's the *header value* that is unreasonable. This is a
-    /// DoS-resistance check; a hostile archive could otherwise
-    /// pin out-of-memory by claiming a 4 GB decoded length on a
-    /// 10-byte payload.
+    /// A declared size or computed archive layout is invalid (entry
+    /// count too large, decoded length beyond the per-entry budget,
+    /// offset overflow, etc.). Distinct from [`Self::Truncated`]
+    /// because the input can be intact while its declarations are
+    /// inconsistent. These checks also prevent hostile metadata from
+    /// forcing unreasonable allocations.
     InvalidSize {
         /// Which field overflowed the bound (`"entry count"`,
         /// `"decoded_len"`, …).
         what: &'static str,
         /// The unreasonable value, surfaced for diagnostics.
         value: u64,
+    },
+    /// A payload's declared length disagrees with its encoded data.
+    LengthMismatch {
+        /// Field whose declaration was inconsistent.
+        what: &'static str,
+        /// Length recorded in the archive index.
+        declared: u64,
+        /// Length derived from the payload bytes.
+        actual: u64,
     },
 }
 
@@ -167,15 +178,23 @@ impl fmt::Display for ArchiveError {
                 f,
                 "archive format version {v} is not supported by this binary"
             ),
+            Self::UnsupportedFlags(flags) => {
+                write!(f, "archive contains unsupported flags 0x{flags:08x}")
+            }
             Self::Truncated { what } => write!(f, "archive truncated while reading {what}"),
             Self::Decompress(e) => write!(f, "zstd decompression failed: {e}"),
             Self::BadLabel => f.write_str("entry label is not valid UTF-8"),
             Self::InvalidSize { what, value } => {
-                write!(
-                    f,
-                    "archive header field {what} is unreasonably large ({value})"
-                )
+                write!(f, "archive {what} is invalid ({value})")
             }
+            Self::LengthMismatch {
+                what,
+                declared,
+                actual,
+            } => write!(
+                f,
+                "archive {what} length mismatch: declared {declared}, actual {actual}"
+            ),
         }
     }
 }
@@ -275,6 +294,10 @@ impl Archive {
             return Err(ArchiveError::UnsupportedVersion(version));
         }
         let flags = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let unsupported_flags = flags & !SUPPORTED_FLAGS;
+        if unsupported_flags != 0 {
+            return Err(ArchiveError::UnsupportedFlags(unsupported_flags));
+        }
         let count = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
 
         // Hard cap: every index record needs at least INDEX_FIXED_LEN
@@ -293,7 +316,14 @@ impl Archive {
         let mut entries = Vec::with_capacity(count);
         let mut cursor = HEADER_LEN;
         for _ in 0..count {
-            if cursor + INDEX_FIXED_LEN > bytes.len() {
+            let fixed_end =
+                cursor
+                    .checked_add(INDEX_FIXED_LEN)
+                    .ok_or(ArchiveError::InvalidSize {
+                        what: "index cursor",
+                        value: cursor as u64,
+                    })?;
+            if fixed_end > bytes.len() {
                 return Err(ArchiveError::Truncated {
                     what: "index entry header",
                 });
@@ -333,16 +363,22 @@ impl Archive {
                     .try_into()
                     .expect("4-byte slice"),
             ) as usize;
-            cursor += INDEX_FIXED_LEN;
-            if cursor + label_len > bytes.len() {
+            cursor = fixed_end;
+            let label_end = cursor
+                .checked_add(label_len)
+                .ok_or(ArchiveError::InvalidSize {
+                    what: "label length",
+                    value: label_len as u64,
+                })?;
+            if label_end > bytes.len() {
                 return Err(ArchiveError::Truncated {
                     what: "index entry label",
                 });
             }
-            let label = str::from_utf8(&bytes[cursor..cursor + label_len])
+            let label = str::from_utf8(&bytes[cursor..label_end])
                 .map_err(|_| ArchiveError::BadLabel)?
                 .to_owned();
-            cursor += label_len;
+            cursor = label_end;
 
             // Validate that the declared payload range fits in the
             // file before we hand it out to readers.
@@ -364,6 +400,45 @@ impl Archive {
                 source_blake3,
                 label,
             });
+        }
+
+        let payload_section_start =
+            u64::try_from(cursor).map_err(|_| ArchiveError::InvalidSize {
+                what: "payload section offset",
+                value: u64::MAX,
+            })?;
+        let mut ranges = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            if entry.payload_offset < payload_section_start {
+                return Err(ArchiveError::InvalidSize {
+                    what: "payload offset before payload section",
+                    value: entry.payload_offset,
+                });
+            }
+            if flags & FLAG_ZSTD == 0 && entry.payload_len != entry.decoded_len {
+                return Err(ArchiveError::LengthMismatch {
+                    what: "raw payload",
+                    declared: u64::from(entry.decoded_len),
+                    actual: u64::from(entry.payload_len),
+                });
+            }
+            let end = entry
+                .payload_offset
+                .checked_add(u64::from(entry.payload_len))
+                .ok_or(ArchiveError::InvalidSize {
+                    what: "payload range",
+                    value: entry.payload_offset,
+                })?;
+            ranges.push((entry.payload_offset, end));
+        }
+        ranges.sort_unstable();
+        for pair in ranges.windows(2) {
+            if pair[1].0 < pair[0].1 {
+                return Err(ArchiveError::InvalidSize {
+                    what: "overlapping payload range",
+                    value: pair[1].0,
+                });
+            }
         }
 
         Ok(Self {
@@ -435,6 +510,13 @@ impl Archive {
         if self.is_zstd() {
             let bytes = decompress_payload(raw, entry.decoded_len as usize)
                 .map_err(ArchiveError::Decompress)?;
+            if bytes.len() != entry.decoded_len as usize {
+                return Err(ArchiveError::LengthMismatch {
+                    what: "decoded payload",
+                    declared: u64::from(entry.decoded_len),
+                    actual: bytes.len() as u64,
+                });
+            }
             Ok(ArchivePayload::Decompressed(bytes))
         } else {
             Ok(ArchivePayload::Borrowed(raw))
@@ -561,25 +643,17 @@ impl ArchivePayload<'_> {
     }
 }
 
-/// Decompress a zstd-compressed payload into a fresh `Vec`.
-///
-/// `expected_len` is a hint used to pre-size the destination
-/// buffer; it is **clamped** to [`MAX_DECODED_LEN_PER_ENTRY`] so a
-/// hostile archive header cannot pin OOM by claiming a huge decoded
-/// length on a tiny compressed payload. The zstd reader still fully
-/// decompresses the stream — if the stream itself produces more
-/// bytes than the budget, `read_to_end` will eventually grow the
-/// vector, but that growth is amortised, observable, and bounded by
-/// the actual stream content rather than by an attacker-supplied
-/// integer in the index header.
 fn decompress_payload(src: &[u8], expected_len: usize) -> io::Result<Vec<u8>> {
-    let cap = expected_len.min(MAX_DECODED_LEN_PER_ENTRY as usize);
-    let mut out = Vec::with_capacity(cap);
+    let initial_capacity = expected_len
+        .min(src.len().saturating_mul(4))
+        .min(1024 * 1024);
+    let mut out = Vec::new();
+    out.try_reserve(initial_capacity)
+        .map_err(|error| io::Error::other(error.to_string()))?;
     let decoder = zstd::stream::read::Decoder::new(src)?;
-    // Bound the runtime decode too — if the compressed stream
-    // expands past the budget, refuse rather than keep growing the
-    // allocation. `Read::take` enforces this on the producer side.
-    let limit = u64::from(MAX_DECODED_LEN_PER_ENTRY).saturating_add(1);
+    let limit = u64::try_from(expected_len.min(MAX_DECODED_LEN_PER_ENTRY as usize))
+        .unwrap_or_else(|_| u64::from(MAX_DECODED_LEN_PER_ENTRY))
+        .saturating_add(1);
     let mut limited = decoder.take(limit);
     limited.read_to_end(&mut out)?;
     if out.len() as u64 > u64::from(MAX_DECODED_LEN_PER_ENTRY) {
@@ -622,8 +696,7 @@ pub fn ns_to_system_time(ns: i64) -> SystemTime {
 /// Append entries via [`push_entry`] (or [`push_already_encoded`] for
 /// pre-encoded payloads, or [`push_prebuilt`] for verbatim copies
 /// from a previous archive); then finalise via [`finish`] which
-/// writes header + index + payload to the supplied path atomically
-/// (write-to-tmpfile-then-rename).
+/// writes header + index + payload to the supplied path atomically.
 ///
 /// [`push_entry`]: ArchiveBuilder::push_entry
 /// [`push_already_encoded`]: ArchiveBuilder::push_already_encoded
@@ -677,27 +750,28 @@ impl ArchiveBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ArchiveError::Decompress`] if zstd encoding fails
-    /// (it shouldn't on valid input but the error path is preserved
-    /// for completeness).
+    /// Returns an [`ArchiveError`] if the builder configuration or
+    /// entry size is invalid, or if zstd encoding fails.
     pub fn push_entry(
         &mut self,
         label: impl Into<String>,
         bytes: &[u8],
         source_mtime_ns: i64,
     ) -> Result<(), ArchiveError> {
+        validate_flags(self.flags)?;
+        let label = label.into();
+        validate_label_len(&label)?;
         let source_blake3: [u8; 32] = blake3::hash(bytes).into();
-        let decoded_len = u32::try_from(bytes.len()).expect("entry larger than u32 unsupported");
-        let payload_offset_in_section = u64::try_from(self.payload.len())
-            .expect("archive payload section larger than u64 unsupported");
+        let decoded_len = decoded_len(bytes.len())?;
+        let payload_offset_in_section = payload_offset(self.payload.len())?;
 
         if self.flags & FLAG_ZSTD != 0 {
             use zstd::stream::copy_encode;
             let mut compressed = Vec::with_capacity(bytes.len() / 4);
             copy_encode(bytes, &mut compressed, self.zstd_level)
                 .map_err(ArchiveError::Decompress)?;
-            let payload_len =
-                u32::try_from(compressed.len()).expect("compressed entry larger than u32");
+            let payload_len = payload_len(compressed.len())?;
+            checked_payload_growth(self.payload.len(), compressed.len())?;
             self.payload.extend_from_slice(&compressed);
             self.entries.push(EntryMeta {
                 // payload_offset is fixed up to absolute file offset
@@ -708,9 +782,10 @@ impl ArchiveBuilder {
                 decoded_len,
                 source_mtime_ns,
                 source_blake3,
-                label: label.into(),
+                label,
             });
         } else {
+            checked_payload_growth(self.payload.len(), bytes.len())?;
             self.payload.extend_from_slice(bytes);
             self.entries.push(EntryMeta {
                 payload_offset: payload_offset_in_section,
@@ -718,7 +793,7 @@ impl ArchiveBuilder {
                 decoded_len,
                 source_mtime_ns,
                 source_blake3,
-                label: label.into(),
+                label,
             });
         }
         Ok(())
@@ -730,6 +805,11 @@ impl ArchiveBuilder {
     /// parallel work loop and only the assembly step is sequential.
     /// The caller has already computed `decoded_len` and the source
     /// hash; the builder simply records them as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ArchiveError`] if the builder configuration,
+    /// label, or declared lengths are invalid.
     pub fn push_already_encoded(
         &mut self,
         label: &str,
@@ -737,11 +817,14 @@ impl ArchiveBuilder {
         decoded_len: u32,
         source_mtime_ns: i64,
         source_blake3: [u8; 32],
-    ) {
-        let payload_offset_in_section = u64::try_from(self.payload.len())
-            .expect("archive payload section larger than u64 unsupported");
-        let payload_len =
-            u32::try_from(payload.len()).expect("payload longer than u32 unsupported");
+    ) -> Result<(), ArchiveError> {
+        validate_flags(self.flags)?;
+        validate_label_len(label)?;
+        validate_decoded_len(decoded_len)?;
+        let payload_offset_in_section = payload_offset(self.payload.len())?;
+        let payload_len = payload_len(payload.len())?;
+        validate_raw_lengths(self.flags, payload_len, decoded_len)?;
+        checked_payload_growth(self.payload.len(), payload.len())?;
         self.payload.extend_from_slice(payload);
         self.entries.push(EntryMeta {
             payload_offset: payload_offset_in_section,
@@ -751,74 +834,155 @@ impl ArchiveBuilder {
             source_blake3,
             label: label.to_owned(),
         });
+        Ok(())
     }
 
     /// Append an entry whose compressed/raw payload is *already*
     /// encoded. Used by the incremental-pack path to copy unchanged
     /// entries verbatim from a previous archive without
     /// recompressing.
-    pub fn push_prebuilt(&mut self, meta: EntryMeta, payload: &[u8]) {
-        let payload_offset_in_section = u64::try_from(self.payload.len())
-            .expect("archive payload section larger than u64 unsupported");
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ArchiveError`] if the builder configuration or
+    /// metadata is invalid, or the payload length disagrees with the
+    /// metadata.
+    pub fn push_prebuilt(&mut self, meta: EntryMeta, payload: &[u8]) -> Result<(), ArchiveError> {
+        validate_flags(self.flags)?;
+        validate_label_len(&meta.label)?;
+        validate_decoded_len(meta.decoded_len)?;
+        let actual_payload_len = payload_len(payload.len())?;
+        if actual_payload_len != meta.payload_len {
+            return Err(ArchiveError::LengthMismatch {
+                what: "prebuilt payload",
+                declared: u64::from(meta.payload_len),
+                actual: u64::from(actual_payload_len),
+            });
+        }
+        validate_raw_lengths(self.flags, meta.payload_len, meta.decoded_len)?;
+        let payload_offset_in_section = payload_offset(self.payload.len())?;
+        checked_payload_growth(self.payload.len(), payload.len())?;
         self.payload.extend_from_slice(payload);
         self.entries.push(EntryMeta {
             payload_offset: payload_offset_in_section,
             ..meta
         });
+        Ok(())
     }
 
     /// Finalise the archive: assemble header + index + payload and
-    /// write atomically to `path`. The write goes to `path.tmp`
-    /// first, then `rename(2)` to `path` — partially-written archives
-    /// never leak.
+    /// write atomically to `path`. A uniquely named temporary file is
+    /// written and synchronized in the destination directory before
+    /// it atomically replaces `path`.
     ///
     /// Returns the total file size in bytes (useful for reporting
     /// compression ratios).
     ///
     /// # Errors
     ///
-    /// Returns [`ArchiveError::Io`] on filesystem failures.
+    /// Returns an [`ArchiveError`] if the archive is invalid or a
+    /// filesystem operation fails.
     pub fn finish(self, path: impl AsRef<Path>) -> Result<u64, ArchiveError> {
-        let path = path.as_ref();
+        let path = archive_destination(path.as_ref())?;
+        validate_flags(self.flags)?;
+        let entry_count =
+            u32::try_from(self.entries.len()).map_err(|_| ArchiveError::InvalidSize {
+                what: "entry count",
+                value: self.entries.len() as u64,
+            })?;
 
         // Compute index section size to know the absolute payload
         // offset (so each entry's `payload_offset` can be promoted
         // from "offset within payload section" to "offset within
         // file").
-        let index_section_len: usize = self
-            .entries
-            .iter()
-            .map(|e| INDEX_FIXED_LEN + e.label.len())
-            .sum();
-        let payload_section_offset = HEADER_LEN + index_section_len;
+        let mut index_section_len = 0usize;
+        for entry in &self.entries {
+            validate_label_len(&entry.label)?;
+            validate_decoded_len(entry.decoded_len)?;
+            validate_raw_lengths(self.flags, entry.payload_len, entry.decoded_len)?;
+            let payload_end = entry
+                .payload_offset
+                .checked_add(u64::from(entry.payload_len))
+                .ok_or(ArchiveError::InvalidSize {
+                    what: "payload range",
+                    value: entry.payload_offset,
+                })?;
+            if payload_end > self.payload.len() as u64 {
+                return Err(ArchiveError::InvalidSize {
+                    what: "payload range",
+                    value: payload_end,
+                });
+            }
+            let record_len = INDEX_FIXED_LEN.checked_add(entry.label.len()).ok_or(
+                ArchiveError::InvalidSize {
+                    what: "index entry length",
+                    value: entry.label.len() as u64,
+                },
+            )?;
+            index_section_len =
+                index_section_len
+                    .checked_add(record_len)
+                    .ok_or(ArchiveError::InvalidSize {
+                        what: "index section length",
+                        value: self.entries.len() as u64,
+                    })?;
+        }
+        let payload_section_offset =
+            HEADER_LEN
+                .checked_add(index_section_len)
+                .ok_or(ArchiveError::InvalidSize {
+                    what: "payload section offset",
+                    value: index_section_len as u64,
+                })?;
 
         // Pre-size the output vector so the final `fs::write` is one
         // sequential memcpy with no growth realloc.
-        let total_len = payload_section_offset + self.payload.len();
-        let mut out = Vec::with_capacity(total_len);
+        let total_len = payload_section_offset
+            .checked_add(self.payload.len())
+            .ok_or(ArchiveError::InvalidSize {
+                what: "archive length",
+                value: self.payload.len() as u64,
+            })?;
+        let total_len_u64 = u64::try_from(total_len).map_err(|_| ArchiveError::InvalidSize {
+            what: "archive length",
+            value: u64::MAX,
+        })?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(total_len)
+            .map_err(|_| ArchiveError::InvalidSize {
+                what: "archive allocation",
+                value: total_len_u64,
+            })?;
 
         // Header
         out.extend_from_slice(&MAGIC);
         out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
         out.extend_from_slice(&self.flags.to_le_bytes());
-        out.extend_from_slice(
-            &u32::try_from(self.entries.len())
-                .expect("entry count larger than u32 unsupported")
-                .to_le_bytes(),
-        );
+        out.extend_from_slice(&entry_count.to_le_bytes());
 
         // Index
         for entry in &self.entries {
-            let absolute_offset = u64::try_from(payload_section_offset)
-                .expect("file offsets fit in u64")
-                + entry.payload_offset;
+            let section_offset =
+                u64::try_from(payload_section_offset).map_err(|_| ArchiveError::InvalidSize {
+                    what: "payload section offset",
+                    value: u64::MAX,
+                })?;
+            let absolute_offset = section_offset.checked_add(entry.payload_offset).ok_or(
+                ArchiveError::InvalidSize {
+                    what: "payload offset",
+                    value: entry.payload_offset,
+                },
+            )?;
             out.extend_from_slice(&absolute_offset.to_le_bytes());
             out.extend_from_slice(&entry.payload_len.to_le_bytes());
             out.extend_from_slice(&entry.decoded_len.to_le_bytes());
             out.extend_from_slice(&entry.source_mtime_ns.to_le_bytes());
             out.extend_from_slice(&entry.source_blake3);
             let label_len_u32 =
-                u32::try_from(entry.label.len()).expect("label longer than u32 unsupported");
+                u32::try_from(entry.label.len()).map_err(|_| ArchiveError::InvalidSize {
+                    what: "label length",
+                    value: entry.label.len() as u64,
+                })?;
             out.extend_from_slice(&label_len_u32.to_le_bytes());
             out.extend_from_slice(entry.label.as_bytes());
         }
@@ -827,31 +991,155 @@ impl ArchiveBuilder {
         out.extend_from_slice(&self.payload);
         debug_assert_eq!(out.len(), total_len, "archive layout invariant");
 
-        let tmp = path.with_extension(format!(
-            "{}.tmp",
-            path.extension().and_then(|e| e.to_str()).unwrap_or("aozc")
-        ));
-        // Atomic-publish pattern: write to tmp -> fsync -> rename.
-        // Without the fsync, a crash between `write` and `rename` —
-        // or between `rename` and the kernel flushing pages — can
-        // leave the target archive present-but-corrupt: the rename
-        // is committed to the directory entry, but the file's data
-        // pages haven't reached the block device. fsync forces the
-        // pages out before the rename publishes the file, so a
-        // post-rename crash leaves either the old archive or the
-        // fully-written new one — never a half-written one.
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(&out)?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&tmp, path)?;
-        Ok(total_len as u64)
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let permissions = match fs::metadata(&path) {
+            Ok(metadata) => Some(metadata.permissions()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(ArchiveError::Io(error)),
+        };
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            builder.permissions(fs::Permissions::from_mode(0o666))
+        };
+        let mut temporary = builder.tempfile_in(parent)?;
+        if let Some(permissions) = permissions {
+            temporary.as_file().set_permissions(permissions)?;
+        }
+        temporary.write_all(&out)?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(&path)
+            .map_err(|error| ArchiveError::Io(error.error))?;
+        sync_directory(parent)?;
+        Ok(total_len_u64)
+    }
+}
+
+fn archive_destination(path: &Path) -> io::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let target = fs::read_link(&current)?;
+                current = if target.is_absolute() {
+                    target
+                } else {
+                    current
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(target)
+                };
+            }
+            Ok(_) => return Ok(current),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(current),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "symbolic link chain is too deep",
+    ))
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+fn validate_flags(flags: u32) -> Result<(), ArchiveError> {
+    let unsupported = flags & !SUPPORTED_FLAGS;
+    if unsupported == 0 {
+        Ok(())
+    } else {
+        Err(ArchiveError::UnsupportedFlags(unsupported))
+    }
+}
+
+fn validate_label_len(label: &str) -> Result<(), ArchiveError> {
+    u32::try_from(label.len())
+        .map(|_| ())
+        .map_err(|_| ArchiveError::InvalidSize {
+            what: "label length",
+            value: label.len() as u64,
+        })
+}
+
+fn validate_decoded_len(len: u32) -> Result<(), ArchiveError> {
+    if len <= MAX_DECODED_LEN_PER_ENTRY {
+        Ok(())
+    } else {
+        Err(ArchiveError::InvalidSize {
+            what: "decoded_len",
+            value: u64::from(len),
+        })
+    }
+}
+
+fn decoded_len(len: usize) -> Result<u32, ArchiveError> {
+    let len = u32::try_from(len).map_err(|_| ArchiveError::InvalidSize {
+        what: "decoded_len",
+        value: len as u64,
+    })?;
+    validate_decoded_len(len)?;
+    Ok(len)
+}
+
+fn payload_len(len: usize) -> Result<u32, ArchiveError> {
+    u32::try_from(len).map_err(|_| ArchiveError::InvalidSize {
+        what: "payload_len",
+        value: len as u64,
+    })
+}
+
+fn payload_offset(len: usize) -> Result<u64, ArchiveError> {
+    u64::try_from(len).map_err(|_| ArchiveError::InvalidSize {
+        what: "payload offset",
+        value: u64::MAX,
+    })
+}
+
+fn checked_payload_growth(current: usize, additional: usize) -> Result<(), ArchiveError> {
+    current
+        .checked_add(additional)
+        .map(|_| ())
+        .ok_or(ArchiveError::InvalidSize {
+            what: "payload section length",
+            value: additional as u64,
+        })
+}
+
+fn validate_raw_lengths(
+    flags: u32,
+    payload_len: u32,
+    decoded_len: u32,
+) -> Result<(), ArchiveError> {
+    if flags & FLAG_ZSTD != 0 || payload_len == decoded_len {
+        Ok(())
+    } else {
+        Err(ArchiveError::LengthMismatch {
+            what: "raw payload",
+            declared: u64::from(decoded_len),
+            actual: u64::from(payload_len),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use core::ptr;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     use super::*;
 
@@ -1024,6 +1312,79 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_flags_are_rejected() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&(1u32 << 31).to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        assert!(matches!(
+            Archive::from_bytes(buf),
+            Err(ArchiveError::UnsupportedFlags(flags)) if flags == 1 << 31
+        ));
+    }
+
+    #[test]
+    fn raw_payload_length_must_match_decoded_length() {
+        let arc = roundtrip(0, &[("a.txt", b"hello")]);
+        let mut bytes = arc.bytes;
+        bytes[HEADER_LEN + 12..HEADER_LEN + 16].copy_from_slice(&6u32.to_le_bytes());
+        assert!(matches!(
+            Archive::from_bytes(bytes),
+            Err(ArchiveError::LengthMismatch {
+                what: "raw payload",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn payload_must_begin_after_the_complete_index() {
+        let arc = roundtrip(0, &[("a.txt", b"hello")]);
+        let mut bytes = arc.bytes;
+        bytes[HEADER_LEN..HEADER_LEN + 8].copy_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            Archive::from_bytes(bytes),
+            Err(ArchiveError::InvalidSize {
+                what: "payload offset before payload section",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn payload_ranges_must_not_overlap() {
+        let arc = roundtrip(0, &[("a.txt", b"hello"), ("b.txt", b"world")]);
+        let mut bytes = arc.bytes;
+        let first_offset = bytes[HEADER_LEN..HEADER_LEN + 8].to_vec();
+        let second = HEADER_LEN + INDEX_FIXED_LEN + "a.txt".len();
+        bytes[second..second + 8].copy_from_slice(&first_offset);
+        assert!(matches!(
+            Archive::from_bytes(bytes),
+            Err(ArchiveError::InvalidSize {
+                what: "overlapping payload range",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn zstd_payload_must_match_declared_decoded_length() {
+        let arc = roundtrip(FLAG_ZSTD, &[("a.txt", b"hello")]);
+        let mut bytes = arc.bytes;
+        bytes[HEADER_LEN + 12..HEADER_LEN + 16].copy_from_slice(&6u32.to_le_bytes());
+        let malformed = Archive::from_bytes(bytes).expect("index shape remains valid");
+        assert!(matches!(
+            malformed.payload_at(0),
+            Err(ArchiveError::LengthMismatch {
+                what: "decoded payload",
+                declared: 6,
+                actual: 5
+            })
+        ));
+    }
+
+    #[test]
     fn truncated_header_rejected() {
         let buf = vec![b'A', b'O']; // less than 16 bytes
         match Archive::from_bytes(buf) {
@@ -1069,7 +1430,7 @@ mod tests {
         let mut b2 = ArchiveBuilder::new(FLAG_ZSTD | FLAG_UTF8);
         let meta = arc1.entries()[0].clone();
         let raw = arc1.raw_payload(0).to_vec();
-        b2.push_prebuilt(meta, &raw);
+        b2.push_prebuilt(meta, &raw).unwrap();
         b2.finish(&path2).unwrap();
 
         let arc2 = Archive::open(&path2).unwrap();
@@ -1080,6 +1441,36 @@ mod tests {
         let items: Vec<_> = arc2.iter().filter_map(Result::ok).collect();
         assert_eq!(items[0].0, "doc.txt");
         assert_eq!(items[0].1, body.as_bytes());
+    }
+
+    #[test]
+    fn prebuilt_payload_length_mismatch_is_an_error() {
+        let mut builder = ArchiveBuilder::new(FLAG_ZSTD);
+        let meta = EntryMeta {
+            payload_offset: 0,
+            payload_len: 2,
+            decoded_len: 1,
+            source_mtime_ns: 0,
+            source_blake3: [0; 32],
+            label: "a.txt".to_owned(),
+        };
+        assert!(matches!(
+            builder.push_prebuilt(meta, b"x"),
+            Err(ArchiveError::LengthMismatch {
+                what: "prebuilt payload",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn builder_rejects_unsupported_flags() {
+        let builder = ArchiveBuilder::new(1 << 31);
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(matches!(
+            builder.finish(dir.path().join("bad.aozc")),
+            Err(ArchiveError::UnsupportedFlags(flags)) if flags == 1 << 31
+        ));
     }
 
     // ----------------------------------------------------------------
@@ -1217,13 +1608,16 @@ mod tests {
         assert!(out.is_empty(), "empty stream must decompress to empty");
     }
 
-    /// A successful `finish` followed by `Archive::open` must yield
-    /// the same bytes. Together with the explicit `sync_all` call in
-    /// `finish`, this pins "the file is published only after data
-    /// is durably written" — without the sync the test would still
-    /// pass on a healthy filesystem, but the regression risk is the
-    /// removal of `sync_all`. We add a separate test below to detect
-    /// THAT regression.
+    #[test]
+    fn decompress_payload_stops_after_declared_length_mismatch() {
+        let compressed =
+            zstd::encode_all(io::Cursor::new(vec![b'x'; 1024 * 1024]), 1).expect("zstd encode");
+
+        let out = decompress_payload(&compressed, 0).expect("decompress prefix");
+
+        assert_eq!(out, b"x");
+    }
+
     #[test]
     fn finish_produces_a_readable_archive() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1237,19 +1631,13 @@ mod tests {
         assert_eq!(payload.as_bytes(), b"hello");
     }
 
-    /// Pin the atomic-publish pattern: there must be NO `.tmp`
-    /// remnants after a successful `finish`. (If the rename happened
-    /// before sync_all panicked, the tmp would be left behind.)
     #[test]
-    fn finish_does_not_leave_tmp_file_behind() {
+    fn finish_does_not_leave_temporary_file_behind() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("corpus.aozc");
         let mut b = ArchiveBuilder::new(0);
         b.push_entry("a.txt", b"hi", 0).unwrap();
         b.finish(&path).unwrap();
-        // List the directory — only one file should exist (the
-        // archive). A leftover `.tmp` would mean the rename happened
-        // partially.
         let count = fs::read_dir(dir.path()).unwrap().count();
         assert_eq!(
             count,
@@ -1258,6 +1646,112 @@ mod tests {
             dir.path(),
             count,
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finish_preserves_existing_archive_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.aozc");
+        fs::write(&path, b"old").expect("seed archive");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).expect("set permissions");
+        let mut builder = ArchiveBuilder::new(0);
+        builder.push_entry("a.txt", b"new", 0).unwrap();
+
+        builder.finish(&path).expect("finish");
+
+        let mode = fs::metadata(path).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finish_replaces_the_target_of_an_existing_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target.aozc");
+        let link = dir.path().join("corpus.aozc");
+        fs::write(&target, b"old").expect("seed target");
+        symlink("target.aozc", &link).expect("create link");
+        let mut builder = ArchiveBuilder::new(FLAG_UTF8);
+        builder.push_entry("a.txt", b"new", 0).unwrap();
+
+        builder.finish(&link).expect("finish");
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+        let archive = Archive::open(&target).expect("target archive");
+        assert_eq!(archive.payload_at(0).unwrap().as_bytes(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_archive_uses_the_process_default_creation_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reference = dir.path().join("reference");
+        let path = dir.path().join("corpus.aozc");
+        fs::File::create(&reference).expect("create reference");
+        let builder = ArchiveBuilder::new(0);
+
+        builder.finish(&path).expect("finish");
+
+        let reference_mode = fs::metadata(reference)
+            .expect("reference metadata")
+            .permissions()
+            .mode();
+        let archive_mode = fs::metadata(path)
+            .expect("archive metadata")
+            .permissions()
+            .mode();
+        assert_eq!(archive_mode & 0o777, reference_mode & 0o777);
+    }
+
+    #[test]
+    fn concurrent_finish_to_the_same_path_publishes_one_complete_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.aozc");
+        let barrier = Arc::new(Barrier::new(2));
+
+        let threads: Vec<_> = b"ab"
+            .iter()
+            .copied()
+            .map(|byte| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let payload = vec![byte; 4 * 1024 * 1024];
+                    let mut builder = ArchiveBuilder::new(FLAG_UTF8);
+                    builder.push_entry("entry.txt", &payload, 0)?;
+                    barrier.wait();
+                    builder.finish(path)
+                })
+            })
+            .collect();
+
+        for thread in threads {
+            thread
+                .join()
+                .expect("finish thread panicked")
+                .expect("finish failed");
+        }
+
+        let archive = Archive::open(&path).expect("final archive must be readable");
+        let payload = archive.payload_at(0).expect("payload must be readable");
+        assert_eq!(payload.len(), 4 * 1024 * 1024);
+        assert!(
+            payload.as_bytes().iter().all(|byte| *byte == b'a')
+                || payload.as_bytes().iter().all(|byte| *byte == b'b')
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     // ----------------------------------------------------------------

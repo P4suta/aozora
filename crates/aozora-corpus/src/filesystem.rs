@@ -1,8 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "filesystem corpus metadata is validated before conversion"
-)]
-
 //! [`FilesystemCorpus`] — yield every `.txt` file found under a root.
 //!
 //! Accepts any directory layout. Canonical usage is to point it at a
@@ -20,7 +15,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use walkdir::WalkDir;
 
@@ -35,6 +30,7 @@ use crate::{CorpusError, CorpusItem, CorpusSource};
 #[derive(Debug, Clone)]
 pub struct FilesystemCorpus {
     root: PathBuf,
+    canonical_root: PathBuf,
     provenance: String,
 }
 
@@ -46,14 +42,32 @@ impl FilesystemCorpus {
     /// # Errors
     ///
     /// Returns [`CorpusError::RootNotDirectory`] if `root` does not
-    /// exist or is not a directory.
+    /// exist or is not a directory, or [`CorpusError::Io`] if its
+    /// canonical path cannot be resolved.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
-        if !root.is_dir() {
+        let metadata = match fs::metadata(&root) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                return Err(CorpusError::RootNotDirectory { path: root });
+            }
+            Err(source) => {
+                return Err(CorpusError::Io { path: root, source });
+            }
+        };
+        if !metadata.is_dir() {
             return Err(CorpusError::RootNotDirectory { path: root });
         }
+        let canonical_root = fs::canonicalize(&root).map_err(|source| CorpusError::Io {
+            path: root.clone(),
+            source,
+        })?;
         let provenance = format!("filesystem:{}", root.display());
-        Ok(Self { root, provenance })
+        Ok(Self {
+            root,
+            canonical_root,
+            provenance,
+        })
     }
 
     /// Borrow the corpus root directory.
@@ -104,20 +118,24 @@ impl FilesystemCorpus {
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::Io`] on read failure.
+    /// Returns [`CorpusError::Io`] if `path` is outside the corpus
+    /// root, cannot be resolved, or cannot be read.
     pub fn read_path(&self, path: &Path) -> Result<CorpusItem, CorpusError> {
-        read_item(&self.root, path)
+        read_item(&self.root, &self.canonical_root, path)
     }
 }
 
 impl CorpusSource for FilesystemCorpus {
     fn iter(&self) -> Box<dyn Iterator<Item = Result<CorpusItem, CorpusError>> + '_> {
         let root = self.root.clone();
+        let canonical_root = self.canonical_root.clone();
         let walker = WalkDir::new(&self.root)
             .follow_links(false)
             .into_iter()
             .filter_map(move |entry_result| match entry_result {
-                Ok(entry) if is_text_dir_entry(&entry) => Some(read_item(&root, entry.path())),
+                Ok(entry) if is_text_dir_entry(&entry) => {
+                    Some(read_item(&root, &canonical_root, entry.path()))
+                }
                 Ok(_) => None,
                 // walkdir's errors are io-level (permission denied walking
                 // into a subdir, broken symlink). We surface them so the
@@ -160,18 +178,45 @@ fn is_text_dir_entry(entry: &walkdir::DirEntry) -> bool {
     !ft.is_dir() && !ft.is_symlink() && entry.path().extension().is_some_and(|ext| ext == "txt")
 }
 
-fn read_item(root: &Path, path: &Path) -> Result<CorpusItem, CorpusError> {
+fn read_item(root: &Path, canonical_root: &Path, path: &Path) -> Result<CorpusItem, CorpusError> {
+    let relative = path.strip_prefix(root).map_err(|_| CorpusError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path is outside the corpus root",
+        ),
+    })?;
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(CorpusError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path is outside the corpus root",
+            ),
+        });
+    }
+    let canonical_path = fs::canonicalize(path).map_err(|source| CorpusError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !canonical_path.starts_with(canonical_root) {
+        return Err(CorpusError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path is outside the corpus root",
+            ),
+        });
+    }
     let bytes = fs::read(path).map_err(|source| CorpusError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    // walkdir always yields paths nested inside the root it was handed, so
-    // strip_prefix cannot fail here; the invariant is encoded as `expect`
-    // rather than a defensive fallback branch that would never execute
-    // (and would therefore drag coverage down with no behavioural value).
-    let relative = path
-        .strip_prefix(root)
-        .expect("walkdir yielded a path outside the corpus root");
     // Labels are portable, POSIX-style identifiers: join the components
     // with '/' rather than `Path::display`, which emits the platform
     // separator ('\' on Windows). Without this, the same corpus would
@@ -221,6 +266,83 @@ mod tests {
         fs::write(&file_path, b"").expect("write file");
         let err = FilesystemCorpus::new(&file_path).expect_err("file path must fail");
         assert!(matches!(err, CorpusError::RootNotDirectory { path } if path == file_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_preserves_metadata_errors() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fresh_root();
+        let loop_path = dir.path().join("loop");
+        symlink("loop", &loop_path).expect("create symlink loop");
+
+        let error = FilesystemCorpus::new(&loop_path).expect_err("metadata must fail");
+
+        assert!(matches!(error, CorpusError::Io { path, .. } if path == loop_path));
+    }
+
+    #[test]
+    fn read_path_rejects_a_readable_file_outside_the_root() {
+        let corpus_root = fresh_root();
+        let outside_root = fresh_root();
+        let outside = outside_root.path().join("outside.txt");
+        fs::write(&outside, b"readable").expect("write outside file");
+        let corpus = FilesystemCorpus::new(corpus_root.path()).expect("valid root");
+
+        let err = corpus
+            .read_path(&outside)
+            .expect_err("outside path must be rejected");
+
+        assert!(matches!(
+            err,
+            CorpusError::Io { source, .. }
+                if source.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[test]
+    fn read_path_rejects_parent_directory_traversal() {
+        let parent = fresh_root();
+        let corpus_dir = parent.path().join("corpus");
+        fs::create_dir(&corpus_dir).expect("create corpus root");
+        fs::write(parent.path().join("outside.txt"), b"readable").expect("write outside file");
+        let corpus = FilesystemCorpus::new(&corpus_dir).expect("valid root");
+        let traversal = corpus_dir.join("../outside.txt");
+
+        let err = corpus
+            .read_path(&traversal)
+            .expect_err("parent traversal must be rejected");
+
+        assert!(matches!(
+            err,
+            CorpusError::Io { source, .. }
+                if source.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_path_rejects_a_symlink_that_escapes_the_root() {
+        use std::os::unix::fs::symlink;
+
+        let corpus_root = fresh_root();
+        let outside_root = fresh_root();
+        let outside = outside_root.path().join("outside.txt");
+        fs::write(&outside, b"readable").expect("write outside file");
+        let link = corpus_root.path().join("link.txt");
+        symlink(&outside, &link).expect("create symlink");
+        let corpus = FilesystemCorpus::new(corpus_root.path()).expect("valid root");
+
+        let err = corpus
+            .read_path(&link)
+            .expect_err("escaping symlink must be rejected");
+
+        assert!(matches!(
+            err,
+            CorpusError::Io { source, .. }
+                if source.kind() == io::ErrorKind::InvalidInput
+        ));
     }
 
     #[test]

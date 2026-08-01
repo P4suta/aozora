@@ -8,25 +8,21 @@ import type {
 import wasmPackage from '../../crates/aozora-wasm/pkg/package.json';
 import type { EngineAwareEditorController } from './editor-controller';
 import { setEditorLocale } from './i18n';
+import { createRetryableLoader } from './retryableLoader';
 import { DEFAULT_SAMPLE_ID, SAMPLES } from './samples';
 
 type EngineModule = typeof import('./adapter-engine');
 type EditorModule = typeof import('./editor-controller');
 
-let enginePromise: Promise<EngineModule> | null = null;
-let editorPromise: Promise<EditorModule> | null = null;
 let engineReady = false;
 const activeEditors = new Set<EngineAwareEditorController>();
 
-function loadEngine(): Promise<EngineModule> {
-  enginePromise ??= import('./adapter-engine');
-  return enginePromise;
-}
-
-function loadEditor(): Promise<EditorModule> {
-  editorPromise ??= import('./editor-controller');
-  return editorPromise;
-}
+const loadEngine = createRetryableLoader<EngineModule>(
+  () => import('./adapter-engine'),
+);
+const loadEditor = createRetryableLoader<EditorModule>(
+  () => import('./editor-controller'),
+);
 
 const sampleEnglishTitles: Readonly<Record<string, string>> = {
   ruby: 'Explicit ruby',

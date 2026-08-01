@@ -32,7 +32,9 @@
           { "context": "release-ready", "integration_id": 15368 },
           { "context": "codeql (rust)", "integration_id": 15368 },
           { "context": "codeql (python)", "integration_id": 15368 },
-          { "context": "codeql (javascript-typescript)", "integration_id": 15368 }
+          { "context": "codeql (javascript-typescript)", "integration_id": 15368 },
+          { "context": "codeql (actions)", "integration_id": 15368 },
+          { "context": "dependency review", "integration_id": 15368 }
         ]
       }
     }

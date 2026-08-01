@@ -755,6 +755,9 @@ pub(crate) fn resolve_at(source: &str, start: usize, end: usize) -> Option<Gaiji
         return None;
     }
     let body = source.get(body_start..body_end)?;
+    if body.contains(['\r', '\n']) {
+        return None;
+    }
     let GaijiBody {
         description,
         mencode,
@@ -783,38 +786,70 @@ pub(crate) fn resolve_at(source: &str, start: usize, end: usize) -> Option<Gaiji
 /// the source linearly once; cost is `O(source)`.
 #[must_use]
 pub(crate) fn gaiji_resolutions(source: &str) -> Vec<GaijiResolution> {
-    let mut out = Vec::new();
-    let mut cursor = 0usize;
-    // Scan the bracket-hash opener so both the refmark (`※［＃`) and the
-    // standalone (`［＃`, #122) forms are seen; `resolve_at` folds a preceding
-    // `※` into the span and gates the standalone form against recognition.
-    while let Some(rel) = source[cursor..].find(BRACKET_HASH) {
-        let previous = cursor;
-        let hash_open = cursor
-            .checked_add(rel)
-            .expect("relative match offset stays inside source");
-        let span_start = if source[..hash_open].ends_with(GAIJI_REFMARK) {
-            hash_open
-                .checked_sub(GAIJI_REFMARK.len())
-                .expect("matched refmark precedes bracket")
-        } else {
-            hash_open
-        };
-        let body_start = hash_open
-            .checked_add(BRACKET_HASH.len())
-            .expect("matched opener stays inside source");
-        let Some(close_rel) = source[body_start..].find(GAIJI_CLOSE) else {
-            break;
-        };
-        let span_end = body_start
-            .checked_add(close_rel)
-            .and_then(|end| end.checked_add(GAIJI_CLOSE.len()))
-            .expect("matched closer stays inside source");
-        if let Some(res) = resolve_at(source, span_start, span_end) {
-            out.push(res);
+    #[derive(Clone, Copy)]
+    struct Candidate {
+        start: usize,
+        end: Option<usize>,
+        parent: Option<usize>,
+    }
+
+    #[derive(Clone, Copy)]
+    struct BracketFrame {
+        candidate: Option<usize>,
+        previous_candidate: Option<usize>,
+    }
+
+    let mut candidates = Vec::new();
+    let mut stack = Vec::new();
+    let mut active_candidate = None;
+    for (offset, ch) in source.char_indices() {
+        if ch == '［' {
+            let previous_candidate = active_candidate;
+            let candidate = source[offset..].starts_with(BRACKET_HASH).then(|| {
+                let start = if source[..offset].ends_with(GAIJI_REFMARK) {
+                    offset.saturating_sub(GAIJI_REFMARK.len())
+                } else {
+                    offset
+                };
+                let index = candidates.len();
+                candidates.push(Candidate {
+                    start,
+                    end: None,
+                    parent: previous_candidate,
+                });
+                active_candidate = Some(index);
+                index
+            });
+            stack.push(BracketFrame {
+                candidate,
+                previous_candidate,
+            });
+        } else if matches!(ch, '\r' | '\n') {
+            stack.clear();
+            active_candidate = None;
+        } else if ch == '］'
+            && let Some(frame) = stack.pop()
+        {
+            if let Some(index) = frame.candidate {
+                candidates[index].end = Some(offset.saturating_add(ch.len_utf8()));
+            }
+            active_candidate = frame.previous_candidate;
         }
-        cursor = span_end;
-        assert!(cursor > previous, "gaiji description scan must advance");
+    }
+
+    let mut out = Vec::new();
+    let mut covered = vec![false; candidates.len()];
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        if candidate.parent.is_some_and(|parent| covered[parent]) {
+            covered[index] = true;
+            continue;
+        }
+        if let Some(end) = candidate.end
+            && let Some(resolution) = resolve_at(source, candidate.start, end)
+        {
+            covered[index] = true;
+            out.push(resolution);
+        }
     }
     out
 }
@@ -1059,6 +1094,37 @@ mod tests {
     }
 
     #[test]
+    fn gaiji_resolutions_rejects_line_crossing_candidates() {
+        for line_ending in ["\r", "\n", "\r\n"] {
+            let source = format!("前※［＃「々」{line_ending}］後");
+            assert!(
+                gaiji_resolutions(&source).is_empty(),
+                "line ending: {line_ending:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn gaiji_resolutions_does_not_pair_with_a_close_on_the_next_line() {
+        for line_ending in ["\r", "\n", "\r\n"] {
+            let source = format!("※［＃「未閉じ」{line_ending}］※［＃「々」］");
+            let resolutions = gaiji_resolutions(&source);
+            assert_eq!(resolutions.len(), 1, "line ending: {line_ending:?}");
+            assert_eq!(resolutions[0].span().slice(&source), "※［＃「々」］");
+        }
+    }
+
+    #[test]
+    fn gaiji_resolutions_keeps_same_line_candidates() {
+        for line_ending in ["\r", "\n", "\r\n"] {
+            let source = format!("※［＃「々」］{line_ending}後");
+            let resolutions = gaiji_resolutions(&source);
+            assert_eq!(resolutions.len(), 1, "line ending: {line_ending:?}");
+            assert_eq!(resolutions[0].span().slice(&source), "※［＃「々」］");
+        }
+    }
+
+    #[test]
     fn gaiji_resolutions_excludes_plain_directives() {
         // A bracket-hash directive is NOT a gaiji — the standalone gate
         // (recognize_gaiji_body) declines it, so it never enters the view.
@@ -1080,6 +1146,67 @@ mod tests {
             res[1].span().slice(src),
             "［＃「木＋吶のつくり」、第3水準1-85-54］"
         );
+    }
+
+    #[test]
+    fn gaiji_resolutions_finds_nested_refmark_in_directive() {
+        let src = "未［＃「未」の左に「さ※［＃「々」］い」のルビ］";
+        let resolutions = gaiji_resolutions(src);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].span().slice(src), "※［＃「々」］");
+        assert_eq!(resolutions[0].resolved(), Some("々"));
+    }
+
+    #[test]
+    fn gaiji_resolutions_tracks_plain_bracket_nesting() {
+        let src = "※［＃「foo［bar］」、U+0061］";
+        let resolutions = gaiji_resolutions(src);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].span().slice(src), src);
+        assert_eq!(resolutions[0].description(), "foo［bar］");
+        assert_eq!(resolutions[0].resolved(), Some("a"));
+        assert_eq!(resolutions[0].codepoint(), Some(0x61));
+    }
+
+    #[test]
+    fn gaiji_resolutions_keeps_nested_and_adjacent_source_order() {
+        let src = "［＃外側［＃内側※［＃「々」］］］※［＃「〆」］［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let resolutions = gaiji_resolutions(src);
+        assert_eq!(resolutions.len(), 3);
+        assert_eq!(resolutions[0].span().slice(src), "※［＃「々」］");
+        assert_eq!(resolutions[1].span().slice(src), "※［＃「〆」］");
+        assert_eq!(
+            resolutions[2].span().slice(src),
+            "［＃「木＋吶のつくり」、第3水準1-85-54］"
+        );
+    }
+
+    #[test]
+    fn gaiji_resolutions_handles_malformed_outer_directive() {
+        let src = "［＃閉じない外側※［＃「々」］";
+        let resolutions = gaiji_resolutions(src);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].span().slice(src), "※［＃「々」］");
+        assert!(gaiji_resolutions("［＃外側［＃内側").is_empty());
+    }
+
+    #[test]
+    fn gaiji_resolutions_does_not_duplicate_nested_body() {
+        let src = "※［＃外字の説明に［＃「々」］を含む］";
+        let resolutions = gaiji_resolutions(src);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].span().slice(src), src);
+    }
+
+    #[test]
+    fn gaiji_resolutions_handles_deep_nesting() {
+        let depth = 4_096;
+        let mut src = "※［＃".repeat(depth);
+        src.push_str("「々」");
+        src.push_str(&"］".repeat(depth));
+        let resolutions = gaiji_resolutions(&src);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].span().slice(&src), src);
     }
 
     #[test]
@@ -1596,5 +1723,16 @@ mod tests {
         // (empty-description) resolution.
         let src = "※［＃］";
         assert!(resolve_at(src, 0, src.len()).is_none());
+    }
+
+    #[test]
+    fn resolve_at_rejects_line_crossing_spans() {
+        for line_ending in ["\r", "\n", "\r\n"] {
+            let source = format!("※［＃「々」{line_ending}］");
+            assert!(
+                resolve_at(&source, 0, source.len()).is_none(),
+                "line ending: {line_ending:?}"
+            );
+        }
     }
 }

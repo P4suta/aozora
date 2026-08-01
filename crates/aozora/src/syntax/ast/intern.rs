@@ -26,6 +26,8 @@
 //!
 //! The *handle contract* (dedup + resolve) is the invariant.
 
+use core::mem;
+
 /// FxHash-style mix constant. The same constant rustc internally uses for
 /// `FxHasher`; chosen for fast diffusion on short inputs.
 const FX_PRIME: u64 = 0x517c_c1b7_2722_0a95;
@@ -241,10 +243,8 @@ impl StrInterner {
             .checked_sub(1)
             .expect("grown interner capacity is nonzero");
         let mut new_table: Vec<Option<StrId>> = vec![None; new_cap];
-        // Collect occupied ids up front so the re-probe below can resolve each
-        // against `buf` without overlapping a borrow of `table`.
-        let ids: Vec<StrId> = self.table.iter().flatten().copied().collect();
-        for id in ids {
+        let old_table = mem::take(&mut self.table);
+        for id in old_table.into_iter().flatten() {
             let h = fx_hash(self.resolve(id).as_bytes());
             #[expect(
                 clippy::cast_possible_truncation,
@@ -463,6 +463,30 @@ mod tests {
         assert_eq!(i.capacity(), INITIAL_CAPACITY);
         i.intern("load-boundary-trigger");
         assert_eq!(i.capacity(), INITIAL_CAPACITY * 2);
+    }
+
+    #[test]
+    fn resize_preserves_ids_values_and_stats() {
+        let mut i = StrInterner::new();
+        let entries: Vec<_> = (0..224)
+            .map(|index| {
+                let value = format!("resize-entry-{index}");
+                let id = i.intern(&value);
+                (value, id)
+            })
+            .collect();
+        let before = i.stats;
+
+        let trigger = i.intern("resize-entry-trigger");
+
+        assert_eq!(i.stats.calls, before.calls + 1);
+        assert_eq!(i.stats.allocs, before.allocs + 1);
+        assert_eq!(i.stats.resizes, before.resizes + 1);
+        assert_eq!(i.resolve(trigger), "resize-entry-trigger");
+        for (value, id) in entries {
+            assert_eq!(i.resolve(id), value);
+            assert_eq!(i.intern(&value), id);
+        }
     }
 
     #[test]

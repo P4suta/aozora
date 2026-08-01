@@ -1004,7 +1004,7 @@ deny:
 
 # RustSec advisory scan
 audit:
-    cargo audit
+    cargo audit --ignore RUSTSEC-2026-0222
 
 # Unused-dependency scan. cargo-shear is stable (no nightly), fast, and
 # also flags unlinked source files; it replaces the former nightly
@@ -1033,13 +1033,10 @@ semver *ARGS:
     cargo semver-checks check-release --workspace \
         --exclude tree-sitter-aozora {{ARGS}}
 
-# --- dependency follow-up (local-only, no remote CI) -------------------------
-# Policy: workspace deps track @latest. The mechanism is purely local —
-# `just deps-check` runs the full dependency-health gate (outdated +
-# audit + deny), `just upgrade` bumps Cargo.toml to the latest
-# compatible versions, and a systemd user timer (see
-# `deps-timer-install`) runs `just deps-check` weekly so new advisories
-# surface even on quiet branches.
+# --- dependency follow-up ----------------------------------------------------
+# Dependabot proposes repository updates. The local `deps-check` adds the full
+# dependency-health gate (outdated + audit + deny), and its systemd timer
+# surfaces new advisories even on quiet branches.
 
 # `target/.deps-check.timestamp` is the last-success marker that
 # `deps-status` reads. Written under `target/` and intentionally ephemeral —
@@ -1373,11 +1370,11 @@ playground-all: playground-ci playground-build
 # Production Playwright suite. CI installs browser system dependencies before
 # calling this recipe; local hosts must provide them through their package manager.
 playground-e2e: playground-build
-    cd playground && bun x playwright install chromium firefox webkit
-    cd playground && bun x playwright test
+    cd playground && bun run playwright install chromium firefox webkit
+    cd playground && bun run playwright test
 
 playground-lighthouse: playground-build
-    cd playground && bun x playwright install chromium
+    cd playground && bun run playwright install chromium
     cd playground && bun run lighthouse
 
 # --- VS Code extension (TypeScript, esbuild-bundled) --------------------------

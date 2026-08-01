@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -89,6 +89,8 @@ pub(super) struct OpenDocument {
     document: Mutex<aozora::Document>,
     snapshot: ArcSwap<DocSnapshot>,
     edit_version: AtomicU64,
+    lsp_version: AtomicI32,
+    lsp_update: Mutex<()>,
     pub metrics: Arc<Metrics>,
     debounce_task: Mutex<Option<AbortHandle>>,
 }
@@ -97,6 +99,7 @@ impl fmt::Debug for OpenDocument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OpenDocument")
             .field("edit_version", &self.edit_version.load(Ordering::Relaxed))
+            .field("lsp_version", &self.lsp_version.load(Ordering::Relaxed))
             .field("snapshot_version", &self.snapshot.load().version)
             .finish_non_exhaustive()
     }
@@ -104,7 +107,13 @@ impl fmt::Debug for OpenDocument {
 
 impl OpenDocument {
     #[must_use]
+    #[cfg(test)]
     pub(super) fn new(text: String) -> Arc<Self> {
+        Self::new_versioned(text, 0)
+    }
+
+    #[must_use]
+    pub(super) fn new_versioned(text: String, lsp_version: i32) -> Arc<Self> {
         let started = Instant::now();
         let document = aozora::parse(text).expect("LSP document fits parser spans");
         let core = document.snapshot();
@@ -114,6 +123,8 @@ impl OpenDocument {
             document: Mutex::new(document),
             snapshot: ArcSwap::from(initial),
             edit_version: AtomicU64::new(0),
+            lsp_version: AtomicI32::new(lsp_version),
+            lsp_update: Mutex::new(()),
             metrics: Arc::new(Metrics::default()),
             debounce_task: Mutex::new(None),
         });
@@ -128,6 +139,18 @@ impl OpenDocument {
 
     pub(super) fn edit_version(&self) -> u64 {
         self.edit_version.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn lsp_version(&self) -> i32 {
+        self.lsp_version.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn set_lsp_version(&self, version: i32) {
+        self.lsp_version.store(version, Ordering::SeqCst);
+    }
+
+    pub(super) fn lock_lsp_update(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.lsp_update.lock()
     }
 
     pub(super) fn replace_debounce_task(&self, handle: AbortHandle) {

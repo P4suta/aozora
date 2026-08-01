@@ -16,8 +16,8 @@ VS Code Marketplace または Open VSX から `aozora-vscode` をインストー
 code --install-extension yasunobu-sakashita.aozora-vscode
 ```
 
-GitHub Release の対象プラットフォーム向け `.vsix` も
-`code --install-extension FILE.vsix` でインストールできる。
+対象プラットフォーム向け `.vsix` を取得した場合は
+`code --install-extension FILE.vsix` でもインストールできる。
 
 各プラットフォーム向けパッケージには言語サーバ兼 CLI が同梱されるため、追加設定
 なしで診断・補完・フォーマット・プレビュー・workspace lint が動作する。独自ビルド

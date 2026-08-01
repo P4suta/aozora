@@ -93,7 +93,7 @@ use std::collections::VecDeque;
 // inherent methods (single intern, no arena); the produced `Node`s thread
 // straight into the lex output's `NodeStore`.
 use crate::syntax::alloc::Allocator;
-use crate::syntax::ast::{Content, Directive, Gaiji, Node, Segment};
+use crate::syntax::ast::{Content, Directive, Gaiji, Node, Segment, node_is_content_segment};
 use crate::syntax::{DirectiveKind, RegionClose, RegionFormat, Span, ruby_base_class};
 
 use super::pair::{PairEvent, PairKind};
@@ -294,6 +294,7 @@ where
     streaming: Option<StreamingFrame>,
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
+    pending_ruby_bar: Option<Span>,
     /// A just-recognised gaiji held back one step so an immediately-
     /// following `《…》` ruby can take it as its base (`※［＃…］《みは》`).
     /// A gaiji resolves to a glyph distinct from its `※［＃…］` source and
@@ -401,6 +402,14 @@ enum GaijiBaseRuby {
 pub(crate) struct BodyView<'b> {
     pub events: &'b [PairEvent],
     pub links: &'b [u32],
+}
+
+#[derive(Clone, Copy)]
+struct StructuredRubyInput<'b> {
+    body: BodyView<'b>,
+    open_idx: usize,
+    close_idx: usize,
+    bar: Option<Span>,
 }
 
 /// Per-recognise-call shared context.
@@ -607,6 +616,7 @@ where
             streaming: None,
             pending_plain_start: None,
             pending_refmark: None,
+            pending_ruby_bar: None,
             pending_ruby_base: None,
             diagnostics: Vec::new(),
             kaeriten_obs: Vec::new(),
@@ -1037,6 +1047,7 @@ where
     fn handle_top_level(&mut self, event: PairEvent) {
         match event {
             PairEvent::Newline { pos } => {
+                self.pending_ruby_bar = None;
                 self.flush_plain_up_to(pos);
                 self.push_output(ClassifiedSpan {
                     kind: SpanKind::Newline,
@@ -1051,6 +1062,12 @@ where
                 // is requested before the next event arrives the
                 // refmark is folded into the plain run.
                 self.pending_refmark = Some(span);
+            }
+            PairEvent::Solo {
+                kind: TriggerKind::Bar,
+                span,
+            } => {
+                self.remember_ruby_bar(span);
             }
             PairEvent::PairOpen { kind, span, .. } => {
                 // Stream-through: Quote and Tortoise have no
@@ -1155,6 +1172,13 @@ where
         }
     }
 
+    fn remember_ruby_bar(&mut self, span: Span) {
+        self.pending_ruby_bar = Some(span);
+        if self.pending_plain_start.is_none() {
+            self.pending_plain_start = Some(span.start);
+        }
+    }
+
     fn handle_stream_event(&mut self, event: PairEvent) {
         self.fold_held_refmark(&event);
 
@@ -1203,6 +1227,7 @@ where
             .expect("handle_stream_event without streaming state");
         match event {
             PairEvent::Newline { pos } => {
+                self.pending_ruby_bar = None;
                 self.flush_plain_up_to(pos);
                 self.push_output(ClassifiedSpan {
                     kind: SpanKind::Newline,
@@ -1258,6 +1283,12 @@ where
                 // no `［` follows, or the Bracket sub-frame absorbs it as
                 // the gaiji shape.
                 self.pending_refmark = Some(span);
+            }
+            PairEvent::Solo {
+                kind: TriggerKind::Bar,
+                span,
+            } => {
+                self.remember_ruby_bar(span);
             }
             other => {
                 let Some(span) = other.span() else {
@@ -1369,6 +1400,7 @@ where
         else {
             return None;
         };
+        let explicit_bar = self.pending_ruby_bar.take();
 
         // Nested ruby: a `《…》` opening *inside* the reading
         // body is an authoring error. Flag the first one (caret on the
@@ -1393,11 +1425,20 @@ where
         // streaming model has no preceding events, so we synthesise them.
         let preceding_start = self.pending_plain_start.unwrap_or(open_span.start);
         if preceding_start >= open_span.start {
-            return None;
+            return self.try_structured_explicit_ruby(StructuredRubyInput {
+                body,
+                open_idx,
+                close_idx,
+                bar: explicit_bar,
+            });
         }
         let prev_text_range = Span::new(preceding_start, open_span.start);
-        let preceding_bytes = &self.source[preceding_start as usize..open_span.start as usize];
-        let bar_byte_offset = preceding_bytes.rfind('｜');
+        let bar_byte_offset = explicit_bar
+            .filter(|bar| preceding_start <= bar.start && bar.end <= open_span.start)
+            .map(|bar| {
+                usize::try_from(bar.start.saturating_sub(preceding_start))
+                    .expect("source span offset fits usize")
+            });
 
         let (synth, synth_links, synth_open_idx) =
             build_synth_ruby_view(body, prev_text_range, bar_byte_offset)?;
@@ -1431,7 +1472,13 @@ where
             {
                 self.diagnostics.push(Diagnostic::empty_ruby_reading(span));
             }
-            return None;
+            self.diagnostics.append(&mut ctx.diagnostics);
+            return self.try_structured_explicit_ruby(StructuredRubyInput {
+                body,
+                open_idx,
+                close_idx,
+                bar: explicit_bar,
+            });
         };
         // Drain diagnostics raised while building the nested ruby reading.
         self.diagnostics.append(&mut ctx.diagnostics);
@@ -1444,6 +1491,62 @@ where
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
+        })
+    }
+
+    fn try_structured_explicit_ruby(
+        &mut self,
+        input: StructuredRubyInput<'_>,
+    ) -> Option<ClassifiedSpan> {
+        let StructuredRubyInput {
+            body,
+            open_idx,
+            close_idx,
+            bar,
+        } = input;
+        let bar = bar?;
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = body.events[open_idx]
+        else {
+            return None;
+        };
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = body.events[close_idx]
+        else {
+            return None;
+        };
+        if bar.end >= open_span.start || open_span.end >= close_span.start {
+            return None;
+        }
+        let reading = {
+            let mut ctx = RecogniseCtx {
+                alloc: self.alloc,
+                source: self.source,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let reading = ctx.build_content_from_body(
+                body,
+                &BodyWindow {
+                    events: open_idx.saturating_add(1)..close_idx,
+                    bytes: open_span.end..close_span.start,
+                },
+            );
+            self.diagnostics.append(&mut ctx.diagnostics);
+            reading
+        };
+        let base = self
+            .alloc
+            .content_plain(&self.source[bar.end as usize..open_span.start as usize]);
+        let node = self.alloc.ruby(base, reading);
+        self.flush_plain_up_to(open_span.start);
+        self.pending_plain_start = None;
+        Some(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
+            source_span: Span::new(open_span.start, close_span.end),
         })
     }
 
@@ -1557,6 +1660,21 @@ where
             EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
             EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
+        if matches!(
+            kind,
+            SpanKind::BlockOpen(_)
+                | SpanKind::BlockClose(_)
+                | SpanKind::Aozora(
+                    Node::Line(_)
+                        | Node::PageBreak
+                        | Node::SectionBreak(_)
+                        | Node::BodyEnd
+                        | Node::ForcedBreak
+                        | Node::Heading(_)
+                )
+        ) {
+            self.pending_ruby_bar = None;
+        }
         self.pending_plain_start = None;
         // Surface any non-fatal warning the recogniser attached
         // (unrecognised container directive / 縦中横 target not found /
@@ -1606,18 +1724,16 @@ where
         // base-start marker for a following ruby. Hold it out of the plain
         // run so `try_ruby_over_gaiji_base` can drop the redundant marker on
         // adoption (the gaiji is unambiguously the base), or `emit_pending_gaiji`
-        // can re-emit it as plain when the gaiji stands alone. Consume the
-        // WHOLE trailing `｜` run, not just the last bar: dropping only one
-        // per parse would leave the next `｜` adjacent to the gaiji, so
-        // re-serialising `｜｜※…《…》` would keep peeling one bar off each pass
-        // and never reach a fixed point (fmt-idempotence).
+        // can re-emit it as plain when the gaiji stands alone. Only the closest
+        // bar is a marker; earlier bars stay visible, matching plain explicit
+        // ruby and keeping repeated-bar source serialization stable (ADR-0002).
         let before = &self.source[..m.consume_start as usize];
-        let bar_start = before.trim_end_matches('\u{ff5c}').len();
-        let bar = (bar_start < before.len()).then(|| {
-            Span::new(
-                u32::try_from(bar_start).expect("bar-run start is within the source (u32)"),
-                m.consume_start,
-            )
+        let bar = before.ends_with('｜').then(|| {
+            let bar_start = m
+                .consume_start
+                .checked_sub(u32::try_from('｜'.len_utf8()).expect("bar length fits u32"))
+                .expect("matched bar precedes gaiji");
+            Span::new(bar_start, m.consume_start)
         });
         self.flush_plain_up_to(bar.map_or(m.consume_start, |b| b.start));
         let node = self.alloc.gaiji(m.payload);
@@ -1853,7 +1969,7 @@ struct RubyMatch<'s> {
 ///
 /// The `《…》` reading body is walked with `build_content_from_body`
 /// so nested `※［＃…］` gaiji and `［＃…］` annotations fold into the
-/// returned `Content` as `Segment::Gaiji` / `Segment::Directive`.
+/// returned structured `Content`.
 /// Pure-text readings collapse back to `Content::Plain` via
 /// `Content::from_segments`.
 ///
@@ -1957,18 +2073,12 @@ struct BodyWindow {
 ///
 /// Each nested `※［＃description、mencode］` reduces to a
 /// `Segment::Gaiji` via `recognize_gaiji`; each standalone
-/// `［＃…］` reduces to a `Segment::Directive` via
+/// `［＃…］` reduces to a semantic segment via
 /// `recognize_annotation`. Every other byte (plain text, stray
 /// triggers, unmatched delimiters) is captured into adjacent
 /// `Segment::Text` runs by tracking a single "outstanding text
 /// start" byte offset and flushing only when a recognisable construct
 /// consumes the intervening bytes.
-///
-/// Non-Directive Aozora emits (a paired-container opener, a block
-/// leaf, etc.) are *not* first-class segments and are folded back
-/// into `Directive{Unknown}` with the raw bracket bytes — this keeps
-/// the Tier-A canary intact inside a ruby body regardless of how
-/// unusual the inner annotation shape is.
 ///
 /// ## Fast path
 ///
@@ -2019,6 +2129,37 @@ struct ContentBuild {
 }
 
 impl RecogniseCtx<'_, '_> {
+    fn build_content_from_source_slice(&mut self, view: BodyView<'_>, text: &str) -> Content {
+        let source_start = self.source.as_ptr() as usize;
+        let text_start = (text.as_ptr() as usize)
+            .checked_sub(source_start)
+            .expect("nested content slice starts inside the source");
+        let text_end = text_start.saturating_add(text.len());
+        assert!(
+            text_end <= self.source.len(),
+            "nested content slice ends inside the source"
+        );
+        let byte_start = u32::try_from(text_start).expect("source length fits u32");
+        let byte_end = u32::try_from(text_end).expect("source length fits u32");
+        let event_start = view
+            .events
+            .iter()
+            .position(|event| event.span().is_some_and(|span| span.end > byte_start))
+            .unwrap_or(view.events.len());
+        let event_end = view
+            .events
+            .iter()
+            .rposition(|event| event.span().is_some_and(|span| span.start < byte_end))
+            .map_or(event_start, |idx| idx.saturating_add(1));
+        self.build_content_from_body(
+            view,
+            &BodyWindow {
+                events: event_start..event_end,
+                bytes: byte_start..byte_end,
+            },
+        )
+    }
+
     /// Build a [`Content`] for the body
     /// window, recognising any nested gaiji / annotation constructs in
     /// a single forward sweep.
@@ -2172,12 +2313,8 @@ impl RecogniseCtx<'_, '_> {
     /// after [`Self::try_emit_gaiji_at`] so the `※`+bracket combo gets
     /// first claim on a leading bracket. `recognize_annotation` has an
     /// `Unknown` catch-all (only returns `None` for malformed brackets
-    /// with no `＃` sentinel); on success the bracket folds into a
-    /// `Segment::Directive` with the recogniser's payload (or a
-    /// synthetic `Unknown` payload built from the raw source bytes
-    /// when the recogniser left `annotation_payload` unset). The
-    /// fallback synthesis preserves the Tier-A canary: no bare `［＃`
-    /// ever leaks outside an `aozora-directive` wrapper.
+    /// with no `＃` sentinel); on success an inline semantic node stays
+    /// structured, while paired block markers fall back to a raw directive.
     fn try_emit_annotation_at(
         &mut self,
         body: BodyWalkCtx<'_>,
@@ -2216,27 +2353,28 @@ impl RecogniseCtx<'_, '_> {
             build.text_start..a.consume_start,
             self.alloc,
         );
-        // A no-`※` standalone gaiji (#122) reaches here as `Aozora(Gaiji)`;
-        // wrap it as a `Segment::Gaiji` (not the `Unknown` annotation the
-        // payload fallback would build) and flag an unresolved miss (#84).
-        // Every other recogniser keeps the `Segment::Directive` path.
-        if let EmitKind::Aozora(Node::Gaiji(g)) = a.emit {
-            build.segments.push(self.alloc.seg_gaiji(g));
-            if g.resolve(self.alloc.store()).is_none() {
-                self.diagnostics
-                    .push(Diagnostic::unresolved_gaiji(Span::new(
-                        a.consume_start,
-                        a.consume_end,
-                    )));
+        match a.emit {
+            EmitKind::Aozora(Node::Gaiji(g)) => {
+                build.segments.push(self.alloc.seg_gaiji(g));
             }
-        } else {
-            let payload = if let Some(p) = a.annotation_payload {
-                p
-            } else {
-                let raw = &self.source[open_span.start as usize..close_span.end as usize];
-                self.alloc.make_directive(raw, DirectiveKind::Editorial)
-            };
-            build.segments.push(self.alloc.seg_annotation(payload));
+            EmitKind::Aozora(Node::Directive(directive)) => {
+                build.segments.push(self.alloc.seg_annotation(directive));
+            }
+            EmitKind::Aozora(node) if node_is_content_segment(node) => {
+                build.segments.push(self.alloc.seg_node(node));
+            }
+            EmitKind::Aozora(_) | EmitKind::BlockOpen(_) | EmitKind::BlockClose(_) => {
+                let payload = if let Some(p) = a.annotation_payload {
+                    p
+                } else {
+                    let raw = &self.source[open_span.start as usize..close_span.end as usize];
+                    self.alloc.make_directive(raw, DirectiveKind::Editorial)
+                };
+                build.segments.push(self.alloc.seg_annotation(payload));
+            }
+        }
+        if let Some(diagnostic) = a.pending_diagnostic {
+            self.diagnostics.push(diagnostic);
         }
         build.text_start = a.consume_end;
         close_idx.checked_add(1)
@@ -2294,9 +2432,8 @@ fn trailing_ruby_base_start(text: &str) -> usize {
 /// recogniser produced an `Directive{…}` payload — the
 /// `build_content_from_body` caller uses it to wrap the same payload
 /// as a `Segment::Directive` without reconstructing it. The emit
-/// variants `BlockOpen` / `BlockClose` and non-`Directive` `Aozora`
-/// nodes leave `annotation_payload` as `None`, so the body-builder
-/// falls back to its `Directive{Unknown}` synthesis path.
+/// variants `BlockOpen` / `BlockClose` leave `annotation_payload` as
+/// `None`, so a nested body keeps their raw bytes as an inline directive.
 struct AnnotationMatch {
     emit: EmitKind,
     annotation_payload: Option<Directive>,
@@ -2493,6 +2630,15 @@ mod tests {
         assert!(matches!(segs[0], Segment::Text(t) if out.s(t) == "に"));
         assert!(matches!(segs[1], Segment::Gaiji(_)));
         assert!(matches!(segs[2], Segment::Text(t) if out.s(t) == "ん"));
+    }
+
+    #[test]
+    fn nested_standalone_gaiji_reports_one_unresolved_diagnostic() {
+        run!(out, "漢《［＃「架空」、未知コード］》");
+        assert!(matches!(
+            out.diagnostics.as_slice(),
+            [Diagnostic::UnresolvedGaiji { .. }]
+        ));
     }
 
     #[test]

@@ -9,13 +9,13 @@
 //! command users invoke by hand. It stays reachable for the release job
 //! and for power users who want to install a page locally.
 
-use std::io;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::CommandFactory;
 
 use crate::Cli;
+use crate::output;
 
 /// `aozora man [COMMAND]` arguments.
 #[derive(Debug, clap::Args)]
@@ -35,7 +35,7 @@ pub(crate) fn run_man(args: &ManArgs) -> Result<ExitCode> {
             .with_context(|| format!("unknown subcommand `{name}`; run `aozora --help`"))?,
         None => root,
     };
-    let mut out = io::stdout().lock();
+    let mut out = output::stdout();
     clap_mangen::Man::new(cmd)
         .render(&mut out)
         .context("render man page")?;

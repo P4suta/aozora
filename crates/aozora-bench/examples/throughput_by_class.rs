@@ -66,10 +66,10 @@ use std::time::Instant;
 
 use aozora::decode_auto;
 use aozora_bench::{
-    SizeBand, SizeBandedCorpus, archive_size_bands, corpus_size_bands_from_decoded,
-    parallel_size_bands,
+    SizeBand, SizeBandedCorpus, archive_size_bands_limited, corpus_size_bands_from_decoded,
+    parallel_size_bands_limited,
 };
-use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
+use aozora_corpus::{Archive, FilesystemCorpus};
 use rayon::prelude::*;
 
 // One Arena per worker thread, reused across the docs that worker
@@ -155,21 +155,22 @@ fn main() {
             // is suppressed there — the per-phase timers no longer
             // attribute meaningfully under concurrent dispatch.
             if parallel {
-                LoadPhase::run_parallel(&corpus)
+                LoadPhase::run_parallel(&corpus, limit)
             } else {
                 LoadPhase::run(&corpus, limit)
             }
         },
-        |archive_path| LoadPhase::run_archive(Path::new(archive_path)),
+        |archive_path| LoadPhase::run_archive(Path::new(archive_path), limit),
     );
 
     eprintln!(
-        "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
+        "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={}, io_err={})",
         load.banded.small.len(),
         load.banded.medium.len(),
         load.banded.large.len(),
         load.banded.pathological.len(),
         load.banded.decode_errors,
+        load.banded.io_errors,
     );
     eprintln!(
         "throughput_by_class: load wall {:.2}s (Shift-JIS decode + I/O + bucketing — \
@@ -206,6 +207,13 @@ fn main() {
             "  └─ parallel mode (rayon): walkdir + per-file read+decode+bucket fanned across workers; \
              sub-phase timers do not attribute"
         );
+    }
+    if load.banded.io_errors != 0 {
+        eprintln!(
+            "throughput_by_class: refusing a partial-corpus measurement after {} I/O error(s)",
+            load.banded.io_errors
+        );
+        process::exit(2);
     }
 
     let parse_start = Instant::now();
@@ -257,20 +265,26 @@ impl LoadPhase {
 
         // 1. walkdir — enumerate file paths only (no read).
         let walk_start = Instant::now();
-        let paths: Vec<PathBuf> = corpus
-            .walk_paths()
-            .take(limit.unwrap_or(usize::MAX))
-            .filter_map(Result::ok)
-            .collect();
+        let mut paths = Vec::new();
+        let mut io_errors = 0;
+        for path in corpus.walk_paths().take(limit.unwrap_or(usize::MAX)) {
+            match path {
+                Ok(path) => paths.push(path),
+                Err(_) => io_errors += 1,
+            }
+        }
         let walkdir_secs = walk_start.elapsed().as_secs_f64();
         let path_count = paths.len();
 
         // 2. read — pull bytes for every path.
         let read_start = Instant::now();
-        let items: Vec<CorpusItem> = paths
-            .iter()
-            .filter_map(|p| corpus.read_path(p).ok())
-            .collect();
+        let mut items = Vec::with_capacity(paths.len());
+        for path in &paths {
+            match corpus.read_path(path) {
+                Ok(item) => items.push(item),
+                Err(_) => io_errors += 1,
+            }
+        }
         let read_secs = read_start.elapsed().as_secs_f64();
         let sjis_bytes_total: u64 = items.iter().map(|it| it.bytes.len() as u64).sum();
 
@@ -293,6 +307,7 @@ impl LoadPhase {
         let bucket_start = Instant::now();
         let mut banded = corpus_size_bands_from_decoded(decoded);
         banded.decode_errors = decode_errors;
+        banded.io_errors = io_errors;
         let bucket_secs = bucket_start.elapsed().as_secs_f64();
 
         let total_secs = total_start.elapsed().as_secs_f64();
@@ -312,9 +327,9 @@ impl LoadPhase {
         }
     }
 
-    fn run_parallel(corpus: &FilesystemCorpus) -> Self {
+    fn run_parallel(corpus: &FilesystemCorpus, limit: Option<usize>) -> Self {
         let total_start = Instant::now();
-        let banded = parallel_size_bands(corpus);
+        let banded = parallel_size_bands_limited(corpus, limit);
         let total_secs = total_start.elapsed().as_secs_f64();
         Self {
             banded,
@@ -326,19 +341,22 @@ impl LoadPhase {
     /// Load from a packed binary archive. One `fs::read` of
     /// the archive file, then parallel iter (decompress / decode /
     /// bucket) on the physical-core pool.
-    fn run_archive(path: &Path) -> Self {
+    fn run_archive(path: &Path, limit: Option<usize>) -> Self {
         let total_start = Instant::now();
         let archive =
             Archive::open(path).unwrap_or_else(|err| panic!("open {}: {err}", path.display()));
+        let archive_size = fs::metadata(path)
+            .unwrap_or_else(|err| panic!("inspect {}: {err}", path.display()))
+            .len();
         eprintln!(
             "throughput_by_class: archive {} ({} entries, {}{}, {:.1} MB on disk)",
             path.display(),
             archive.len(),
             if archive.is_utf8() { "UTF8 " } else { "SJIS " },
             if archive.is_zstd() { "ZSTD" } else { "RAW" },
-            fs::metadata(path).map_or(0, |m| m.len()) as f64 / 1_048_576.0,
+            archive_size as f64 / 1_048_576.0,
         );
-        let banded = archive_size_bands(&archive);
+        let banded = archive_size_bands_limited(&archive, limit);
         let total_secs = total_start.elapsed().as_secs_f64();
         Self {
             banded,
@@ -439,9 +457,10 @@ fn print_report(
     println!("=== throughput_by_class ===");
     println!();
     println!(
-        "Corpus: {} docs across 4 bands; {} decode errors",
+        "Corpus: {} docs across 4 bands; {} decode errors; {} I/O errors",
         banded.total_docs(),
         banded.decode_errors,
+        banded.io_errors,
     );
     println!(
         "Wall:    load {load_secs:.2}s   parse {parse_secs:.2}s ({repeat} pass{plural})",
@@ -460,7 +479,7 @@ fn print_report(
         let serial_work_secs = (serial_work_ns as f64) / NS_PER_S;
         let single_pass_secs = parse_secs / (repeat as f64);
         let scaling = if single_pass_secs > 0.0 {
-            serial_work_secs / single_pass_secs / (repeat as f64)
+            serial_work_secs / single_pass_secs
         } else {
             0.0
         };

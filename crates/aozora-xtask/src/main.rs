@@ -96,8 +96,7 @@ enum Cmd {
     Trace(TraceArgs),
     /// Local-only dependency-follow-up tooling — install / inspect /
     /// remove the systemd user timer that runs `just deps-check`
-    /// weekly. Replaces the dependabot / GitHub-Actions pattern with
-    /// a host-side pure-Rust mechanism.
+    /// weekly alongside repository update automation.
     Deps(DepsArgs),
     /// Build / inspect aozora-corpus binary archives. Replaces the
     /// directory-of-17-k-small-files load shape with a single packed

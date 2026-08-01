@@ -64,6 +64,7 @@ import {
   window,
   workspace,
 } from "vscode";
+import { documentVersionMatches } from "./extensionLogic";
 
 const LANG_ID = "aozora";
 
@@ -214,9 +215,10 @@ async function maybeSkipOver(
     return false;
   }
   // Delete the just-typed close, then move cursor past the existing one.
+  const version = doc.version;
   const deleteRange = new Range(start, new Position(start.line, nextCol));
   const ok = await editor.edit((eb) => eb.delete(deleteRange));
-  if (!ok) {
+  if (!(ok && documentVersionMatches(version + 1, doc.version))) {
     return false;
   }
   // After deletion, the existing close moved into position `start.character`.
@@ -256,12 +258,18 @@ async function maybeWrap(
   // Replace the just-typed trigger with the snippet body in one
   // undo step. `insertSnippet(SnippetString, Range)` does the splice
   // atomically.
+  const version = doc.version;
   const replaceRange = new Range(start, new Position(start.line, start.character + text.length));
   const ok = await editor.insertSnippet(new SnippetString(rule.body), replaceRange);
   if (!ok) {
     return;
   }
-  if (rule.postExpandSuggest === true) {
+  if (
+    rule.postExpandSuggest === true &&
+    window.activeTextEditor === editor &&
+    editor.document === doc &&
+    documentVersionMatches(version + 1, doc.version)
+  ) {
     await commands.executeCommand("editor.action.triggerSuggest");
   }
 }

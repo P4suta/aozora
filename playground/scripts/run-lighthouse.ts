@@ -1,7 +1,7 @@
 let failed = false;
 for (const config of ['.lighthouserc.cjs', '.lighthouserc.mobile.cjs']) {
   const process = Bun.spawn(
-    ['bun', 'x', 'lhci', 'autorun', '--config', config],
+    ['bun', 'run', 'lhci', 'autorun', '--config', config],
     {
       stdin: 'inherit',
       stdout: 'inherit',

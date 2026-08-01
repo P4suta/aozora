@@ -80,9 +80,8 @@ component on first run. Nothing else is global state.
 ## Dependency follow-up timer (xtask, not a shell script)
 
 Install / inspect / remove a systemd **user** timer that runs `just
-deps-check` weekly. Replaces the dependabot / renovate / GitHub
-Actions pattern with an entirely-local mechanism — there is no
-remote CI involved at any point.
+deps-check` weekly. It complements Dependabot's update PRs with a local full
+dependency-health check, including weeks when no repository change occurs.
 
 The implementation lives in `crates/aozora-xtask/src/deps.rs` and
 is invoked through `just`:

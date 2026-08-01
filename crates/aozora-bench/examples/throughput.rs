@@ -1,17 +1,10 @@
-//! Tier-2 wall-clock validation for the owned lex producer (#237 P0.2-real).
+//! Per-size-band parser throughput probe.
 //!
 //! The Tier-1 `alloc_gate` ratchet is deterministic
 //! and CI-stable but cannot see index-resolution throughput (resolving
 //! `StrId` / ranges leaves no allocation footprint). This example measures the
-//! one thing the proxy can't: the owned producer's wall-clock throughput
-//! versus the borrowed one, on the same machine in the same run (a self-
-//! baselining ratio, immune to cross-machine noise). It is **not** a gate —
-//! run it once at the P0.2-real landing commit and record the band ratios in
-//! the PR description.
-//!
-//! Pass criterion (human-adjudicated at landing): `owned / borrowed >= 0.95`
-//! in the small / medium bands (the large / pathological bands have too few
-//! documents to be reproducible — reported, not judged).
+//! parser's current wall-clock throughput. It is a diagnostic, not a gate;
+//! compare results only under the same machine and build configuration.
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput -p aozora-bench
@@ -53,11 +46,18 @@ fn main() {
 
     // Decode everything up front so the timed loops measure only the parse.
     let mut docs: Vec<String> = Vec::new();
-    for item in corpus.iter().filter_map(Result::ok) {
-        if let Ok(text) = decode_auto(&item.bytes) {
-            docs.push(text.into_owned());
+    let mut io_errors = 0;
+    let mut decode_errors = 0;
+    for item in corpus.iter() {
+        match item {
+            Ok(item) => match decode_auto(&item.bytes) {
+                Ok(text) => docs.push(text.into_owned()),
+                Err(_) => decode_errors += 1,
+            },
+            Err(_) => io_errors += 1,
         }
     }
+    report_load_errors(io_errors, decode_errors);
     if docs.is_empty() {
         println!("throughput: corpus yielded 0 decodable documents.");
         process::exit(0);
@@ -71,15 +71,9 @@ fn main() {
                 .expect("source fits parser span limit")
                 .snapshot(),
         );
-        black_box(
-            aozora::parse(doc.as_str())
-                .expect("source fits parser span limit")
-                .snapshot(),
-        );
     }
 
-    // Measured pass. Per-band accumulators: (bytes, borrowed_ns, owned_ns, count).
-    let mut bands = [(0u64, 0u128, 0u128, 0u64); BANDS.len()];
+    let mut bands = [(0u64, 0u128, 0u64); BANDS.len()];
     for doc in &docs {
         let b = band_of(doc.len() as u64);
 
@@ -89,42 +83,35 @@ fn main() {
                 .expect("source fits parser span limit")
                 .snapshot(),
         );
-        let borrowed_ns = t0.elapsed().as_nanos();
-
-        let t1 = Instant::now();
-        black_box(
-            aozora::parse(doc.as_str())
-                .expect("source fits parser span limit")
-                .snapshot(),
-        );
-        let owned_ns = t1.elapsed().as_nanos();
+        let parse_ns = t0.elapsed().as_nanos();
 
         bands[b].0 += doc.len() as u64;
-        bands[b].1 += borrowed_ns;
-        bands[b].2 += owned_ns;
-        bands[b].3 += 1;
+        bands[b].1 += parse_ns;
+        bands[b].2 += 1;
     }
 
-    println!("=== throughput (owned vs borrowed lex) ===\n");
-    println!(
-        "{:<20} {:>7} {:>12} {:>12} {:>8}",
-        "band", "docs", "borrowed MB/s", "owned MB/s", "ratio"
-    );
+    println!("=== parse throughput ===\n");
+    println!("{:<20} {:>7} {:>12}", "band", "docs", "MB/s");
     for (i, &(name, _, _)) in BANDS.iter().enumerate() {
-        let (bytes, b_ns, o_ns, count) = bands[i];
+        let (bytes, parse_ns, count) = bands[i];
         if count == 0 {
             continue;
         }
-        let b_mbps = mbps(bytes, b_ns);
-        let o_mbps = mbps(bytes, o_ns);
-        let ratio = if b_mbps > 0.0 { o_mbps / b_mbps } else { 0.0 };
-        let flag = if i <= 1 && ratio < 0.95 { " ⚠" } else { "" };
-        println!("{name:<20} {count:>7} {b_mbps:>12.1} {o_mbps:>12.1} {ratio:>7.3}{flag}");
+        let throughput = mbps(bytes, parse_ns);
+        println!("{name:<20} {count:>7} {throughput:>12.1}");
     }
-    println!(
-        "\nGuide: owned/borrowed ≥ 0.95 in the small / medium bands is the landing target.\n\
-         Large / pathological bands have too few docs to be reproducible (reported, not judged)."
-    );
+}
+
+fn report_load_errors(io_errors: usize, decode_errors: usize) {
+    if io_errors != 0 {
+        eprintln!(
+            "throughput: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
+        );
+        process::exit(2);
+    }
+    if decode_errors != 0 {
+        eprintln!("throughput: skipped {decode_errors} undecodable document(s)");
+    }
 }
 
 fn mbps(bytes: u64, nanos: u128) -> f64 {

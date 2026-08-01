@@ -74,6 +74,20 @@ describe('buildOffsetTables', () => {
     expect(u2b[3]).toBe(7); // sentinel
   });
 
+  it('encodes unpaired surrogates as the replacement character', () => {
+    const cases = [
+      ['\ud800', [0, 3]],
+      ['\udc00', [0, 3]],
+      ['\ud800a', [0, 3, 4]],
+      ['a\udc00', [0, 1, 4]],
+    ] as const;
+    for (const [src, offsets] of cases) {
+      const { u2b, byteLen } = buildOffsetTables(src);
+      expect(byteLen).toBe(utf8ByteLen(src));
+      expect(u2b).toEqual(new Uint32Array(offsets));
+    }
+  });
+
   it('keeps u2b monotonically non-decreasing', () => {
     const src = 'a青b梅c📚d';
     const { u2b } = buildOffsetTables(src);

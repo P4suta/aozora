@@ -96,16 +96,17 @@ pub(crate) enum SerializablePairKind {
     Quote,
 }
 
-impl From<PairKind> for SerializablePairKind {
-    fn from(k: PairKind) -> Self {
-        // `PairKind` is `#[non_exhaustive]`; merging `Bracket` with the
-        // wildcard keeps the fallback explicit without a duplicate-body arm.
+impl TryFrom<PairKind> for SerializablePairKind {
+    type Error = ();
+
+    fn try_from(k: PairKind) -> Result<Self, Self::Error> {
         match k {
-            PairKind::Ruby => Self::Ruby,
-            PairKind::AngleQuote => Self::AngleQuote,
-            PairKind::Tortoise => Self::Tortoise,
-            PairKind::Quote => Self::Quote,
-            PairKind::Bracket | _ => Self::Bracket,
+            PairKind::Bracket => Ok(Self::Bracket),
+            PairKind::Ruby => Ok(Self::Ruby),
+            PairKind::AngleQuote => Ok(Self::AngleQuote),
+            PairKind::Tortoise => Ok(Self::Tortoise),
+            PairKind::Quote => Ok(Self::Quote),
+            _ => Err(()),
         }
     }
 }
@@ -182,14 +183,14 @@ fn quick_fix_payload(d: &AozoraDiagnostic) -> Option<DiagnosticPayload> {
             })
         }
         AozoraDiagnostic::UnclosedBracket { kind, .. } => {
-            let pair_kind = SerializablePairKind::from(*kind);
+            let pair_kind = SerializablePairKind::try_from(*kind).ok()?;
             Some(DiagnosticPayload::UnclosedBracket {
                 pair_kind,
                 expected_close: pair_kind.close_str().to_owned(),
             })
         }
         AozoraDiagnostic::UnmatchedClose { kind, .. } => Some(DiagnosticPayload::UnmatchedClose {
-            pair_kind: SerializablePairKind::from(*kind),
+            pair_kind: SerializablePairKind::try_from(*kind).ok()?,
         }),
         AozoraDiagnostic::NonCanonicalDirective { canonical, .. } => {
             Some(DiagnosticPayload::NonCanonicalDirective {
@@ -203,6 +204,13 @@ fn quick_fix_payload(d: &AozoraDiagnostic) -> Option<DiagnosticPayload> {
         // Every other variant (including the other three internal checks) has
         // no automatic fix; `#[non_exhaustive]` requires the wildcard.
         _ => None,
+    }
+}
+
+fn serialize_payload(payload: DiagnosticPayload) -> serde_json::Value {
+    match serde_json::to_value(payload) {
+        Ok(value) => value,
+        Err(error) => unreachable!("LSP diagnostic payload serialization failed: {error}"),
     }
 }
 
@@ -236,8 +244,7 @@ fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic, lang: &LanguageIdentifie
         source: Some("aozora-lsp".to_owned()),
         message,
         tags: d.is_unnecessary().then(|| vec![DiagnosticTag::UNNECESSARY]),
-        data: quick_fix_payload(d)
-            .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null)),
+        data: quick_fix_payload(d).map(serialize_payload),
         ..Default::default()
     }
 }
@@ -395,6 +402,16 @@ mod tests {
         for (kind, open, close) in cases {
             assert_eq!(kind.open_str(), open, "open_str for {kind:?}");
             assert_eq!(kind.close_str(), close, "close_str for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn serializable_pair_kind_covers_every_core_pair_kind() {
+        for &kind in PairKind::ALL {
+            let serializable = SerializablePairKind::try_from(kind)
+                .expect("every core pair kind has an LSP payload tag");
+            assert_eq!(serializable.open_str(), kind.open_str());
+            assert_eq!(serializable.close_str(), kind.close_str());
         }
     }
 
