@@ -10,7 +10,7 @@ export function registerCanonicalizeAtCursorCommand(
   context.subscriptions.push(
     commands.registerCommand("aozora.canonicalizeSlugAtCursor", async () => {
       const editor = window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "aozora") {
+      if (editor?.document.languageId !== "aozora") {
         void window.showInformationMessage(
           "Aozora ファイル上にカーソルを置いてから実行してください。",
         );
