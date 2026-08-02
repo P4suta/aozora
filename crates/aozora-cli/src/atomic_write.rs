@@ -11,15 +11,8 @@ fn replace_with(
     write: impl FnOnce(&mut fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
     let destination = destination(path)?;
-    let parent = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let permissions = match fs::metadata(&destination) {
-        Ok(metadata) => Some(metadata.permissions()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-        Err(err) => return Err(err),
-    };
+    let parent = destination_parent(&destination);
+    let permissions = existing_permissions(&destination)?;
     let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
     {
@@ -34,6 +27,21 @@ fn replace_with(
     temporary.as_file_mut().sync_all()?;
     temporary.persist(&destination).map_err(|err| err.error)?;
     Ok(())
+}
+
+fn destination_parent(destination: &Path) -> &Path {
+    destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn existing_permissions(destination: &Path) -> io::Result<Option<fs::Permissions>> {
+    Ok(match fs::metadata(destination) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err),
+    })
 }
 
 fn destination(path: &Path) -> io::Result<PathBuf> {
@@ -173,5 +181,34 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read(&target).expect("read target"), b"replacement");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_propagates_non_missing_metadata_errors() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let path = Path::new(OsStr::from_bytes(b"invalid\0path"));
+        let error = destination(path).expect_err("an invalid path is not a missing file");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn bare_destination_uses_the_current_directory() {
+        assert_eq!(destination_parent(Path::new("source.txt")), Path::new("."));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_probe_propagates_non_missing_metadata_errors() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let path = Path::new(OsStr::from_bytes(b"invalid\0path"));
+        let error = existing_permissions(path).expect_err("invalid metadata path");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 }

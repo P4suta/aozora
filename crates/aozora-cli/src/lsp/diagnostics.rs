@@ -460,6 +460,23 @@ mod tests {
     }
 
     #[test]
+    fn serialized_quick_fix_payload_pins_the_lsp_wire_shape() {
+        let value = serialize_payload(DiagnosticPayload::UnclosedBracket {
+            pair_kind: SerializablePairKind::Bracket,
+            expected_close: "］".to_owned(),
+        });
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "unclosed-bracket",
+                "pair_kind": "bracket",
+                "expected_close": "］",
+            }),
+        );
+    }
+
+    #[test]
     fn to_lsp_range_reflects_diagnostic_span_not_default() {
         // `𠮷` is astral (4 bytes, 2 UTF-16 units); `文` is BMP (3 bytes,
         // 1 unit). The stray close `］` occupies bytes 7..10, i.e. UTF-16

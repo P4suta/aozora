@@ -66,27 +66,11 @@ pub(super) fn semantic_tokens_full(snapshot: &Snapshot) -> SemanticTokens {
             let Some(reading) = ruby.reading() else {
                 continue;
             };
-            let Some(base_start) = full.find(base) else {
-                continue;
-            };
-            let after_base = base_start + base.len();
-            let Some(reading_start) = full[after_base..]
-                .find(reading)
-                .map(|offset| after_base + offset)
+            let Some((base_span, reading_span)) =
+                fallback_ruby_spans(ruby.span().start, full, base, reading)
             else {
                 continue;
             };
-            let ruby_start = ruby.span().start;
-            let base_span = Span::new(
-                ruby_start.saturating_add(u32::try_from(base_start).unwrap_or(u32::MAX)),
-                ruby_start.saturating_add(u32::try_from(after_base).unwrap_or(u32::MAX)),
-            );
-            let reading_span = Span::new(
-                ruby_start.saturating_add(u32::try_from(reading_start).unwrap_or(u32::MAX)),
-                ruby_start.saturating_add(
-                    u32::try_from(reading_start + reading.len()).unwrap_or(u32::MAX),
-                ),
-            );
             sink.push_fragments(base_span, TT_RUBY_BASE);
             sink.push_fragments(reading_span, TT_RUBY_READING);
         }
@@ -96,6 +80,32 @@ pub(super) fn semantic_tokens_full(snapshot: &Snapshot) -> SemanticTokens {
         result_id: None,
         data: encode_delta(&tokens),
     }
+}
+
+fn fallback_ruby_spans(
+    ruby_start: u32,
+    full: &str,
+    base: &str,
+    reading: &str,
+) -> Option<(Span, Span)> {
+    let base_start = full.find(base)?;
+    let after_base = base_start.checked_add(base.len())?;
+    let reading_start = full
+        .get(after_base..)?
+        .find(reading)?
+        .checked_add(after_base)?;
+    let reading_end = reading_start.checked_add(reading.len())?;
+    Some((
+        relative_span(ruby_start, base_start, after_base),
+        relative_span(ruby_start, reading_start, reading_end),
+    ))
+}
+
+fn relative_span(origin: u32, start: usize, end: usize) -> Span {
+    Span::new(
+        origin.saturating_add(u32::try_from(start).unwrap_or(u32::MAX)),
+        origin.saturating_add(u32::try_from(end).unwrap_or(u32::MAX)),
+    )
 }
 
 struct PairIndex {
@@ -142,25 +152,26 @@ impl PairIndex {
             ));
         }
         let outer = pair_ending_at(&self.bracket, span.end)?;
-        if outer.open.start < span.start {
-            return None;
-        }
-        let quote_start = self
-            .quote
-            .partition_point(|pair| pair.open.start < outer.open.end);
-        let reading = self.quote[quote_start..]
-            .iter()
-            .take_while(|pair| pair.open.start < outer.close.start)
-            .find(|pair| {
-                pair.close.end <= outer.close.start
-                    && source.get(pair.close.end as usize..outer.close.start as usize)
-                        == Some("のルビ")
-            })?;
-        Some((
-            Span::new(span.start, outer.open.start),
-            Span::new(reading.open.end, reading.close.start),
-        ))
+        let base_span = left_ruby_base_span(span.start, outer.open.start)?;
+        let quote_start = pair_start_index(&self.quote, outer.open.end);
+        let quote_end = pair_start_index(&self.quote, outer.close.start);
+        let reading = self.quote[quote_start..quote_end].iter().find(|pair| {
+            pair.close.end <= outer.close.start
+                && source.get(pair.close.end as usize..outer.close.start as usize) == Some("のルビ")
+        })?;
+        Some((base_span, Span::new(reading.open.end, reading.close.start)))
     }
+}
+
+// mutants::skip — `classify_forward_left_ruby` only emits a ruby after finding
+// a non-empty predecessor target, so equality is unreachable from a Snapshot.
+#[cfg_attr(test, mutants::skip)]
+fn left_ruby_base_span(start: u32, end: u32) -> Option<Span> {
+    (start < end).then(|| Span::new(start, end))
+}
+
+fn pair_start_index(pairs: &[PairLink], start: u32) -> usize {
+    pairs.partition_point(|pair| pair.open.start < start)
 }
 
 fn pair_ending_at(pairs: &[PairLink], end: u32) -> Option<PairLink> {
@@ -200,14 +211,10 @@ impl TokenSink<'_> {
                 continue;
             }
             let exclusion_start = exclusion.start.max(span.start);
-            if cursor < exclusion_start {
-                self.push_lines(Span::new(cursor, exclusion_start), token_type);
-            }
+            self.push_lines(Span::new(cursor, cursor.max(exclusion_start)), token_type);
             cursor = cursor.max(exclusion.end.min(span.end));
         }
-        if cursor < span.end {
-            self.push_lines(Span::new(cursor, span.end), token_type);
-        }
+        self.push_lines(Span::new(cursor, span.end), token_type);
     }
 
     fn push_lines(&mut self, span: Span, token_type: u32) {
@@ -291,6 +298,10 @@ fn encode_delta(raw: &[RawToken]) -> Vec<SemanticToken> {
 mod tests {
     use super::*;
 
+    fn link(kind: PairKind, open: (u32, u32), close: (u32, u32)) -> PairLink {
+        PairLink::new(kind, Span::new(open.0, open.1), Span::new(close.0, close.1))
+    }
+
     fn tokens_for(src: &str) -> Vec<SemanticToken> {
         let document = aozora::parse(src).expect("test source fits parser limits");
         semantic_tokens_full(&document.snapshot()).data
@@ -337,6 +348,107 @@ mod tests {
     fn plain_text_yields_no_tokens() {
         let tokens = tokens_for("ただの文章\n二行目\n");
         assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn fallback_ruby_spans_preserve_nonzero_relative_offsets() {
+        assert_eq!(
+            fallback_ruby_spans(10, "xxbase:reading", "base", "reading"),
+            Some((Span::new(12, 16), Span::new(17, 24)))
+        );
+    }
+
+    #[test]
+    fn direct_ruby_pair_preserves_the_full_base_extent() {
+        let source = "base<reading>";
+        let index = PairIndex::new(&[link(PairKind::Ruby, (4, 5), (12, 13))]);
+        assert_eq!(
+            index.ruby_spans(Span::new(0, 13), source),
+            Some((Span::new(0, 4), Span::new(5, 12)))
+        );
+    }
+
+    #[test]
+    fn left_ruby_rejects_a_target_starting_inside_its_annotation() {
+        let source = "base[\"read\"のルビ]";
+        let bracket_close = u32::try_from(source.find(']').expect("closing bracket")).unwrap();
+        let quote_close = u32::try_from(source.rfind('"').expect("closing quote")).unwrap();
+        let bracket = link(
+            PairKind::Bracket,
+            (4, 5),
+            (bracket_close, bracket_close + 1),
+        );
+        let quote = link(PairKind::Quote, (5, 6), (quote_close, quote_close + 1));
+        let index = PairIndex::new(&[bracket, quote]);
+        assert_eq!(
+            index.ruby_spans(Span::new(5, bracket_close + 1), source),
+            None
+        );
+    }
+
+    #[test]
+    fn pair_start_index_excludes_a_pair_on_the_boundary() {
+        let pairs = [
+            link(PairKind::Quote, (1, 2), (2, 3)),
+            link(PairKind::Quote, (4, 5), (5, 6)),
+        ];
+        assert_eq!(pair_start_index(&pairs, 4), 1);
+    }
+
+    #[test]
+    fn fragment_exclusion_at_the_span_start_is_not_emitted() {
+        let source = "abcd";
+        let line_index = LineIndex::new(source);
+        let mut tokens = Vec::new();
+        TokenSink {
+            tokens: &mut tokens,
+            source,
+            line_index: &line_index,
+            exclusions: &[Span::new(0, 2)],
+        }
+        .push_fragments(Span::new(0, 4), TT_RUBY_BASE);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].start_byte, 2);
+        assert_eq!(tokens[0].length, 2);
+    }
+
+    #[test]
+    fn line_splitting_does_not_emit_empty_boundary_tokens() {
+        let source = "\nA\n";
+        let line_index = LineIndex::new(source);
+        let mut tokens = Vec::new();
+        TokenSink {
+            tokens: &mut tokens,
+            source,
+            line_index: &line_index,
+            exclusions: &[],
+        }
+        .push_lines(Span::new(0, 3), TT_RUBY_READING);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].start_byte, 1);
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].length, 1);
+    }
+
+    #[test]
+    fn overlapping_exclusions_leave_only_outer_fragments() {
+        let source = "abcde";
+        let line_index = LineIndex::new(source);
+        let mut tokens = Vec::new();
+        TokenSink {
+            tokens: &mut tokens,
+            source,
+            line_index: &line_index,
+            exclusions: &[Span::new(1, 3), Span::new(2, 4)],
+        }
+        .push_fragments(Span::new(0, 5), TT_RUBY_BASE);
+        assert_eq!(
+            tokens
+                .iter()
+                .map(|token| (token.start_byte, token.length))
+                .collect::<Vec<_>>(),
+            vec![(0, 1), (4, 1)]
+        );
     }
 
     #[test]

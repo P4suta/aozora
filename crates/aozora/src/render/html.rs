@@ -238,6 +238,7 @@ impl<W: fmt::Write, const INLINE: bool> NewlineSink for HtmlSink<'_, W, INLINE> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syntax::alloc::Allocator;
 
     #[test]
     fn normalized_render_emits_actual_paragraph_html() {
@@ -261,17 +262,34 @@ mod tests {
         assert!(!canonical.contains("aozora-directive"));
     }
 
-    /// A non-warichu inline directive (`［＃入力者注(5)］`) must fall through to the
-    /// per-node emitter: the `WarichuClose` match guard is a genuine equality
-    /// test, not an unconditional `true`. Were the guard always true, this
-    /// editor note would be routed to `close_warichu` (a no-op with no open
-    /// warichu) and its visible `注5` superscript would vanish.
     #[test]
-    fn non_warichu_inline_directive_renders_via_emitter_not_close_warichu() {
-        let out = lex("本文［＃入力者注(5)］続き");
+    fn non_warichu_directive_reaches_the_emitter_in_both_modes() {
+        fn render_editor_note<const INLINE: bool>() -> String {
+            let mut allocator = Allocator::new();
+            let directive =
+                allocator.make_directive("［＃入力者注(5)］", DirectiveKind::EditorNote);
+            let node = allocator.annotation(directive);
+            let store = allocator.into_store();
+            let mut output = String::new();
+            let mut sink = HtmlSink::<_, INLINE> {
+                store: &store,
+                out: &mut output,
+                state: RenderState::default(),
+                nested_depth: 0,
+            };
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(node))
+                .expect("render into String is infallible");
+            sink.finish().expect("render into String is infallible");
+            output
+        }
+
         assert_eq!(
-            render_html(&out),
-            "<p>本文<sup class=\"aozora-editor-note\">注5</sup>続き</p>\n",
+            render_editor_note::<false>(),
+            "<p><sup class=\"aozora-editor-note\">注5</sup></p>\n",
+        );
+        assert_eq!(
+            render_editor_note::<true>(),
+            "<sup class=\"aozora-editor-note\">注5</sup>",
         );
     }
 

@@ -75,6 +75,15 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Err(self.0.into())
         }
+
+        fn write_vectored(&mut self, _bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+            Err(self.0.into())
+        }
+    }
+
+    #[test]
+    fn stdout_broken_pipe_has_a_stable_message() {
+        assert_eq!(StdoutBrokenPipe.to_string(), "stdout was closed");
     }
 
     #[test]
@@ -99,5 +108,25 @@ mod tests {
         let mut out = guard(FailingWriter(io::ErrorKind::PermissionDenied));
         let err = anyhow::Error::new(out.write_all(b"x").unwrap_err());
         assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn flush_broken_pipe_is_marked_as_stdout_closure() {
+        let mut out = guard(FailingWriter(io::ErrorKind::BrokenPipe));
+        let err = anyhow::Error::new(out.flush().expect_err("flush reaches the writer"));
+
+        assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn vectored_broken_pipe_is_marked_as_stdout_closure() {
+        let mut out = guard(FailingWriter(io::ErrorKind::BrokenPipe));
+        let bufs = [io::IoSlice::new(b"first"), io::IoSlice::new(b"second")];
+        let err = anyhow::Error::new(
+            out.write_vectored(&bufs)
+                .expect_err("vectored write reaches the writer"),
+        );
+
+        assert!(is_broken_pipe(&err));
     }
 }

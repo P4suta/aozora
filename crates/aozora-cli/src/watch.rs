@@ -197,6 +197,18 @@ mod tests {
     }
 
     #[test]
+    fn receive_event_returns_the_backend_event() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send event");
+
+        let event = receive_event(&rx).expect("receive event");
+
+        assert_eq!(event.kind, EventKind::Any);
+        assert_eq!(event.paths, [PathBuf::from("file.txt")]);
+    }
+
+    #[test]
     fn wait_for_change_propagates_backend_errors() {
         let (tx, rx) = mpsc::channel();
         tx.send(Err(notify::Error::generic("backend stopped")))
@@ -235,6 +247,21 @@ mod tests {
         let err = wait_for_change(&rx, Path::new("file.txt"), Duration::ZERO)
             .expect_err("debounce error must stop watch");
         assert!(err.to_string().contains("file watcher backend failed"));
+    }
+
+    #[test]
+    fn unrelated_event_inside_debounce_does_not_finish_the_batch() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send matching event");
+        tx.send(Ok(Event::new(EventKind::Any).add_path("other.txt".into())))
+            .expect("send unrelated event");
+        drop(tx);
+
+        let err = wait_for_change(&rx, Path::new("file.txt"), Duration::from_secs(1))
+            .expect_err("an unrelated event must not hide a disconnected watcher");
+
+        assert!(err.to_string().contains("disconnected"));
     }
 
     #[test]

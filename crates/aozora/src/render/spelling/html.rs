@@ -234,11 +234,19 @@ impl RenderState {
     /// an inline `［＃割り注］` with no matching inline close (#415, Case 2). The
     /// span renders as extending to the paragraph boundary.
     pub(crate) fn drain_open_warichu<W: Write>(&mut self, out: &mut W) -> fmt::Result {
-        while let Some(index) = self
+        let open_count = self
             .inline_stack
             .iter()
-            .rposition(|scope| matches!(scope, InlineScope::Warichu))
-        {
+            .filter(|scope| matches!(scope, InlineScope::Warichu))
+            .count();
+        for _ in 0..open_count {
+            let Some(index) = self
+                .inline_stack
+                .iter()
+                .rposition(|scope| matches!(scope, InlineScope::Warichu))
+            else {
+                break;
+            };
             self.close_inline_scope_at(index, out)?;
         }
         Ok(())
@@ -712,7 +720,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-        RenderState, escape_text, heading_tag, html_entity, parse_sashie_dimensions,
+        InlineScope, RenderState, escape_text, heading_tag, html_entity, parse_sashie_dimensions,
         render_container_close, render_container_open, render_line,
     };
     use crate::pipeline::lex;
@@ -758,6 +766,27 @@ mod tests {
             .ensure_in_paragraph(&mut out)
             .expect("render into String is infallible");
         assert_eq!(out, "\n<p>");
+    }
+
+    #[test]
+    fn closing_a_crossed_inline_scope_removes_only_its_target() {
+        let mut state = RenderState::default();
+        let mut out = String::new();
+        let bold = RegionFormat::Bold { padded: false };
+        state
+            .open_container(bold, &mut out)
+            .expect("render into String is infallible");
+        state
+            .open_warichu(&mut out)
+            .expect("render into String is infallible");
+        out.clear();
+
+        state
+            .close_inline_scope_at(0, &mut out)
+            .expect("render into String is infallible");
+
+        assert_eq!(out, "</span></b><span class=\"aozora-warichu\">");
+        assert_eq!(state.inline_stack, vec![InlineScope::Warichu]);
     }
 
     /// A well-formed inline warichu pair emits the same balanced span it always

@@ -1434,6 +1434,25 @@ mod tests {
     }
 
     #[test]
+    fn pandoc_child_stdin_broken_pipe_is_an_operational_error() {
+        let result = finish_pandoc_pipes(Err(io::ErrorKind::BrokenPipe.into()), Ok(0))
+            .expect("pandoc closing stdin is a classified operational failure");
+
+        assert_eq!(result, Some(ExitCode::from(2)));
+    }
+
+    #[test]
+    fn pandoc_child_stdin_non_pipe_error_is_propagated() {
+        let error = finish_pandoc_pipes(Err(io::ErrorKind::PermissionDenied.into()), Ok(0))
+            .expect_err("non-pipe stdin errors must retain their cause");
+        let io_error = error
+            .downcast_ref::<io::Error>()
+            .expect("stdin error remains in the anyhow chain");
+
+        assert_eq!(io_error.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
     fn pandoc_output_and_diagnostic_formats_are_independent() {
         let args = PandocArgs::try_parse_from([
             "pandoc",

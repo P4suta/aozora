@@ -2382,6 +2382,15 @@ mod tests {
     }
 
     #[test]
+    fn incremental_sanitize_keeps_a_new_crlf_whole() {
+        let sanitized = incremental_sanitize("\r\rX", &TextEdit::new(2..3, "\n"))
+            .expect("the CR before the replacement remains in the incremental region");
+        assert_eq!(sanitized.text.as_ref(), "\n\n");
+        assert_eq!(sanitized.edit_range, 1..3);
+        assert!(!sanitized.source_unchanged);
+    }
+
+    #[test]
     fn incremental_edit_inside_accent_span_across_blank_line_matches_full_parse() {
         // A `〔…〕` accent-decomposition span crossing blank lines: an edit
         // in its interior yields a fragment with no `〔`/`〕`, so a

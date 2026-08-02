@@ -529,14 +529,14 @@ fn run_app(mut app: App) -> Result<ExitCode> {
     session.finish(outcome)
 }
 
-struct TerminalSession {
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
+struct TerminalSession<W: io::Write> {
+    terminal: Terminal<CrosstermBackend<W>>,
     raw_mode: bool,
     alternate_screen: bool,
     cursor: bool,
 }
 
-impl TerminalSession {
+impl TerminalSession<io::Stdout> {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode().context("failed to enable raw mode")?;
         let mut stdout = io::stdout();
@@ -563,7 +563,9 @@ impl TerminalSession {
             cursor: true,
         })
     }
+}
 
+impl<W: io::Write> TerminalSession<W> {
     fn finish(mut self, outcome: Result<ExitCode>) -> Result<ExitCode> {
         let cleanup = self.restore();
         match (outcome, cleanup) {
@@ -609,7 +611,7 @@ impl TerminalSession {
     }
 }
 
-impl Drop for TerminalSession {
+impl<W: io::Write> Drop for TerminalSession<W> {
     fn drop(&mut self) {
         let _drop = self.restore();
     }
@@ -671,10 +673,14 @@ fn event_loop(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::fs;
+    use std::rc::Rc;
 
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Rect;
+    use ratatui::{TerminalOptions, Viewport};
 
     use super::*;
 
@@ -837,6 +843,85 @@ mod tests {
             !all_terminals([false, false]),
             "both piped → not interactive"
         );
+    }
+
+    #[test]
+    fn terminal_finish_preserves_the_application_exit_code() {
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 1, 1)),
+            },
+        )
+        .expect("a fixed viewport does not inspect the host terminal");
+        let session = TerminalSession {
+            terminal,
+            raw_mode: false,
+            alternate_screen: false,
+            cursor: false,
+        };
+
+        assert_eq!(
+            session
+                .finish(Ok(ExitCode::from(7)))
+                .expect("disabled cleanup is infallible"),
+            ExitCode::from(7)
+        );
+    }
+
+    #[test]
+    fn terminal_drop_restores_an_enabled_cursor() {
+        #[derive(Clone, Default)]
+        struct SharedWriter(Rc<RefCell<Vec<u8>>>);
+
+        impl io::Write for SharedWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.borrow_mut().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = SharedWriter::default();
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(writer.clone()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 1, 1)),
+            },
+        )
+        .expect("a fixed viewport does not inspect the host terminal");
+        let session = TerminalSession {
+            terminal,
+            raw_mode: false,
+            alternate_screen: false,
+            cursor: true,
+        };
+
+        drop(session);
+
+        assert!(!writer.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn cleanup_combiner_preserves_single_and_multiple_failures() {
+        let first = combine_cleanup(Err(anyhow::anyhow!("first")), Ok(()))
+            .expect_err("the first cleanup failure is retained");
+        assert_eq!(first.to_string(), "first");
+
+        let second = combine_cleanup(Ok(()), Err(anyhow::anyhow!("second")))
+            .expect_err("the second cleanup failure is retained");
+        assert_eq!(second.to_string(), "second");
+
+        let both = combine_cleanup(
+            Err(anyhow::anyhow!("first")),
+            Err(anyhow::anyhow!("second")),
+        )
+        .expect_err("both cleanup failures are retained");
+        assert!(both.to_string().contains("first"));
+        assert!(both.to_string().contains("second"));
     }
 
     // --- App transitions ---

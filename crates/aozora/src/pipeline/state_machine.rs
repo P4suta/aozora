@@ -588,13 +588,7 @@ fn merge_structured_forward_target(
         idx: format_idx,
         format,
     } = candidate;
-    if !matches!(
-        format.origin,
-        ForwardOrigin::SelfContained | ForwardOrigin::Referenced
-    ) || !matches!(
-        format.payload,
-        ForwardPayload::None | ForwardPayload::NestedSource
-    ) {
+    if !structured_forward_can_merge(format.origin, format.payload) {
         return None;
     }
     let [Content::Plain(quoted_target)] = alloc.store().resolve_content_range(format.target) else {
@@ -607,7 +601,7 @@ fn merge_structured_forward_target(
         match spans[..format_idx].last()?.kind {
             SpanKind::Plain => {
                 let text = spans[format_idx - 1].source_span.slice(source);
-                if !target.ends_with(text) && !text.ends_with(target) {
+                if !plain_edge_matches_target(text, target) {
                     return None;
                 }
             }
@@ -629,6 +623,17 @@ fn merge_structured_forward_target(
     spans[format_idx].kind = SpanKind::Aozora(Node::Format(merged));
     spans[format_idx].source_span.start = source_start;
     Some(directive_span)
+}
+
+fn structured_forward_can_merge(origin: ForwardOrigin, payload: ForwardPayload) -> bool {
+    matches!(
+        origin,
+        ForwardOrigin::SelfContained | ForwardOrigin::Referenced
+    ) && matches!(payload, ForwardPayload::None | ForwardPayload::NestedSource)
+}
+
+fn plain_edge_matches_target(text: &str, target: &str) -> bool {
+    target.ends_with(text) || text.ends_with(target)
 }
 
 fn structured_forward_prefix(
@@ -1484,6 +1489,94 @@ mod tests {
             ),
             before
         );
+    }
+
+    #[test]
+    fn structured_forward_merge_requires_supported_origin_and_payload() {
+        let mut alloc = Allocator::new();
+        let Content::Plain(quoted) = alloc.content_plain("quoted") else {
+            panic!("plain content")
+        };
+
+        assert!(structured_forward_can_merge(
+            ForwardOrigin::SelfContained,
+            ForwardPayload::None
+        ));
+        assert!(structured_forward_can_merge(
+            ForwardOrigin::Referenced,
+            ForwardPayload::NestedSource
+        ));
+        assert!(!structured_forward_can_merge(
+            ForwardOrigin::Reclaimed,
+            ForwardPayload::None
+        ));
+        assert!(!structured_forward_can_merge(
+            ForwardOrigin::SelfContained,
+            ForwardPayload::QuotedTarget(quoted)
+        ));
+    }
+
+    #[test]
+    fn structured_forward_plain_edge_accepts_only_prefix_related_targets() {
+        assert!(plain_edge_matches_target("末", "前末"));
+        assert!(plain_edge_matches_target("前末", "末"));
+        assert!(!plain_edge_matches_target("前", "末"));
+    }
+
+    #[test]
+    fn trailing_class_start_keeps_an_unrelated_prefix() {
+        assert_eq!(
+            trailing_class_start("前ABC", RubyBaseClass::Latin),
+            "前".len()
+        );
+    }
+
+    #[test]
+    fn structured_gaiji_suffix_keeps_the_preceding_text() {
+        let mut alloc = Allocator::new();
+        let gaiji = alloc.make_gaiji("特のへん＋廴＋聿", Some("第3水準1-87-71"), false);
+
+        assert_eq!(
+            strip_structured_gaiji_suffix("前犍", gaiji, alloc.store()),
+            Some("前")
+        );
+    }
+
+    #[test]
+    fn explicit_ruby_marker_does_not_add_an_empty_text_segment() {
+        let source = "｜※［＃「特のへん＋廴＋聿」、第3水準1-87-71］《r》";
+        let marker_end = u32::try_from('｜'.len_utf8()).expect("fixture fits u32");
+        let ruby_start = u32::try_from(source.find('《').expect("ruby reading")).unwrap();
+        let mut alloc = Allocator::new();
+        let gaiji = alloc.make_gaiji("特のへん＋廴＋聿", Some("第3水準1-87-71"), false);
+        let base = alloc.content_segments(&[alloc.seg_gaiji(gaiji)]);
+        let reading = alloc.content_plain("r");
+        let ruby = alloc.ruby(base, reading);
+        let spans = [
+            ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(0, marker_end),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(Node::Gaiji(gaiji)),
+                source_span: Span::new(marker_end, ruby_start),
+            },
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(ruby),
+                source_span: Span::new(
+                    ruby_start,
+                    u32::try_from(source.len()).expect("fixture fits u32"),
+                ),
+            },
+        ];
+
+        let (_, plan) = explicit_ruby_prefix(&spans, 2, source, alloc.store())
+            .expect("structured base is reclaimed to the explicit marker");
+
+        assert!(matches!(
+            plan.as_slice(),
+            [PlannedSegment::Ready(Segment::Gaiji(_))]
+        ));
     }
 
     #[test]

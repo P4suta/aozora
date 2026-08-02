@@ -2141,20 +2141,11 @@ impl RecogniseCtx<'_, '_> {
         );
         let byte_start = u32::try_from(text_start).expect("source length fits u32");
         let byte_end = u32::try_from(text_end).expect("source length fits u32");
-        let event_start = view
-            .events
-            .iter()
-            .position(|event| event.span().is_some_and(|span| span.end > byte_start))
-            .unwrap_or(view.events.len());
-        let event_end = view
-            .events
-            .iter()
-            .rposition(|event| event.span().is_some_and(|span| span.start < byte_end))
-            .map_or(event_start, |idx| idx.saturating_add(1));
+        let event_window = source_slice_event_window(view.events, byte_start..byte_end);
         self.build_content_from_body(
             view,
             &BodyWindow {
-                events: event_start..event_end,
+                events: event_window,
                 bytes: byte_start..byte_end,
             },
         )
@@ -2381,6 +2372,18 @@ impl RecogniseCtx<'_, '_> {
     }
 }
 
+fn source_slice_event_window(events: &[PairEvent], bytes: Range<u32>) -> Range<usize> {
+    let start = events
+        .iter()
+        .position(|event| event.span().is_some_and(|span| span.end > bytes.start))
+        .unwrap_or(events.len());
+    let end = events
+        .iter()
+        .rposition(|event| event.span().is_some_and(|span| span.start < bytes.end))
+        .map_or(start, |idx| idx.saturating_add(1));
+    start..end
+}
+
 /// Append `source[start..end]` to `segments` as a `Segment::Text` if
 /// the slice is non-empty. `start == end` occurs naturally when a
 /// recognised construct sits at the very start of the body or
@@ -2562,6 +2565,23 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[0].source_span, Span::new(0, 5));
+    }
+
+    #[test]
+    fn source_slice_event_window_excludes_adjacent_events() {
+        let events = [
+            PairEvent::Text {
+                range: Span::new(0, 3),
+            },
+            PairEvent::Text {
+                range: Span::new(3, 6),
+            },
+            PairEvent::Text {
+                range: Span::new(6, 9),
+            },
+        ];
+
+        assert_eq!(source_slice_event_window(&events, 3..6), 1..2);
     }
 
     #[test]

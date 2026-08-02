@@ -953,6 +953,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn accent_composes_a_single_letter_target() {
+        let mut a = Allocator::new();
+        let target = a.content_plain("e");
+        let node = a.forward_format(
+            ForwardAttr::Accent(AccentMark::Acute),
+            target,
+            ForwardOrigin::SelfContained,
+        );
+        let store = a.into_store();
+
+        assert_eq!(
+            html(node, &store),
+            r#"<span class="aozora-accent">é</span>"#
+        );
+    }
+
     /// An Aozora heading wraps its text in the shared `<hN>` open/close writers
     /// — real markup, not the empty `Ok(())` of a stubbed body.
     #[test]

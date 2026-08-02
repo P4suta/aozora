@@ -465,6 +465,9 @@ fn emit_nested_node<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fmt
     }
 }
 
+// mutants::skip — `node_is_content_segment` rejects `Node::Ruby`, so this
+// defensive emitter cannot be reached from an allocator-built content tree.
+#[cfg_attr(test, mutants::skip)]
 fn emit_nested_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut W) -> fmt::Result {
     if matches!(r.side, RubySide::Left) {
         emit_content_range(r.base, store, out)?;
@@ -1023,6 +1026,42 @@ mod tests {
     }
 
     #[test]
+    fn referenced_format_is_a_boundary_for_the_following_ruby() {
+        let mut allocator = Allocator::new();
+        let target = allocator.content_plain("漢");
+        let referenced =
+            allocator.forward_format(ForwardAttr::Bold, target, ForwardOrigin::Referenced);
+        let base = allocator.content_plain("字");
+        let reading = allocator.content_plain("じ");
+        let ruby = allocator.ruby(base, reading);
+        let store = allocator.into_store();
+
+        let mut source = String::new();
+        {
+            let mut writer = TrackingWriter::new(&mut source);
+            let mut sink = SerializeSink {
+                store: &store,
+                out: &mut writer,
+                directives: DirectiveNormalization::Off,
+                predecessor: RubyPredecessor::Boundary,
+            };
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(referenced))
+                .expect("serialize into String is infallible");
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(ruby))
+                .expect("serialize into String is infallible");
+        };
+
+        assert_eq!(source, "［＃「漢」は太字］字《じ》");
+        assert_eq!(serialize(&lex(&source)), source);
+    }
+
+    #[test]
+    fn different_text_class_before_ruby_does_not_force_a_bar() {
+        let source = "あ字《じ》";
+        assert_eq!(serialize(&lex(source)), source);
+    }
+
+    #[test]
     fn normalized_serializer_reflows_block_directives_before_returning() {
         let opts = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
         let out = lex("［＃中中見出し］\0\0");
@@ -1221,8 +1260,6 @@ mod tests {
         assert_eq!(buf, "前※［＃「ほげ」］");
     }
 
-    /// `emit_content_as_plain_one` walks a `Segments` content and writes each
-    /// arm — text verbatim, gaiji as its `hint`, directive as its raw bytes.
     #[test]
     fn emit_content_as_plain_one_writes_every_segment() {
         let mut a = Allocator::new();
