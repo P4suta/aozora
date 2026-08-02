@@ -997,6 +997,8 @@ jobs:
     if: needs.qualify.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: "1.97.0"
     defaults:
       run:
         shell: bash
