@@ -254,7 +254,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just cargo:cargo-mutants
+          install_args: rust@1.97.0 just cargo:cargo-mutants cargo:cargo-nextest
       - name: Mutation sweep
         env:
           ASSIGNMENT: ${{ matrix.assignment }}
