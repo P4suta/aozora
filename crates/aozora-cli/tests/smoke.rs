@@ -18,24 +18,31 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use aozora::json::SCHEMA_VERSION;
-use tempfile::NamedTempFile;
 
 mod common;
 
-fn write_temp(contents: &str) -> NamedTempFile {
-    let mut f = tempfile::Builder::new()
-        .prefix("aozora-cli-test-")
-        .suffix(".txt")
-        .tempfile()
-        .expect("temp file");
-    f.write_all(contents.as_bytes()).expect("write temp");
-    f.flush().expect("flush temp");
-    f
+struct TempFile {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl TempFile {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn write_temp(contents: &str) -> TempFile {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("aozora-cli-test.txt");
+    fs::write(&path, contents).expect("write temp");
+    TempFile { _dir: dir, path }
 }
 
 /// Run the binary with `args`, optionally feeding `stdin`. Returns

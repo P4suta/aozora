@@ -1008,11 +1008,9 @@ mod tests {
 
     #[test]
     fn save_writes_the_buffer_and_acknowledges() {
-        let file = tempfile::Builder::new()
-            .suffix(".aozora")
-            .tempfile()
-            .expect("temp file");
-        let path = file.path().to_path_buf();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("source.aozora");
+        fs::write(&path, b"").expect("seed temp file");
         let mut a = App::from_source(
             "青空《あおぞら》",
             Some(path.clone()),
