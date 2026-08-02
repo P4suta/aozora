@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-02
+
+
+### Added
+
+- Gate releases on rights-filtered works ([#628](https://github.com/P4suta/aozora/pull/628))
+- **playground**: Adopt shared Spectrum authoring UI ([#623](https://github.com/P4suta/aozora/pull/623))
+
+
+### Chore
+
+- Retire Docker development environment ([#619](https://github.com/P4suta/aozora/pull/619))
+
+
+### Fixed
+
+- Harden parser and integration boundaries ([#625](https://github.com/P4suta/aozora/pull/625))
+
+
 ### Added
 
 - Ship the optional canonical notation stylesheet with the `aozora-wasm` npm package.
