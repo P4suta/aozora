@@ -1207,6 +1207,12 @@ jobs:
   real-work:
     needs: [qualify, real-work-candidate, real-work-inputs]
     if: needs.qualify.outputs.run == 'true'
+    # The called workflow downloads artifacts from this run. Permissions can
+    # only be reduced across a reusable-workflow boundary, so grant that read
+    # capability explicitly instead of relying on repository defaults.
+    permissions:
+      actions: read
+      contents: read
     uses: P4suta/aozora-wasm-static-html-example/.github/workflows/release-gate.yml@cb49f306087931e69209a22fa570bd70d59e360c
     with:
       lab_commit: cb49f306087931e69209a22fa570bd70d59e360c

@@ -43,6 +43,11 @@ aozora = { workspace = true, features = ["json"] }
 # the standard `just test` / `just ci` path never compiles wasmtime.
 host-smoke = ["dep:extism"]
 
+[dev-dependencies]
+# Enables narrowly reasoned `#[mutants::skip]` markers on the external runtime
+# and process-I/O boundaries; all protocol logic remains mutation-tested.
+mutants = { workspace = true }
+
 # Host-side Extism runtime, used ONLY by the `host-smoke`-gated
 # integration test (tests/host_smoke.rs) to load the built `aozora.wasm`
 # and exercise the real plugin ABI. Optional + non-wasm32 so it never

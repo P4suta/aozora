@@ -261,6 +261,7 @@ dependencies = [
  "aozora",
  "extism",
  "extism-pdk",
+ "mutants",
  "serde",
  "serde_json",
 ]
