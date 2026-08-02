@@ -32,6 +32,11 @@ include = [
 [lints]
 workspace = true
 
+[[example]]
+name = "real_work_worker"
+path = "examples/real_work_worker.rs"
+required-features = ["json"]
+
 [dependencies]
 # The core parse/render chain (aozora-spec, aozora-veb, aozora-scan,
 # aozora-encoding, aozora-syntax, aozora-pipeline, aozora-render) is now

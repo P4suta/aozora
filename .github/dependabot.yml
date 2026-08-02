@@ -49,6 +49,12 @@ updates:
       bun-majors:
         patterns: ["*"]
         update-types: ["major"]
+    ignore:
+      # VS Code typings track the minimum supported editor, not an independent
+      # library. Raise this ceiling together with `engines.vscode` and the
+      # Electron/Node target asserted by editors/vscode/esbuild.mjs.
+      - dependency-name: "@types/vscode"
+        versions: [">1.91.0"]
 
   - package-ecosystem: npm
     directory: "/crates/tree-sitter-aozora"

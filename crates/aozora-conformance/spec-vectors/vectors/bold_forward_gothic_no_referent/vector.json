@@ -8,7 +8,7 @@
   },
   "source": "本文［＃「強調」はゴシック体］。\n",
   "expected": {
-    "html": "<p>本文<span class=\"aozora-goshikku\">強調</span>。</p>\n",
+    "html": "<p>本文<b class=\"aozora-goshikku\">強調</b>。</p>\n",
     "serialize": "本文［＃「強調」はゴシック体］。\n",
     "nodes": [
       {

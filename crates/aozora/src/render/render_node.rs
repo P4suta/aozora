@@ -418,11 +418,10 @@ fn render_forward_semantic<W: Write>(
         ForwardAttr::SubScript => ("sub", "</sub>"),
         ForwardAttr::SmallScript(_)
         | ForwardAttr::Framed(_)
-        | ForwardAttr::Gothic
         | ForwardAttr::Horizontal
         | ForwardAttr::Caption
         | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),
-        ForwardAttr::Bold => ("b", "</b>"),
+        ForwardAttr::Bold | ForwardAttr::Gothic => ("b", "</b>"),
         ForwardAttr::Bouten { .. }
         | ForwardAttr::CombineUpright
         | ForwardAttr::FontSize(_)
@@ -893,7 +892,7 @@ mod tests {
 
     /// The semantic fall-through picks the HTML element per attribute kind:
     /// 斜体 → `<i>`, 上付き → `<sup>`, 下付き → `<sub>`, the span family (横組み /
-    /// 小書き / 枠 / …) → `<span>`, and the weight default → `<b>`. Deleting any
+    /// 小書き / 枠 / …) → `<span>`, and bold / gothic → `<b>`. Deleting any
     /// arm reroutes its attribute to the `<b>` default, changing the tag.
     #[test]
     fn forward_semantic_selects_element_per_attr() {
@@ -904,7 +903,7 @@ mod tests {
             (ForwardAttr::SuperScript, "sup"),
             (ForwardAttr::SubScript, "sub"),
             (ForwardAttr::Horizontal, "span"),
-            (ForwardAttr::Gothic, "span"),
+            (ForwardAttr::Gothic, "b"),
             (ForwardAttr::Bold, "b"),
         ] {
             let t = a.content_plain("字");

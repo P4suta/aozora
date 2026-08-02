@@ -66,6 +66,22 @@ extern "C" {
 #endif // __cplusplus
 
 /**
+ * Return the parser build version as an owned UTF-8 byte buffer.
+ *
+ * The caller MUST release the returned value with [`aozora_bytes_free`].
+ *
+ * # Safety
+ *
+ * - `out_version` must point to a writable [`AozoraBytes`] slot.
+ */
+int aozora_version(AozoraBytes *out_version);
+
+/**
+ * Return the structured wire schema version implemented by this library.
+ */
+uint32_t aozora_schema_version(void);
+
+/**
  * Construct a [`Document`](AozoraDocument) from a UTF-8 byte slice.
  *
  * On success, writes the document handle to `*out_doc` and returns

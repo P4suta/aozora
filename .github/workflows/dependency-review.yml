@@ -83,6 +83,11 @@ jobs:
           # normalises the slash form and accepts it; exempt it here by purl to
           # mirror that. (A transitive dep pulled in via the LSP/`phf` graph.)
           #
+          # `filetime` has the same metadata defect: crates.io records the
+          # deprecated `MIT/Apache-2.0` slash form. It enters through the
+          # deterministic tar writer; cargo-deny verifies the crate contents
+          # and accepts both underlying licenses.
+          #
           # The runtime-crate license policy stays enforced by
           # `allow-licenses` above and authoritatively by cargo-deny (the
           # `audit (deny)` gate). If a future dependency carries a copyleft
@@ -90,7 +95,8 @@ jobs:
           allow-dependencies-licenses: >-
             pkg:githubactions/Swatinem/rust-cache,
             pkg:golang/google.golang.org/protobuf,
-            pkg:cargo/const-siphasher
+            pkg:cargo/const-siphasher,
+            pkg:cargo/filetime
 
           # Post a summary comment only on failure so clean PRs don't
           # get a no-op drive-by from the bot.
