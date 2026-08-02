@@ -35,12 +35,13 @@ runs:
                    AOZORA_REAL_WORK_CORPUS_SHA \
                    AOZORA_REAL_WORK_LAB_REPOSITORY \
                    AOZORA_REAL_WORK_LAB_SHA; do
-          mapfile -t matches < <(grep -E "^${key}=" "$env_file" || true)
-          if [[ "${#matches[@]}" -ne 1 ]]; then
+          match_count=$(grep -Ec "^${key}=" "$env_file" || true)
+          if [[ "$match_count" -ne 1 ]]; then
             echo "::error::$key must occur exactly once in $env_file"
             exit 1
           fi
-          value=${matches[0]#*=}
+          value=$(grep -E "^${key}=" "$env_file")
+          value=${value#*=}
           case "$key" in
             *_REPOSITORY)
               if [[ ! "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+$ ]]; then
