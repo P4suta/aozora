@@ -92,6 +92,7 @@ mod i18n;
 mod init;
 mod input;
 mod introspect;
+mod lab_worker;
 mod logging;
 mod lsp;
 mod manpage;
@@ -319,6 +320,9 @@ enum Command {
     /// under `man/man1/` rather than being invoked by hand.
     #[command(hide = true)]
     Man(ManArgs),
+    /// Speak the release-lab JSONL protocol over stdin/stdout.
+    #[command(hide = true)]
+    LabWorker,
 }
 
 /// Where to read a single document.
@@ -724,6 +728,7 @@ fn main() -> ExitCode {
         Command::Lsp(opts) => lsp::run(&opts),
         Command::Completions(opts) => completions::run_completions(&opts),
         Command::Man(opts) => manpage::run_man(&opts),
+        Command::LabWorker => lab_worker::run(),
     };
 
     match result {
@@ -793,7 +798,8 @@ fn command_config_path(command: &Command) -> Option<&Path> {
         | Command::Tui(_)
         | Command::Lsp(_)
         | Command::Completions(_)
-        | Command::Man(_) => None,
+        | Command::Man(_)
+        | Command::LabWorker => None,
     }
 }
 

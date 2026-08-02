@@ -58,6 +58,7 @@ mod msrv;
 mod perf;
 mod publish;
 mod ratchet;
+mod real_work;
 mod release;
 mod scan;
 mod schema;
@@ -70,6 +71,7 @@ pub(crate) use artifacts::ArtifactsArgs;
 pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
 pub(crate) use deps::DepsArgs;
+pub(crate) use real_work::RealWorkArgs;
 pub(crate) use trace::TraceArgs;
 pub(crate) use version::VersionArgs;
 
@@ -157,6 +159,8 @@ enum Cmd {
     Perf(PerfArgs),
     /// Enforce monotonic performance, allocation, artifact, and wire baselines.
     Ratchet(RatchetArgs),
+    /// Assemble immutable real-work release-lab inputs and worker bundles.
+    RealWork(RealWorkArgs),
     /// MSRV / toolchain pin coherence gate. `rust-toolchain.toml`'s
     /// channel (the DEV toolchain, tracking latest stable) and
     /// `Cargo.toml`'s `rust-version` (the PUBLIC CONTRACT, a measured
@@ -524,6 +528,7 @@ fn main() {
         Cmd::Release(args) => release::dispatch(&args),
         Cmd::Perf(args) => perf::dispatch(&args),
         Cmd::Ratchet(args) => ratchet::check(&args),
+        Cmd::RealWork(args) => real_work::dispatch(&args),
         Cmd::Msrv(args) => msrv::dispatch(&args),
         Cmd::Lint(args) => match args.op {
             LintOp::Coordinates => coords::check(),

@@ -55,12 +55,20 @@ host-smoke = ["dep:extism"]
 # so the HTTP fetcher is dead weight. `wasmtime-default-features` keeps
 # the runtime (cranelift) needed to actually execute the wasm.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow = { workspace = true }
 extism = { version = "1", optional = true, default-features = false, features = [
   "wasmtime-default-features",
 ] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "aozora-real-work-extism"
+path = "src/bin/aozora-real-work-extism.rs"
+required-features = ["host-smoke"]
 
 [package.metadata.cargo-shear]
 # `extism` is an intentional optional host-SDK dependency, pulled only by

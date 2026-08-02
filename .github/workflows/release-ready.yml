@@ -1076,9 +1076,149 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+  real-work-candidate:
+    needs: [qualify, artifacts, native-artifacts, python]
+    if: needs.qualify.outputs.run == 'true'
+    name: real-work candidate (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            python-os: ubuntu-latest
+          - platform: macos
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            python-os: macos-latest
+          - platform: windows
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            python-os: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/load-release-inputs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.AOZORA_REAL_WORK_LAB_REPOSITORY }}
+          ref: ${{ env.AOZORA_REAL_WORK_LAB_SHA }}
+          path: .real-work-lab
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-ready-${{ github.sha }}
+          path: .real-work-inputs/release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-native-${{ github.sha }}-${{ matrix.target }}
+          path: .real-work-inputs/native
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-python-${{ github.sha }}-${{ matrix.python-os }}
+          path: .real-work-inputs/python
+      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.97.0 go
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: real-work-candidate-${{ matrix.platform }}
+      - name: Build distribution-specific worker hosts
+        run: |
+          cargo build --locked --release -p aozora-extism \
+            --features host-smoke --bin aozora-real-work-extism
+      - name: Assemble the immutable seven-engine bundle
+        run: >-
+          cargo run --locked --release -p aozora-xtask -- real-work bundle
+          --platform ${{ matrix.platform }}
+          --release-dir .real-work-inputs/release
+          --native-dir .real-work-inputs/native
+          --python-dir .real-work-inputs/python
+          --adapters-dir .real-work-lab/src/workers
+          --extism-worker target/release/aozora-real-work-extism${{ runner.os == 'Windows' && '.exe' || '' }}
+          --out-dir target/real-work/${{ matrix.platform }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aozora-candidate-${{ github.sha }}-${{ matrix.platform }}
+          path: target/real-work/${{ matrix.platform }}/bundle.tar
+          retention-days: 90
+          if-no-files-found: error
+
+  real-work-inputs:
+    needs: qualify
+    if: needs.qualify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/load-release-inputs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.AOZORA_REAL_WORK_CORPUS_REPOSITORY }}
+          ref: ${{ env.AOZORA_REAL_WORK_CORPUS_SHA }}
+          path: .real-work-corpus
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.0"
+      - name: Pack immutable corpus
+        run: >-
+          cargo run --locked -p aozora-xtask -- real-work corpus
+          --checkout .real-work-corpus
+          --expected-commit "$AOZORA_REAL_WORK_CORPUS_SHA"
+          --out target/real-work-inputs/corpus.tar
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aozora-rights-corpus-${{ github.sha }}
+          path: target/real-work-inputs/corpus.tar
+          retention-days: 90
+          if-no-files-found: error
+      - name: Pack reviewed baselines
+        run: >-
+          cargo run --locked -p aozora-xtask -- real-work baselines
+          --diagnostics .github/real-work/diagnostics-baseline.json
+          --site .github/real-work/site
+          --out-dir target/real-work-inputs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aozora-diagnostics-stable-${{ github.sha }}
+          path: target/real-work-inputs/diagnostics-baseline.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aozora-pages-stable-${{ github.sha }}
+          path: target/real-work-inputs/site.tar
+          retention-days: 90
+          if-no-files-found: error
+
+  real-work:
+    needs: [qualify, real-work-candidate, real-work-inputs]
+    if: needs.qualify.outputs.run == 'true'
+    uses: P4suta/aozora-wasm-static-html-example/.github/workflows/release-gate.yml@cb49f306087931e69209a22fa570bd70d59e360c
+    with:
+      lab_commit: cb49f306087931e69209a22fa570bd70d59e360c
+      aozora_commit: ${{ github.sha }}
+      candidate_artifact_prefix: aozora-candidate-${{ github.sha }}
+      corpus_artifact: aozora-rights-corpus-${{ github.sha }}
+      diagnostics_artifact: aozora-diagnostics-stable-${{ github.sha }}
+      baseline_artifact: aozora-pages-stable-${{ github.sha }}
+
   release-ready:
     if: always()
-    needs: [qualify, code-proof, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python]
+    needs: [qualify, code-proof, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python, real-work]
     runs-on: ubuntu-latest
     steps:
       - name: Require every release gate
@@ -1096,6 +1236,7 @@ jobs:
           VSCODE_ARTIFACTS: ${{ needs.vscode-artifacts.result }}
           ARTIFACTS: ${{ needs.artifacts.result }}
           PYTHON: ${{ needs.python.result }}
+          REAL_WORK: ${{ needs.real-work.result }}
         run: |
           set -euo pipefail
           test "$QUALIFY" = success
@@ -1118,6 +1259,7 @@ jobs:
           for result in "$NATIVE_ARTIFACTS" "$VSCODE_ARTIFACTS" "$ARTIFACTS" "$PYTHON"; do
             test "$result" = success
           done
+          test "$REAL_WORK" = success
       - if: needs.qualify.outputs.run == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

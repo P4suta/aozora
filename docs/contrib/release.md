@@ -1,5 +1,7 @@
 # Release process
 
+The all-edition, seven-distribution gate and first-baseline procedure are documented in [Real-work release gate](real-work-release-gate.md).
+
 Releases are Release-PR driven by [release-plz](https://release-plz.dev/).
 Humans never edit a version or push a release tag.
 

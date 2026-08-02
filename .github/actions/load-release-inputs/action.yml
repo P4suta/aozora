@@ -1,7 +1,7 @@
 # Composite action: load the pinned conformance inputs into the job env.
 #
-# `.github/release-inputs.env` is the single source of truth for the corpus
-# and specification repository + revision that every conformance gate pins to.
+# `.github/release-inputs.env` is the single source of truth for the corpora,
+# specification, and real-work lab repositories + revisions that release gates pin to.
 # This action reads it and exports the required keys into `$GITHUB_ENV`, so every
 # consumer references `${{ env.AOZORA_* }}` (including in a later `with:`)
 # instead of hard-coding its own copy of the SHA. One source, no duplicate to
@@ -10,19 +10,31 @@
 # Fails closed unless each key occurs once and names an immutable input.
 
 name: load-release-inputs
-description: Export the pinned corpus/spec repository+SHA from .github/release-inputs.env into the job environment.
+description: Export every pinned release-input repository and SHA from .github/release-inputs.env into the job environment.
+
+inputs:
+  env-file:
+    description: Repository-relative release-input file to validate and load.
+    required: false
+    default: .github/release-inputs.env
 
 runs:
   using: composite
   steps:
     - id: load
       shell: bash
+      env:
+        RELEASE_INPUTS_ENV: ${{ inputs.env-file }}
       run: |
         set -euo pipefail
-        env_file=.github/release-inputs.env
+        env_file="$RELEASE_INPUTS_ENV"
         test -f "$env_file" || { echo "::error::$env_file not found"; exit 1; }
         for key in AOZORA_CORPUS_REPOSITORY AOZORA_CORPUS_SHA \
-                   AOZORA_SPEC_REPOSITORY AOZORA_SPEC_SHA; do
+                   AOZORA_SPEC_REPOSITORY AOZORA_SPEC_SHA \
+                   AOZORA_REAL_WORK_CORPUS_REPOSITORY \
+                   AOZORA_REAL_WORK_CORPUS_SHA \
+                   AOZORA_REAL_WORK_LAB_REPOSITORY \
+                   AOZORA_REAL_WORK_LAB_SHA; do
           mapfile -t matches < <(grep -E "^${key}=" "$env_file" || true)
           if [[ "${#matches[@]}" -ne 1 ]]; then
             echo "::error::$key must occur exactly once in $env_file"

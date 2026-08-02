@@ -127,6 +127,30 @@ pub struct AozoraBytes {
     pub cap: usize,
 }
 
+/// Return the parser build version as an owned UTF-8 byte buffer.
+///
+/// The caller MUST release the returned value with [`aozora_bytes_free`].
+///
+/// # Safety
+///
+/// - `out_version` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_version(out_version: *mut AozoraBytes) -> c_int {
+    if out_version.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    let bytes = into_owned_bytes(env!("CARGO_PKG_VERSION").as_bytes().to_vec());
+    // SAFETY: caller guarantees out_version is writable.
+    unsafe { out_version.write(bytes) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Return the structured wire schema version implemented by this library.
+#[unsafe(no_mangle)]
+pub extern "C" fn aozora_schema_version() -> u32 {
+    AOZORA_SCHEMA_VERSION
+}
+
 /// Construct a [`Document`](AozoraDocument) from a UTF-8 byte slice.
 ///
 /// On success, writes the document handle to `*out_doc` and returns
@@ -594,6 +618,23 @@ fn into_owned_bytes(mut v: Vec<u8>) -> AozoraBytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_and_schema_are_available_through_the_abi() {
+        let mut version = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_version(&mut version) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let value =
+            unsafe { core::str::from_utf8(slice::from_raw_parts(version.ptr, version.len)) }
+                .expect("version is UTF-8");
+        assert_eq!(value, env!("CARGO_PKG_VERSION"));
+        assert_eq!(aozora_schema_version(), AOZORA_SCHEMA_VERSION);
+        unsafe { aozora_bytes_free(version) };
+    }
 
     /// End-to-end smoke: parse, render to HTML, free. Exercises the
     /// happy path of every public entry point.
