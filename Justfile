@@ -16,6 +16,7 @@ setup:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v mise >/dev/null || { echo "❌ mise not found — install it from https://mise.jdx.dev/"; exit 1; }
+    scripts/check-native-prerequisites.sh
     export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
     mapfile -t tools < <(mise config get -f mise.toml tools \
       | sed '/^\[\[/,$d' \
@@ -100,12 +101,12 @@ doctor:
     [ "${avail_kb:-0}" -ge 5242880 ] \
       && ok "disk headroom (>= 5 GB free)" \
       || note "less than ~5 GB free here" "Cargo, Bun, and browser artifacts need headroom"
-    command -v valgrind >/dev/null \
-      && ok "valgrind available (performance gate ready)" \
-      || note "valgrind not found" "install it with the operating-system package manager"
-    command -v clang >/dev/null \
-      && ok "clang available (all-target lint ready)" \
-      || note "clang not found" "install clang and libclang development headers with the operating-system package manager"
+    if native_output=$(scripts/check-native-prerequisites.sh 2>&1); then
+      ok "native prerequisites: Clang/libclang and Valgrind"
+    else
+      printf '%s\n' "$native_output"
+      bad "native prerequisites unavailable" "install the packages listed above"
+    fi
     if [ -r /proc/sys/kernel/perf_event_paranoid ]; then
       lvl=$(cat /proc/sys/kernel/perf_event_paranoid)
       [ "${lvl:-9}" -le 1 ] \
@@ -119,6 +120,9 @@ doctor:
       exit 1
     fi
     echo "✅ no blocking issues ($warn warning(s))."
+
+native-prerequisites:
+    scripts/check-native-prerequisites.sh
 
 # --- build --------------------------------------------------------------------
 
@@ -1251,7 +1255,7 @@ ci-corpus:
     just alloc-gate
     just incremental-speedup-gate
 
-ci-perf:
+ci-perf: native-prerequisites
     just perf-gate
 
 ci-release:
@@ -1270,7 +1274,7 @@ ci-fuzz:
       )
     done
 
-ci:
+ci: native-prerequisites
     just ci-rust
     just test-wasm
     just ci-web
