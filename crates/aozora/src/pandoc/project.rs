@@ -734,7 +734,7 @@ fn format_target_inlines(f: ForwardFormat, store: &NodeStore, nested_depth: usiz
     if matches!(f.payload, ForwardPayload::NestedSource)
         && let Some(source) = store.content_range_as_plain(f.target)
         && nested_depth < MAX_NESTED_SOURCE_DEPTH
-        && let Some(inlines) = nested_source_to_inlines(source, nested_depth + 1)
+        && let Some(inlines) = nested_source_to_inlines(source, nested_depth.saturating_add(1))
     {
         return inlines;
     }
@@ -1406,6 +1406,26 @@ mod tests {
                 "{source:?}"
             );
         }
+    }
+
+    #[test]
+    fn leading_newline_does_not_emit_a_soft_break() {
+        assert_eq!(
+            project("\nOne"),
+            vec![Block::Para(vec![Inline::Str("One".to_owned())])]
+        );
+    }
+
+    #[test]
+    fn inline_source_does_not_materialize_its_terminal_newline() {
+        let store = NodeStore::new();
+        let mut converter = Converter::inline_source("One\n", &[], &store, 0);
+        converter.run();
+
+        assert_eq!(
+            converter.blocks,
+            vec![Block::Para(vec![Inline::Str("One".to_owned())])]
+        );
     }
 
     #[test]
@@ -2481,6 +2501,14 @@ mod tests {
     }
 
     #[test]
+    fn single_character_accent_target_composes() {
+        assert_eq!(
+            compose_single_accent("e", AccentMark::Acute),
+            Some('\u{e9}')
+        );
+    }
+
+    #[test]
     fn nested_source_depth_limit_falls_back_to_verbatim_source() {
         let mut store = NodeStore::new();
         let raw = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
@@ -2502,6 +2530,18 @@ mod tests {
             panic!("bouten must be a Span")
         };
         assert_eq!(content, vec![Inline::Str(raw.to_owned())]);
+    }
+
+    #[test]
+    fn nested_content_depth_limit_falls_back_to_verbatim_source() {
+        let mut store = NodeStore::new();
+        let raw = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let content = Content::Plain(store.intern(raw));
+
+        assert_eq!(
+            nested_content_to_inlines(content, &store, MAX_NESTED_SOURCE_DEPTH),
+            vec![Inline::Str(raw.to_owned())]
+        );
     }
 
     #[test]
@@ -2547,6 +2587,26 @@ mod tests {
                 Inline::LineBreak,
                 Inline::LineBreak,
                 Inline::Str("b".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn flatten_blocks_recurses_into_divs_and_separates_content() {
+        let blocks = vec![
+            Block::Div(
+                class_attr("outer"),
+                vec![Block::Para(vec![Inline::Str("first".to_owned())])],
+            ),
+            Block::Para(vec![Inline::Str("second".to_owned())]),
+        ];
+
+        assert_eq!(
+            flatten_blocks(blocks),
+            Some(vec![
+                Inline::Str("first".to_owned()),
+                Inline::SoftBreak,
+                Inline::Str("second".to_owned()),
             ])
         );
     }
@@ -2920,7 +2980,9 @@ mod tests {
             };
             assert!(matches!(
                 inlines.as_slice(),
-                [Inline::Span(attr, _)] if has_class(attr, "container-italic")
+                [Inline::Span(attr, content)]
+                    if has_class(attr, "container-italic")
+                        && matches!(content.as_slice(), [Inline::Emph(_)])
             ));
         }
     }
@@ -2985,7 +3047,9 @@ mod tests {
             style: HeadingStyle::Window,
             padded: true,
         });
-        converter.push_inline(Inline::Str("heading".to_owned()));
+        converter.push_inline(Inline::Str("first".to_owned()));
+        converter.flush_paragraph();
+        converter.push_inline(Inline::Str("second".to_owned()));
         converter.close_container(false);
         converter.run();
 
@@ -2998,7 +3062,14 @@ mod tests {
         assert_eq!(*level, 2);
         assert_eq!(kv(attr, "style"), Some("window"));
         assert_eq!(kv(attr, "padded"), Some("true"));
-        assert_eq!(content, &[Inline::Str("heading".to_owned())]);
+        assert_eq!(
+            content,
+            &[
+                Inline::Str("first".to_owned()),
+                Inline::SoftBreak,
+                Inline::Str("second".to_owned()),
+            ]
+        );
     }
 
     #[test]
