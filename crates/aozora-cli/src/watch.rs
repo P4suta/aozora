@@ -3,8 +3,8 @@
 //! Foreground and non-daemon (ADR-0014). The loop runs the command once
 //! up front, then again on every change to the input, debounced. Each
 //! run's exit code is swallowed — a diagnostic or `fmt --check` mismatch
-//! prints but does not stop the watch — so the loop ends only on Ctrl-C
-//! (default SIGINT termination).
+//! prints but does not stop the watch. The loop ends on Ctrl-C or a watcher
+//! failure.
 //!
 //! The input's *parent directory* is watched, not the file itself:
 //! editors commonly save by writing a temp file and renaming it over the
