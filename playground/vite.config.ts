@@ -179,6 +179,15 @@ export default defineConfig(({ command, isPreview, mode }) => ({
             return 's2-styles';
           }
           if (
+            // Rolldown can hoist ActionMenu's Menu subtree into the main
+            // artifact; isolate its narrow root to preserve ADR-0055's gate.
+            id.endsWith(
+              '/node_modules/react-aria-components/dist/private/Menu.mjs',
+            )
+          ) {
+            return 'vendor-spectrum-menu';
+          }
+          if (
             id.includes('node_modules/@codemirror/') ||
             id.includes('node_modules/@lezer/') ||
             id.includes('node_modules/codemirror/')
