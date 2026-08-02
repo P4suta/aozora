@@ -61,7 +61,11 @@ fn wait_for_change(
     debounce: Duration,
 ) -> Result<()> {
     loop {
-        let event = receive_event(rx)?;
+        let event = match rx.recv() {
+            Ok(Ok(event)) => event,
+            Ok(Err(err)) => return Err(err).context("file watcher backend failed"),
+            Err(_) => bail!("file watcher event channel disconnected"),
+        };
         if should_skip(&event, path) {
             trace!(kind = ?event.kind, "watch: skipping fs event that does not touch the target");
             continue;
@@ -91,14 +95,6 @@ fn wait_for_change(
 
 fn debounce_deadline(now: Instant, debounce: Duration) -> Instant {
     now + debounce
-}
-
-fn receive_event(rx: &mpsc::Receiver<notify::Result<Event>>) -> Result<Event> {
-    match rx.recv() {
-        Ok(Ok(event)) => Ok(event),
-        Ok(Err(err)) => Err(err).context("file watcher backend failed"),
-        Err(_) => bail!("file watcher event channel disconnected"),
-    }
 }
 
 /// The directory to watch: the file's parent, or `.` for a bare filename.
@@ -198,18 +194,6 @@ mod tests {
         let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/file.txt"));
         // A matching event is *not* skipped — dropping the `!` would flip this.
         assert!(!should_skip(&event, Path::new("file.txt")));
-    }
-
-    #[test]
-    fn receive_event_returns_the_backend_event() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
-            .expect("send event");
-
-        let event = receive_event(&rx).expect("receive event");
-
-        assert_eq!(event.kind, EventKind::Any);
-        assert_eq!(event.paths, [PathBuf::from("file.txt")]);
     }
 
     #[test]
