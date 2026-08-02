@@ -1464,6 +1464,41 @@ mod tests {
         assert_eq!(content.get(1), Some(&Inline::Str("after".to_owned())));
     }
 
+    #[test]
+    fn emitted_inline_frame_materializes_each_paragraph_before_a_block() {
+        let store = NodeStore::new();
+        let mut converter = Converter::new("", &[], &store, 0);
+        converter.open_container(RegionFormat::Caption { padded: false });
+
+        converter.push_inline(Inline::Str("first".to_owned()));
+        converter.flush_paragraph();
+        converter.push_inline(Inline::Str("second".to_owned()));
+        converter.flush_paragraph();
+        converter.push_block(Block::HorizontalRule);
+        converter.close_container(true);
+        converter.run();
+
+        let [
+            Block::Para(first),
+            Block::Para(second),
+            Block::HorizontalRule,
+        ] = converter.blocks.as_slice()
+        else {
+            panic!(
+                "expected both caption fragments before the block: {:?}",
+                converter.blocks
+            )
+        };
+        let [Inline::Span(_, first)] = first.as_slice() else {
+            panic!("expected first caption fragment: {first:?}")
+        };
+        let [Inline::Span(_, second)] = second.as_slice() else {
+            panic!("expected second caption fragment: {second:?}")
+        };
+        assert_eq!(first, &[Inline::Str("first".to_owned())]);
+        assert_eq!(second, &[Inline::Str("second".to_owned())]);
+    }
+
     /// Ruby with explicit delimiter projects to a Span.aozora-ruby
     /// carrying base / reading sub-spans.
     #[test]
