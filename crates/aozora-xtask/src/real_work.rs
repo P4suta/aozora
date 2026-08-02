@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::env::current_dir;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -199,6 +200,15 @@ fn python_command() -> Result<&'static str, String> {
                 .is_ok_and(|output| output.status.success())
         })
         .ok_or_else(|| "Python 3 is required to unpack and exercise release artifacts".to_owned())
+}
+
+fn command_output_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    current_dir()
+        .map(|directory| directory.join(path))
+        .map_err(|error| format!("resolve command output {}: {error}", path.display()))
 }
 
 fn digest(path: &Path) -> Result<String, String> {
@@ -464,11 +474,12 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     )?;
     copy(&args.extism_worker, &extism_worker)?;
     let go_module = go_dir.join("aozora-go");
+    let go_worker_output = command_output_path(&go_worker)?;
     run(
         Command::new("go")
             .current_dir(&go_module)
             .args(["build", "-trimpath", "-buildvcs=false", "-o"])
-            .arg(&go_worker)
+            .arg(&go_worker_output)
             .arg("./cmd/aozora-real-work-worker"),
         "build Go release worker",
     )?;
@@ -643,13 +654,28 @@ pub(crate) fn dispatch(args: &RealWorkArgs) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_commit;
+    use std::env::current_dir;
+    use std::path::Path;
+
+    use super::{command_output_path, validate_commit};
 
     #[test]
     fn immutable_inputs_require_full_lowercase_commits() -> Result<(), String> {
         validate_commit(&"a".repeat(40), "commit")?;
         assert!(validate_commit(&"A".repeat(40), "commit").is_err());
         assert!(validate_commit("main", "commit").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn command_outputs_are_resolved_before_changing_working_directory() -> Result<(), String> {
+        let relative = Path::new("target/real-work/linux/staging/workers/aozora-real-work-go");
+        let expected = current_dir()
+            .map_err(|error| error.to_string())?
+            .join(relative);
+
+        assert_eq!(command_output_path(relative)?, expected);
+        assert_eq!(command_output_path(&expected)?, expected);
         Ok(())
     }
 }
