@@ -722,7 +722,7 @@ jobs:
             '/^version = / { gsub(/"/, "", $2); print $2; exit }' ../../Cargo.toml)"
           bun pm pkg set "version=$version"
           bun run compile
-          bun run vsce package --target "$VSCE_TARGET" --no-yarn
+          bun run vsce package --target "$VSCE_TARGET" --no-yarn --no-dependencies
           vsix="$(find . -maxdepth 1 -name '*.vsix' -print -quit)"
           test -n "$vsix"
           test "$(unzip -p "$vsix" extension/package.json | jq -er .version)" = "$version"
@@ -797,6 +797,10 @@ jobs:
       - name: Install Playwright system dependencies
         working-directory: playground
         run: bun x --no-install playwright install --with-deps chromium firefox webkit
+      - name: Install deterministic screenshot fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-noto-core fonts-takao-gothic
       - name: Resolve immutable release identity
         run: |
           set -euo pipefail

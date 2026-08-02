@@ -55,6 +55,13 @@
 
 #![forbid(unsafe_code)]
 
+/// Host-side JSONL protocol used to exercise the exact Extism artifact.
+///
+/// The module is present for host tests and the opt-in worker binary, but is
+/// excluded from the portable plugin build itself.
+#[cfg(all(not(target_arch = "wasm32"), any(test, feature = "host-smoke")))]
+pub mod worker;
+
 /// Stateless parse-and-serialize logic, shared by the `wasm32` plugin
 /// exports and the host unit tests.
 ///
