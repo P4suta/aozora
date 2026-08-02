@@ -1219,9 +1219,9 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: P4suta/aozora-wasm-static-html-example/.github/workflows/release-gate.yml@cb49f306087931e69209a22fa570bd70d59e360c
+    uses: P4suta/aozora-wasm-static-html-example/.github/workflows/release-gate.yml@bb0b2b364ee048313292bf1299e1601fd8d6ac6a
     with:
-      lab_commit: cb49f306087931e69209a22fa570bd70d59e360c
+      lab_commit: bb0b2b364ee048313292bf1299e1601fd8d6ac6a
       aozora_commit: ${{ github.sha }}
       candidate_artifact_prefix: aozora-candidate-${{ github.sha }}
       corpus_artifact: aozora-rights-corpus-${{ github.sha }}
