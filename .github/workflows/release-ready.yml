@@ -254,7 +254,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just cargo:cargo-mutants
+          install_args: rust@1.97.0 just cargo:cargo-mutants cargo:cargo-nextest
       - name: Mutation sweep
         env:
           ASSIGNMENT: ${{ matrix.assignment }}
@@ -395,7 +395,7 @@ jobs:
           key: release-ready-native-${{ matrix.target }}
       - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
-          tool: cargo-auditable,cargo-cyclonedx
+          tool: cargo-auditable@0.7.5,cargo-cyclonedx@0.5.9
       - name: Resolve immutable release identity
         run: |
           set -euo pipefail
@@ -671,7 +671,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: stable
+          toolchain: "1.97.0"
           targets: ${{ matrix.cargo_target }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -680,7 +680,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
-          tool: cargo-cyclonedx
+          tool: cargo-cyclonedx@0.5.9
       - name: Build bundled language server
         env:
           TARGET: ${{ matrix.cargo_target }}
@@ -843,6 +843,7 @@ jobs:
           after=$(wc -c < "$wasm")
           test "$after" -lt "$before"
           cp LICENSE-APACHE LICENSE-MIT NOTICE crates/aozora-wasm/pkg/
+          cp crates/aozora/assets/aozora-notation.css crates/aozora-wasm/pkg/
           cargo cyclonedx \
             --manifest-path crates/aozora-wasm/Cargo.toml \
             --target wasm32-unknown-unknown \
@@ -854,7 +855,10 @@ jobs:
           mv "$wasm_sbom" crates/aozora-wasm/pkg/aozora-wasm.cdx.json
           package_json=crates/aozora-wasm/pkg/package.json
           generated="$(mktemp)"
-          jq '.files = (.files + ["LICENSE-APACHE", "LICENSE-MIT", "NOTICE", "aozora-wasm.cdx.json"] | unique)' \
+          jq '
+            .files = (.files + ["LICENSE-APACHE", "LICENSE-MIT", "NOTICE", "aozora-notation.css", "aozora-wasm.cdx.json"] | unique)
+            | .sideEffects = ((.sideEffects // []) + ["./aozora-notation.css"] | unique)
+          ' \
             "$package_json" > "$generated"
           mv "$generated" "$package_json"
           (cd crates/aozora-wasm/pkg && npm pack)
@@ -958,6 +962,10 @@ jobs:
             "$package_root" \
             crates/aozora-conformance/fixtures/render \
             "$schema_version"
+          cmp crates/aozora/assets/aozora-notation.css \
+            "$package_root/aozora-notation.css"
+          jq -e '.sideEffects | index("./aozora-notation.css") != null' \
+            "$package_root/package.json" >/dev/null
       - name: Install and exercise exact Go artifact
         run: |
           smoke="$(mktemp -d)"
@@ -1002,11 +1010,11 @@ jobs:
           echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: stable
+          toolchain: "1.97.0"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - run: pip install --upgrade "maturin>=1.9,<2.0" pytest mypy twine
+      - run: pip install --upgrade "maturin==1.14.1" "pytest==9.1.1" "mypy==2.3.0" "twine==6.2.0"
       - if: matrix.os == 'ubuntu-latest'
         run: bash scripts/smoke-py.sh
       - name: Build wheel and sdist
@@ -1189,6 +1197,12 @@ jobs:
           for legal in LICENSE-APACHE LICENSE-MIT NOTICE; do
             tar -tzf "$npm_package" | grep -Fx "package/$legal"
           done
+          tar -tzf "$npm_package" | grep -Fx package/aozora-notation.css
+          cmp \
+            <(tar -xOf "$npm_package" package/aozora-notation.css) \
+            crates/aozora/assets/aozora-notation.css
+          tar -xOf "$npm_package" package/package.json |
+            jq -e '.sideEffects | index("./aozora-notation.css") != null' >/dev/null
           tar -tzf "$npm_package" | grep -Fx package/aozora-wasm.cdx.json
           grep -F "#define AOZORA_SCHEMA_VERSION $schema" qualified/aozora.h
           for legal in LICENSE-APACHE LICENSE-MIT NOTICE; do

@@ -1,8 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "the worker count is clamped to a non-zero value"
-)]
-
 //! Parallel I/O + decode helpers.
 //!
 //! The default [`crate::CorpusSource::iter`] impl on [`crate::FilesystemCorpus`]
@@ -24,6 +19,8 @@
 //! contend for the same L1/L2 cache and per-core memory bandwidth.
 //! On systems where logical = physical (no SMT), the pool size
 //! matches rayon's default and the cost is zero.
+//! If the dedicated pool cannot be constructed, [`par_load_decoded`]
+//! falls back to processing items serially on the calling thread.
 //!
 //! ## Why "collect paths then parallel-read"
 //!
@@ -63,16 +60,17 @@ use crate::{CorpusError, CorpusItem, FilesystemCorpus};
 /// pool so the worker threads stay warm across multiple corpus
 /// sweeps. `OnceLock` is the standard-library lazy-init primitive;
 /// no `unsafe` in our code.
-fn physical_core_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+fn physical_core_pool() -> Option<&'static ThreadPool> {
+    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
         let n = num_cpus::get_physical().max(1);
         ThreadPoolBuilder::new()
             .num_threads(n)
             .thread_name(|i| format!("aozora-corpus-load-{i}"))
             .build()
-            .expect("rayon pool construction must not fail under reasonable settings")
+            .ok()
     })
+    .as_ref()
 }
 
 /// Run `f` on the physical-core load pool.
@@ -86,13 +84,18 @@ fn physical_core_pool() -> &'static ThreadPool {
 /// default (logical-cores) size and re-introduce the
 /// over-subscription regression this pool exists to fix.
 ///
-/// `f` runs synchronously; the function returns when `f` returns.
+/// `f` runs synchronously; the function returns when `f` returns. If
+/// the dedicated pool cannot be constructed, `f` is invoked directly
+/// on the calling thread.
 pub fn with_load_pool<R, F>(f: F) -> R
 where
     F: FnOnce() -> R + Send,
     R: Send,
 {
-    physical_core_pool().install(f)
+    match physical_core_pool() {
+        Some(pool) => pool.install(f),
+        None => f(),
+    }
 }
 
 /// Walk the corpus, read every file, and apply `per_item` to each
@@ -133,21 +136,50 @@ where
     // physical-core pool. Each worker pulls a
     // `Result<PathBuf, _>`, propagates walkdir errors unchanged,
     // otherwise reads the bytes and runs the closure.
-    physical_core_pool().install(|| {
-        paths
-            .into_par_iter()
-            .map(|path_result| {
-                let path = path_result?;
-                let item = corpus.read_path(&path)?;
-                Ok(per_item(item))
-            })
-            .collect()
-    })
+    load_decoded_with_pool(corpus, paths, &per_item, physical_core_pool())
+}
+
+fn load_decoded_with_pool<F, T>(
+    corpus: &FilesystemCorpus,
+    paths: Vec<Result<PathBuf, CorpusError>>,
+    per_item: &F,
+    pool: Option<&ThreadPool>,
+) -> Vec<Result<T, CorpusError>>
+where
+    F: Fn(CorpusItem) -> T + Sync + Send,
+    T: Send,
+{
+    match pool {
+        Some(pool) => pool.install(|| {
+            paths
+                .into_par_iter()
+                .map(|path_result| load_one(corpus, per_item, path_result))
+                .collect()
+        }),
+        None => paths
+            .into_iter()
+            .map(|path_result| load_one(corpus, per_item, path_result))
+            .collect(),
+    }
+}
+
+fn load_one<F, T>(
+    corpus: &FilesystemCorpus,
+    per_item: &F,
+    path_result: Result<PathBuf, CorpusError>,
+) -> Result<T, CorpusError>
+where
+    F: Fn(CorpusItem) -> T,
+{
+    let path = path_result?;
+    let item = corpus.read_path(&path)?;
+    Ok(per_item(item))
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::thread;
 
     use tempfile::TempDir;
 
@@ -229,5 +261,22 @@ mod tests {
         let mut expected: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
         expected.sort();
         assert_eq!(labels, expected);
+    }
+
+    #[test]
+    fn pool_construction_failure_falls_back_to_the_calling_thread() {
+        let dir = fresh_root_with(&[("a.txt", b"alpha"), ("b.txt", b"beta")]);
+        let corpus = FilesystemCorpus::new(dir.path()).expect("corpus");
+        let caller = thread::current().id();
+        let paths = corpus.walk_paths().collect();
+
+        let observed = load_decoded_with_pool(&corpus, paths, &|_| thread::current().id(), None);
+
+        assert_eq!(observed.len(), 2);
+        assert!(
+            observed
+                .into_iter()
+                .all(|result| result.is_ok_and(|thread| thread == caller))
+        );
     }
 }

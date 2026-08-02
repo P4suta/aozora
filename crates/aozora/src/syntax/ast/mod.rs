@@ -37,6 +37,7 @@ pub(crate) use output::SourceNode;
 pub(crate) use payload::{
     AngleQuote, Content, Directive, ForwardFormat, ForwardPayload, Gaiji, GaijiCanonicalOwned,
     Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, Ruby, Segment,
+    content_ruby_base_class, gaiji_ruby_base_class, node_is_content_segment,
 };
 pub(crate) use registry::Registry;
 pub(crate) use registry::{ContainerPair, NodeRef};

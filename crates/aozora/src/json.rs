@@ -360,8 +360,10 @@ fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
         schema_version: SCHEMA_VERSION,
         data,
     };
-    serde_json::to_string(&env)
-        .unwrap_or_else(|_| format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"data":[]}}"#))
+    match serde_json::to_string(&env) {
+        Ok(json) => json,
+        Err(error) => unreachable!("wire envelope serialization failed: {error}"),
+    }
 }
 
 /// One half-open `[start, end)` byte span in a wire envelope.
@@ -504,6 +506,18 @@ impl From<gaiji::GaijiResolution> for GaijiResolution {
 mod tests {
     use super::*;
     use crate::Document;
+    use serde::ser::Error as _;
+
+    struct RejectSerialization;
+
+    impl Serialize for RejectSerialization {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(S::Error::custom("rejected"))
+        }
+    }
 
     fn empty_envelope() -> String {
         format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"data":[]}}"#)
@@ -567,6 +581,12 @@ mod tests {
     fn empty_diagnostics_round_trip_envelope() {
         let json = diagnostics(&[]);
         assert_eq!(json, empty_envelope());
+    }
+
+    #[test]
+    #[should_panic(expected = "wire envelope serialization failed: rejected")]
+    fn serialization_failure_is_not_reported_as_an_empty_envelope() {
+        drop(serialize_envelope(&[RejectSerialization]));
     }
 
     #[test]

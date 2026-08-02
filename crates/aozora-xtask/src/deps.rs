@@ -1,8 +1,8 @@
 //! `xtask deps ...` — local-only dependency-follow-up tooling.
 //!
-//! Replaces the dependabot / renovate / GitHub Actions pattern with
-//! a host-side systemd user timer that runs `just deps-check`
-//! weekly. Why pure Rust and not a shell script:
+//! Complements repository update automation with a host-side systemd user
+//! timer that runs `just deps-check` weekly. Why pure Rust and not a shell
+//! script:
 //!
 //! - the rest of the project is Rust 2024 — keeping tooling in the
 //!   same language means one toolchain, one set of types, one set of
@@ -19,7 +19,7 @@
 //!
 //! ## Layout
 //!
-//! Two files end up in `$XDG_CONFIG_HOME/systemd/user/`:
+//! The installed units live in `$XDG_CONFIG_HOME/systemd/user/`:
 //!
 //! | File | Role |
 //! |---|---|
@@ -320,6 +320,41 @@ fn unit_installed() -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ecosystems_for_directory<'a>(text: &'a str, directory: &str) -> Vec<&'a str> {
+        let quoted = format!("\"{directory}\"");
+        let scalar = format!("directory: {quoted}");
+        let list_item = format!("- {quoted}");
+        text.split("\n  - package-ecosystem: ")
+            .skip(1)
+            .filter_map(|block| {
+                let (ecosystem, body) = block.split_once('\n')?;
+                body.lines()
+                    .map(str::trim)
+                    .any(|line| line == scalar || line == list_item)
+                    .then_some(ecosystem.trim())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dependabot_uses_each_manifest_ecosystem() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let config = fs::read_to_string(root.join(".github/dependabot.yml"))
+            .expect("dependabot configuration");
+        assert_eq!(ecosystems_for_directory(&config, "/playground"), ["bun"]);
+        assert_eq!(
+            ecosystems_for_directory(&config, "/editors/vscode"),
+            ["bun"]
+        );
+        assert_eq!(
+            ecosystems_for_directory(&config, "/crates/tree-sitter-aozora"),
+            ["npm"]
+        );
+    }
 
     #[test]
     fn service_unit_bakes_in_repo_and_log_paths() {

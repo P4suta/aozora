@@ -78,12 +78,6 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     }
 
     pub(crate) fn from_sorted_by<T>(sorted: &[T], project: impl Fn(&T) -> (K, V) + Copy) -> Self {
-        debug_assert!(
-            sorted
-                .windows(2)
-                .all(|window| project(&window[0]).0 <= project(&window[1]).0),
-            "input keys must be sorted ascending"
-        );
         let n = sorted.len();
         if n == 0 {
             return Self::new();
@@ -105,11 +99,15 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
 
         let mut keys = Vec::with_capacity(n);
         let mut values = Vec::with_capacity(n);
-        for index in layout {
+        for &index in &layout {
             let (key, value) = project(&sorted[index]);
             keys.push(key);
             values.push(value);
         }
+        debug_assert!(
+            keys_are_sorted_in_source_order(&keys, &layout),
+            "input keys must be sorted ascending"
+        );
         Self {
             keys: EytzingerArray::from_layout(keys),
             values,
@@ -122,6 +120,16 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
     pub(crate) fn iter_sorted(&self) -> SortedIter<'_, K, V> {
         SortedIter::new(self)
     }
+}
+
+fn keys_are_sorted_in_source_order<K: Ord>(keys: &[K], layout: &[usize]) -> bool {
+    let mut source_to_layout = vec![0; layout.len()];
+    for (layout_index, &source_index) in layout.iter().enumerate() {
+        source_to_layout[source_index] = layout_index;
+    }
+    source_to_layout
+        .windows(2)
+        .all(|window| keys[window[0]] <= keys[window[1]])
 }
 
 struct IndexPlacer<'a> {
@@ -191,6 +199,7 @@ impl<'a, K, V> Iterator for SortedIter<'a, K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::vec;
 
     #[test]
@@ -227,6 +236,21 @@ mod tests {
     }
 
     #[test]
+    fn projection_runs_once_per_entry() {
+        let calls = Cell::new(0);
+        let pairs = [(10u32, "ten"), (20, "twenty"), (30, "thirty")];
+        let map = EytzingerMap::from_sorted_by(&pairs, |pair| {
+            calls.set(calls.get() + 1);
+            *pair
+        });
+
+        assert_eq!(calls.get(), pairs.len());
+        assert_eq!(map.get(&10), Some(&"ten"));
+        assert_eq!(map.get(&20), Some(&"twenty"));
+        assert_eq!(map.get(&30), Some(&"thirty"));
+    }
+
+    #[test]
     fn lookup_holds_for_each_pair_at_various_sizes() {
         for n in 0u32..32 {
             let pairs: Vec<(u32, u32)> = (0..n).map(|i| (i * 2, i * 100)).collect();
@@ -242,6 +266,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "sorted ascending")]
     fn debug_panic_on_unsorted_keys() {
         // Body is the panic, not the return value — drop explicitly.

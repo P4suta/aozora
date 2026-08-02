@@ -30,7 +30,8 @@ export const GALLERY_FIXTURES: readonly GalleryFixture[] = [
   {
     family: 'gaiji',
     label: { ja: '外字', en: 'Gaiji' },
-    source: '美女、瞳を※［＃「目＋爭」、第3水準1-88-85］《みは》る。',
+    source:
+      '美女、瞳を※［＃「目＋爭」、第3水準1-88-85］《みは》る。未解決：※［＃「架空の外字」、第3水準99-99-99］',
   },
   {
     family: 'angle-quote',

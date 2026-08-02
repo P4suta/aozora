@@ -34,23 +34,24 @@ updates:
       actions-sha-bumps:
         patterns: ["*"]
 
-  - package-ecosystem: npm
-    # JS/TS surfaces: the playground, the VS Code extension, and the
-    # tree-sitter node bindings.
-    #
-    # `/playground` and `/editors/vscode` are Bun workspaces (`bun.lock`);
-    # `/crates/tree-sitter-aozora` has no lockfile at all. Dependabot does
-    # not write `bun.lock`, so a PR against either Bun directory bumps
-    # `package.json` alone and lands RED on the `bun install
-    # --frozen-lockfile` step of the `vscode` / `playground-checks` /
-    # `e2e` jobs. That red is correct and load-bearing: it is what stops a
-    # range bump from merging with a lockfile that still pins the old
-    # version. Resolving such a PR means running `bun install` in the
-    # directory and committing the lockfile alongside.
+  - package-ecosystem: bun
     directories:
       - "/playground"
       - "/editors/vscode"
-      - "/crates/tree-sitter-aozora"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      bun-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      bun-majors:
+        patterns: ["*"]
+        update-types: ["major"]
+
+  - package-ecosystem: npm
+    directory: "/crates/tree-sitter-aozora"
     schedule:
       interval: weekly
       day: monday
@@ -59,12 +60,6 @@ updates:
       npm-deps:
         patterns: ["*"]
         update-types: ["minor", "patch"]
-      # Majors are grouped too — separately, so a breaking bump is never
-      # mixed into the routine minor/patch PR, but still only ONE PR per
-      # wave. Without this an ungrouped major fans out per directory: the
-      # typescript 6→7 bump opened one PR for `/playground` and another
-      # for `/editors/vscode`, the same upgrade reviewed twice. The
-      # multiplier is the directory list, not the severity.
       npm-majors:
         patterns: ["*"]
         update-types: ["major"]

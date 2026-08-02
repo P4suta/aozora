@@ -41,7 +41,7 @@ use tower_lsp::lsp_types::{
     DidOpenTextDocumentParams, DocumentFormattingParams, DocumentOnTypeFormattingParams,
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
     FoldingRange, FoldingRangeParams, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, LinkedEditingRangeParams, LinkedEditingRanges, MessageType,
+    InitializedParams, LinkedEditingRangeParams, LinkedEditingRanges, MessageType, Position,
     PrepareRenameResponse, Range, RenameParams, SemanticTokens, SemanticTokensParams,
     SemanticTokensResult, TextDocumentContentChangeEvent, TextDocumentPositionParams, TextEdit,
     Url, WorkspaceEdit,
@@ -51,7 +51,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::i18n::{FluentArgs, LanguageIdentifier, tf};
 use crate::lsp::document_symbol::document_symbols;
 use crate::lsp::folding_range::folding_ranges;
-use crate::lsp::position::position_to_byte_offset;
+use crate::lsp::position::{byte_offset_to_position, position_to_byte_offset};
 use crate::lsp::semantic_tokens::semantic_tokens_full;
 use aozora::resolve_gaiji;
 
@@ -359,8 +359,35 @@ pub(crate) struct GaijiSpansResult {
 #[derive(serde::Deserialize)]
 struct CanonicalizeArgs {
     uri: Url,
+    version: i32,
     range: Range,
     body: String,
+}
+
+enum ValidatedLspChange {
+    Edit(ByteEdit),
+    Replace(String),
+}
+
+fn validate_lsp_changes(
+    source: &str,
+    changes: &[TextDocumentContentChangeEvent],
+) -> Option<Vec<ValidatedLspChange>> {
+    let mut working = source.to_owned();
+    let mut validated = Vec::with_capacity(changes.len());
+    for change in changes {
+        if change.range.is_none() {
+            working.clone_from(&change.text);
+            u32::try_from(working.len()).ok()?;
+            validated.push(ValidatedLspChange::Replace(change.text.clone()));
+            continue;
+        }
+        let edit = lsp_change_to_edit(&working, change)?;
+        working.replace_range(edit.range.clone(), &edit.new_text);
+        u32::try_from(working.len()).ok()?;
+        validated.push(ValidatedLspChange::Edit(edit));
+    }
+    Some(validated)
 }
 
 /// Convert an LSP `TextDocumentContentChangeEvent` into a
@@ -375,6 +402,11 @@ fn lsp_change_to_edit(source: &str, change: &TextDocumentContentChangeEvent) -> 
         return None;
     }
     Some(ByteEdit::new(start..end, change.text.clone()))
+}
+
+fn exact_position_to_byte_offset(source: &str, position: Position) -> Option<usize> {
+    let offset = position_to_byte_offset(source, position)?;
+    (byte_offset_to_position(source, offset) == position).then_some(offset)
 }
 
 #[tower_lsp::async_trait]
@@ -400,8 +432,10 @@ impl LanguageServer for AozoraLanguageServer {
     #[tracing::instrument(skip_all, fields(uri = %p.text_document.uri, text_bytes = p.text_document.text.len()))]
     async fn did_open(&self, p: DidOpenTextDocumentParams) {
         let uri = p.text_document.uri;
-        self.docs
-            .insert(uri.clone(), OpenDocument::new(p.text_document.text));
+        self.docs.insert(
+            uri.clone(),
+            OpenDocument::new_versioned(p.text_document.text, p.text_document.version),
+        );
         self.publish(uri).await;
     }
 
@@ -418,23 +452,37 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return;
         };
-        for change in &p.content_changes {
-            let snap = state.snapshot();
-            match lsp_change_to_edit(snap.doc_text(), change) {
-                Some(edit) => {
-                    _ = state.apply_changes(slice::from_ref(&edit));
+        let update = state.lock_lsp_update();
+        if p.text_document.version <= state.lsp_version() {
+            tracing::warn!(
+                current_version = state.lsp_version(),
+                received_version = p.text_document.version,
+                "ignoring stale text document change",
+            );
+            return;
+        }
+        let snapshot = state.snapshot();
+        let Some(changes) = validate_lsp_changes(snapshot.doc_text(), &p.content_changes) else {
+            tracing::warn!("rejecting invalid text document change batch");
+            drop(update);
+            self.schedule_publish_debounced(uri);
+            return;
+        };
+        for change in changes {
+            match change {
+                ValidatedLspChange::Edit(edit) => {
+                    if state.apply_changes(slice::from_ref(&edit)).is_none() {
+                        tracing::error!("validated text document edit was rejected by core");
+                        return;
+                    }
                 }
-                None if change.range.is_none() => {
-                    state.replace_text(change.text.clone());
-                }
-                None => {
-                    tracing::warn!(
-                        "skipping content change with unresolvable range: {:?}",
-                        change.range,
-                    );
+                ValidatedLspChange::Replace(text) => {
+                    state.replace_text(text);
                 }
             }
         }
+        state.set_lsp_version(p.text_document.version);
+        drop(update);
         // Schedule the slow semantic parse + publish as a debounced
         // background task. `did_change` itself returns now (microseconds
         // later), so subsequent LSP requests are not blocked by
@@ -696,22 +744,61 @@ impl LanguageServer for AozoraLanguageServer {
         if params.command != COMMAND_CANONICALIZE_SLUG {
             return Err(JsonRpcError::method_not_found());
         }
-        // Argument shape: a single JSON object with `uri`, `range`, `body`.
         let arg = params
             .arguments
             .into_iter()
             .next()
             .ok_or_else(|| JsonRpcError::invalid_params("expected one argument object"))?;
-        let CanonicalizeArgs { uri, range, body } = serde_json::from_value(arg)
+        let CanonicalizeArgs {
+            uri,
+            version,
+            range,
+            body,
+        } = serde_json::from_value(arg)
             .map_err(|err| JsonRpcError::invalid_params(err.to_string()))?;
-        let Some(workspace_edit) = canonicalize_slug_edit(uri, range, &body) else {
+        let state = self
+            .lookup(&uri)
+            .ok_or_else(|| JsonRpcError::invalid_params("no document at uri"))?;
+        let update = state.lock_lsp_update();
+        if state.lsp_version() != version {
+            return Err(JsonRpcError::invalid_params(
+                "document version changed; retry canonicalization",
+            ));
+        }
+        let snapshot = state.snapshot();
+        let start = exact_position_to_byte_offset(snapshot.doc_text(), range.start)
+            .ok_or_else(|| JsonRpcError::invalid_params("invalid canonicalization range"))?;
+        let end = exact_position_to_byte_offset(snapshot.doc_text(), range.end)
+            .ok_or_else(|| JsonRpcError::invalid_params("invalid canonicalization range"))?;
+        let selected = snapshot
+            .doc_text()
+            .get(start..end)
+            .ok_or_else(|| JsonRpcError::invalid_params("invalid canonicalization range"))?;
+        if selected != body {
+            return Err(JsonRpcError::invalid_params(
+                "selected text changed; retry canonicalization",
+            ));
+        }
+        let workspace_edit = canonicalize_slug_edit(uri, version, range, selected);
+        drop(update);
+        let Some(workspace_edit) = workspace_edit else {
             return Ok(None);
         };
-        // Apply the edit through the client's
-        // `workspace/applyEdit` RPC. Failures bubble up as
-        // jsonrpc::Error.
-        if let Err(err) = self.client.apply_edit(workspace_edit).await {
-            tracing::warn!(error = %err, "applyEdit failed");
+        let response = self
+            .client
+            .apply_edit(workspace_edit)
+            .await
+            .map_err(|err| {
+                let mut rpc_error = JsonRpcError::internal_error();
+                rpc_error.message = format!("applyEdit failed: {err}").into();
+                rpc_error
+            })?;
+        if !response.applied {
+            return Err(JsonRpcError::invalid_params(
+                response
+                    .failure_reason
+                    .unwrap_or_else(|| "client rejected versioned workspace edit".to_owned()),
+            ));
         }
         Ok(None)
     }
@@ -1880,9 +1967,10 @@ mod e2e {
                     "command": COMMAND_CANONICALIZE_SLUG,
                     "arguments": [{
                         "uri": URI,
+                        "version": 1,
                         "range": {
                             "start": { "line": 0, "character": 0 },
-                            "end":   { "line": 0, "character": 6 },
+                            "end":   { "line": 0, "character": 7 },
                         },
                         "body": "［＃ぼうてん］",
                     }],
@@ -1899,14 +1987,19 @@ mod e2e {
             })
             .await;
         let new_text = apply.params().and_then(|p| {
-            p["edit"]["changes"]
-                .as_object()
-                .and_then(|m| m.values().next())
-                .and_then(|edits| edits.get(0))
+            p["edit"]["documentChanges"]
+                .get(0)
+                .and_then(|change| change["edits"].get(0))
                 .and_then(|e| e["newText"].as_str())
                 .map(str::to_owned)
         });
         assert_eq!(new_text.as_deref(), Some("［＃傍点］"));
+        assert_eq!(
+            apply
+                .params()
+                .and_then(|p| p["edit"]["documentChanges"][0]["textDocument"]["version"].as_i64()),
+            Some(1),
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1921,11 +2014,247 @@ mod e2e {
                     "command": COMMAND_CANONICALIZE_SLUG,
                     "arguments": [{
                         "uri": URI,
+                        "version": 1,
                         "range": {
                             "start": { "line": 0, "character": 0 },
-                            "end":   { "line": 0, "character": 4 },
+                            "end":   { "line": 0, "character": 5 },
                         },
                         "body": "［＃傍点］",
+                    }],
+                }),
+            )
+            .await;
+        assert!(result.is_null());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_rejects_stale_document_version() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃ぼうてん］").await;
+        let err = server
+            .try_request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 2,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 7 },
+                        },
+                        "body": "［＃ぼうてん］",
+                    }],
+                }),
+            )
+            .await
+            .expect_err("stale command must error");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert_eq!(server.outbound_count("workspace/applyEdit"), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_rejects_changed_selection_body() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃ぼうてん］").await;
+        let err = server
+            .try_request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 1,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 7 },
+                        },
+                        "body": "［＃傍点］",
+                    }],
+                }),
+            )
+            .await
+            .expect_err("changed body must error");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert_eq!(server.outbound_count("workspace/applyEdit"), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_rejects_invalid_selection_range() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃ぼうてん］").await;
+        let err = server
+            .try_request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 1,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 99 },
+                        },
+                        "body": "［＃ぼうてん］",
+                    }],
+                }),
+            )
+            .await
+            .expect_err("invalid range must error");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert_eq!(server.outbound_count("workspace/applyEdit"), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_observes_the_version_after_a_change_batch() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("a［＃ぼうてん］").await;
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end":   { "line": 0, "character": 0 },
+                            },
+                            "text": "x",
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 1 },
+                                "end":   { "line": 0, "character": 1 },
+                            },
+                            "text": "y",
+                        },
+                    ],
+                }),
+            )
+            .await;
+        let result = server
+            .request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 2,
+                        "range": {
+                            "start": { "line": 0, "character": 3 },
+                            "end":   { "line": 0, "character": 10 },
+                        },
+                        "body": "［＃ぼうてん］",
+                    }],
+                }),
+            )
+            .await;
+        assert!(result.is_null());
+        let apply = server
+            .wait_until(|reqs| {
+                reqs.iter()
+                    .find(|request| request.method() == "workspace/applyEdit")
+                    .cloned()
+            })
+            .await;
+        assert_eq!(
+            apply.params().and_then(
+                |params| params["edit"]["documentChanges"][0]["textDocument"]["version"].as_i64()
+            ),
+            Some(2),
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stale_change_notification_cannot_roll_back_document_state() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("old").await;
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 3 },
+                    "contentChanges": [{ "text": "［＃ぼうてん］" }],
+                }),
+            )
+            .await;
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [{ "text": "stale" }],
+                }),
+            )
+            .await;
+        let result = server
+            .request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 3,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 7 },
+                        },
+                        "body": "［＃ぼうてん］",
+                    }],
+                }),
+            )
+            .await;
+        assert!(result.is_null());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn invalid_change_batch_leaves_source_and_version_unchanged() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃ぼうてん］").await;
+        server
+            .notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": URI, "version": 2 },
+                    "contentChanges": [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end":   { "line": 0, "character": 0 },
+                            },
+                            "text": "x",
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 9, "character": 0 },
+                                "end":   { "line": 9, "character": 0 },
+                            },
+                            "text": "y",
+                        },
+                    ],
+                }),
+            )
+            .await;
+        let result = server
+            .request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "version": 1,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 7 },
+                        },
+                        "body": "［＃ぼうてん］",
                     }],
                 }),
             )
@@ -1978,6 +2307,32 @@ mod e2e {
             .await
             .expect_err("malformed argument must error");
         assert_eq!(err.code, ErrorCode::InvalidParams);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_missing_version_is_invalid_params() {
+        let mut server = TestServer::new();
+        server.handshake().await;
+        server.did_open("［＃ぼうてん］").await;
+        let err = server
+            .try_request(
+                "workspace/executeCommand",
+                json!({
+                    "command": COMMAND_CANONICALIZE_SLUG,
+                    "arguments": [{
+                        "uri": URI,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end":   { "line": 0, "character": 7 },
+                        },
+                        "body": "［＃ぼうてん］",
+                    }],
+                }),
+            )
+            .await
+            .expect_err("missing version must error");
+        assert_eq!(err.code, ErrorCode::InvalidParams);
+        assert_eq!(server.outbound_count("workspace/applyEdit"), 0);
     }
 
     // -----------------------------------------------------------------

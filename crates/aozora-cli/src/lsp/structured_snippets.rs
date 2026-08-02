@@ -50,7 +50,7 @@ use tower_lsp::lsp_types::{
     MarkupContent, MarkupKind, Position, Range, TextEdit,
 };
 
-use crate::lsp::completion::{canonical_to_snippet, family_to_kind};
+use crate::lsp::completion::{canonical_to_snippet, family_label, family_to_kind};
 use crate::lsp::position::{byte_offset_to_position, position_to_byte_offset};
 
 const HASH: char = '#';
@@ -147,8 +147,8 @@ fn hash_wrap_completions(
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: format!(
-                    "**{family:?}** {accepts}\n\n{doc}",
-                    family = entry.family,
+                    "**{family}** {accepts}\n\n{doc}",
+                    family = family_label(lang, entry.family),
                     accepts = if entry.accepts_param {
                         i18n::t(lang, "lsp-completion-takes-param")
                     } else {

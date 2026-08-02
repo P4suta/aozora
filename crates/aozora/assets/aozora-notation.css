@@ -284,6 +284,10 @@
 
 /* ── Gaiji (§gaiji) ────────────────────────────────────────────────── */
 .aozora-gaiji {
+  color: inherit;
+}
+
+.aozora-gaiji[data-description] {
   color: var(--aozora-gaiji-fg);
   background: var(--aozora-gaiji-bg);
   padding: 0 0.15em;

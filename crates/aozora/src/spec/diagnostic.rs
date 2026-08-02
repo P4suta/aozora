@@ -281,7 +281,10 @@ pub enum Diagnostic {
     /// Downstream stages will emit those same codepoints into normalized
     /// text, so a collision means the placeholder registry can no longer
     /// distinguish source-text occurrences from lexer-inserted markers.
-    #[error("source contains lexer PUA sentinel codepoint {codepoint:?}")]
+    #[error(
+        "source contains lexer PUA sentinel codepoint U+{:04X}",
+        u32::from(*.codepoint)
+    )]
     #[diagnostic(
         code("aozora::lex::source_contains_pua"),
         url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#source-contains-pua"),
@@ -306,7 +309,11 @@ pub enum Diagnostic {
 
     /// An open delimiter reached end-of-input with no matching close on
     /// the pairing stack.
-    #[error("unclosed Aozora {kind:?} bracket")]
+    #[error(
+        "unclosed Aozora {}…{} delimiter",
+        .kind.open_str(),
+        .kind.close_str()
+    )]
     #[diagnostic(
         code("aozora::lex::unclosed_bracket"),
         url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unclosed-bracket"),
@@ -330,7 +337,7 @@ pub enum Diagnostic {
 
     /// A close delimiter was seen with an empty stack, or with a stack
     /// top of a different [`PairKind`].
-    #[error("unmatched Aozora {kind:?} close delimiter")]
+    #[error("unmatched Aozora {} close delimiter", .kind.close_str())]
     #[diagnostic(
         code("aozora::lex::unmatched_close"),
         url("https://p4suta.github.io/aozora-notation-spec/diagnostics.html#unmatched-close"),
@@ -1661,11 +1668,9 @@ mod tests {
     #[test]
     fn source_contains_pua_display_mentions_codepoint() {
         let diag = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E002}');
-        let rendered = format!("{diag}");
-        assert!(
-            rendered.contains("E002")
-                || rendered.contains("\\u{e002}")
-                || rendered.contains('\u{E002}')
+        assert_eq!(
+            format!("{diag}"),
+            "source contains lexer PUA sentinel codepoint U+E002"
         );
     }
 
@@ -1712,13 +1717,13 @@ mod tests {
     #[test]
     fn unclosed_bracket_display_mentions_kind() {
         let diag = Diagnostic::unclosed_bracket(Span::new(0, 3), PairKind::Tortoise);
-        assert!(format!("{diag}").contains("Tortoise"));
+        assert_eq!(format!("{diag}"), "unclosed Aozora 〔…〕 delimiter");
     }
 
     #[test]
     fn unmatched_close_display_mentions_kind() {
         let diag = Diagnostic::unmatched_close(Span::new(0, 3), PairKind::Quote);
-        assert!(format!("{diag}").contains("Quote"));
+        assert_eq!(format!("{diag}"), "unmatched Aozora 」 close delimiter");
     }
 
     #[test]

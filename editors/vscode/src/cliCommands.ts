@@ -8,11 +8,16 @@
 // workspace folder for batch diagnostics beyond the open editors (the live LSP
 // only diagnoses documents the editor has opened).
 
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
-
-import type { RenderHtmlResult } from "./lspWire";
+import { documentVersionMatches, htmlFileName } from "./extensionLogic";
+import { parseRenderHtmlResult } from "./lspWire";
 import { aozoraNotationStyles } from "./notationStyles";
+import { WorkspaceLintTerminal } from "./workspaceLint";
+import { WORKSPACE_LINT_FILE_LIMIT } from "./workspaceLintLogic";
 
 export function registerCliCommands(
   context: vscode.ExtensionContext,
@@ -36,14 +41,23 @@ async function exportHtml(client: LanguageClient): Promise<void> {
     return;
   }
   const document = editor.document;
+  const version = document.version;
 
-  let result: RenderHtmlResult;
+  let result: ReturnType<typeof parseRenderHtmlResult>;
   try {
-    result = await client.sendRequest<RenderHtmlResult>("aozora/renderHtml", {
-      uri: document.uri.toString(),
-    });
+    result = parseRenderHtmlResult(
+      await client.sendRequest<unknown>("aozora/renderHtml", {
+        uri: document.uri.toString(),
+      }),
+    );
   } catch (err) {
     void vscode.window.showErrorMessage(`aozora: render failed: ${asMessage(err)}`);
+    return;
+  }
+  if (!documentVersionMatches(version, document.version)) {
+    void vscode.window.showWarningMessage(
+      "aozora: the document changed while rendering; run Export HTML again.",
+    );
     return;
   }
 
@@ -56,15 +70,22 @@ async function exportHtml(client: LanguageClient): Promise<void> {
     );
     return;
   }
-  const html = wrapStandalone(documentTitle(document.uri), result.html ?? "");
+  const html = wrapStandalone(documentTitle(document.uri), result.html);
 
+  const defaultUri = defaultHtmlUri(document.uri);
   const target = await vscode.window.showSaveDialog({
     saveLabel: "Export HTML",
-    defaultUri: defaultHtmlUri(document.uri),
+    ...(defaultUri ? { defaultUri } : {}),
     // biome-ignore lint/style/useNamingConvention: VS Code shows the filter key as its display label
     filters: { HTML: ["html"] },
   });
   if (!target) {
+    return;
+  }
+  if (!documentVersionMatches(version, document.version)) {
+    void vscode.window.showWarningMessage(
+      "aozora: the document changed before export; run Export HTML again.",
+    );
     return;
   }
 
@@ -87,30 +108,94 @@ async function exportHtml(client: LanguageClient): Promise<void> {
   }
 }
 
-function lintWorkspace(bundledCli: string): void {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const target = folder ?? vscode.window.activeTextEditor?.document.uri.fsPath;
-  if (target === undefined) {
+async function lintWorkspace(bundledCli: string): Promise<void> {
+  const activeDocument = vscode.window.activeTextEditor?.document;
+  const activeFolder = activeDocument
+    ? vscode.workspace.getWorkspaceFolder(activeDocument.uri)
+    : undefined;
+  const firstFolder = vscode.workspace.workspaceFolders?.[0];
+  const folder = activeFolder ?? firstFolder;
+  const activeFile = activeDocument?.uri.scheme === "file" ? activeDocument.uri.fsPath : undefined;
+  const files = folder
+    ? await workspaceLintFiles(folder)
+    : activeFile
+      ? [vscode.Uri.file(activeFile)]
+      : [];
+  if (files.length === 0) {
     void vscode.window.showInformationMessage("Open a folder or a file to lint.");
     return;
   }
-  const bin =
-    vscode.workspace.getConfiguration("aozora").get<string>("cli.path", "").trim() || bundledCli;
+  const firstFile = files[0];
+  if (!firstFile) {
+    return;
+  }
+  if (files.length > WORKSPACE_LINT_FILE_LIMIT) {
+    void vscode.window.showWarningMessage(
+      `Aozora workspace lint supports at most ${WORKSPACE_LINT_FILE_LIMIT} files per run.`,
+    );
+    return;
+  }
+  const configured = vscode.workspace
+    .getConfiguration("aozora", folder?.uri ?? activeDocument?.uri)
+    .get<string>("cli.path", "")
+    .trim();
+  const bin = configured.length > 0 ? resolveCliPath(configured, folder) : bundledCli;
+  const cwd = folder?.uri.fsPath ?? dirname(firstFile.fsPath);
+  const execution = new vscode.CustomExecution(
+    async () => new WorkspaceLintTerminal(bin, files, cwd),
+  );
+  const definition = { type: "aozora", files: files.length };
+  const task = new vscode.Task(
+    definition,
+    folder ?? vscode.TaskScope.Workspace,
+    folder ? "lint workspace" : "lint file",
+    "aozora",
+    execution,
+    ["$aozora-lint"],
+  );
+  task.presentationOptions = {
+    clear: true,
+    panel: vscode.TaskPanelKind.Dedicated,
+    reveal: vscode.TaskRevealKind.Always,
+  };
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `aozora: could not start workspace lint: ${asMessage(err)}`,
+    );
+  }
+}
 
-  const terminal = vscode.window.createTerminal("aozora lint");
-  terminal.show();
-  // The terminal surfaces the rustc-style output (and any "command not
-  // found" if the CLI is not installed); paths are click-to-open there.
-  terminal.sendText(`${bin} lint "${target}"`);
+async function workspaceLintFiles(folder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
+  const pattern = new vscode.RelativePattern(folder, "**/*.{afm,aozora,txt,text}");
+  const exclude = new vscode.RelativePattern(
+    folder,
+    "**/{.git,node_modules,target,out,dist,.next,coverage}/**",
+  );
+  const files = await vscode.workspace.findFiles(pattern, exclude, WORKSPACE_LINT_FILE_LIMIT + 1);
+  return files
+    .filter((uri) => uri.scheme === "file")
+    .sort((left, right) => (left.fsPath < right.fsPath ? -1 : left.fsPath > right.fsPath ? 1 : 0));
+}
+
+function resolveCliPath(value: string, folder: vscode.WorkspaceFolder | undefined): string {
+  return value
+    .replace(/\$\{workspaceFolder\}/g, folder?.uri.fsPath ?? "")
+    .replace(/\$\{userHome\}/g, homedir())
+    .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => process.env[name] ?? "");
 }
 
 function documentTitle(uri: vscode.Uri): string {
   return uri.path.split("/").pop() ?? "aozora";
 }
 
-function defaultHtmlUri(source: vscode.Uri): vscode.Uri {
-  const base = source.fsPath.replace(/\.(afm|aozora|aozora\.txt|txt)$/i, "");
-  return vscode.Uri.file(`${base}.html`);
+function defaultHtmlUri(source: vscode.Uri): vscode.Uri | undefined {
+  if (source.scheme === "file") {
+    return vscode.Uri.file(join(dirname(source.fsPath), htmlFileName(source.fsPath)));
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  return folder ? vscode.Uri.joinPath(folder.uri, htmlFileName(source.path)) : undefined;
 }
 
 function asMessage(err: unknown): string {

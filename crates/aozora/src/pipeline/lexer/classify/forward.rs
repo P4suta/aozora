@@ -1381,8 +1381,8 @@ impl RecogniseCtx<'_, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
                 .unwrap_or(open_span.start);
-        let base = self.alloc.content_plain(target);
-        let reading = self.alloc.content_plain(reading_text);
+        let base = self.build_content_from_source_slice(view, target);
+        let reading = self.build_content_from_source_slice(view, reading_text);
         Some((self.alloc.left_ruby(base, reading), consume_start))
     }
 }
@@ -1440,8 +1440,8 @@ impl RecogniseCtx<'_, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
                 .unwrap_or(open_span.start);
-        let base = self.alloc.content_plain(target);
-        let note = self.alloc.content_plain(note_text);
+        let base = self.build_content_from_source_slice(view, target);
+        let note = self.build_content_from_source_slice(view, note_text);
         Some((self.alloc.side_note(kind, base, note), consume_start))
     }
 
@@ -1475,7 +1475,7 @@ impl RecogniseCtx<'_, '_> {
         if file.is_empty() || &rest[close_off + '）'.len_utf8()..] != "入る" {
             return None;
         }
-        let caption_content = self.alloc.content_plain(caption);
+        let caption_content = self.build_content_from_source_slice(view, caption);
         Some(self.alloc.sashie(file, None, None, Some(caption_content)))
     }
 }

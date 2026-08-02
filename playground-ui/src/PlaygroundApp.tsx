@@ -55,11 +55,7 @@ import {
 } from 'react';
 
 import { formatMessage, message } from './catalog';
-import {
-  copyShareUrl,
-  readSharedSource,
-  ShareUrlTooLongError,
-} from './share';
+import { copyShareUrl, readSharedSource, ShareUrlTooLongError } from './share';
 import {
   loadDraft,
   loadPreferences,
@@ -450,12 +446,16 @@ function usePersistentEditor({
   adapter,
   enabled,
   onChange,
+  onError,
+  revision,
   settingValues,
   value,
 }: {
   readonly adapter: PlaygroundAdapter;
   readonly enabled: boolean;
   readonly onChange: (value: string) => void;
+  readonly onError: () => void;
+  readonly revision: number;
   readonly settingValues: Readonly<Record<string, boolean>>;
   readonly value: string;
 }): {
@@ -503,31 +503,50 @@ function usePersistentEditor({
     let disposed = false;
     let secondFrame = 0;
     let timer = 0;
+    let ownedController: EditorController | null = null;
+    const destroyOwnedController = () => {
+      const controller = ownedController;
+      ownedController = null;
+      if (!controller) return;
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+      try {
+        controller.destroy();
+      } catch {}
+    };
     const mountEditor = () => {
-      void Promise.resolve(
-        adapter.createEditor(host, initialValueRef.current, onChange),
-      ).then((controller) => {
-        if (disposed) {
-          controller.destroy();
-          return;
-        }
-        controllerRef.current = controller;
-        controller.setValue(latestValueRef.current);
-        for (const [id, enabled] of Object.entries(
-          latestSettingValuesRef.current,
-        )) {
-          controller.setSetting(id, enabled);
-        }
-        setController(controller);
-      });
+      void Promise.resolve()
+        .then(() =>
+          adapter.createEditor(host, initialValueRef.current, onChange),
+        )
+        .then((controller) => {
+          ownedController = controller;
+          if (disposed) {
+            destroyOwnedController();
+            return;
+          }
+          controller.setValue(latestValueRef.current);
+          for (const [id, enabled] of Object.entries(
+            latestSettingValuesRef.current,
+          )) {
+            controller.setSetting(id, enabled);
+          }
+          controllerRef.current = controller;
+          setController(controller);
+        })
+        .catch(() => {
+          destroyOwnedController();
+          if (disposed) return;
+          host.replaceChildren();
+          setController(null);
+          onError();
+        });
     };
     const firstFrame = globalThis.requestAnimationFrame(() => {
       secondFrame = globalThis.requestAnimationFrame(() => {
         if (adapter.createEditorDuringInitialization) {
-          timer = globalThis.setTimeout(
-            mountEditor,
-            POST_PAINT_WORK_DELAY_MS,
-          );
+          timer = globalThis.setTimeout(mountEditor, POST_PAINT_WORK_DELAY_MS);
         } else {
           mountEditor();
         }
@@ -538,11 +557,10 @@ function usePersistentEditor({
       globalThis.cancelAnimationFrame(firstFrame);
       globalThis.cancelAnimationFrame(secondFrame);
       globalThis.clearTimeout(timer);
-      controllerRef.current?.destroy();
-      controllerRef.current = null;
+      destroyOwnedController();
       setController(null);
     };
-  }, [adapter, enabled, host, onChange]);
+  }, [adapter, enabled, host, onChange, onError, revision]);
 
   useEffect(() => {
     controllerRef.current?.setValue(value);
@@ -1144,6 +1162,8 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
   const [dialog, setDialog] = useState<DialogName>(null);
   const [selectedSample, setSelectedSample] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
+  const [editorMountFailed, setEditorMountFailed] = useState(false);
+  const [editorMountRevision, setEditorMountRevision] = useState(0);
   const [pendingJump, setPendingJump] = useState<TextRange | null>(null);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const isMobile = useMedia('(max-width: 767px)');
@@ -1151,9 +1171,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
   const colorScheme = useEffectiveColorScheme(preferences.colorScheme);
   const revisionRef = useRef(0);
   const initializationRevisionRef = useRef(0);
-  const previousAttentionDiagnostics = useRef<Map<string, number> | null>(
-    null,
-  );
+  const previousAttentionDiagnostics = useRef<Map<string, number> | null>(null);
   const storageFailureShownRef = useRef(false);
   const dialogReturnFocusRef = useRef<{
     readonly element: HTMLElement | null;
@@ -1176,6 +1194,10 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     setSource(value);
   }, []);
 
+  const onEditorError = useCallback(() => {
+    setEditorMountFailed(true);
+  }, []);
+
   const {
     attach: attachEditor,
     controller: editorController,
@@ -1185,6 +1207,8 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     enabled:
       adapter.createEditorDuringInitialization || initialization === 'ready',
     onChange: onEditorChange,
+    onError: onEditorError,
+    revision: editorMountRevision,
     settingValues,
     value: source,
   });
@@ -1193,8 +1217,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     (nextDialog: Exclude<DialogName, null>, fallbackId?: string) => {
       const activeElement = document.activeElement;
       dialogReturnFocusRef.current = {
-        element:
-          activeElement instanceof HTMLElement ? activeElement : null,
+        element: activeElement instanceof HTMLElement ? activeElement : null,
         fallbackId: fallbackId ?? null,
       };
       setDialog(nextDialog);
@@ -1265,28 +1288,45 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
   }, [preferences, reportStorageResult]);
 
   useEffect(() => {
-    const pending = globalThis.setTimeout(() => {
+    const persist = () => {
       reportStorageResult(saveDraft(adapter.product.id, source));
-    }, 300);
-    return () => globalThis.clearTimeout(pending);
+    };
+    const pending = globalThis.setTimeout(persist, 300);
+    globalThis.addEventListener('pagehide', persist);
+    return () => {
+      globalThis.clearTimeout(pending);
+      globalThis.removeEventListener('pagehide', persist);
+    };
   }, [adapter.product.id, reportStorageResult, source]);
 
   const initialize = useCallback(() => {
     const revision = ++initializationRevisionRef.current;
     setInitialization('loading');
-    adapter.initialize().then(
-      () => {
-        if (revision === initializationRevisionRef.current) {
-          setInitialization('ready');
-        }
-      },
-      () => {
-        if (revision === initializationRevisionRef.current) {
-          setInitialization('failed');
-        }
-      },
-    );
+    Promise.resolve()
+      .then(() => adapter.initialize())
+      .then(
+        () => {
+          if (revision === initializationRevisionRef.current) {
+            setInitialization('ready');
+          }
+        },
+        () => {
+          if (revision === initializationRevisionRef.current) {
+            setInitialization('failed');
+          }
+        },
+      );
   }, [adapter]);
+
+  const retryInitialization = useCallback(() => {
+    if (editorMountFailed) {
+      setEditorMountFailed(false);
+      setEditorMountRevision((revision) => revision + 1);
+    }
+    if (initialization === 'failed') {
+      initialize();
+    }
+  }, [editorMountFailed, initialization, initialize]);
 
   useEffect(() => {
     if (!adapter.createEditorDuringInitialization) {
@@ -1297,10 +1337,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     let timer = 0;
     const firstFrame = globalThis.requestAnimationFrame(() => {
       secondFrame = globalThis.requestAnimationFrame(() => {
-        timer = globalThis.setTimeout(
-          initialize,
-          POST_PAINT_WORK_DELAY_MS,
-        );
+        timer = globalThis.setTimeout(initialize, POST_PAINT_WORK_DELAY_MS);
       });
     });
     return () => {
@@ -1318,19 +1355,15 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     ) {
       setMobilePane('preview');
     }
-  }, [
-    adapter.createEditorDuringInitialization,
-    initialization,
-    isMobile,
-  ]);
+  }, [adapter.createEditorDuringInitialization, initialization, isMobile]);
 
   useEffect(() => {
     if (initialization !== 'ready') return;
     const revision = ++revisionRef.current;
     const abort = new AbortController();
     const pending = globalThis.setTimeout(() => {
-      adapter
-        .analyze(source, { revision, signal: abort.signal })
+      Promise.resolve()
+        .then(() => adapter.analyze(source, { revision, signal: abort.signal }))
         .then((result) => {
           if (abort.signal.aborted || revision !== revisionRef.current) return;
           setAnalysis(result);
@@ -1578,6 +1611,17 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     </ActionMenu>
   );
 
+  const displayInitialization: InitializationState = editorMountFailed
+    ? 'failed'
+    : initialization;
+  const failureHeading = message(
+    locale,
+    editorMountFailed ? 'editorInitializationFailed' : 'initializationFailed',
+  );
+  const failureHint = message(
+    locale,
+    editorMountFailed ? 'editorInitializationHint' : 'initializationHint',
+  );
   const editorPane = (
     <EditorPane
       attachEditor={attachEditor}
@@ -1586,7 +1630,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
     />
   );
   const previewPane =
-    initialization === 'ready' ? (
+    displayInitialization === 'ready' ? (
       <PreviewPane
         adapter={adapter}
         analysis={analysis}
@@ -1602,14 +1646,11 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         showDiagnostics={!isMobile}
       />
     ) : (
-      <section
-        aria-label={message(locale, 'preview')}
-        className={paneStyle}
-      >
+      <section aria-label={message(locale, 'preview')} className={paneStyle}>
         <div className={paneHeaderStyle}>
           <span className={paneTitleStyle}>{message(locale, 'preview')}</span>
         </div>
-        {initialization === 'loading' ? (
+        {displayInitialization === 'loading' ? (
           <div className={centeredStyle} role="status">
             <ProgressCircle
               aria-label={message(locale, 'initializing')}
@@ -1620,10 +1661,10 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         ) : (
           <div className={centeredStyle}>
             <InlineAlert autoFocus variant="negative">
-              <Heading>{message(locale, 'initializationFailed')}</Heading>
-              <Content>{message(locale, 'initializationHint')}</Content>
+              <Heading>{failureHeading}</Heading>
+              <Content>{failureHint}</Content>
             </InlineAlert>
-            <Button onPress={initialize} variant="accent">
+            <Button onPress={retryInitialization} variant="accent">
               {message(locale, 'retry')}
             </Button>
           </div>
@@ -1633,7 +1674,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
 
   let workspace: ReactNode;
   if (
-    initialization === 'loading' &&
+    displayInitialization === 'loading' &&
     !adapter.createEditorDuringInitialization
   ) {
     workspace = (
@@ -1646,16 +1687,16 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       </div>
     );
   } else if (
-    initialization === 'failed' &&
+    displayInitialization === 'failed' &&
     !adapter.createEditorDuringInitialization
   ) {
     workspace = (
       <div className={centeredStyle}>
         <InlineAlert autoFocus variant="negative">
-          <Heading>{message(locale, 'initializationFailed')}</Heading>
-          <Content>{message(locale, 'initializationHint')}</Content>
+          <Heading>{failureHeading}</Heading>
+          <Content>{failureHint}</Content>
         </InlineAlert>
-        <Button onPress={initialize} variant="accent">
+        <Button onPress={retryInitialization} variant="accent">
           {message(locale, 'retry')}
         </Button>
       </div>
@@ -1666,7 +1707,7 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
         <div className={mobileToolsStyle}>
           <ActionButton
             id="playground-mobile-outline-trigger"
-            isDisabled={initialization !== 'ready'}
+            isDisabled={displayInitialization !== 'ready'}
             onPress={() =>
               openDialog('outline', 'playground-mobile-outline-trigger')
             }
@@ -1677,12 +1718,9 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
           </ActionButton>
           <ActionButton
             id="playground-mobile-diagnostics-trigger"
-            isDisabled={initialization !== 'ready'}
+            isDisabled={displayInitialization !== 'ready'}
             onPress={() =>
-              openDialog(
-                'diagnostics',
-                'playground-mobile-diagnostics-trigger',
-              )
+              openDialog('diagnostics', 'playground-mobile-diagnostics-trigger')
             }
             size="S"
           >
@@ -1720,10 +1758,10 @@ export function PlaygroundApp({ adapter }: PlaygroundAppProps) {
       </div>
     );
   } else {
-    const forceSplit = initialization !== 'ready';
+    const forceSplit = displayInitialization !== 'ready';
     workspace = (
       <div className={workspaceStyle}>
-        {initialization === 'ready' && preferences.outlineOpen && (
+        {displayInitialization === 'ready' && preferences.outlineOpen && (
           <aside
             className={outlineStyle}
             aria-label={message(locale, 'outline')}

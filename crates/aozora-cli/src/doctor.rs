@@ -40,6 +40,7 @@ use clap::ValueEnum;
 
 use crate::config::{ConfigFile, Layers, strict_active};
 use crate::diagnostics_render::DiagFormat;
+use crate::output;
 use crate::which::which;
 use crate::{ColorChoice, Encoding};
 
@@ -72,7 +73,7 @@ pub(crate) fn run(
 ) -> Result<ExitCode> {
     let doctor = Doctor::gather(color, lang_flag, lang);
     let (report, blocking) = doctor.render(lang);
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     stdout
         .write_all(report.as_bytes())
         .context("failed to write the doctor report to stdout")?;

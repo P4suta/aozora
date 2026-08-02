@@ -166,12 +166,7 @@ fn run() -> Result<(), String> {
 
 fn collect_cases(root: &Path) -> Result<Vec<CaseResult>, String> {
     let fixtures_dir = root.join(FIXTURE_REL);
-    let mut entries: Vec<_> = fs::read_dir(&fixtures_dir)
-        .map_err(|err| format!("read_dir {}: {err}", fixtures_dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir())
-        .collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
+    let entries = sorted_subdirectories(&fixtures_dir)?;
 
     // Rayon's `par_iter()` preserves the input order on `collect()`,
     // so the alphabetised fixture sequence above carries through to
@@ -356,12 +351,7 @@ fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
 fn run_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let fixtures_dir = root.join(FIXTURE_REL);
-    let mut entries: Vec<_> = fs::read_dir(&fixtures_dir)
-        .map_err(|err| format!("read_dir {}: {err}", fixtures_dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
+    let entries = sorted_subdirectories(&fixtures_dir)?;
 
     // A plain sequential walk: `tree_sitter::Parser` is not shareable
     // across rayon worker threads, and parsing 64 tiny fixtures is a
@@ -499,12 +489,7 @@ struct TsVectorSnapshot {
 fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);
-    let mut entries: Vec<_> = fs::read_dir(&vectors_dir)
-        .map_err(|err| format!("read_dir {}: {err}", vectors_dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
+    let entries = sorted_subdirectories(&vectors_dir)?;
 
     let mut cases = Vec::with_capacity(entries.len());
     let mut snapshot_vectors = Vec::with_capacity(entries.len());
@@ -691,12 +676,7 @@ struct ActualDiagnostic {
 fn run_vectors() -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);
-    let mut entries: Vec<_> = fs::read_dir(&vectors_dir)
-        .map_err(|err| format!("read_dir {}: {err}", vectors_dir.display()))?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect();
-    entries.sort_by_key(fs::DirEntry::file_name);
+    let entries = sorted_subdirectories(&vectors_dir)?;
 
     let mut total = 0usize;
     let mut failed = 0usize;
@@ -731,6 +711,27 @@ fn run_vectors() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn sorted_subdirectories(directory: &Path) -> Result<Vec<fs::DirEntry>, String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|err| format!("read_dir {}: {err}", directory.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("read entry in {}: {err}", directory.display()))?;
+    let mut entries = entries
+        .into_iter()
+        .map(|entry| {
+            entry
+                .file_type()
+                .map(|file_type| (entry, file_type))
+                .map_err(|err| format!("inspect entry in {}: {err}", directory.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter_map(|(entry, file_type)| file_type.is_dir().then_some(entry))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    Ok(entries)
 }
 
 /// Parse one vector's source and diff each projection the spec pins.

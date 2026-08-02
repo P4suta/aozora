@@ -20,9 +20,10 @@ use crate::pipeline::lex;
 use crate::syntax::DirectiveKind;
 use crate::syntax::ast::{LexOutput, Node, NodeRef, NodeStore};
 
-use crate::render::render_node::render;
+use crate::render::MAX_NESTED_SOURCE_DEPTH;
+use crate::render::render_node::render_with_depth;
 use crate::render::serialize::{DirectiveNormalization, SerializeOptions, serialize_with};
-use crate::render::spelling::html::{RenderState, escape_text_chunk};
+use crate::render::spelling::html::{RenderState, escape_text, escape_text_chunk};
 use crate::render::walk::{NewlineSink, SentinelKind, WalkSink, walk_with_newlines};
 
 /// Options controlling the opt-in HTML render path.
@@ -108,19 +109,35 @@ pub(crate) fn render_html_into<W: fmt::Write>(out: &LexOutput, writer: &mut W) -
         store: &out.store,
         out: writer,
         state: RenderState::default(),
+        nested_depth: 0,
     };
     walk_with_newlines(out, &mut sink)?;
     sink.finish()
 }
 
-pub(super) fn render_inline_source<W: fmt::Write>(source: &str, writer: &mut W) -> fmt::Result {
+pub(super) fn render_inline_source<W: fmt::Write>(
+    source: &str,
+    writer: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    if nested_depth >= MAX_NESTED_SOURCE_DEPTH {
+        return escape_text(source, writer);
+    }
     let output = lex(source);
+    if output.source_nodes.iter().any(|entry| match entry.node {
+        NodeRef::Inline(_) => false,
+        NodeRef::BlockLeaf(_) | NodeRef::BlockOpen(_) | NodeRef::BlockClose(_) => true,
+    }) {
+        return escape_text(source, writer);
+    }
     let mut sink = HtmlSink::<_, true> {
         store: &output.store,
         out: writer,
         state: RenderState::default(),
+        nested_depth: nested_depth + 1,
     };
-    walk_with_newlines(&output, &mut sink)
+    walk_with_newlines(&output, &mut sink)?;
+    sink.finish()
 }
 
 /// [`WalkSink`] that emits semantic HTML5 from the AST, threading the
@@ -131,12 +148,13 @@ struct HtmlSink<'a, W: fmt::Write, const INLINE: bool> {
     store: &'a NodeStore,
     out: &'a mut W,
     state: RenderState,
+    nested_depth: usize,
 }
 
 impl<W: fmt::Write, const INLINE: bool> HtmlSink<'_, W, INLINE> {
     fn finish(&mut self) -> fmt::Result {
         if INLINE {
-            Ok(())
+            self.state.drain_open_warichu(self.out)
         } else {
             self.state.finish(self.out)
         }
@@ -156,22 +174,23 @@ impl<W: fmt::Write, const INLINE: bool> WalkSink for HtmlSink<'_, W, INLINE> {
         if INLINE {
             return match (kind, node) {
                 (SentinelKind::Inline, NodeRef::Inline(n))
-                | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
-                    render(n, self.store, self.out)
-                }
+                | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => match &n {
+                    Node::Directive(a) if a.kind == DirectiveKind::WarichuOpen => {
+                        self.state.open_warichu(self.out)
+                    }
+                    Node::Directive(a) if a.kind == DirectiveKind::WarichuClose => {
+                        self.state.close_warichu(self.out)
+                    }
+                    _ => render_with_depth(n, self.store, self.out, self.nested_depth),
+                },
                 _ => Ok(()),
             };
         }
         match (kind, node) {
             (SentinelKind::Inline, NodeRef::Inline(n)) => {
                 self.state.ensure_in_paragraph(self.out)?;
-                // Inline warichu open / close are structural, not per-node:
-                // their span must stay balanced across paragraph boundaries, so
-                // `RenderState` owns the depth counter (mirroring container
-                // balance) rather than the AST emitter writing the tags
-                // unconditionally (#415). Every other inline node renders as
-                // before. Check `kind` through a borrow, then move `n` into
-                // `render` on the fall-through.
+                // RenderState splits crossed phrasing scopes into balanced
+                // fragments instead of emitting overlapping tags (#415).
                 match &n {
                     Node::Directive(a) if a.kind == DirectiveKind::WarichuOpen => {
                         self.state.open_warichu(self.out)
@@ -179,12 +198,12 @@ impl<W: fmt::Write, const INLINE: bool> WalkSink for HtmlSink<'_, W, INLINE> {
                     Node::Directive(a) if a.kind == DirectiveKind::WarichuClose => {
                         self.state.close_warichu(self.out)
                     }
-                    _ => render(n, self.store, self.out),
+                    _ => render_with_depth(n, self.store, self.out, self.nested_depth),
                 }
             }
             (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
                 self.state.before_block_emit(self.out)?;
-                render(n, self.store, self.out)?;
+                render_with_depth(n, self.store, self.out, self.nested_depth)?;
                 self.state.after_block_emit();
                 Ok(())
             }
@@ -219,11 +238,8 @@ impl<W: fmt::Write, const INLINE: bool> NewlineSink for HtmlSink<'_, W, INLINE> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syntax::alloc::Allocator;
 
-    /// [`render_html_normalized`] returns the *actual* rendered HTML of the
-    /// (formatter-rewritten, re-parsed) tree — not an empty string nor a
-    /// placeholder. Plain text has no catalogue entry, so `Canonical` leaves it
-    /// verbatim and it renders as an ordinary paragraph.
     #[test]
     fn normalized_render_emits_actual_paragraph_html() {
         let out = lex("Hello.");
@@ -246,17 +262,34 @@ mod tests {
         assert!(!canonical.contains("aozora-directive"));
     }
 
-    /// A non-warichu inline directive (`［＃入力者注(5)］`) must fall through to the
-    /// per-node emitter: the `WarichuClose` match guard is a genuine equality
-    /// test, not an unconditional `true`. Were the guard always true, this
-    /// editor note would be routed to `close_warichu` (a no-op with no open
-    /// warichu) and its visible `注5` superscript would vanish.
     #[test]
-    fn non_warichu_inline_directive_renders_via_emitter_not_close_warichu() {
-        let out = lex("本文［＃入力者注(5)］続き");
+    fn non_warichu_directive_reaches_the_emitter_in_both_modes() {
+        fn render_editor_note<const INLINE: bool>() -> String {
+            let mut allocator = Allocator::new();
+            let directive =
+                allocator.make_directive("［＃入力者注(5)］", DirectiveKind::EditorNote);
+            let node = allocator.annotation(directive);
+            let store = allocator.into_store();
+            let mut output = String::new();
+            let mut sink = HtmlSink::<_, INLINE> {
+                store: &store,
+                out: &mut output,
+                state: RenderState::default(),
+                nested_depth: 0,
+            };
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(node))
+                .expect("render into String is infallible");
+            sink.finish().expect("render into String is infallible");
+            output
+        }
+
         assert_eq!(
-            render_html(&out),
-            "<p>本文<sup class=\"aozora-editor-note\">注5</sup>続き</p>\n",
+            render_editor_note::<false>(),
+            "<p><sup class=\"aozora-editor-note\">注5</sup></p>\n",
+        );
+        assert_eq!(
+            render_editor_note::<true>(),
+            "<sup class=\"aozora-editor-note\">注5</sup>",
         );
     }
 
@@ -267,5 +300,87 @@ mod tests {
         assert!(html.contains("<em class=\"aozora-bouten"));
         assert!(html.contains("<ruby>經<rp>(</rp><rt>た</rt>"));
         assert!(!html.contains("｜經《た》"), "html: {html}");
+    }
+
+    #[test]
+    fn non_bouten_format_preserves_nested_gaiji() {
+        let source = "［＃「※［＃「木＋吶のつくり」、第3水準1-85-54］」は太字］";
+        let html = render_html(&lex(source));
+
+        assert!(html.contains(r#"<b class="aozora-futoji">"#), "{html}");
+        assert!(html.contains(r#"<span class="aozora-gaiji""#), "{html}");
+        assert!(html.contains('枘'), "{html}");
+        assert!(!html.contains("※［＃"), "{html}");
+    }
+
+    #[test]
+    fn block_nested_source_falls_back_to_escaped_notation() {
+        let html = render_html(&lex("［＃「［＃改ページ］」に傍点］"));
+
+        assert!(html.contains("［＃改ページ］"), "{html}");
+        assert!(!html.contains("<div"), "{html}");
+        assert!(!html.contains("<br"), "{html}");
+    }
+
+    #[test]
+    fn nested_source_warichu_is_balanced() {
+        let stray_close = render_html(&lex("［＃「［＃割り注終わり］X」に傍点］"));
+        assert!(!stray_close.contains("</span>X"), "{stray_close}");
+
+        let unclosed = render_html(&lex("［＃「［＃割り注］X」に傍点］"));
+        assert_eq!(
+            unclosed.matches(r#"<span class="aozora-warichu">"#).count(),
+            unclosed.matches("</span>").count(),
+            "{unclosed}"
+        );
+    }
+
+    #[test]
+    fn crossed_warichu_and_region_scopes_are_split_into_valid_html() {
+        let warichu_outer = render_html(&lex(
+            "［＃割り注］［＃太字］X［＃割り注終わり］Y［＃太字終わり］",
+        ));
+        assert_eq!(
+            warichu_outer,
+            "<p><span class=\"aozora-warichu\"><b class=\"aozora-futoji\">X</b></span><b class=\"aozora-futoji\">Y</b></p>\n"
+        );
+
+        let region_outer = render_html(&lex(
+            "［＃太字］［＃割り注］X［＃太字終わり］Y［＃割り注終わり］",
+        ));
+        assert_eq!(
+            region_outer,
+            "<p><b class=\"aozora-futoji\"><span class=\"aozora-warichu\">X</span></b><span class=\"aozora-warichu\">Y</span></p>\n"
+        );
+    }
+
+    #[test]
+    fn nested_unmatched_warichu_close_is_an_inert_marker() {
+        let html = render_html(&lex("｜X《［＃割り注終わり］Y》"));
+
+        assert!(!html.contains("<rt></span>"), "{html}");
+        assert!(
+            html.contains(r#"<span class="aozora-directive" hidden>"#),
+            "{html}"
+        );
+        assert!(html.contains("Y</rt>"), "{html}");
+    }
+
+    #[test]
+    fn deeply_nested_source_stops_reparsing_and_preserves_escaped_tail() {
+        let mut source = "<&".to_owned();
+        for _ in 0..MAX_NESTED_SOURCE_DEPTH + 2 {
+            source = format!("［＃「{source}」に傍点］");
+        }
+
+        let html = render_html(&lex(&source));
+        assert_eq!(
+            html.matches(r#"<em class="aozora-bouten"#).count(),
+            MAX_NESTED_SOURCE_DEPTH + 1,
+            "{html}"
+        );
+        assert!(html.contains("［＃「"), "{html}");
+        assert!(html.contains("&lt;&amp;"), "{html}");
+        assert!(!html.contains("<&"), "{html}");
     }
 }

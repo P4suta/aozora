@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 128,
-  "passed": 128,
+  "total": 131,
+  "passed": 131,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,8 +10,8 @@
       "failed": 0
     },
     "must": {
-      "total": 31,
-      "passed": 31,
+      "total": 34,
+      "passed": 34,
       "failed": 0
     },
     "should": {
@@ -281,6 +281,13 @@
       "message": null
     },
     {
+      "case": "empty_directive",
+      "feature": "annotation",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "empty_ruby_reading",
       "feature": "ruby",
       "level": "should",
@@ -347,6 +354,13 @@
       "case": "gaiji_locator_tolerance",
       "feature": "gaiji",
       "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_mencode_absent",
+      "feature": "gaiji",
+      "level": "must",
       "passed": true,
       "message": null
     },
@@ -725,6 +739,13 @@
       "case": "ruby_base_latin_in_quote",
       "feature": "ruby",
       "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_mixed_gaiji_text_implicit",
+      "feature": "ruby",
+      "level": "must",
       "passed": true,
       "message": null
     },

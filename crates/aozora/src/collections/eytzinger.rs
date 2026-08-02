@@ -231,6 +231,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "sorted ascending")]
     fn debug_panic_on_unsorted_input() {
         // Body is the panic, not the return value — drop explicitly.

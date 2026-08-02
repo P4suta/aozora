@@ -9,6 +9,16 @@ Install from npm:
 npm install aozora-wasm
 ```
 
+The renderer emits semantic `aozora-*` class hooks. Applications that want
+the project defaults can opt in to the reference stylesheet:
+
+```js
+import "aozora-wasm/aozora-notation.css";
+```
+
+The stylesheet is optional. Applications can use the class hooks with their
+own presentation instead.
+
 Or build from source:
 
 ```sh

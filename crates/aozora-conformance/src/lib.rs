@@ -84,8 +84,8 @@ impl RenderFixture {
     ///
     /// # Panics
     ///
-    /// Panics if `fixtures_root` does not exist — the caller is
-    /// expected to be a test that knows the layout.
+    /// Panics if the fixture tree cannot be read or a fixture lacks its
+    /// required source file.
     #[must_use]
     pub fn load_group(fixtures_root: &Path, group: &str) -> Vec<Self> {
         let group_dir = fixtures_root.join(group);
@@ -96,8 +96,15 @@ impl RenderFixture {
         );
         let mut entries: Vec<_> = fs::read_dir(&group_dir)
             .expect("read_dir on fixtures group")
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|err| panic!("read entry in {}: {err}", group_dir.display()))
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .unwrap_or_else(|err| panic!("inspect {}: {err}", entry.path().display()))
+                    .is_dir()
+            })
             .collect();
         entries.sort_by_key(fs::DirEntry::file_name);
         entries

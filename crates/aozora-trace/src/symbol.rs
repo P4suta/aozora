@@ -199,7 +199,7 @@ impl Symbolicator {
     }
 
     /// Verify every registered binary's build-id matches the trace's
-    /// recorded `code_id` (or `debug_id` as fallback) for the same
+    /// recorded `code_id` (or Breakpad `debug_id` as fallback) for the same
     /// library. Returns `Ok(())` if every match is good (or the
     /// trace had no identifier to compare against),
     /// [`SymbolError::BuildIdMismatch`] otherwise.
@@ -208,10 +208,6 @@ impl Symbolicator {
             let Some(found) = self.build_ids.get(&lib.name) else {
                 continue;
             };
-            // samply records the gnu-build-id in `codeId`. Some
-            // older/other recorders use `debugId` (breakpad-style:
-            // uppercase 32 hex + 8 hex age). Try both; first non-empty
-            // wins.
             let trace_id = if !lib.code_id.is_empty() {
                 lib.code_id.as_str()
             } else if !lib.debug_id.is_empty() {
@@ -287,7 +283,7 @@ impl Symbolicator {
         let mut resolved = 0;
         let mut attempted = 0;
         // Build a per-thread "library_idx → (loader?, dyn_table?,
-        // name, debug_id)" lookup once. Either source is optional —
+        // name, binary identity)" lookup once. Either source is optional —
         // a library may have only DWARF, only dynsym, or both.
         for thread_idx in 0..trace.threads.len() {
             type LibBindings<'a> = Option<(
@@ -301,12 +297,12 @@ impl Symbolicator {
                 let loader = self.loaders.get(&lib.name);
                 let dyn_table = self.dyn_symbols.get(&lib.name);
                 if loader.is_some() || dyn_table.is_some() {
-                    lib_bindings.push(Some((
-                        loader,
-                        dyn_table,
-                        lib.name.as_str(),
-                        lib.debug_id.as_str(),
-                    )));
+                    let identity = if lib.code_id.is_empty() {
+                        lib.debug_id.as_str()
+                    } else {
+                        lib.code_id.as_str()
+                    };
+                    lib_bindings.push(Some((loader, dyn_table, lib.name.as_str(), identity)));
                 } else {
                     lib_bindings.push(None);
                 }
@@ -319,7 +315,7 @@ impl Symbolicator {
                 let Some(lib_idx) = thread.frame_library(frame_idx) else {
                     continue;
                 };
-                let Some(Some((loader, dyn_table, lib_name, debug_id))) = lib_bindings.get(lib_idx)
+                let Some(Some((loader, dyn_table, lib_name, identity))) = lib_bindings.get(lib_idx)
                 else {
                     continue;
                 };
@@ -332,7 +328,7 @@ impl Symbolicator {
                     cache.record(
                         crate::LibIdent {
                             name: lib_name,
-                            debug_id,
+                            debug_id: identity,
                         },
                         addr,
                         name.clone(),
@@ -394,18 +390,23 @@ fn read_dynamic_symbols(path: &Path) -> Option<DynSymbolTable> {
         if name.is_empty() {
             continue;
         }
-        let address = sym.address();
-        if address == 0 {
+        let Some((address, end)) = dynamic_symbol_range(sym.address(), sym.size()) else {
             continue;
-        }
-        let size = sym.size().max(1);
+        };
         // Best-effort Rust demangle (no-op for C names like `malloc`).
         let demangled =
             addr2line::demangle_auto(std::borrow::Cow::Borrowed(name), None).into_owned();
-        entries.push((address, address + size, demangled));
+        entries.push((address, end, demangled));
     }
     entries.sort_by_key(|(start, _, _)| *start);
     Some(DynSymbolTable { entries })
+}
+
+fn dynamic_symbol_range(address: u64, size: u64) -> Option<(u64, u64)> {
+    if address == 0 {
+        return None;
+    }
+    address.checked_add(size.max(1)).map(|end| (address, end))
 }
 
 /// Strip dashes and lowercase. Breakpad and GNU forms differ in
@@ -423,7 +424,9 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{DYNSYM_FUZZY_GAP_LIMIT, DynSymbolTable, Symbolicator, normalise_id};
+    use super::{
+        DYNSYM_FUZZY_GAP_LIMIT, DynSymbolTable, Symbolicator, dynamic_symbol_range, normalise_id,
+    };
     use crate::Trace;
 
     fn table(entries: &[(u64, u64, &str)]) -> DynSymbolTable {
@@ -442,6 +445,14 @@ mod tests {
         assert_eq!(t.lookup(0x150).as_deref(), Some("foo"), "in foo's range");
         assert_eq!(t.lookup(0x200).as_deref(), Some("bar"), "start of bar");
         assert_eq!(t.lookup(0x2ff).as_deref(), Some("bar"), "last byte of bar");
+    }
+
+    #[test]
+    fn dynamic_symbol_range_rejects_zero_and_overflowing_addresses() {
+        assert_eq!(dynamic_symbol_range(0, 10), None);
+        assert_eq!(dynamic_symbol_range(0x100, 0), Some((0x100, 0x101)));
+        assert_eq!(dynamic_symbol_range(u64::MAX, 1), None);
+        assert_eq!(dynamic_symbol_range(u64::MAX - 1, 2), None);
     }
 
     #[test]
@@ -503,7 +514,7 @@ mod tests {
                 "name": name,
                 "path": "/x",
                 "codeId": code_id,
-                "debugId": debug_id,
+                "breakpadId": debug_id,
             }],
             "threads": [],
         });
@@ -528,25 +539,21 @@ mod tests {
         sym.build_ids
             .insert("bin".to_owned(), "deadbeefcafe".to_owned());
 
-        // Matching codeId ⇒ Ok.
         let good = trace_with_lib("bin", "deadbeefcafe", "");
         assert!(
             sym.verify_against(&good).is_ok(),
             "matching codeId verifies"
         );
 
-        // Trace with empty ids ⇒ nothing to compare ⇒ Ok.
         let idless = trace_with_lib("bin", "", "");
         assert!(sym.verify_against(&idless).is_ok(), "no trace id ⇒ skipped");
 
-        // Falls back to debugId when codeId empty; matching ⇒ Ok.
         let via_debug = trace_with_lib("bin", "", "DEAD-BEEF-CAFE");
         assert!(
             sym.verify_against(&via_debug).is_ok(),
-            "debugId fallback verifies after normalisation"
+            "breakpadId fallback verifies after normalisation"
         );
 
-        // Divergent id ⇒ BuildIdMismatch error.
         let bad = trace_with_lib("bin", "00000000ffff", "");
         let err = sym.verify_against(&bad).expect_err("mismatch must error");
         assert!(

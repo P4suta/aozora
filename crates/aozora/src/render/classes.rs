@@ -126,8 +126,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
 /// Romaji slug for a [`BoutenKind`] — the `aozora-bouten-<slug>` suffix.
 ///
 /// The slug lives in the spec table (`RENDER_SLUGS`), keyed by the
-/// canonical 青空文庫 keyword; `BoutenKind` is `#[non_exhaustive]`, so an
-/// unknown kind falls back to `other` and rendering stays infallible.
+/// canonical 青空文庫 keyword.
 #[must_use]
 pub(crate) fn bouten_kind_slug(kind: BoutenKind) -> &'static str {
     roman_slug(kind.keyword()).unwrap_or("other")
@@ -138,9 +137,9 @@ pub(crate) fn bouten_kind_slug(kind: BoutenKind) -> &'static str {
 #[must_use]
 pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
     match pos {
+        BoutenPosition::Right => "right",
         BoutenPosition::Left => "left",
         BoutenPosition::Both => "both",
-        _ => "right",
     }
 }
 
@@ -148,28 +147,26 @@ pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
 /// suffix.
 ///
 /// Shared by the forward-reference leaf and the paired/block heading
-/// container. `HeadingKind` is `#[non_exhaustive]`; an unknown level
-/// defaults to the top (`large`).
+/// container.
 #[must_use]
 pub(crate) const fn heading_level_slug(kind: HeadingKind) -> &'static str {
     match kind {
+        HeadingKind::Large => "large",
         HeadingKind::Medium => "medium",
         HeadingKind::Small => "small",
-        _ => "large",
     }
 }
 
 /// Per-style modifier slug for a [`HeadingStyle`].
 ///
 /// `None` for the standard style, which adds no modifier so a standard
-/// heading's markup is unchanged. An unknown (`#[non_exhaustive]`) style
-/// is treated as standard.
+/// heading's markup is unchanged.
 #[must_use]
 pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static str> {
     match style {
+        HeadingStyle::Standard => None,
         HeadingStyle::SameLine => Some("same-line"),
         HeadingStyle::Window => Some("window"),
-        _ => None,
     }
 }
 
@@ -177,7 +174,7 @@ pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static s
 mod tests {
     use super::{AOZORA_CLASSES, bouten_kind_slug, bouten_position_slug};
     use crate::render::render_node::render;
-    use crate::render::spelling::html::render_container;
+    use crate::render::spelling::html::{RenderState, render_container};
     use crate::syntax::alloc::Allocator;
     use crate::syntax::ast::{Node, NodeStore};
     use crate::syntax::{
@@ -586,6 +583,15 @@ mod tests {
                 .expect("render into String is infallible");
             collect_classes(&html, &mut emitted);
         }
+        let mut html = String::new();
+        let mut state = RenderState::default();
+        state
+            .open_warichu(&mut html)
+            .expect("render into String is infallible");
+        state
+            .close_warichu(&mut html)
+            .expect("render into String is infallible");
+        collect_classes(&html, &mut emitted);
         emitted
     }
 

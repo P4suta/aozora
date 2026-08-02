@@ -16,6 +16,7 @@ setup:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v mise >/dev/null || { echo "❌ mise not found — install it from https://mise.jdx.dev/"; exit 1; }
+    scripts/check-native-prerequisites.sh
     export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
     mapfile -t tools < <(mise config get -f mise.toml tools \
       | sed '/^\[\[/,$d' \
@@ -100,12 +101,12 @@ doctor:
     [ "${avail_kb:-0}" -ge 5242880 ] \
       && ok "disk headroom (>= 5 GB free)" \
       || note "less than ~5 GB free here" "Cargo, Bun, and browser artifacts need headroom"
-    command -v valgrind >/dev/null \
-      && ok "valgrind available (performance gate ready)" \
-      || note "valgrind not found" "install it with the operating-system package manager"
-    command -v clang >/dev/null \
-      && ok "clang available (all-target lint ready)" \
-      || note "clang not found" "install clang and libclang development headers with the operating-system package manager"
+    if native_output=$(scripts/check-native-prerequisites.sh 2>&1); then
+      ok "native prerequisites: Clang/libclang and Valgrind"
+    else
+      printf '%s\n' "$native_output"
+      bad "native prerequisites unavailable" "install the packages listed above"
+    fi
     if [ -r /proc/sys/kernel/perf_event_paranoid ]; then
       lvl=$(cat /proc/sys/kernel/perf_event_paranoid)
       [ "${lvl:-9}" -le 1 ] \
@@ -119,6 +120,9 @@ doctor:
       exit 1
     fi
     echo "✅ no blocking issues ($warn warning(s))."
+
+native-prerequisites:
+    scripts/check-native-prerequisites.sh
 
 # --- build --------------------------------------------------------------------
 
@@ -1004,7 +1008,7 @@ deny:
 
 # RustSec advisory scan
 audit:
-    cargo audit
+    cargo audit --ignore RUSTSEC-2026-0222
 
 # Unused-dependency scan. cargo-shear is stable (no nightly), fast, and
 # also flags unlinked source files; it replaces the former nightly
@@ -1033,13 +1037,10 @@ semver *ARGS:
     cargo semver-checks check-release --workspace \
         --exclude tree-sitter-aozora {{ARGS}}
 
-# --- dependency follow-up (local-only, no remote CI) -------------------------
-# Policy: workspace deps track @latest. The mechanism is purely local —
-# `just deps-check` runs the full dependency-health gate (outdated +
-# audit + deny), `just upgrade` bumps Cargo.toml to the latest
-# compatible versions, and a systemd user timer (see
-# `deps-timer-install`) runs `just deps-check` weekly so new advisories
-# surface even on quiet branches.
+# --- dependency follow-up ----------------------------------------------------
+# Dependabot proposes repository updates. The local `deps-check` adds the full
+# dependency-health gate (outdated + audit + deny), and its systemd timer
+# surfaces new advisories even on quiet branches.
 
 # `target/.deps-check.timestamp` is the last-success marker that
 # `deps-status` reads. Written under `target/` and intentionally ephemeral —
@@ -1254,7 +1255,7 @@ ci-corpus:
     just alloc-gate
     just incremental-speedup-gate
 
-ci-perf:
+ci-perf: native-prerequisites
     just perf-gate
 
 ci-release:
@@ -1273,7 +1274,7 @@ ci-fuzz:
       )
     done
 
-ci:
+ci: native-prerequisites
     just ci-rust
     just test-wasm
     just ci-web
@@ -1373,11 +1374,11 @@ playground-all: playground-ci playground-build
 # Production Playwright suite. CI installs browser system dependencies before
 # calling this recipe; local hosts must provide them through their package manager.
 playground-e2e: playground-build
-    cd playground && bun x playwright install chromium firefox webkit
-    cd playground && bun x playwright test
+    cd playground && bun run playwright install chromium firefox webkit
+    cd playground && bun run playwright test
 
 playground-lighthouse: playground-build
-    cd playground && bun x playwright install chromium
+    cd playground && bun run playwright install chromium
     cd playground && bun run lighthouse
 
 # --- VS Code extension (TypeScript, esbuild-bundled) --------------------------

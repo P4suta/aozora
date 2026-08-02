@@ -148,6 +148,15 @@ impl Allocator {
         Segment::Directive(a)
     }
 
+    #[must_use]
+    pub(crate) fn seg_node(&self, node: Node) -> Segment {
+        assert!(
+            super::ast::node_is_content_segment(node),
+            "only inline semantic nodes may enter a Content segment"
+        );
+        Segment::Node(node)
+    }
+
     // ---------------------------------------------------------------------
     // Payload builders (used by both Segment and Node constructors)
     // ---------------------------------------------------------------------
@@ -510,7 +519,7 @@ impl Allocator {
             !file.is_empty(),
             "classify stage must emit Illustration with non-empty file path"
         );
-        debug_assert!(
+        assert!(
             !description.is_empty(),
             "classify stage must emit a general Illustration with a non-empty description"
         );
@@ -786,6 +795,13 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "non-empty description")]
+    fn sashie_general_rejects_an_empty_description_in_every_profile() {
+        let mut allocator = Allocator::new();
+        let _drop = allocator.sashie_general("fig.png", "", None);
+    }
+
+    #[test]
     fn kaeriten_round_trip() {
         let mut a = Allocator::new();
         let Node::Kaeriten(k) = a.kaeriten("（レ）") else {
@@ -868,5 +884,31 @@ mod tests {
         let base = a.content_plain("");
         let reading = a.content_plain("おうめ");
         let _ = a.ruby(base, reading);
+    }
+
+    #[test]
+    #[should_panic(expected = "only inline semantic nodes")]
+    fn content_segment_rejects_block_only_node() {
+        let a = Allocator::new();
+        assert!(matches!(a.seg_node(a.page_break()), Segment::Node(_)));
+    }
+
+    #[test]
+    #[should_panic(expected = "only inline semantic nodes")]
+    fn content_segment_rejects_gaiji_node() {
+        let mut a = Allocator::new();
+        let gaiji = a.make_gaiji("外字", None, false);
+        assert!(matches!(a.seg_node(a.gaiji(gaiji)), Segment::Node(_)));
+    }
+
+    #[test]
+    #[should_panic(expected = "only inline semantic nodes")]
+    fn content_segment_rejects_directive_node() {
+        let mut a = Allocator::new();
+        let directive = a.make_directive("［＃ママ］", DirectiveKind::Sic);
+        assert!(matches!(
+            a.seg_node(a.annotation(directive)),
+            Segment::Node(_)
+        ));
     }
 }

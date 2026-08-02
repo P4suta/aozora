@@ -474,6 +474,19 @@ lsp-action-delete-pua = 私用領域文字 U+{$codepoint} を削除する
 # 補完の detail／documentation の断片。
 lsp-completion-half-to-full-hint = (半角→全角)
 lsp-completion-takes-param = (パラメータあり)
+lsp-completion-family-page-break = 改ページ
+lsp-completion-family-section = 改丁・改段
+lsp-completion-family-block-open = ブロック開始
+lsp-completion-family-block-close = ブロック終了
+lsp-completion-family-leaf-align = 行配置
+lsp-completion-family-bouten = 傍点・傍線
+lsp-completion-family-illustration = 挿絵
+lsp-completion-family-framed = 罫囲み
+lsp-completion-family-warichu = 割り注
+lsp-completion-family-combine-upright = 縦中横
+lsp-completion-family-kaeriten-single = 返り点
+lsp-completion-family-kaeriten-compound = 複合返り点
+lsp-completion-family-other = 注記
 
 # 半角→全角「emmet」補完の detail。ターゲットとそれを生む半角トリガを示す。
 lsp-emmet-ruby-open = ルビ読み (半角『<』→全角ペア『《》』)

@@ -80,6 +80,7 @@
 )]
 #![forbid(unsafe_code)]
 
+mod atomic_write;
 mod buildstamp;
 mod color;
 mod completions;
@@ -94,6 +95,7 @@ mod introspect;
 mod logging;
 mod lsp;
 mod manpage;
+mod output;
 mod repl;
 mod timing;
 mod tui;
@@ -106,6 +108,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
+use std::thread;
 
 use aozora::pandoc::to_pandoc;
 use aozora::{DiagnosticSource, DirectiveNormalization, RenderOptions, SerializeOptions, json};
@@ -719,7 +722,7 @@ fn main() -> ExitCode {
         Command::Repl(opts) => repl::run(&opts, &lang),
         Command::Tui(opts) => tui::run(&opts, &lang),
         Command::Lsp(opts) => lsp::run(&opts),
-        Command::Completions(opts) => Ok(completions::run_completions(&opts)),
+        Command::Completions(opts) => completions::run_completions(&opts),
         Command::Man(opts) => manpage::run_man(&opts),
     };
 
@@ -799,7 +802,7 @@ fn command_config_path(command: &Command) -> Option<&Path> {
 /// without a real broken pipe or a 4 GiB input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ErrDisposition {
-    /// Broken pipe: exit 0 with nothing on stderr (ADR-0029).
+    /// Broken stdout pipe: exit 0 with nothing on stderr (ADR-0029).
     SilentSuccess,
     /// Bad input, configuration, arguments, or runtime prerequisites.
     Usage,
@@ -807,7 +810,7 @@ enum ErrDisposition {
 
 /// Classify a top-level `err` into its [`ErrDisposition`].
 fn classify_err(err: &anyhow::Error) -> ErrDisposition {
-    if fmt::is_broken_pipe(err) {
+    if output::is_broken_pipe(err) {
         ErrDisposition::SilentSuccess
     } else {
         ErrDisposition::Usage
@@ -1087,7 +1090,7 @@ fn run_render_once(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitC
         DirectiveNormalization::Off
     });
     let html = timer.measure("render", || tree.to_html_with(opts));
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     stdout
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
@@ -1111,7 +1114,7 @@ fn run_inspect_once(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<Exi
         timer.report()?;
         return Ok(outcome.exit_code());
     }
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
     timer.report()?;
     Ok(outcome.exit_code())
@@ -1192,7 +1195,7 @@ fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitC
         // No --to: emit Pandoc JSON. Downstream invocations
         // ( `aozora pandoc input.txt | pandoc -f json -t epub` )
         // pick up the bytes verbatim.
-        let mut stdout = io::stdout().lock();
+        let mut stdout = output::stdout();
         stdout
             .write_all(json.as_bytes())
             .context("write Pandoc JSON to stdout")?;
@@ -1204,20 +1207,52 @@ fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitC
     let mut child = Process::new("pandoc")
         .args(["-f", "json", "-t", format])
         .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .with_context(|| {
             "failed to spawn `pandoc`; install it from https://pandoc.org or omit \
              --to to emit Pandoc JSON instead"
         })?;
+    let mut child_stdout = child.stdout.take().context("piped stdout")?;
+    let stdout_forwarder = match thread::Builder::new()
+        .name("aozora-pandoc-stdout".to_owned())
+        .spawn(move || {
+            let mut stdout = output::stdout();
+            io::copy(&mut child_stdout, &mut stdout)
+        }) {
+        Ok(forwarder) => forwarder,
+        Err(error) => {
+            let _drop = child.kill();
+            let _drop = child.wait();
+            return Err(error).context("failed to spawn the pandoc stdout forwarding thread");
+        }
+    };
     let mut stdin = child.stdin.take().context("piped stdin")?;
-    stdin
-        .write_all(json.as_bytes())
-        .context("write Pandoc JSON to pandoc stdin")?;
+    let write_result = stdin.write_all(json.as_bytes());
     drop(stdin);
     let status = child.wait().context("wait for pandoc")?;
+    let forward_result = stdout_forwarder
+        .join()
+        .map_err(|_| anyhow::anyhow!("pandoc stdout forwarding thread panicked"))?;
+    if let Some(code) = finish_pandoc_pipes(write_result, forward_result)? {
+        return Ok(code);
+    }
     Ok(pandoc_exit_code(outcome, status.success()))
+}
+
+fn finish_pandoc_pipes(
+    write_result: io::Result<()>,
+    forward_result: io::Result<u64>,
+) -> Result<Option<ExitCode>> {
+    forward_result.context("forward pandoc stdout")?;
+    if let Err(error) = write_result {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(Some(ExitCode::from(2)));
+        }
+        return Err(error).context("write Pandoc JSON to pandoc stdin");
+    }
+    Ok(None)
 }
 
 fn pandoc_exit_code(outcome: DocumentOutcome, child_succeeded: bool) -> ExitCode {
@@ -1261,12 +1296,36 @@ mod tests {
 
     use super::*;
 
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    fn stdout_broken_pipe_error() -> anyhow::Error {
+        let mut stdout = output::guard(BrokenPipeWriter);
+        anyhow::Error::new(stdout.write_all(b"x").unwrap_err())
+    }
+
     // --- classify_err: main's final error disposition ---
 
     #[test]
     fn classify_err_maps_broken_pipe_to_silent_success() {
-        let err = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe));
+        let err = stdout_broken_pipe_error();
         assert_eq!(classify_err(&err), ErrDisposition::SilentSuccess);
+    }
+
+    #[test]
+    fn classify_err_does_not_silence_unmarked_broken_pipe() {
+        let err = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe))
+            .context("failed to write a file");
+        assert_eq!(classify_err(&err), ErrDisposition::Usage);
     }
 
     #[test]
@@ -1348,6 +1407,49 @@ mod tests {
             PandocArgs::try_parse_from(["pandoc", "/nonexistent/aozora-pandoc-missing-9c1f2a.txt"])
                 .expect("pandoc args parse");
         run_pandoc_once(&args, &resolve_lang(None, None)).unwrap_err();
+    }
+
+    #[test]
+    fn pandoc_stdout_broken_pipe_takes_priority_over_child_stdin_broken_pipe() {
+        struct BrokenWriter;
+
+        impl Write for BrokenWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut stdout = output::guard(BrokenWriter);
+        let forward_result = stdout.write_all(b"x").map(|()| 1);
+        let write_result = Err(io::ErrorKind::BrokenPipe.into());
+
+        let error = finish_pandoc_pipes(write_result, forward_result)
+            .expect_err("stdout closure must remain visible");
+
+        assert!(output::is_broken_pipe(&error));
+    }
+
+    #[test]
+    fn pandoc_child_stdin_broken_pipe_is_an_operational_error() {
+        let result = finish_pandoc_pipes(Err(io::ErrorKind::BrokenPipe.into()), Ok(0))
+            .expect("pandoc closing stdin is a classified operational failure");
+
+        assert_eq!(result, Some(ExitCode::from(2)));
+    }
+
+    #[test]
+    fn pandoc_child_stdin_non_pipe_error_is_propagated() {
+        let error = finish_pandoc_pipes(Err(io::ErrorKind::PermissionDenied.into()), Ok(0))
+            .expect_err("non-pipe stdin errors must retain their cause");
+        let io_error = error
+            .downcast_ref::<io::Error>()
+            .expect("stdin error remains in the anyhow chain");
+
+        assert_eq!(io_error.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]

@@ -52,8 +52,8 @@ pub struct Library {
 /// One profiled thread with its sample stream + stack tables.
 #[derive(Debug, Clone)]
 pub struct Thread {
-    /// OS thread id as recorded by samply.
-    pub tid: i64,
+    /// Thread id as recorded by the profile producer.
+    pub tid: String,
     /// Thread name (e.g. `main`, a tokio worker name), or empty.
     pub name: String,
     /// Whether this is the process main thread.
@@ -176,9 +176,8 @@ impl Thread {
     }
 
     /// Iterate the stack from leaf-most frame to root, yielding
-    /// frame indices. Cycles in the prefix chain (which gecko
-    /// schema forbids but we don't enforce) would loop indefinitely
-    /// — bounded internally by the stack-table length.
+    /// frame indices. The loader rejects prefix cycles; the iterator
+    /// remains bounded because callers can mutate the public tables.
     #[must_use]
     pub fn walk_stack(&self, leaf_stack: usize) -> StackWalker<'_> {
         StackWalker {

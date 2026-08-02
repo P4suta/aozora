@@ -14,10 +14,12 @@
 // is 縦書き — Aozora Bunko works are vertically typeset in print, so
 // the preview matches that orientation by default.
 
+import { basename } from "node:path";
+
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
-
-import type { RenderHtmlResult } from "./lspWire";
+import { AsyncGeneration } from "./extensionLogic";
+import { parseRenderHtmlResult } from "./lspWire";
 import { aozoraNotationStyles } from "./notationStyles";
 
 type WritingMode = "vertical" | "horizontal";
@@ -31,6 +33,7 @@ interface PreviewState {
   panel: vscode.WebviewPanel;
   uri: vscode.Uri;
   mode: WritingMode;
+  generation: AsyncGeneration;
   debounce?: NodeJS.Timeout;
 }
 
@@ -82,6 +85,7 @@ export function registerPreviewCommand(
       if (!state) {
         return;
       }
+      state.generation.invalidate();
       if (state.debounce) {
         clearTimeout(state.debounce);
       }
@@ -151,7 +155,7 @@ async function openPreview(
 
   const panel = vscode.window.createWebviewPanel(
     "aozoraPreview",
-    `Aozora Preview — ${document.fileName.split("/").pop() ?? "untitled"}`,
+    `Aozora Preview — ${basename(document.fileName) || "untitled"}`,
     vscode.ViewColumn.Beside,
     {
       // The preview only ever shows a static HTML+CSS fragment the LSP
@@ -173,16 +177,20 @@ async function openPreview(
     panel,
     uri: document.uri,
     mode: configuredWritingMode(),
+    generation: new AsyncGeneration(),
   };
   panelsByUri.set(key, state);
 
   panel.onDidDispose(
     () => {
       const live = panelsByUri.get(key);
-      if (live?.debounce) {
-        clearTimeout(live.debounce);
+      state.generation.dispose();
+      if (state.debounce) {
+        clearTimeout(state.debounce);
       }
-      panelsByUri.delete(key);
+      if (live === state) {
+        panelsByUri.delete(key);
+      }
     },
     undefined,
     context.subscriptions,
@@ -192,17 +200,27 @@ async function openPreview(
 }
 
 async function renderInto(state: PreviewState, client: LanguageClient): Promise<void> {
+  const generation = state.generation.begin();
   try {
-    const result = await client.sendRequest<RenderHtmlResult>("aozora/renderHtml", {
+    const response = await client.sendRequest<unknown>("aozora/renderHtml", {
       uri: state.uri.toString(),
     });
-    state.panel.webview.html = wrapHtml(result.html ?? "", state.mode);
+    if (!state.generation.isCurrent(generation)) {
+      return;
+    }
+    const result = parseRenderHtmlResult(response);
+    state.panel.webview.html = wrapHtml(result.html, state.mode);
   } catch (err) {
+    if (!state.generation.isCurrent(generation)) {
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
-    state.panel.webview.html = wrapHtml(
-      `<pre>aozora/renderHtml failed: ${escapeHtml(message)}</pre>`,
-      state.mode,
-    );
+    try {
+      state.panel.webview.html = wrapHtml(
+        `<pre>aozora/renderHtml failed: ${escapeHtml(message)}</pre>`,
+        state.mode,
+      );
+    } catch {}
   }
 }
 

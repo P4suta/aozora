@@ -58,17 +58,43 @@ static MSRV_PINS: &[Pin] = &[Pin {
     pattern: r#"(?m)^msrv\s*=\s*"([^"]+)""#,
 }];
 
+const WORKFLOW_DEV_RUST_PIN: &str =
+    r#"(?m)(?:rust@|toolchain:\s*["']?)([0-9]+\.[0-9]+\.[0-9]+)(?:["']|\b)"#;
+
 /// Pins that must equal the toolchain channel (`rust-toolchain.toml`).
-static TOOLCHAIN_PINS: &[Pin] = &[Pin {
-    path: "mise.toml",
-    what: "mise's stable Rust tool",
-    pattern: r#"(?m)^\s*\{\s*version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)""#,
-}];
+static TOOLCHAIN_PINS: &[Pin] = &[
+    Pin {
+        path: "mise.toml",
+        what: "mise's stable Rust tool",
+        pattern: r#"(?m)^\s*\{\s*version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)""#,
+    },
+    Pin {
+        path: ".github/workflows/ci.yml",
+        what: "CI workflow's development Rust pin",
+        pattern: WORKFLOW_DEV_RUST_PIN,
+    },
+    Pin {
+        path: ".github/workflows/release-ready.yml",
+        what: "release-ready workflow's development Rust pin",
+        pattern: WORKFLOW_DEV_RUST_PIN,
+    },
+    Pin {
+        path: ".github/workflows/release-plz.yml",
+        what: "release-plz workflow's development Rust pin",
+        pattern: WORKFLOW_DEV_RUST_PIN,
+    },
+];
 
 struct Pin {
     path: &'static str,
     what: &'static str,
     pattern: &'static str,
+}
+
+struct PinExpectation<'a> {
+    version: Version,
+    authority: &'a str,
+    follows: &'a str,
 }
 
 /// A Rust version as `(minor, patch)`. Every release since 1.0 is `1.x`,
@@ -225,18 +251,42 @@ fn read_toml<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
     toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
 }
 
-/// Extract the first capture group of `pattern` from `path`.
-fn scrape(root: &Path, pin: &Pin) -> Result<Version, String> {
+fn scrape_text(text: &str, pin: &Pin) -> Result<Vec<Version>, String> {
+    let re =
+        Regex::new(pin.pattern).map_err(|err| format!("bad pattern for {}: {err}", pin.path))?;
+    let mut found = Vec::new();
+    for captures in re.captures_iter(text) {
+        let value = captures
+            .get(1)
+            .ok_or_else(|| format!("{}: {} pattern has no capture", pin.path, pin.what))?;
+        found.push(parse_version(value.as_str()).map_err(|err| format!("{}: {err}", pin.path))?);
+    }
+    if found.is_empty() {
+        return Err(format!("{}: could not find {}", pin.path, pin.what));
+    }
+    Ok(found)
+}
+
+fn scrape(root: &Path, pin: &Pin) -> Result<Vec<Version>, String> {
     let path = root.join(pin.path);
     let text =
         fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
-    let re =
-        Regex::new(pin.pattern).map_err(|err| format!("bad pattern for {}: {err}", pin.path))?;
-    let found = re
-        .captures(&text)
-        .and_then(|c| c.get(1))
-        .ok_or_else(|| format!("{}: could not find {}", pin.path, pin.what))?;
-    parse_version(found.as_str()).map_err(|err| format!("{}: {err}", pin.path))
+    scrape_text(&text, pin)
+}
+
+fn pin_violations(pin: &Pin, found: &[Version], expected: &PinExpectation<'_>) -> Vec<String> {
+    let expected_version = expected.version;
+    found
+        .iter()
+        .filter(|version| **version != expected_version)
+        .map(|version| {
+            format!(
+                "{}: {} is {version}, but {} is {expected_version}\n\
+                 -> {}",
+                pin.path, pin.what, expected.authority, expected.follows,
+            )
+        })
+        .collect()
 }
 
 /// Maintained docs may not name a Rust version — `docs/contrib/msrv.md`
@@ -395,25 +445,29 @@ fn check() -> Result<(), String> {
     // I1 — every MSRV pin equals the contract.
     for pin in MSRV_PINS {
         let found = scrape(&root, pin)?;
-        if found != msrv {
-            violations.push(format!(
-                "{}: {} is {found}, but Cargo.toml's rust-version is {msrv}\n\
-                 -> the MSRV is the contract; this pin follows it",
-                pin.path, pin.what,
-            ));
-        }
+        violations.extend(pin_violations(
+            pin,
+            &found,
+            &PinExpectation {
+                version: msrv,
+                authority: "Cargo.toml's rust-version",
+                follows: "the MSRV is the contract; this pin follows it",
+            },
+        ));
     }
 
     // I2 — every toolchain pin equals the channel.
     for pin in TOOLCHAIN_PINS {
         let found = scrape(&root, pin)?;
-        if found != channel {
-            violations.push(format!(
-                "{}: {} is {found}, but rust-toolchain.toml's channel is {channel}\n\
-                 -> this follows the DEV channel, not the MSRV",
-                pin.path, pin.what,
-            ));
-        }
+        violations.extend(pin_violations(
+            pin,
+            &found,
+            &PinExpectation {
+                version: channel,
+                authority: "rust-toolchain.toml's channel",
+                follows: "this follows the DEV channel, not the MSRV",
+            },
+        ));
     }
 
     // I3 — the contract cannot ask for more than we develop on.
@@ -552,6 +606,34 @@ mod tests {
             !"https://img.shields.io/crates/msrv/aozora".contains(STATIC_MSRV_BADGE),
             "the derived badge is the fix, not a violation"
         );
+    }
+
+    #[test]
+    fn workflow_pin_validation_catches_a_stale_second_match() {
+        let pin = Pin {
+            path: "workflow.yml",
+            what: "development Rust pin",
+            pattern: WORKFLOW_DEV_RUST_PIN,
+        };
+        let expected = parse_version("1.97.0").expect("current toolchain");
+        let found = scrape_text(
+            "install_args: rust@1.97.0 just\ntoolchain: \"1.96.0\"\ntoolchain: 1.97.0\ntoolchain: ${{ steps.msrv.outputs.version }}\n",
+            &pin,
+        )
+        .expect("workflow pins");
+        let violations = pin_violations(
+            &pin,
+            &found,
+            &PinExpectation {
+                version: expected,
+                authority: "rust-toolchain.toml's channel",
+                follows: "this follows the DEV channel, not the MSRV",
+            },
+        );
+
+        assert_eq!(found.len(), 3, "dynamic MSRV toolchain is excluded");
+        assert_eq!(violations.len(), 1, "only the stale second pin differs");
+        assert!(violations[0].contains("1.96.0"));
     }
 
     #[test]

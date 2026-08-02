@@ -18,7 +18,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::{env, fs, process};
+use std::sync::{Arc, Barrier};
+use std::{env, fs, process, thread};
 
 use aozora_trace::analysis::{HotMode, RowKind};
 use aozora_trace::{
@@ -513,6 +514,13 @@ fn rollup_config_from_toml_errors_on_bad_shapes() {
         err.to_string().contains("patterns"),
         "mentions patterns: {err}"
     );
+    let err =
+        RollupConfig::from_toml("[[categories]]\nname=\"allocation\"\npatterns=[\"malloc\", 7]")
+            .expect_err("non-string pattern rejected");
+    assert!(
+        err.to_string().contains("allocation") && err.to_string().contains("non-string"),
+        "mentions category and invalid type: {err}"
+    );
 }
 
 #[test]
@@ -1001,7 +1009,7 @@ fn load_defaults_weight_to_one_when_column_absent() {
     // Library + thread metadata parsed.
     assert_eq!(trace.libs[0].name, "bin", "library name parsed");
     assert_eq!(trace.libs[0].code_id, "abc", "codeId parsed");
-    assert_eq!(trace.threads[0].tid, 7, "tid parsed");
+    assert_eq!(trace.threads[0].tid, "7", "tid parsed");
     assert!(trace.threads[0].is_main, "isMainThread parsed");
 }
 
@@ -1158,15 +1166,16 @@ fn rollup_config_from_toml_file_reads_disk() {
 #[test]
 fn cache_record_then_apply_resolves_matching_frames() {
     let mut trace = simple_trace();
+    trace.libs[0].code_id = "AABBCC".to_owned();
     let lib_name = trace.libs[0].name.clone();
-    let debug_id = trace.libs[0].debug_id.clone();
+    let identity = trace.libs[0].code_id.clone();
     let addr = trace.threads[0].frame_address(1); // leaf b address
 
     let mut cache = SymbolCache::default();
     cache.record(
         LibIdent {
             name: &lib_name,
-            debug_id: &debug_id,
+            debug_id: &identity,
         },
         addr,
         "demangled::b".to_owned(),
@@ -1185,8 +1194,7 @@ fn cache_record_then_apply_resolves_matching_frames() {
 #[test]
 fn cache_apply_skips_debug_id_mismatch() {
     let mut trace = simple_trace();
-    // Give the trace lib a non-empty debug_id that the cache won't match.
-    trace.libs[0].debug_id = "TRACE_ID".to_owned();
+    trace.libs[0].code_id = "AABBCC".to_owned();
     let lib_name = trace.libs[0].name.clone();
     let addr = trace.threads[0].frame_address(1);
 
@@ -1194,7 +1202,7 @@ fn cache_apply_skips_debug_id_mismatch() {
     cache.record(
         LibIdent {
             name: &lib_name,
-            debug_id: "OTHER_ID",
+            debug_id: "DDEEFF",
         },
         addr,
         "wrong".to_owned(),
@@ -1208,10 +1216,9 @@ fn cache_apply_skips_debug_id_mismatch() {
 }
 
 #[test]
-fn cache_apply_allows_empty_debug_id() {
-    // An empty cached debug_id is treated as a wildcard (matches any).
+fn cache_apply_rejects_empty_identity() {
     let mut trace = simple_trace();
-    trace.libs[0].debug_id = "ANYTHING".to_owned();
+    trace.libs[0].code_id = "AABBCC".to_owned();
     let lib_name = trace.libs[0].name.clone();
     let addr = trace.threads[0].frame_address(1);
 
@@ -1219,12 +1226,32 @@ fn cache_apply_allows_empty_debug_id() {
     cache.record(
         LibIdent {
             name: &lib_name,
-            debug_id: "", // wildcard
+            debug_id: "",
         },
         addr,
         "ok".to_owned(),
     );
-    assert_eq!(cache.apply(&mut trace), 1, "empty cached id is a wildcard");
+    assert_eq!(cache.apply(&mut trace), 0);
+}
+
+#[test]
+fn cache_apply_prefers_code_id_over_debug_id() {
+    let mut trace = simple_trace();
+    trace.libs[0].code_id = "AABBCC".to_owned();
+    trace.libs[0].debug_id = "DDEEFF".to_owned();
+    let lib_name = trace.libs[0].name.clone();
+    let addr = trace.threads[0].frame_address(1);
+    let mut cache = SymbolCache::default();
+    cache.record(
+        LibIdent {
+            name: &lib_name,
+            debug_id: "DDEEFF",
+        },
+        addr,
+        "stale".to_owned(),
+    );
+
+    assert_eq!(cache.apply(&mut trace), 0);
 }
 
 #[test]
@@ -1238,11 +1265,8 @@ fn cache_write_load_round_trip() {
         0x40,
         "func_at_0x40".to_owned(),
     );
-    let dir = env::temp_dir();
-    let path = dir.join(format!(
-        "aozora-trace-cache-test-{}.symbols.json",
-        process::id()
-    ));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trace.symbols.json");
     cache.write(&path).expect("write cache");
     let loaded = SymbolCache::load(&path)
         .expect("load cache")
@@ -1254,7 +1278,6 @@ fn cache_write_load_round_trip() {
         Some("func_at_0x40"),
         "address keyed as decimal string"
     );
-    drop(fs::remove_file(&path));
 }
 
 #[test]
@@ -1266,7 +1289,57 @@ fn cache_load_missing_file_is_none() {
 }
 
 #[test]
-fn cache_record_is_idempotent_and_updates_debug_id() {
+fn cache_load_preserves_non_not_found_io_errors() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Err(_error) = SymbolCache::load(dir.path()) else {
+        panic!("directory read must fail");
+    };
+}
+
+#[test]
+fn concurrent_cache_writes_publish_complete_json() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("trace.symbols.json");
+    let barrier = Arc::new(Barrier::new(2));
+    let threads: Vec<_> = ["AABB", "CCDD"]
+        .into_iter()
+        .map(|identity| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                let mut cache = SymbolCache::default();
+                cache.record(
+                    LibIdent {
+                        name: "bin",
+                        debug_id: identity,
+                    },
+                    1,
+                    identity.to_owned(),
+                );
+                barrier.wait();
+                cache.write(&path)
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("write thread").expect("write cache");
+    }
+
+    let cache = SymbolCache::load(&path)
+        .expect("load cache")
+        .expect("cache exists");
+    assert!(matches!(
+        cache
+            .libs
+            .get("bin")
+            .map(|library| library.debug_id.as_str()),
+        Some("AABB" | "CCDD")
+    ));
+    assert_eq!(fs::read_dir(dir.path()).expect("read dir").count(), 1);
+}
+
+#[test]
+fn cache_record_drops_addresses_when_the_binary_identity_changes() {
     let mut cache = SymbolCache::default();
     cache.record(
         LibIdent {
@@ -1276,7 +1349,6 @@ fn cache_record_is_idempotent_and_updates_debug_id() {
         0x10,
         "first".to_owned(),
     );
-    // Re-record same lib with a new debug_id + a second address.
     cache.record(
         LibIdent {
             name: "bin",
@@ -1287,7 +1359,8 @@ fn cache_record_is_idempotent_and_updates_debug_id() {
     );
     let lib = cache.libs.get("bin").expect("bin entry");
     assert_eq!(lib.debug_id, "NEW", "debug_id replaced on re-record");
-    assert_eq!(lib.by_address.len(), 2, "both addresses retained");
+    assert_eq!(lib.by_address.len(), 1);
+    assert_eq!(lib.by_address.get("32").map(String::as_str), Some("second"));
 }
 
 #[test]

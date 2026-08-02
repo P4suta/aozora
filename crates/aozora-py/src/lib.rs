@@ -33,6 +33,17 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(any(feature = "extension-module", test))]
+const MAX_SOURCE_BYTES: usize = u32::MAX as usize;
+
+#[cfg(any(feature = "extension-module", test))]
+const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static str> {
+    if byte_len as u64 > MAX_SOURCE_BYTES as u64 {
+        return Err("source exceeds 4 GiB (u32::MAX) span limit");
+    }
+    Ok(())
+}
+
 #[cfg(feature = "extension-module")]
 #[allow(
     clippy::too_many_arguments,
@@ -42,14 +53,6 @@ mod bindings {
     use aozora::{Document as AozoraDoc, decode_auto, decode_sjis as core_decode_sjis, json};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
-
-    /// Largest input the parser core accepts, in bytes. Span offsets
-    /// are `u32`, so a longer source trips a `u32::MAX` assert inside
-    /// the lexer; under `panic = "abort"` that tears down the whole
-    /// interpreter instead of surfacing a recoverable error. The
-    /// fallible entry points below reject oversize input up front so
-    /// no oversize `Document` is ever constructed.
-    const MAX_SOURCE_BYTES: usize = u32::MAX as usize;
 
     /// `PyO3`-facing handle to a parsed Aozora document.
     ///
@@ -74,6 +77,7 @@ mod bindings {
         /// Construct from a Python `str`.
         #[new]
         fn new(source: &str) -> PyResult<Self> {
+            crate::source_len_within_span_limit(source.len()).map_err(PyValueError::new_err)?;
             Ok(Self {
                 inner: aozora::parse(source)
                     .map_err(|err| PyValueError::new_err(err.to_string()))?,
@@ -97,11 +101,7 @@ mod bindings {
         #[staticmethod]
         fn from_bytes(data: &[u8]) -> PyResult<Self> {
             let text = decode_auto(data).map_err(|err| PyValueError::new_err(err.to_string()))?;
-            if text.len() > MAX_SOURCE_BYTES {
-                return Err(PyValueError::new_err(
-                    "source exceeds 4 GiB (u32::MAX) span limit",
-                ));
-            }
+            crate::source_len_within_span_limit(text.len()).map_err(PyValueError::new_err)?;
             Ok(Self {
                 inner: aozora::parse(text.into_owned())
                     .map_err(|err| PyValueError::new_err(err.to_string()))?,
@@ -201,11 +201,7 @@ mod bindings {
     /// (`u32::MAX`) span limit.
     #[pyfunction]
     fn parse_to_html(source: &str) -> PyResult<String> {
-        if source.len() > MAX_SOURCE_BYTES {
-            return Err(PyValueError::new_err(
-                "source exceeds 4 GiB (u32::MAX) span limit",
-            ));
-        }
+        crate::source_len_within_span_limit(source.len()).map_err(PyValueError::new_err)?;
         Ok(aozora::parse(source)
             .map_err(|err| PyValueError::new_err(err.to_string()))?
             .snapshot()
@@ -275,6 +271,19 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use aozora::json;
+
+    #[test]
+    fn source_len_guard_matches_u32_span_boundary() {
+        super::source_len_within_span_limit(0).expect("empty source is in range");
+        super::source_len_within_span_limit(u32::MAX as usize)
+            .expect("u32::MAX bytes is the inclusive upper bound");
+        #[cfg(target_pointer_width = "64")]
+        {
+            let err = super::source_len_within_span_limit(u32::MAX as usize + 1)
+                .expect_err("u32::MAX + 1 bytes must be rejected");
+            assert_eq!(err, "source exceeds 4 GiB (u32::MAX) span limit");
+        }
+    }
 
     /// Smoke: PUA collision shows up via `aozora::json`.
     #[test]

@@ -46,6 +46,7 @@ use std::process::ExitCode;
 
 use crate::fmt::{decode, read_file};
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
+use crate::output;
 use anyhow::{Context, Result};
 use aozora::json;
 use aozora::pandoc::to_pandoc;
@@ -282,10 +283,8 @@ fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
     }
     if mode.shows_pandoc() {
         let snapshot = doc.snapshot();
-        // Serializing the Pandoc AST cannot fail in practice; surface the error
-        // text rather than panicking if that assumption ever breaks.
-        let pandoc =
-            serde_json::to_string(&to_pandoc(&snapshot)).unwrap_or_else(|err| err.to_string());
+        let pandoc = serde_json::to_string(&to_pandoc(&snapshot))
+            .expect("Pandoc AST serialization is infallible");
         sections.push(section(&i18n::t(lang, "repl-label-pandoc"), &pandoc));
     }
 
@@ -349,9 +348,8 @@ fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
 pub(crate) fn run(args: &ReplArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let mut repl = Repl::new(args.mode, lang.clone(), args.encoding);
 
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     writeln!(stdout, "{}", i18n::t(lang, "repl-banner")).context("failed to write REPL banner")?;
-    drop(stdout);
 
     if io::stdin().is_terminal() {
         interactive(&mut repl)
@@ -383,7 +381,7 @@ fn interactive(repl: &mut Repl) -> Result<ExitCode> {
                 if let Err(err) = editor.add_history_entry(line.as_str()) {
                     debug!(%err, "could not record REPL history entry");
                 }
-                let mut stdout = io::stdout().lock();
+                let mut stdout = output::stdout();
                 let keep_going = step(repl, &line, &mut stdout)?;
                 if !keep_going {
                     return Ok(ExitCode::SUCCESS);
@@ -404,7 +402,7 @@ fn interactive(repl: &mut Repl) -> Result<ExitCode> {
 /// stops early; otherwise it runs to EOF.
 fn scripted(repl: &mut Repl) -> Result<ExitCode> {
     let input = io::read_to_string(io::stdin()).context("failed to read stdin")?;
-    let mut stdout = io::stdout().lock();
+    let mut stdout = output::stdout();
     for line in input.lines() {
         if !step(repl, line, &mut stdout)? {
             break;

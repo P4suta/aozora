@@ -330,8 +330,14 @@ impl RollupConfig {
                     CategoryError::Toml(format!("category `{name}` missing `patterns`"))
                 })?
                 .iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect();
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        CategoryError::Toml(format!(
+                            "category `{name}` has a non-string `patterns` entry"
+                        ))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
             categories.push(CategorySpec { name, patterns });
         }
         Ok(Self { categories })

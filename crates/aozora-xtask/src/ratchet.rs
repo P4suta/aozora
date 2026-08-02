@@ -242,9 +242,12 @@ fn parse_json(path: &str, text: &str) -> Result<Value, String> {
 
 fn schema_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
     let directory = root.join("crates/aozora-conformance/json");
-    let mut paths = fs::read_dir(&directory)
+    let entries = fs::read_dir(&directory)
         .map_err(|err| format!("read {}: {err}", directory.display()))?
-        .filter_map(Result::ok)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("read entry in {}: {err}", directory.display()))?;
+    let mut paths = entries
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| {
             path.file_name()

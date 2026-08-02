@@ -30,6 +30,7 @@ iai-callgrind = { version = "0.16.1", default-features = false, features = [
   "client_requests",
 ] }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "crime_and_punishment"

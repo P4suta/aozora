@@ -1,5 +1,6 @@
 {
   "name": "aozora-vscode",
+  "packageManager": "bun@1.3.14",
   "displayName": "aozora — aozora-flavored markdown",
   "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by the aozora language server.",
   "version": "0.0.0",
@@ -237,6 +238,23 @@
         "when": "editorLangId == aozora && editorHasSelection"
       }
     ],
+    "problemMatchers": [
+      {
+        "name": "aozora-lint",
+        "owner": "aozora",
+        "source": "aozora lint",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (error|warning|info)\\[([^\\]]+)\\]: (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "aozora",
@@ -328,15 +346,20 @@
     "check:fix": "biome check --write . && tsc -p ./ --noEmit"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.0.0"
+    "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",
     "@types/node": "^26.0.1",
     "@types/vscode": "^1.91.0",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "ovsx": "^1.0.2",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.9",
+    "fast-uri": "^3.1.5",
+    "minimatch": "^10.2.6"
   }
 }

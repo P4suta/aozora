@@ -6,6 +6,8 @@ import {
   encodeLegacyTextForTest,
   encodeSourceHash,
   readSharedSource,
+  SHARE_SOURCE_LIMIT,
+  SHARE_URL_LIMIT,
   ShareUrlTooLongError,
 } from './share';
 
@@ -36,10 +38,81 @@ describe('shared source compatibility', () => {
     expect(readSharedSource(compressedUrl)).toEqual({ status: 'ok', source });
   });
 
-  it('rejects malformed shared state without throwing', () => {
-    expect(readSharedSource(new URL('https://example.test/#src=%%%'))).toEqual({
-      status: 'invalid',
+  it('reads an intentionally empty legacy compressed document', () => {
+    const url = new URL('https://example.test/');
+    url.searchParams.set('c', toBase64Url(compressToBase64('')));
+    expect(readSharedSource(url)).toEqual({ status: 'ok', source: '' });
+
+    const paddedUrl = new URL('https://example.test/');
+    paddedUrl.searchParams.set('c', compressToBase64(''));
+    expect(readSharedSource(paddedUrl)).toEqual({ status: 'ok', source: '' });
+  });
+
+  it('rejects invalid legacy UTF-8 and malformed empty data', () => {
+    const invalidText = new URL('https://example.test/?text=_w');
+    expect(readSharedSource(invalidText)).toEqual({ status: 'invalid' });
+
+    for (const value of ['A', '!', 'AAAA', 'Q====']) {
+      expect(
+        readSharedSource(new URL(`https://example.test/?c=${value}`)),
+      ).toEqual({ status: 'invalid' });
+    }
+  });
+
+  it('applies the encoded input limit to every shared format', () => {
+    const oversized = 'A'.repeat(SHARE_URL_LIMIT + 1);
+    for (const url of [
+      new URL(`https://example.test/#src=${oversized}`),
+      new URL(`https://example.test/?text=${oversized}`),
+      new URL(`https://example.test/?c=${oversized}`),
+    ]) {
+      expect(readSharedSource(url)).toEqual({ status: 'invalid' });
+    }
+  });
+
+  it('applies the decoded source limit to every shared format', () => {
+    const oversizedSource = 'a'.repeat(SHARE_SOURCE_LIMIT + 1);
+    const hashUrl = new URL(
+      `https://example.test/${encodeSourceHash(oversizedSource)}`,
+    );
+    expect(readSharedSource(hashUrl)).toEqual({ status: 'invalid' });
+
+    const textUrl = new URL('https://example.test/');
+    textUrl.searchParams.set('text', encodeLegacyTextForTest(oversizedSource));
+    expect(readSharedSource(textUrl)).toEqual({ status: 'invalid' });
+
+    const compressedUrl = new URL('https://example.test/');
+    compressedUrl.searchParams.set(
+      'c',
+      toBase64Url(compressToBase64(oversizedSource)),
+    );
+    expect(readSharedSource(compressedUrl)).toEqual({ status: 'invalid' });
+  });
+
+  it('keeps the decoded source limit independent from the URL limit', () => {
+    const compatibleSource = 'a'.repeat(100_000);
+    const compatible = new URL('https://example.test/');
+    compatible.searchParams.set(
+      'c',
+      toBase64Url(compressToBase64(compatibleSource)),
+    );
+    expect(readSharedSource(compatible)).toEqual({
+      status: 'ok',
+      source: compatibleSource,
     });
+  });
+
+  it('rejects malformed shared state without throwing', () => {
+    const compressed = encodeSourceHash('hello');
+    for (const url of [
+      new URL('https://example.test/#src=%%%'),
+      new URL(`https://example.test/${compressed}!`),
+      new URL(`https://example.test/${compressed}A`),
+      new URL('https://example.test/?c=BYUwNmD2Q===!'),
+      new URL('https://example.test/?c=BYUwNmD2Q==A'),
+    ]) {
+      expect(readSharedSource(url)).toEqual({ status: 'invalid' });
+    }
   });
 
   it('gives the hash precedence over legacy query parameters', () => {
@@ -77,6 +150,20 @@ describe('shared source compatibility', () => {
     await expect(copyShareUrl(source)).rejects.toBeInstanceOf(
       ShareUrlTooLongError,
     );
+    expect(location.pathname).toBe('/before');
+    expect(location.hash).toBe('');
+    expect(writeText).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects an oversized compressible source before changing history or clipboard', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    history.replaceState(null, '', '/before');
+
+    await expect(
+      copyShareUrl('a'.repeat(SHARE_SOURCE_LIMIT + 1)),
+    ).rejects.toBeInstanceOf(ShareUrlTooLongError);
     expect(location.pathname).toBe('/before');
     expect(location.hash).toBe('');
     expect(writeText).not.toHaveBeenCalled();

@@ -32,6 +32,9 @@ impl NodeStore {
                     ForwardPayload::AccentBody(id) => {
                         ForwardPayload::AccentBody(graft_str(source, self, id))
                     }
+                    ForwardPayload::QuotedTarget(id) => {
+                        ForwardPayload::QuotedTarget(graft_str(source, self, id))
+                    }
                     payload => payload,
                 },
             }),
@@ -125,6 +128,7 @@ fn graft_segment(source: &NodeStore, target: &mut NodeStore, segment: Segment) -
             raw: graft_str(source, target, directive.raw),
             kind: directive.kind,
         }),
+        Segment::Node(node) => Segment::Node(target.graft_node(source, node)),
     }
 }
 

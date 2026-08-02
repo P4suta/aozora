@@ -124,6 +124,21 @@ describe('playground persistence', () => {
     expect(loadSettingValues('afm', settings)).toEqual({ assist: false });
   });
 
+  it('ignores non-object editor setting payloads', () => {
+    const settings = [
+      {
+        id: 'assist',
+        label: { ja: '支援', en: 'Assist' },
+        description: { ja: '説明', en: 'Description' },
+        defaultValue: true,
+      },
+    ];
+    for (const payload of ['null', '[]', 'false']) {
+      localStorage.setItem('aozora-playground:settings:v1:afm', payload);
+      expect(loadSettingValues('afm', settings)).toEqual({ assist: true });
+    }
+  });
+
   it('degrades safely when browser storage throws', () => {
     vi.stubGlobal('localStorage', {
       getItem: () => {

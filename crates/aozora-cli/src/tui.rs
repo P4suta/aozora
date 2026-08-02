@@ -46,12 +46,12 @@
 //! a Shift_JIS file on open (`-E sjis`), but a Shift_JIS write-back is out of
 //! scope.
 
-use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use crate::atomic_write;
 use crate::fmt::{decode, read_file};
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
 use anyhow::{Context, Result};
@@ -171,11 +171,8 @@ fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived 
         Preview::Nodes => json::nodes(&tree),
         Preview::Pandoc => {
             let snapshot = doc.snapshot();
-            // Pretty-printed for the pane (the compact `aozora pandoc` bytes
-            // would wrap into an unreadable blob); serializing cannot fail in
-            // practice, so surface the error text rather than panicking.
             serde_json::to_string_pretty(&to_pandoc(&snapshot))
-                .unwrap_or_else(|err| err.to_string())
+                .expect("Pandoc AST serialization is infallible")
         }
     };
 
@@ -390,7 +387,7 @@ fn next_lang(current: &LanguageIdentifier) -> LanguageIdentifier {
 /// Write the editor buffer to `path` as UTF-8. Split out so the byte write is
 /// unit-testable over a tempfile.
 fn write_source(path: &Path, source: &str) -> io::Result<()> {
-    fs::write(path, source)
+    atomic_write::replace(path, source.as_bytes())
 }
 
 /// The SOURCE pane title: `source`, plus the file path and a `modified` marker
@@ -527,22 +524,112 @@ pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
 /// terminal on every exit path (clean quit, error, or panic-unwind of the
 /// loop).
 fn run_app(mut app: App) -> Result<ExitCode> {
-    terminal::enable_raw_mode().context("failed to enable raw mode")?;
-    let mut stdout = io::stdout();
-    execute!(stdout, terminal::EnterAlternateScreen)
-        .context("failed to enter the alternate screen")?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut term = Terminal::new(backend).context("failed to create the terminal")?;
+    let mut session = TerminalSession::enter()?;
+    let outcome = event_loop(&mut session.terminal, &mut app);
+    session.finish(outcome)
+}
 
-    let outcome = event_loop(&mut term, &mut app);
+struct TerminalSession<W: io::Write> {
+    terminal: Terminal<CrosstermBackend<W>>,
+    raw_mode: bool,
+    alternate_screen: bool,
+    cursor: bool,
+}
 
-    // Restore the terminal unconditionally, even if the loop errored, so a
-    // failure never leaves the user's shell in raw mode / the alternate screen.
-    let _drop = terminal::disable_raw_mode();
-    let _drop = execute!(term.backend_mut(), terminal::LeaveAlternateScreen);
-    let _drop = term.show_cursor();
+impl TerminalSession<io::Stdout> {
+    fn enter() -> Result<Self> {
+        terminal::enable_raw_mode().context("failed to enable raw mode")?;
+        let mut stdout = io::stdout();
+        if let Err(err) = execute!(stdout, terminal::EnterAlternateScreen) {
+            let primary = anyhow::Error::new(err).context("failed to enter the alternate screen");
+            let cleanup = terminal::disable_raw_mode().context("failed to disable raw mode");
+            return Err(merge_errors(primary, cleanup.err()));
+        }
+        let terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
+            Ok(terminal) => terminal,
+            Err(err) => {
+                let primary = anyhow::Error::new(err).context("failed to create the terminal");
+                let alternate = execute!(io::stdout(), terminal::LeaveAlternateScreen)
+                    .context("failed to leave the alternate screen");
+                let raw = terminal::disable_raw_mode().context("failed to disable raw mode");
+                let cleanup = combine_cleanup(alternate, raw);
+                return Err(merge_errors(primary, cleanup.err()));
+            }
+        };
+        Ok(Self {
+            terminal,
+            raw_mode: true,
+            alternate_screen: true,
+            cursor: true,
+        })
+    }
+}
 
-    outcome
+impl<W: io::Write> TerminalSession<W> {
+    fn finish(mut self, outcome: Result<ExitCode>) -> Result<ExitCode> {
+        let cleanup = self.restore();
+        match (outcome, cleanup) {
+            (Ok(code), Ok(())) => Ok(code),
+            (Err(err), Ok(())) | (Ok(_), Err(err)) => Err(err),
+            (Err(primary), Err(cleanup)) => Err(merge_errors(primary, Some(cleanup))),
+        }
+    }
+
+    fn restore(&mut self) -> Result<()> {
+        let cursor = if self.cursor {
+            let result = self
+                .terminal
+                .show_cursor()
+                .context("failed to restore the terminal cursor");
+            if result.is_ok() {
+                self.cursor = false;
+            }
+            result
+        } else {
+            Ok(())
+        };
+        let alternate = if self.alternate_screen {
+            let result = execute!(self.terminal.backend_mut(), terminal::LeaveAlternateScreen)
+                .context("failed to leave the alternate screen");
+            if result.is_ok() {
+                self.alternate_screen = false;
+            }
+            result
+        } else {
+            Ok(())
+        };
+        let raw = if self.raw_mode {
+            let result = terminal::disable_raw_mode().context("failed to disable raw mode");
+            if result.is_ok() {
+                self.raw_mode = false;
+            }
+            result
+        } else {
+            Ok(())
+        };
+        combine_cleanup(combine_cleanup(cursor, alternate), raw)
+    }
+}
+
+impl<W: io::Write> Drop for TerminalSession<W> {
+    fn drop(&mut self) {
+        let _drop = self.restore();
+    }
+}
+
+fn combine_cleanup(first: Result<()>, second: Result<()>) -> Result<()> {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
+        (Err(primary), Err(cleanup)) => Err(merge_errors(primary, Some(cleanup))),
+    }
+}
+
+fn merge_errors(primary: anyhow::Error, cleanup: Option<anyhow::Error>) -> anyhow::Error {
+    match cleanup {
+        Some(cleanup) => anyhow::anyhow!("{primary:#}; additionally, {cleanup:#}"),
+        None => primary,
+    }
 }
 
 /// The draw / input loop: redraw when something changed, poll for a key, run
@@ -586,8 +673,14 @@ fn event_loop(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::fs;
+    use std::rc::Rc;
+
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Rect;
+    use ratatui::{TerminalOptions, Viewport};
 
     use super::*;
 
@@ -750,6 +843,85 @@ mod tests {
             !all_terminals([false, false]),
             "both piped → not interactive"
         );
+    }
+
+    #[test]
+    fn terminal_finish_preserves_the_application_exit_code() {
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 1, 1)),
+            },
+        )
+        .expect("a fixed viewport does not inspect the host terminal");
+        let session = TerminalSession {
+            terminal,
+            raw_mode: false,
+            alternate_screen: false,
+            cursor: false,
+        };
+
+        assert_eq!(
+            session
+                .finish(Ok(ExitCode::from(7)))
+                .expect("disabled cleanup is infallible"),
+            ExitCode::from(7)
+        );
+    }
+
+    #[test]
+    fn terminal_drop_restores_an_enabled_cursor() {
+        #[derive(Clone, Default)]
+        struct SharedWriter(Rc<RefCell<Vec<u8>>>);
+
+        impl io::Write for SharedWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.borrow_mut().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = SharedWriter::default();
+        let terminal = Terminal::with_options(
+            CrosstermBackend::new(writer.clone()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 1, 1)),
+            },
+        )
+        .expect("a fixed viewport does not inspect the host terminal");
+        let session = TerminalSession {
+            terminal,
+            raw_mode: false,
+            alternate_screen: false,
+            cursor: true,
+        };
+
+        drop(session);
+
+        assert!(!writer.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn cleanup_combiner_preserves_single_and_multiple_failures() {
+        let first = combine_cleanup(Err(anyhow::anyhow!("first")), Ok(()))
+            .expect_err("the first cleanup failure is retained");
+        assert_eq!(first.to_string(), "first");
+
+        let second = combine_cleanup(Ok(()), Err(anyhow::anyhow!("second")))
+            .expect_err("the second cleanup failure is retained");
+        assert_eq!(second.to_string(), "second");
+
+        let both = combine_cleanup(
+            Err(anyhow::anyhow!("first")),
+            Err(anyhow::anyhow!("second")),
+        )
+        .expect_err("both cleanup failures are retained");
+        assert!(both.to_string().contains("first"));
+        assert!(both.to_string().contains("second"));
     }
 
     // --- App transitions ---

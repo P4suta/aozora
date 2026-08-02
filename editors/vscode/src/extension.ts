@@ -11,6 +11,8 @@ import {
   type ExtensionContext,
   env,
   languages,
+  Position,
+  Range,
   type TextDocument,
   Uri,
   type WorkspaceConfiguration,
@@ -37,7 +39,8 @@ let client: LanguageClient | undefined;
 
 export async function activate(context: ExtensionContext): Promise<void> {
   const config = workspace.getConfiguration("aozora");
-  const lspPath = resolveLspBinary(context, config);
+  const defaultBinary = resolveDefaultBinary(context);
+  const lspPath = resolveLspBinary(config, defaultBinary);
 
   // The language server is the `aozora` binary's `lsp` subcommand, run
   // in-process. `--stdio` is accepted for editor compatibility; stdio is
@@ -104,7 +107,10 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // extension (工作員 typically save as .txt), so relying on extension
   // alone misses most real-world files.
   const autoDetect = (document: TextDocument) => {
-    void maybeSwitchToAozora(document);
+    void maybeSwitchToAozora(document).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      void window.showErrorMessage(`aozora language detection failed: ${message}`);
+    });
   };
   context.subscriptions.push(workspace.onDidOpenTextDocument(autoDetect));
   for (const doc of workspace.textDocuments) {
@@ -178,7 +184,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // `Aozora: Export HTML…` renders the document to a standalone HTML file via
   // the LSP, and `Aozora: Lint workspace` runs the `aozora` CLI's batch linter
   // — bringing the new CLI surfaces (render / lint) into the editor.
-  registerCliCommands(context, client, lspPath);
+  registerCliCommands(context, client, defaultBinary);
 
   try {
     await client.start();
@@ -211,12 +217,16 @@ export async function activate(context: ExtensionContext): Promise<void> {
 // vsce ships .vsix archives via a zip codepath that doesn't preserve
 // the executable bit (rust-analyzer hits the same issue). The chmod
 // is idempotent and cheap.
-function resolveLspBinary(context: ExtensionContext, config: WorkspaceConfiguration): string {
+function resolveLspBinary(config: WorkspaceConfiguration, defaultBinary: string): string {
   const userSetting = config.get<string>("lsp.path", "aozora").trim();
   if (userSetting !== "" && userSetting !== "aozora") {
     return resolveVars(userSetting);
   }
 
+  return defaultBinary;
+}
+
+function resolveDefaultBinary(context: ExtensionContext): string {
   const exe = process.platform === "win32" ? "aozora.exe" : "aozora";
   const bundled = pathJoin(context.extensionPath, "server", exe);
   if (existsSync(bundled)) {
@@ -327,7 +337,7 @@ async function maybeSwitchToAozora(document: TextDocument): Promise<void> {
   if (!enabled) {
     return;
   }
-  const head = document.getText().slice(0, 4096);
+  const head = document.getText(new Range(new Position(0, 0), document.positionAt(4096)));
   if (!looksLikeAozora(head)) {
     return;
   }

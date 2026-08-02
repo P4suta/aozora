@@ -1,3 +1,4 @@
+import { ToastQueue } from '@react-spectrum/s2/Toast';
 import {
   act,
   cleanup,
@@ -8,7 +9,6 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ToastQueue } from '@react-spectrum/s2/Toast';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -66,16 +66,16 @@ function fakeHarness(options?: {
   const analyze = vi.fn(
     options?.analyze ??
       (async (source: string) => {
-      const diagnostics = source.includes('warning')
-        ? [
-            {
-              severity: 'warning' as const,
-              message: { ja: '新しい警告', en: 'New warning' },
-              range: { start: 0, end: 7 },
-              code: 'fake::warning',
-            },
-          ]
-        : [];
+        const diagnostics = source.includes('warning')
+          ? [
+              {
+                severity: 'warning' as const,
+                message: { ja: '新しい警告', en: 'New warning' },
+                range: { start: 0, end: 7 },
+                code: 'fake::warning',
+              },
+            ]
+          : [];
         return result(source, diagnostics);
       }),
   );
@@ -459,6 +459,64 @@ describe('shared PlaygroundApp', () => {
     expect(initialize).toHaveBeenCalledTimes(2);
   });
 
+  it('turns a synchronous adapter initialization throw into a retryable failure', async () => {
+    const initialize = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => {
+        throw new Error('synchronous initialization failure');
+      })
+      .mockResolvedValueOnce();
+    const harness = fakeHarness({ initialize });
+    render(<PlaygroundApp adapter={harness.adapter} />);
+
+    expect(
+      await screen.findByText('WebAssembly failed to initialize.'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByLabelText('Fake editor');
+    expect(initialize).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a retryable alert and recovers when editor creation rejects', async () => {
+    const harness = fakeHarness();
+    const createEditor = vi
+      .spyOn(harness.adapter, 'createEditor')
+      .mockRejectedValueOnce(new Error('editor chunk failed'));
+    render(<PlaygroundApp adapter={harness.adapter} />);
+
+    expect(
+      await screen.findByText('The editor failed to initialize.'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByLabelText('Fake editor');
+    expect(createEditor).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a stale editor rejection destroy the current editor', async () => {
+    const harness = fakeHarness();
+    const first = Promise.withResolvers<EditorController>();
+    const originalCreateEditor = harness.adapter.createEditor.bind(
+      harness.adapter,
+    );
+    const createEditor = vi.fn(originalCreateEditor);
+    createEditor.mockImplementationOnce(() => first.promise);
+    const firstAdapter = { ...harness.adapter, createEditor };
+    const replacementAdapter = { ...firstAdapter };
+    const view = render(<PlaygroundApp adapter={firstAdapter} />);
+
+    await waitFor(() => expect(createEditor).toHaveBeenCalledOnce());
+    view.rerender(<PlaygroundApp adapter={replacementAdapter} />);
+    await waitFor(() => expect(createEditor).toHaveBeenCalledTimes(2));
+    await screen.findByLabelText('Fake editor');
+
+    first.reject(new Error('stale editor chunk failed'));
+    await first.promise.catch(() => {});
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+    expect(createEditor).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText('Fake editor')).toBeInTheDocument();
+    expect(harness.destroyEditor).not.toHaveBeenCalled();
+  });
+
   it('does not allow an older asynchronous analysis to overwrite a newer edit', async () => {
     const pending: Array<{
       source: string;
@@ -737,9 +795,7 @@ describe('shared PlaygroundApp', () => {
     render(<PlaygroundApp adapter={harness.adapter} />);
 
     await waitFor(() =>
-      expect(negative).toHaveBeenCalledWith(
-        'The share URL could not be read.',
-      ),
+      expect(negative).toHaveBeenCalledWith('The share URL could not be read.'),
     );
   });
 
@@ -808,9 +864,7 @@ describe('shared PlaygroundApp', () => {
     const editor = await screen.findByLabelText('Fake editor');
 
     await waitFor(() =>
-      expect(negative).toHaveBeenCalledWith(
-        'The draft could not be saved.',
-      ),
+      expect(negative).toHaveBeenCalledWith('The draft could not be saved.'),
     );
     await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
     fireEvent.input(editor, { target: { value: 'another draft' } });
@@ -821,6 +875,19 @@ describe('shared PlaygroundApp', () => {
         ([text]) => text === 'The draft could not be saved.',
       ),
     ).toHaveLength(1);
+  });
+
+  it('flushes the latest draft when the page closes before the debounce', async () => {
+    const harness = fakeHarness();
+    render(<PlaygroundApp adapter={harness.adapter} />);
+    const editor = await screen.findByLabelText('Fake editor');
+
+    fireEvent.input(editor, { target: { value: 'last unsaved edit' } });
+    globalThis.dispatchEvent(new Event('pagehide'));
+
+    expect(localStorage.getItem('aozora-playground:draft:v1:fake')).toBe(
+      'last unsaved edit',
+    );
   });
 
   it('updates theme, locale, title, and product editor settings', async () => {
@@ -918,9 +985,9 @@ describe('shared PlaygroundApp', () => {
   });
 
   it('keeps the last successful preview visible when a later analysis fails', async () => {
-    const analyze = vi.fn(async (source: string) => {
+    const analyze = vi.fn((source: string) => {
       if (source === 'broken') throw new Error('render failed');
-      return result(source);
+      return Promise.resolve(result(source));
     });
     const harness = fakeHarness({ analyze });
     render(<PlaygroundApp adapter={harness.adapter} />);

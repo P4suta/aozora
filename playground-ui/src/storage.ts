@@ -166,9 +166,16 @@ export function loadSettingValues(
 ): Record<string, boolean> {
   let stored: Record<string, unknown> = {};
   try {
-    stored = JSON.parse(
+    const parsed: unknown = JSON.parse(
       read(`${SETTINGS_PREFIX}${productId}`) ?? '{}',
-    ) as Record<string, unknown>;
+    );
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
+      stored = parsed as Record<string, unknown>;
+    }
   } catch {
     stored = {};
   }

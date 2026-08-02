@@ -74,15 +74,21 @@ fn main() {
     // isolated decode benchmark — the timer must wrap *only* the
     // decode work.
     let load_start = Instant::now();
-    let paths: Vec<PathBuf> = corpus
-        .walk_paths()
-        .take(limit.unwrap_or(usize::MAX))
-        .filter_map(Result::ok)
-        .collect();
-    let items: Vec<CorpusItem> = paths
-        .iter()
-        .filter_map(|p| corpus.read_path(p).ok())
-        .collect();
+    let mut paths = Vec::new();
+    let mut io_errors = 0;
+    for path in corpus.walk_paths().take(limit.unwrap_or(usize::MAX)) {
+        match path {
+            Ok(path) => paths.push(path),
+            Err(_) => io_errors += 1,
+        }
+    }
+    let mut items = Vec::with_capacity(paths.len());
+    for path in &paths {
+        match corpus.read_path(path) {
+            Ok(item) => items.push(item),
+            Err(_) => io_errors += 1,
+        }
+    }
     let load_secs = load_start.elapsed().as_secs_f64();
     eprintln!(
         "decode_throughput: loaded {} items ({:.1} MB sjis) in {:.2}s — timer starts now",
@@ -90,6 +96,12 @@ fn main() {
         items.iter().map(|it| it.bytes.len()).sum::<usize>() as f64 / 1_048_576.0,
         load_secs,
     );
+    if io_errors != 0 {
+        eprintln!(
+            "decode_throughput: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
+        );
+        process::exit(2);
+    }
 
     let bands = bucket_for_decode(&items);
     let band_labels = ["<50KB", "50KB-500KB", "500KB-2MB", ">2MB"];

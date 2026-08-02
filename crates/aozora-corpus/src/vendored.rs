@@ -1,8 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "vendored fixture paths are filtered to the required shape before extraction"
-)]
-
 //! [`VendoredCorpus`] — read in-tree golden fixtures.
 //!
 //! Exposes `spec/aozora/fixtures/<card-id>/input.sjis.txt` files as a
@@ -16,6 +11,7 @@
 //! corpus when no external `AOZORA_CORPUS_ROOT` is available.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::vec::IntoIter;
 
@@ -46,10 +42,20 @@ impl VendoredCorpus {
     /// # Errors
     ///
     /// Returns [`CorpusError::RootNotDirectory`] if `root` does not
-    /// exist or is not a directory.
+    /// exist or is not a directory, or [`CorpusError::Io`] if the
+    /// root metadata cannot be read.
     pub fn load(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
-        if !root.is_dir() {
+        let metadata = match fs::metadata(&root) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                return Err(CorpusError::RootNotDirectory { path: root });
+            }
+            Err(source) => {
+                return Err(CorpusError::Io { path: root, source });
+            }
+        };
+        if !metadata.is_dir() {
             return Err(CorpusError::RootNotDirectory { path: root });
         }
         let provenance = format!("vendored:{}", root.display());
@@ -74,7 +80,7 @@ impl CorpusSource for VendoredCorpus {
 /// failures as `Err` items and continue past sub-fixtures that lack
 /// the expected input file.
 struct FixtureIter {
-    entries: Option<IntoIter<PathBuf>>,
+    entries: Option<IntoIter<Result<PathBuf, CorpusError>>>,
     error_once: Option<CorpusError>,
 }
 
@@ -101,29 +107,58 @@ impl Iterator for FixtureIter {
             return Some(Err(err));
         }
         let entries = self.entries.as_mut()?;
-        for dir in entries.by_ref() {
+        for entry in entries.by_ref() {
+            let dir = match entry {
+                Ok(dir) => dir,
+                Err(err) => return Some(Err(err)),
+            };
             let input = dir.join(FIXTURE_INPUT_FILENAME);
-            if !input.is_file() {
-                continue;
+            match fs::metadata(&input) {
+                Ok(metadata) if metadata.is_file() => return Some(read_fixture(&dir, &input)),
+                Ok(_) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Some(Err(CorpusError::Io {
+                        path: input,
+                        source,
+                    }));
+                }
             }
-            return Some(read_fixture(&dir, &input));
         }
         None
     }
 }
 
-fn collect_fixture_dirs(root: &Path) -> Result<Vec<PathBuf>, CorpusError> {
-    let mut dirs: Vec<PathBuf> = fs::read_dir(root)
-        .map_err(|source| CorpusError::Io {
-            path: root.to_path_buf(),
-            source,
-        })?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|p| p.is_dir())
-        .collect();
-    dirs.sort(); // deterministic iteration order across platforms
-    Ok(dirs)
+fn collect_fixture_dirs(root: &Path) -> Result<Vec<Result<PathBuf, CorpusError>>, CorpusError> {
+    let entries = fs::read_dir(root).map_err(|source| CorpusError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let mut dirs = Vec::new();
+    let mut errors = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => match entry.file_type() {
+                Ok(file_type) if file_type.is_dir() => dirs.push(entry.path()),
+                Ok(_) => {}
+                Err(source) => errors.push(CorpusError::Io {
+                    path: entry.path(),
+                    source,
+                }),
+            },
+            Err(source) => errors.push(CorpusError::Io {
+                path: root.to_path_buf(),
+                source,
+            }),
+        }
+    }
+    dirs.sort();
+    errors.sort_by_cached_key(ToString::to_string);
+    Ok(dirs
+        .into_iter()
+        .map(Ok)
+        .chain(errors.into_iter().map(Err))
+        .collect())
 }
 
 fn read_fixture(dir: &Path, input: &Path) -> Result<CorpusItem, CorpusError> {
@@ -131,13 +166,15 @@ fn read_fixture(dir: &Path, input: &Path) -> Result<CorpusItem, CorpusError> {
         path: input.to_path_buf(),
         source,
     })?;
-    // `read_dir` yields `DirEntry`s that, when turned into paths, always
-    // have a terminal file name. `file_name()` therefore cannot return
-    // None for entries we reach here; encode that invariant as `expect`
-    // so the "impossible" branch doesn't linger in the coverage data.
     let label = dir
         .file_name()
-        .expect("read_dir entries always have a terminal file name")
+        .ok_or_else(|| CorpusError::Io {
+            path: dir.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fixture directory has no terminal file name",
+            ),
+        })?
         .to_string_lossy()
         .into_owned();
     Ok(CorpusItem::new(label, bytes))
@@ -174,6 +211,20 @@ mod tests {
         fs::write(&file, b"").expect("write file");
         let err = VendoredCorpus::load(&file).expect_err("file is not a directory");
         assert!(matches!(err, CorpusError::RootNotDirectory { path } if path == file));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_preserves_metadata_errors() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fresh_root();
+        let loop_path = dir.path().join("loop");
+        symlink("loop", &loop_path).expect("create symlink loop");
+
+        let error = VendoredCorpus::load(&loop_path).expect_err("metadata must fail");
+
+        assert!(matches!(error, CorpusError::Io { path, .. } if path == loop_path));
     }
 
     #[test]

@@ -462,6 +462,19 @@ lsp-action-delete-pua = 删除私用区字符 U+{$codepoint}
 # 补全 detail／documentation 的片段。
 lsp-completion-half-to-full-hint = (半角→全角)
 lsp-completion-takes-param = (带参数)
+lsp-completion-family-page-break = 分页
+lsp-completion-family-section = 分节
+lsp-completion-family-block-open = 块开始
+lsp-completion-family-block-close = 块结束
+lsp-completion-family-leaf-align = 行对齐
+lsp-completion-family-bouten = 着重点与旁线
+lsp-completion-family-illustration = 插图
+lsp-completion-family-framed = 方框
+lsp-completion-family-warichu = 割注
+lsp-completion-family-combine-upright = 纵中横
+lsp-completion-family-kaeriten-single = 返点
+lsp-completion-family-kaeriten-compound = 复合返点
+lsp-completion-family-other = 注记
 
 # 半角→全角「emmet」补全的 detail，标明目标及产生它的半角触发键。
 lsp-emmet-ruby-open = 注音读音（半角『<』→全角对『《》』）

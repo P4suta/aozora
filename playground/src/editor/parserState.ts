@@ -71,9 +71,13 @@ export function buildOffsetTables(source: string): {
     const code = source.charCodeAt(i);
     if (code < 0x80) byte += 1;
     else if (code < 0x800) byte += 2;
-    else if (code >= 0xd800 && code < 0xdc00) byte += 4;
-    else if (code >= 0xdc00 && code < 0xe000) byte += 0;
-    else byte += 3;
+    else if (code >= 0xd800 && code < 0xdc00) {
+      const next = source.charCodeAt(i + 1);
+      byte += next >= 0xdc00 && next < 0xe000 ? 4 : 3;
+    } else if (code >= 0xdc00 && code < 0xe000) {
+      const previous = source.charCodeAt(i - 1);
+      byte += previous >= 0xd800 && previous < 0xdc00 ? 0 : 3;
+    } else byte += 3;
   }
   u2b[len] = byte;
   const b2u = new Uint32Array(byte + 1);

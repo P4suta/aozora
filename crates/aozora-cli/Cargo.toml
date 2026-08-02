@@ -61,6 +61,7 @@ tui-textarea-2 = { workspace = true } # multi-line source EDIT pane widget for t
 # `AOZORA_LOG`; also the tracing surface the in-process LSP emits on.
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
 
 # --- Localization (folded from aozora-i18n): the Project Fluent stack backing
 # the human shell strings and the LSP's diagnostic prose (see `src/i18n.rs`). ---
@@ -76,6 +77,7 @@ anstyle = { workspace = true } # diff colour styling
 indicatif = { workspace = true } # TTY-gated batch progress bar / spinner (stderr)
 num_cpus = { workspace = true }
 rayon = { workspace = true }
+encoding_rs = { workspace = true }
 
 # --- In-process language server (folded from aozora-lsp, `src/lsp/`):
 # tower-lsp over tokio stdio, with rope-backed incremental documents. ---
@@ -88,7 +90,6 @@ ropey = { workspace = true }
 hdrhistogram = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 insta = { workspace = true }
 # `#[cfg_attr(test, mutants::skip)]` on live-terminal progress widgets whose
 # pure visibility predicates carry the assertions (ADR-0031); a no-op outside

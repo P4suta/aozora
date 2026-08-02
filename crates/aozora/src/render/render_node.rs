@@ -23,10 +23,10 @@ use crate::syntax::accent::{compose_accent, compose_accent_dots};
 use crate::syntax::ast::{
     AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji,
     GaijiCanonicalOwned, Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore,
-    Ruby, Segment,
+    Ruby, Segment, node_is_content_segment,
 };
 use crate::syntax::format::ForwardOrigin;
-use crate::syntax::{AccentMark, DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
+use crate::syntax::{DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
 
 use crate::render::classes;
 use crate::render::html::render_inline_source;
@@ -44,11 +44,21 @@ use crate::render::spelling::html::{
 /// # Errors
 ///
 /// Propagates formatter write errors.
+#[cfg(test)]
 pub(crate) fn render<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fmt::Result {
+    render_with_depth(node, store, out, 0)
+}
+
+pub(super) fn render_with_depth<W: Write>(
+    node: Node,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     match node {
-        Node::Ruby(r) => render_ruby(&r, store, out),
-        Node::Format(f) => render_format(&f, store, out),
-        Node::MarginNote(s) => render_side_note(&s, store, out),
+        Node::Ruby(r) => render_ruby(&r, store, out, nested_depth),
+        Node::Format(f) => render_format(&f, store, out, nested_depth),
+        Node::MarginNote(s) => render_side_note(&s, store, out, nested_depth),
         Node::Gaiji(g) => render_gaiji(&g, store, out),
         // Pure-scalar leaves: render directly through the shared lifetime-free
         // helpers / inline byte spellings (the section-break slug table stays
@@ -66,9 +76,9 @@ pub(crate) fn render<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fm
         }
         Node::Directive(a) => render_annotation(a, store, out),
         Node::Kaeriten(k) => render_kaeriten(k, store, out),
-        Node::AngleQuote(d) => render_angle_quote(d, store, out),
-        Node::Illustration(s) => render_sashie(&s, store, out),
-        Node::Heading(h) => render_aozora_heading(&h, store, out),
+        Node::AngleQuote(d) => render_angle_quote(d, store, out, nested_depth),
+        Node::Illustration(s) => render_sashie(&s, store, out, nested_depth),
+        Node::Heading(h) => render_aozora_heading(&h, store, out, nested_depth),
         Node::HeadingHint(h) => render_heading_hint(h, store, out),
     }
 }
@@ -84,9 +94,10 @@ fn render_content_range<W: Write>(
     range: ContentRange,
     store: &NodeStore,
     out: &mut W,
+    nested_depth: usize,
 ) -> fmt::Result {
     for c in store.resolve_content_range(range) {
-        render_content_one(*c, store, out)?;
+        render_content_one(*c, store, out, nested_depth)?;
     }
     Ok(())
 }
@@ -94,7 +105,12 @@ fn render_content_range<W: Write>(
 /// Render a single [`Content`]. A `Plain` run escapes to text; a
 /// `Segments` run walks its segments, escaping text and nesting gaiji +
 /// directive markup.
-fn render_content_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_content_one<W: Write>(
+    c: Content,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     match c {
         Content::Plain(id) => escape_text(store.resolve_str(id), out),
         Content::Segments(range) => {
@@ -103,10 +119,31 @@ fn render_content_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> f
                     Segment::Text(id) => escape_text(store.resolve_str(id), out)?,
                     Segment::Gaiji(g) => render_gaiji(&g, store, out)?,
                     Segment::Directive(a) => render_annotation(a, store, out)?,
+                    Segment::Node(node) => {
+                        render_content_segment_node(node, store, out, nested_depth)?;
+                    }
                 }
             }
             Ok(())
         }
+    }
+}
+
+fn render_content_segment_node<W: Write>(
+    node: Node,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    debug_assert!(
+        node_is_content_segment(node),
+        "Content segments contain only phrasing semantic nodes"
+    );
+    match node {
+        Node::Illustration(illustration) => {
+            render_sashie_inline(&illustration, store, out, nested_depth)
+        }
+        _ => render_with_depth(node, store, out, nested_depth),
     }
 }
 
@@ -115,10 +152,24 @@ fn render_nested_source_range<W: Write>(
     range: ContentRange,
     store: &NodeStore,
     out: &mut W,
+    nested_depth: usize,
 ) -> fmt::Result {
     match store.content_range_as_plain(range) {
-        Some(source) => render_inline_source(source, out),
-        None => render_content_range(range, store, out),
+        Some(source) => render_inline_source(source, out, nested_depth),
+        None => render_content_range(range, store, out, nested_depth),
+    }
+}
+
+fn render_format_target<W: Write>(
+    format: &ForwardFormat,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    if matches!(format.payload, ForwardPayload::NestedSource) {
+        render_nested_source_range(format.target, store, out, nested_depth)
+    } else {
+        render_content_range(format.target, store, out, nested_depth)
     }
 }
 
@@ -137,17 +188,18 @@ fn render_nested_content_one<W: Write>(
     content: Content,
     store: &NodeStore,
     out: &mut W,
+    nested_depth: usize,
 ) -> fmt::Result {
     match content {
         Content::Plain(id) => {
             let text = store.resolve_str(id);
             if contains_nested_markup(text) {
-                render_inline_source(text, out)
+                render_inline_source(text, out, nested_depth)
             } else {
                 escape_text(text, out)
             }
         }
-        _ => render_content_one(content, store, out),
+        _ => render_content_one(content, store, out, nested_depth),
     }
 }
 
@@ -167,7 +219,12 @@ fn render_nested_content_one<W: Write>(
 /// (傍点 → `<em>`, 罫囲み → framed `<span>`, 行右小書き / 太字 / 二重傍線 / …) wraps
 /// identically; the separate `Referenced` directive leaf still renders nothing,
 /// so exactly one styled copy exists (no #228 double-render).
-fn render_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_ruby<W: Write>(
+    r: &Ruby,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     out.write_str("<ruby>")?;
     match r.base_emphasis {
         Some(attr) => {
@@ -177,28 +234,33 @@ fn render_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut W) -> fmt::Resul
                 origin: ForwardOrigin::SelfContained,
                 payload: ForwardPayload::None,
             };
-            render_format(&deco, store, out)?;
+            render_format(&deco, store, out, nested_depth)?;
         }
-        None => render_content_range(r.base, store, out)?,
+        None => render_content_range(r.base, store, out, nested_depth)?,
     }
     // A left-side ruby (saidoku building block) marks its `<rt>` with a class
     // so a stylesheet can place the reading below; the right-side form is
     // unchanged.
     out.write_str(match r.side {
         RubySide::Left => r#"<rp>(</rp><rt class="aozora-ruby-left">"#,
-        _ => "<rp>(</rp><rt>",
+        RubySide::Right => "<rp>(</rp><rt>",
     })?;
-    render_content_range(r.reading, store, out)?;
+    render_content_range(r.reading, store, out, nested_depth)?;
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
 /// Render a margin note as a `<ruby>` whose `<rt class="aozora-margin-note">`
 /// carries the note text. The note's `kind` is ignored in HTML (serialize-only).
-fn render_side_note<W: Write>(s: &MarginNote, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_side_note<W: Write>(
+    s: &MarginNote,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     out.write_str("<ruby>")?;
-    render_content_range(s.base, store, out)?;
+    render_content_range(s.base, store, out, nested_depth)?;
     out.write_str(r#"<rp>(</rp><rt class="aozora-margin-note">"#)?;
-    render_content_range(s.note, store, out)?;
+    render_content_range(s.note, store, out, nested_depth)?;
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
@@ -212,7 +274,12 @@ fn render_side_note<W: Write>(s: &MarginNote, store: &NodeStore, out: &mut W) ->
 /// *not* `Referenced`, so it falls through the gate and renders styled — it is
 /// the styled-literal half of a non-adjacent split, and its literal was removed
 /// from the plain run, so rendering it here is the sole (correct) copy.
-fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_format<W: Write>(
+    f: &ForwardFormat,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     if matches!(f.origin, ForwardOrigin::Referenced) {
         return Ok(());
     }
@@ -223,19 +290,14 @@ fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) ->
             out.write_str(" aozora-bouten-")?;
             out.write_str(classes::bouten_position_slug(position))?;
             out.write_str(r#"">"#)?;
-            if matches!(f.payload, ForwardPayload::NestedSource) {
-                render_nested_source_range(f.target, store, out)?;
-            } else {
-                render_content_range(f.target, store, out)?;
-            }
+            render_format_target(f, store, out, nested_depth)?;
             out.write_str("</em>")
         }
         ForwardAttr::CombineUpright => {
             out.write_str(r#"<span class="aozora-combine-upright">"#)?;
-            render_content_range(f.target, store, out)?;
+            render_format_target(f, store, out, nested_depth)?;
             out.write_str("</span>")
         }
-        // 文字サイズ carries a magnitude, so its open tag is dynamic.
         ForwardAttr::FontSize(shift) => {
             let class = if shift.larger() {
                 "aozora-font-larger"
@@ -247,35 +309,10 @@ fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) ->
                 r#"<span class="{class}" data-steps="{}">"#,
                 shift.magnitude()
             )?;
-            render_content_range(f.target, store, out)?;
+            render_format_target(f, store, out, nested_depth)?;
             out.write_str("</span>")
         }
-        // 分数: split the target on a slash — ASCII `/` or fullwidth `／` (the
-        // corpus uses both) — into a `<sup>`/`<sub>` fraction joined by the
-        // fraction slash U+2044. The target is plain math text, so it
-        // materializes via `content_range_as_plain`.
-        ForwardAttr::Fraction => {
-            let slug = roman_slug("分数").unwrap_or("bunsu");
-            write!(out, r#"<span class="aozora-{slug}">"#)?;
-            match store.content_range_as_plain(f.target) {
-                Some(t) => match t.split_once(['/', '／']) {
-                    Some((num, den)) => {
-                        out.write_str("<sup>")?;
-                        escape_text(num, out)?;
-                        out.write_str("</sup>⁄<sub>")?;
-                        escape_text(den, out)?;
-                        out.write_str("</sub>")?;
-                    }
-                    // No slash (not attested) — emit the target verbatim rather
-                    // than fabricate a numerator / denominator.
-                    None => escape_text(t, out)?,
-                },
-                // A structured (non-plain) target can't be split; render it
-                // as-is so no content is dropped.
-                None => render_content_range(f.target, store, out)?,
-            }
-            out.write_str("</span>")
-        }
+        ForwardAttr::Fraction => render_fraction(f, store, out, nested_depth),
         // Enclosures drawn as a CSS-styled span — the glyph / keyword names the
         // kind (serialize-only) and the stylesheet draws the frame, one class per
         // kind: 「□」囲み / ○付き文字 / 点線丸囲み / 二重罫囲み. 罫囲み has no
@@ -284,18 +321,18 @@ fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) ->
         ForwardAttr::Framed(kind) => match framed_span_class(kind) {
             Some(class) => {
                 write!(out, r#"<span class="{class}">"#)?;
-                render_content_range(f.target, store, out)?;
+                render_format_target(f, store, out, nested_depth)?;
                 out.write_str("</span>")
             }
-            None => render_forward_semantic(f, f.attr, store, out),
+            None => render_forward_semantic(f, store, out, nested_depth),
         },
         // ドット付き (#331): compose the addressed letters of the reclaimed run
         // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
-        ForwardAttr::AccentDot => render_accent_dot(f, store, out),
+        ForwardAttr::AccentDot => render_accent_dot(f, store, out, nested_depth),
         // アクサン / ウムラウト: compose the single target letter with its accent
         // mark into the precomposed glyph (é / ö) — see `render_accent`. Its own
         // arm keeps it off the bold catch-all below (the #376/#385 bug class).
-        ForwardAttr::Accent(mark) => render_accent(f, mark, store, out),
+        ForwardAttr::Accent(_) => render_accent(f, store, out, nested_depth),
         // 文末より N字上げ揃え: end-align the run. Reuses the line-form's
         // `aozora-align-end` class / `data-offset` so the two scopes style
         // identically; without this explicit arm the run would fall through to
@@ -305,13 +342,47 @@ fn render_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) ->
                 out,
                 r#"<span class="aozora-align-end" data-offset="{offset}">"#
             )?;
-            render_content_range(f.target, store, out)?;
+            render_format_target(f, store, out, nested_depth)?;
             out.write_str("</span>")
         }
-        // The HTML element is semantic; the `aozora-*` slug comes from the
-        // spec slug table, keyed by the canonical keyword.
-        attr => render_forward_semantic(f, attr, store, out),
+        ForwardAttr::Bold
+        | ForwardAttr::Gothic
+        | ForwardAttr::Italic
+        | ForwardAttr::SuperScript
+        | ForwardAttr::SubScript
+        | ForwardAttr::SmallScript(_)
+        | ForwardAttr::Horizontal
+        | ForwardAttr::Caption
+        | ForwardAttr::FontSizeAbsolute(_) => render_forward_semantic(f, store, out, nested_depth),
     }
+}
+
+fn render_fraction<W: Write>(
+    f: &ForwardFormat,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    let slug = roman_slug("分数").unwrap_or("bunsu");
+    write!(out, r#"<span class="aozora-{slug}">"#)?;
+    if matches!(f.payload, ForwardPayload::NestedSource) {
+        render_format_target(f, store, out, nested_depth)?;
+    } else {
+        match store.content_range_as_plain(f.target) {
+            Some(text) => match text.split_once(['/', '／']) {
+                Some((numerator, denominator)) => {
+                    out.write_str("<sup>")?;
+                    escape_text(numerator, out)?;
+                    out.write_str("</sup>⁄<sub>")?;
+                    escape_text(denominator, out)?;
+                    out.write_str("</sub>")?;
+                }
+                None => escape_text(text, out)?,
+            },
+            None => render_format_target(f, store, out, nested_depth)?,
+        }
+    }
+    out.write_str("</span>")
 }
 
 /// The dedicated `aozora-*` span class for an enclosure that the stylesheet
@@ -336,25 +407,35 @@ const fn framed_span_class(kind: EnclosureKind) -> Option<&'static str> {
 /// [`render_format`]; this is the catch-all for the simple styled runs.
 fn render_forward_semantic<W: Write>(
     f: &ForwardFormat,
-    attr: ForwardAttr,
     store: &NodeStore,
     out: &mut W,
+    nested_depth: usize,
 ) -> fmt::Result {
+    let attr = f.attr;
     let (el, close) = match attr {
         ForwardAttr::Italic => ("i", "</i>"),
         ForwardAttr::SuperScript => ("sup", "</sup>"),
         ForwardAttr::SubScript => ("sub", "</sub>"),
         ForwardAttr::SmallScript(_)
         | ForwardAttr::Framed(_)
+        | ForwardAttr::Gothic
         | ForwardAttr::Horizontal
         | ForwardAttr::Caption
         | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),
-        // Bold and any future weight default to the bold element.
-        _ => ("b", "</b>"),
+        ForwardAttr::Bold => ("b", "</b>"),
+        ForwardAttr::Bouten { .. }
+        | ForwardAttr::CombineUpright
+        | ForwardAttr::FontSize(_)
+        | ForwardAttr::Fraction
+        | ForwardAttr::AccentDot
+        | ForwardAttr::Accent(_)
+        | ForwardAttr::AlignEnd { .. } => {
+            unreachable!("bespoke forward attributes are rendered before semantic dispatch")
+        }
     };
     let slug = roman_slug(attr.keyword()).unwrap_or("futoji");
     write!(out, r#"<{el} class="aozora-{slug}">"#)?;
-    render_content_range(f.target, store, out)?;
+    render_format_target(f, store, out, nested_depth)?;
     out.write_str(close)
 }
 
@@ -364,7 +445,12 @@ fn render_forward_semantic<W: Write>(
 /// composer (also the classifier's validator) produces the visible run. A
 /// literal class (not slug-derived) keeps this off the `slugs.rs` / Hepburn
 /// path; a body-less or structured target falls back to the run verbatim.
-fn render_accent_dot<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_accent_dot<W: Write>(
+    f: &ForwardFormat,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     out.write_str(r#"<span class="aozora-accent-dot">"#)?;
     match (store.content_range_as_plain(f.target), f.payload) {
         (Some(run), ForwardPayload::AccentBody(body_id)) => {
@@ -375,7 +461,7 @@ fn render_accent_dot<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W
             }
         }
         // A structured / body-less target can't be composed; emit as-is.
-        _ => render_content_range(f.target, store, out)?,
+        _ => render_format_target(f, store, out, nested_depth)?,
     }
     out.write_str("</span>")
 }
@@ -387,20 +473,31 @@ fn render_accent_dot<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W
 /// post-classify — falls back to the target verbatim rather than dropping it.
 fn render_accent<W: Write>(
     f: &ForwardFormat,
-    mark: AccentMark,
     store: &NodeStore,
     out: &mut W,
+    nested_depth: usize,
 ) -> fmt::Result {
+    let ForwardAttr::Accent(mark) = f.attr else {
+        unreachable!("render_accent only renders an accent attribute")
+    };
     out.write_str(r#"<span class="aozora-accent">"#)?;
+    if matches!(f.payload, ForwardPayload::NestedSource) {
+        render_format_target(f, store, out, nested_depth)?;
+        return out.write_str("</span>");
+    }
     match store.content_range_as_plain(f.target) {
-        Some(run) => match run.chars().next().and_then(|c| compose_accent(c, mark)) {
-            Some(glyph) => out.write_char(glyph)?,
-            // Unreachable post-classify (validated single composable letter);
-            // emit the run rather than drop it.
-            None => escape_text(run, out)?,
-        },
+        Some(run) => {
+            let mut chars = run.chars();
+            match (chars.next(), chars.next()) {
+                (Some(letter), None) => match compose_accent(letter, mark) {
+                    Some(glyph) => out.write_char(glyph)?,
+                    None => escape_text(run, out)?,
+                },
+                _ => escape_text(run, out)?,
+            }
+        }
         // A structured target can't be composed; emit as-is.
-        None => render_content_range(f.target, store, out)?,
+        None => render_format_target(f, store, out, nested_depth)?,
     }
     out.write_str("</span>")
 }
@@ -448,16 +545,8 @@ fn render_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Res
     out.write_str("</span>")
 }
 
-/// Render a directive: warichu open/close to `<span class="aozora-warichu">` /
-/// `</span>`, an editor note to a visible `注N` superscript, and any other
-/// directive to a hidden `<span class="aozora-directive">` of its raw text.
 fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> fmt::Result {
     match a.kind {
-        // Top-level inline warichu balance is now owned by `RenderState`
-        // (sink-driven, #415); these arms are a defensive fallback that fires
-        // only for the non-occurring nested-`Segment::Directive` case.
-        DirectiveKind::WarichuOpen => return out.write_str(r#"<span class="aozora-warichu">"#),
-        DirectiveKind::WarichuClose => return out.write_str("</span>"),
         DirectiveKind::EditorNote => {
             // ［＃入力者注(N)］ → a visible 注N superscript. `a.raw` is the whole
             // bracketed directive; recover N (the classifier guaranteed the shape).
@@ -531,7 +620,13 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
             escape_text(y, out)?;
             return out.write_str("」</sup>");
         }
-        _ => {}
+        DirectiveKind::NonCanonical
+        | DirectiveKind::Editorial
+        | DirectiveKind::Sic
+        | DirectiveKind::BaseTextVariant
+        | DirectiveKind::WarichuOpen
+        | DirectiveKind::WarichuClose
+        | DirectiveKind::Empty => {}
     }
     out.write_str(r#"<span class="aozora-directive" hidden>"#)?;
     escape_text(store.resolve_str(a.raw), out)?;
@@ -546,9 +641,14 @@ fn render_kaeriten<W: Write>(k: Kaeriten, store: &NodeStore, out: &mut W) -> fmt
 }
 
 /// Render an angle-quote as `<span class="aozora-angle-quote">《…》</span>`.
-fn render_angle_quote<W: Write>(d: AngleQuote, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_angle_quote<W: Write>(
+    d: AngleQuote,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     out.write_str(r#"<span class="aozora-angle-quote">《"#)?;
-    render_content_range(d.content, store, out)?;
+    render_content_range(d.content, store, out, nested_depth)?;
     out.write_str("》</span>")
 }
 
@@ -556,8 +656,40 @@ fn render_angle_quote<W: Write>(d: AngleQuote, store: &NodeStore, out: &mut W) -
 /// `<img>` (optional width/height from the dimensions, alt from the
 /// description) and an optional `<figcaption>`. The figure `number` is ignored
 /// in HTML (serialize-only).
-fn render_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> fmt::Result {
-    out.write_str(r#"<figure class="aozora-illustration"><img src=""#)?;
+fn render_sashie<W: Write>(
+    s: &Illustration,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    out.write_str(r#"<figure class="aozora-illustration">"#)?;
+    render_sashie_image(s, store, out)?;
+    if let Some(caption) = s.caption {
+        out.write_str("<figcaption>")?;
+        render_nested_content_one(caption, store, out, nested_depth)?;
+        out.write_str("</figcaption>")?;
+    }
+    out.write_str("</figure>")
+}
+
+fn render_sashie_inline<W: Write>(
+    s: &Illustration,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
+    out.write_str(r#"<span class="aozora-illustration">"#)?;
+    render_sashie_image(s, store, out)?;
+    if let Some(caption) = s.caption {
+        out.write_str(r#"<span class="aozora-illustration-caption">"#)?;
+        render_nested_content_one(caption, store, out, nested_depth)?;
+        out.write_str("</span>")?;
+    }
+    out.write_str("</span>")
+}
+
+fn render_sashie_image<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> fmt::Result {
+    out.write_str(r#"<img src=""#)?;
     escape_text(store.resolve_str(s.file), out)?;
     out.write_char('"')?;
     if let Some((w, h)) = s
@@ -573,21 +705,20 @@ fn render_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> 
     if let Some(description) = s.description {
         escape_text(store.resolve_str(description), out)?;
     }
-    out.write_str(r#"" />"#)?;
-    if let Some(caption) = s.caption {
-        out.write_str("<figcaption>")?;
-        render_nested_content_one(caption, store, out)?;
-        out.write_str("</figcaption>")?;
-    }
-    out.write_str("</figure>")
+    out.write_str(r#"" />"#)
 }
 
 /// Render an Aozora heading by wrapping its text with the shared
 /// `write_heading_open` / `write_heading_close` writers from
 /// [`crate::render::spelling::html`], keeping the `<hN>` / `<div>` spelling single-source.
-fn render_aozora_heading<W: Write>(h: &Heading, store: &NodeStore, out: &mut W) -> fmt::Result {
+fn render_aozora_heading<W: Write>(
+    h: &Heading,
+    store: &NodeStore,
+    out: &mut W,
+    nested_depth: usize,
+) -> fmt::Result {
     write_heading_open(h.kind, h.style, out)?;
-    render_content_range(h.text, store, out)?;
+    render_content_range(h.text, store, out, nested_depth)?;
     write_heading_close(h.kind, h.style, out)
 }
 
@@ -631,8 +762,9 @@ mod tests {
     //! or stubbed emitter is observable.
 
     use super::*;
+    use crate::render::MAX_NESTED_SOURCE_DEPTH;
     use crate::syntax::alloc::Allocator;
-    use crate::syntax::{HeadingKind, HeadingStyle, MarginNoteKind};
+    use crate::syntax::{AccentMark, HeadingKind, HeadingStyle, MarginNoteKind};
 
     /// Render a full owned node into a fresh `String` (`render` is infallible
     /// over a `String` sink).
@@ -665,7 +797,7 @@ mod tests {
         let store = a.into_store();
 
         let mut out = String::new();
-        render_content_one(content, &store, &mut out).expect("render into String is infallible");
+        render_content_one(content, &store, &mut out, 0).expect("render into String is infallible");
         // Text segment (also proves the `Segments` arm did not collapse away).
         assert!(out.contains("あ"), "text segment missing: {out}");
         // Gaiji segment.
@@ -694,6 +826,34 @@ mod tests {
         assert!(!contains_nested_markup("語《ご"));
         assert!(!contains_nested_markup("前［＃ママ"));
         assert!(!contains_nested_markup("前≪引用"));
+    }
+
+    #[test]
+    fn illustration_caption_uses_the_same_nested_source_limit() {
+        let mut allocator = Allocator::new();
+        let caption = allocator.content_plain("［＃「<&」に傍点］");
+        let node = allocator.sashie("figure.png", None, None, Some(caption));
+        let store = allocator.into_store();
+
+        let normal = html(node, &store);
+        assert!(normal.contains(
+            r#"<figcaption><em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">&lt;&amp;</em></figcaption>"#
+        ));
+
+        let mut limited = String::new();
+        render_with_depth(node, &store, &mut limited, MAX_NESTED_SOURCE_DEPTH)
+            .expect("render into String is infallible");
+        assert!(limited.contains("<figcaption>［＃「&lt;&amp;」に傍点］</figcaption>"));
+
+        let Node::Illustration(illustration) = node else {
+            panic!("sashie creates an illustration")
+        };
+        let mut inline = String::new();
+        render_sashie_inline(&illustration, &store, &mut inline, MAX_NESTED_SOURCE_DEPTH)
+            .expect("render into String is infallible");
+        assert!(inline.contains(
+            "<span class=\"aozora-illustration-caption\">［＃「&lt;&amp;」に傍点］</span>"
+        ));
     }
 
     #[test]
@@ -744,6 +904,7 @@ mod tests {
             (ForwardAttr::SuperScript, "sup"),
             (ForwardAttr::SubScript, "sub"),
             (ForwardAttr::Horizontal, "span"),
+            (ForwardAttr::Gothic, "span"),
             (ForwardAttr::Bold, "b"),
         ] {
             let t = a.content_plain("字");
@@ -775,6 +936,40 @@ mod tests {
         assert_eq!(html(node, &store), expected);
     }
 
+    #[test]
+    fn accent_preserves_a_non_singleton_target() {
+        let mut a = Allocator::new();
+        let target = a.content_plain("ab");
+        let node = a.forward_format(
+            ForwardAttr::Accent(AccentMark::Acute),
+            target,
+            ForwardOrigin::SelfContained,
+        );
+        let store = a.into_store();
+
+        assert_eq!(
+            html(node, &store),
+            r#"<span class="aozora-accent">ab</span>"#
+        );
+    }
+
+    #[test]
+    fn accent_composes_a_single_letter_target() {
+        let mut a = Allocator::new();
+        let target = a.content_plain("e");
+        let node = a.forward_format(
+            ForwardAttr::Accent(AccentMark::Acute),
+            target,
+            ForwardOrigin::SelfContained,
+        );
+        let store = a.into_store();
+
+        assert_eq!(
+            html(node, &store),
+            r#"<span class="aozora-accent">é</span>"#
+        );
+    }
+
     /// An Aozora heading wraps its text in the shared `<hN>` open/close writers
     /// — real markup, not the empty `Ok(())` of a stubbed body.
     #[test]
@@ -789,17 +984,13 @@ mod tests {
         );
     }
 
-    /// Every bespoke directive arm emits its own marker rather than the hidden
-    /// `aozora-directive` raw-echo of the fall-through — pins each arm's exact
-    /// bytes (including the `Y` recovered from the raw bracket, and the
-    /// `左に`-driven label split).
     #[test]
     fn directive_arms_render_exact_markup() {
         let mut a = Allocator::new();
         let cases: Vec<(Directive, &'static str)> = vec![
             (
                 a.make_directive("》", DirectiveKind::WarichuClose),
-                "</span>",
+                r#"<span class="aozora-directive" hidden>》</span>"#,
             ),
             (
                 a.make_directive("［＃「振」のルビ「ふ」］", DirectiveKind::RubyAttached),

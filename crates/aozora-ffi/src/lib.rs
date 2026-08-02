@@ -153,7 +153,13 @@ pub unsafe extern "C" fn aozora_document_new(
     src_len: usize,
     out_doc: *mut *mut AozoraDocument,
 ) -> c_int {
-    if src_ptr.is_null() || out_doc.is_null() {
+    if out_doc.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: out_doc is non-null (checked above) and the caller
+    // guarantees it is writable.
+    unsafe { out_doc.write(core::ptr::null_mut()) };
+    if src_ptr.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
     // Reject oversize input before touching the parser core: its span
@@ -162,9 +168,6 @@ pub unsafe extern "C" fn aozora_document_new(
     // on `src_len` alone — it is the source byte length and the parser
     // never grows the buffer past it.
     if u32::try_from(src_len).is_err() {
-        // SAFETY: out_doc is non-null (checked above) and the caller
-        // guarantees it is writable.
-        unsafe { out_doc.write(core::ptr::null_mut()) };
         return AozoraStatus::SourceTooLarge as c_int;
     }
     // SAFETY: caller guarantees src_ptr + src_len name a valid byte
@@ -173,8 +176,6 @@ pub unsafe extern "C" fn aozora_document_new(
     // `from_raw_parts` is satisfied.
     let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
     let Ok(source_str) = core::str::from_utf8(bytes) else {
-        // SAFETY: caller guarantees out_doc is writable.
-        unsafe { out_doc.write(core::ptr::null_mut()) };
         return AozoraStatus::InvalidUtf8 as c_int;
     };
     let doc = Box::new(AozoraDocument {
@@ -813,7 +814,7 @@ mod tests {
 
     #[test]
     fn null_input_returns_null_input_status() {
-        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
         let status = unsafe { aozora_document_new(core::ptr::null(), 0, &mut doc) };
         assert_eq!(status, AozoraStatus::NullInput as c_int);
         assert!(doc.is_null());
@@ -822,7 +823,7 @@ mod tests {
     #[test]
     fn invalid_utf8_returns_invalid_utf8_status() {
         let bad = [0xFFu8, 0xFE, 0xFD];
-        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
         let status = unsafe { aozora_document_new(bad.as_ptr(), bad.len(), &mut doc) };
         assert_eq!(status, AozoraStatus::InvalidUtf8 as c_int);
         assert!(doc.is_null());
@@ -841,7 +842,7 @@ mod tests {
         // Non-null but never dereferenced (guard returns first).
         let dangling = core::ptr::NonNull::<u8>::dangling().as_ptr().cast_const();
         let oversize = u32::MAX as usize + 1;
-        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
         let status = unsafe { aozora_document_new(dangling, oversize, &mut doc) };
         assert_eq!(status, AozoraStatus::SourceTooLarge as c_int);
         assert!(doc.is_null(), "oversize input must not yield a handle");

@@ -69,7 +69,6 @@ export const linkedRangesFilter = EditorState.transactionFilter.of((tr) => {
     {
       changes: extras,
       annotations: LINKED.of(true),
-      sequential: true,
     },
   ];
 });

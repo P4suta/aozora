@@ -9,8 +9,12 @@ const limits = {
   '.js': 540 * 1024,
   '.wasm': 350 * 1024,
 } as const;
+const artifactLimits = {
+  'assets/main-': 80 * 1024,
+} as const;
 
 const totals = new Map<string, number>();
+const artifactTotals = new Map<string, number>();
 const files: string[] = [];
 
 async function walk(directory: string): Promise<void> {
@@ -31,6 +35,12 @@ for (const file of files) {
   if (!(extension in limits)) continue;
   const bytes = gzipSync(await readFile(file)).byteLength;
   totals.set(extension, (totals.get(extension) ?? 0) + bytes);
+  const buildPath = relative(root, file).replaceAll('\\', '/');
+  for (const prefix of Object.keys(artifactLimits)) {
+    if (extension === '.js' && buildPath.startsWith(prefix)) {
+      artifactTotals.set(prefix, (artifactTotals.get(prefix) ?? 0) + bytes);
+    }
+  }
 }
 
 const failures: string[] = [];
@@ -39,6 +49,16 @@ for (const [extension, limit] of Object.entries(limits)) {
   const formatted = `${(total / 1024).toFixed(1)} KiB / ${(limit / 1024).toFixed(0)} KiB`;
   if (total > limit) failures.push(`${extension}: ${formatted}`);
   else process.stdout.write(`${extension}: ${formatted}\n`);
+}
+for (const [prefix, limit] of Object.entries(artifactLimits)) {
+  const total = artifactTotals.get(prefix);
+  if (total === undefined) {
+    failures.push(`${prefix}: artifact missing`);
+    continue;
+  }
+  const formatted = `${(total / 1024).toFixed(1)} KiB / ${(limit / 1024).toFixed(0)} KiB`;
+  if (total > limit) failures.push(`${prefix}: ${formatted}`);
+  else process.stdout.write(`${prefix}: ${formatted}\n`);
 }
 
 for (const file of files) {

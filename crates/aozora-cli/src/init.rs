@@ -35,11 +35,12 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::i18n::{self as i18n, LanguageIdentifier};
+use crate::{atomic_write, output};
 use anyhow::{Context, Result};
 use clap::Parser;
 
@@ -159,8 +160,7 @@ pub(crate) fn run(args: &InitArgs, lang: &LanguageIdentifier) -> Result<ExitCode
     }
 
     let report = render_report(&results, !args.no_sample, lang);
-    io::stdout()
-        .lock()
+    output::stdout()
         .write_all(report.as_bytes())
         .context("failed to write the init report to stdout")?;
     Ok(ExitCode::SUCCESS)
@@ -191,7 +191,8 @@ fn write_scaffold(path: &Path, contents: &str, force: bool) -> Result<Outcome> {
     if exists && !force {
         return Ok(Outcome::Skipped);
     }
-    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;
+    atomic_write::replace(path, contents.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(if exists {
         Outcome::Overwritten
     } else {

@@ -18,11 +18,10 @@ concurrency:
   cancel-in-progress: true
 
 # Advanced CodeQL setup (replaces default setup). The matrix scans the real
-# first-class source: the Rust workspace, the Python binding (aozora-py), and
-# the TypeScript playground. Dropped from default setup's auto-detection:
+# first-class source: the Rust workspace, the Python binding (aozora-py), the
+# TypeScript surfaces, and GitHub Actions workflows. Dropped from default setup's auto-detection:
 #   - c-cpp  → only the aozora-ffi C *test harness* (crates/aozora-ffi/tests/c_smoke)
 #   - go     → the thin, half-generated aozora-go binding
-#   - actions / redundant js+ts aliases
 jobs:
   codeql:
     name: codeql (${{ matrix.language }})
@@ -30,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [rust, python, javascript-typescript]
+        language: [rust, python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a  # v4.37.1

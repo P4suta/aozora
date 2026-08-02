@@ -48,10 +48,16 @@ fn main() {
 
 fn configured_ratio(name: &str) -> Option<f64> {
     env::var(name).ok().map(|value| {
-        value
-            .parse::<f64>()
-            .unwrap_or_else(|_| panic!("{name} must be a number"))
+        parse_ratio(&value).unwrap_or_else(|()| panic!("{name} must be a finite positive number"))
     })
+}
+
+fn parse_ratio(value: &str) -> Result<f64, ()> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .ok_or(())
 }
 
 fn load_documents(minimum: Option<f64>) -> Vec<String> {
@@ -60,12 +66,28 @@ fn load_documents(minimum: Option<f64>) -> Vec<String> {
         process::exit(i32::from(minimum.is_some()));
     };
 
-    let docs = corpus
-        .iter()
-        .filter_map(Result::ok)
-        .filter_map(|item| decode_auto(&item.bytes).ok().map(Cow::into_owned))
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>();
+    let mut docs = Vec::new();
+    let mut io_errors = 0;
+    let mut decode_errors = 0;
+    for item in corpus.iter() {
+        match item {
+            Ok(item) => match decode_auto(&item.bytes) {
+                Ok(text) if !text.is_empty() => docs.push(Cow::into_owned(text)),
+                Ok(_) => {}
+                Err(_) => decode_errors += 1,
+            },
+            Err(_) => io_errors += 1,
+        }
+    }
+    if io_errors != 0 {
+        eprintln!(
+            "incremental_speedup: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
+        );
+        process::exit(2);
+    }
+    if decode_errors != 0 {
+        eprintln!("incremental_speedup: skipped {decode_errors} undecodable document(s)");
+    }
     if docs.is_empty() {
         eprintln!("incremental_speedup: corpus yielded 0 usable documents.");
         process::exit(i32::from(minimum.is_some()));
@@ -170,4 +192,17 @@ fn speedup(band: Band) -> f64 {
         return 0.0;
     }
     band.full_ns as f64 / band.edit_ns as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ratio;
+
+    #[test]
+    fn configured_contract_ratios_are_finite_and_positive() {
+        assert_eq!(parse_ratio("1.25"), Ok(1.25));
+        for value in ["NaN", "inf", "-1", "0", "invalid"] {
+            assert_eq!(parse_ratio(value), Err(()), "{value}");
+        }
+    }
 }

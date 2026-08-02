@@ -8,38 +8,36 @@ import {
   parserStateField,
 } from './parserState';
 
-/**
- * Map raw diagnostic `kind` from aozora-wasm to a CM6 severity +
- * Japanese message. Unknown kinds fall through as `info` with the
- * raw kind name displayed.
- *
- * Wording is loosely modelled on the in-repo
- * `crates/aozora-cli/src/lsp/diagnostics.rs` but tuned for casual
- * playground use rather than typesetter precision.
- */
 function classify(entry: DiagnosticEntry): {
   severity: Diagnostic['severity'];
   message: string;
 } {
+  const severity = diagnosticSeverity(entry.severity);
   switch (entry.kind) {
     case 'unclosed_bracket':
-      return { severity: 'error', message: t('lintUnclosed') };
+      return { severity, message: t('lintUnclosed') };
     case 'unmatched_close':
-      return { severity: 'error', message: t('lintUnmatched') };
+      return { severity, message: t('lintUnmatched') };
     case 'source_contains_pua': {
       const hex = entry.codepoint
         ? `U+${entry.codepoint.toString(16).toUpperCase().padStart(4, '0')}`
         : 'U+????';
       return {
-        severity: 'warning',
+        severity,
         message: tf('lintPua', { hex }),
       };
     }
     case 'residual_annotation_marker':
-      return { severity: 'warning', message: t('lintStrayMarker') };
+      return { severity, message: t('lintStrayMarker') };
     default:
-      return { severity: 'info', message: entry.kind };
+      return { severity, message: entry.kind };
   }
+}
+
+export function diagnosticSeverity(
+  severity: DiagnosticEntry['severity'],
+): Diagnostic['severity'] {
+  return severity === 'note' ? 'info' : severity;
 }
 
 function lintSource(view: EditorView): readonly Diagnostic[] {

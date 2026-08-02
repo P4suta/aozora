@@ -17,6 +17,9 @@ const ja = {
   diagnosticsEmpty: '警告やエラーはありません。',
   direction: '組方向',
   editor: 'エディタ',
+  editorInitializationFailed: 'エディタの初期化に失敗しました。',
+  editorInitializationHint:
+    'エディタの読み込みに失敗しました。ネットワーク接続を確認して、再試行してください。',
   guide: 'ガイド',
   initializationFailed: 'WebAssembly の初期化に失敗しました。',
   initializationHint:
@@ -71,6 +74,9 @@ const en: Record<MessageKey, string> = {
   diagnosticsEmpty: 'No warnings or errors.',
   direction: 'Writing direction',
   editor: 'Editor',
+  editorInitializationFailed: 'The editor failed to initialize.',
+  editorInitializationHint:
+    'The editor could not be loaded. Check your network connection, then retry.',
   guide: 'Guide',
   initializationFailed: 'WebAssembly failed to initialize.',
   initializationHint:

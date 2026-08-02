@@ -3,8 +3,8 @@
 //! Foreground and non-daemon (ADR-0014). The loop runs the command once
 //! up front, then again on every change to the input, debounced. Each
 //! run's exit code is swallowed — a diagnostic or `fmt --check` mismatch
-//! prints but does not stop the watch — so the loop ends only on Ctrl-C
-//! (default SIGINT termination).
+//! prints but does not stop the watch. The loop ends on Ctrl-C or a watcher
+//! failure.
 //!
 //! The input's *parent directory* is watched, not the file itself:
 //! editors commonly save by writing a temp file and renaming it over the
@@ -15,10 +15,10 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use notify::{Event, RecursiveMode, Watcher};
 use tracing::{debug, trace};
 
@@ -27,8 +27,8 @@ use tracing::{debug, trace};
 const DEBOUNCE: Duration = Duration::from_millis(75);
 
 /// Run `once` immediately, then re-run it on every change to `path`
-/// until interrupted. Always returns `ExitCode::SUCCESS`: per-run exit
-/// codes are reported but not propagated — watching is the point.
+/// until interrupted. Per-run exit codes are reported but not propagated;
+/// watcher backend failures and an unexpected event-channel disconnect are.
 pub(crate) fn watch(
     path: &Path,
     lang: &LanguageIdentifier,
@@ -41,29 +41,60 @@ pub(crate) fn watch(
     debug!(target = %path.display(), watch_dir = %parent.display(), "watch: monitoring parent directory for changes");
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-        if let Ok(event) = res {
-            // The receiver lives as long as the watcher; a send error
-            // only happens during shutdown, which we ignore.
-            let _drop = tx.send(event);
-        }
+        let _drop = tx.send(res);
     })
     .context("failed to start the file watcher")?;
     watcher
         .watch(parent, RecursiveMode::NonRecursive)
         .with_context(|| format!("failed to watch {}", parent.display()))?;
 
-    while let Ok(event) = rx.recv() {
+    loop {
+        wait_for_change(&rx, path, DEBOUNCE)?;
+        rerun(&once);
+        banner(path, lang);
+    }
+}
+
+fn wait_for_change(
+    rx: &mpsc::Receiver<notify::Result<Event>>,
+    path: &Path,
+    debounce: Duration,
+) -> Result<()> {
+    loop {
+        let event = match rx.recv() {
+            Ok(Ok(event)) => event,
+            Ok(Err(err)) => return Err(err).context("file watcher backend failed"),
+            Err(_) => bail!("file watcher event channel disconnected"),
+        };
         if should_skip(&event, path) {
             trace!(kind = ?event.kind, "watch: skipping fs event that does not touch the target");
             continue;
         }
         debug!(kind = ?event.kind, "watch: target changed; draining the debounce window");
-        // Drain the debounce window so a rename+write burst is one re-run.
-        while rx.recv_timeout(DEBOUNCE).is_ok() {}
-        rerun(&once);
-        banner(path, lang);
+        let mut deadline = debounce_deadline(Instant::now(), debounce);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(remaining) {
+                Ok(Ok(event)) => {
+                    let now = Instant::now();
+                    if !should_skip(&event, path) {
+                        deadline = debounce_deadline(now, debounce);
+                    } else if now >= deadline {
+                        return Ok(());
+                    }
+                }
+                Ok(Err(err)) => return Err(err).context("file watcher backend failed"),
+                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    bail!("file watcher event channel disconnected")
+                }
+            }
+        }
     }
-    Ok(ExitCode::SUCCESS)
+}
+
+fn debounce_deadline(now: Instant, debounce: Duration) -> Instant {
+    now + debounce
 }
 
 /// The directory to watch: the file's parent, or `.` for a bare filename.
@@ -124,6 +155,7 @@ fn write_banner(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::thread;
 
     use notify::EventKind;
 
@@ -162,6 +194,98 @@ mod tests {
         let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/file.txt"));
         // A matching event is *not* skipped — dropping the `!` would flip this.
         assert!(!should_skip(&event, Path::new("file.txt")));
+    }
+
+    #[test]
+    fn wait_for_change_propagates_backend_errors() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Err(notify::Error::generic("backend stopped")))
+            .expect("send error");
+        let err = wait_for_change(&rx, Path::new("file.txt"), Duration::ZERO)
+            .expect_err("backend error must stop watch");
+        assert!(err.to_string().contains("file watcher backend failed"));
+    }
+
+    #[test]
+    fn wait_for_change_propagates_disconnect() {
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        let err = wait_for_change(&rx, Path::new("file.txt"), Duration::ZERO)
+            .expect_err("disconnect must stop watch");
+        assert!(err.to_string().contains("disconnected"));
+    }
+
+    #[test]
+    fn wait_for_change_skips_unrelated_events() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("other.txt".into())))
+            .expect("send unrelated event");
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send matching event");
+        wait_for_change(&rx, Path::new("file.txt"), Duration::ZERO).expect("matching change");
+    }
+
+    #[test]
+    fn wait_for_change_propagates_an_error_during_debounce() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send matching event");
+        tx.send(Err(notify::Error::generic("backend stopped")))
+            .expect("send error");
+        let err = wait_for_change(&rx, Path::new("file.txt"), Duration::ZERO)
+            .expect_err("debounce error must stop watch");
+        assert!(err.to_string().contains("file watcher backend failed"));
+    }
+
+    #[test]
+    fn unrelated_event_inside_debounce_does_not_finish_the_batch() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send matching event");
+        tx.send(Ok(Event::new(EventKind::Any).add_path("other.txt".into())))
+            .expect("send unrelated event");
+        drop(tx);
+
+        let err = wait_for_change(&rx, Path::new("file.txt"), Duration::from_secs(1))
+            .expect_err("an unrelated event must not hide a disconnected watcher");
+
+        assert!(err.to_string().contains("disconnected"));
+    }
+
+    #[test]
+    fn unrelated_events_do_not_extend_the_debounce_window() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Ok(Event::new(EventKind::Any).add_path("file.txt".into())))
+            .expect("send matching event");
+        let sender = thread::spawn(move || {
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(2));
+                if tx
+                    .send(Ok(Event::new(EventKind::Any).add_path("other.txt".into())))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let started = Instant::now();
+
+        wait_for_change(&rx, Path::new("file.txt"), Duration::from_millis(10))
+            .expect("debounce completes");
+
+        assert!(started.elapsed() < Duration::from_millis(30));
+        sender.join().expect("sender");
+    }
+
+    #[test]
+    fn debounce_deadline_advances_by_the_full_window() {
+        let now = Instant::now();
+        let debounce = Duration::from_millis(75);
+
+        assert_eq!(
+            debounce_deadline(now, debounce).duration_since(now),
+            debounce
+        );
     }
 
     #[test]

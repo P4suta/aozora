@@ -20,7 +20,6 @@
 use core::str;
 use std::cell::RefCell;
 use std::mem;
-use std::path::PathBuf;
 
 use aozora::decode_auto_into;
 use aozora_corpus::{Archive, ArchivePayload, CorpusItem, FilesystemCorpus, with_load_pool};
@@ -96,6 +95,8 @@ pub struct SizeBandedCorpus {
     /// SJIS decode failures encountered while bucketing. Probes report
     /// this so the user can sanity-check the corpus root.
     pub decode_errors: usize,
+    /// Directory-walk or file-read failures encountered while loading.
+    pub io_errors: usize,
 }
 
 impl SizeBandedCorpus {
@@ -192,11 +193,23 @@ fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
 /// label after this returns.
 ///
 /// Decode failures land in `decode_errors` exactly as
-/// [`corpus_size_bands`] reports them. Walkdir / `fs::read` failures
-/// are silently dropped (matching the sequential path's "skip and
-/// continue" philosophy).
+/// [`corpus_size_bands`] reports them. Walkdir and file-read failures
+/// land in `io_errors` so callers cannot mistake a partial corpus for
+/// a complete measurement.
 #[must_use]
 pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
+    parallel_size_bands_limited(corpus, None)
+}
+
+/// Parallel I/O, decode, and bucketing for at most `limit` corpus entries.
+///
+/// `None` processes the full corpus. Errors encountered while walking count
+/// toward the limit in the same way as the sequential loader.
+#[must_use]
+pub fn parallel_size_bands_limited(
+    corpus: &FilesystemCorpus,
+    limit: Option<usize>,
+) -> SizeBandedCorpus {
     // covers the corpus median doc in one allocation; pathological
     // (>2 MB UTF-8) docs grow the buffer once per worker — the same
     // amortisation pattern `WORKER_ARENA` uses in the parse path.
@@ -211,7 +224,14 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
     // Step 1: serial walkdir to a Vec<PathBuf>. Walkdir is `!Sync`;
     // its cost (~0.3 s on the 17 k-file corpus) is small relative to
     // the parallel read+decode work that follows.
-    let paths: Vec<PathBuf> = corpus.walk_paths().filter_map(Result::ok).collect();
+    let mut paths = Vec::new();
+    let mut walk_errors = 0;
+    for path in corpus.walk_paths().take(limit.unwrap_or(usize::MAX)) {
+        match path {
+            Ok(path) => paths.push(path),
+            Err(_) => walk_errors += 1,
+        }
+    }
 
     // Step 2 + Step 3: parallel fold + reduce on the shared
     // physical-core pool. Each rayon worker reads /
@@ -221,11 +241,12 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
     // hyperthreaded) so memory-bound decode work doesn't
     // over-subscribe the cores; warm-thread reuse keeps DECODE_BUF
     // hot across consecutive sweeps.
-    with_load_pool(|| {
+    let mut banded = with_load_pool(|| {
         paths
             .par_iter()
             .fold(SizeBandedCorpus::default, |mut acc, path| {
                 let Ok(item) = corpus.read_path(path) else {
+                    acc.io_errors += 1;
                     return acc;
                 };
                 let outcome = DECODE_BUF.with(|cell| {
@@ -243,7 +264,9 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
                 acc
             })
             .reduce(SizeBandedCorpus::default, merge_banded)
-    })
+    });
+    banded.io_errors += walk_errors;
+    banded
 }
 
 fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpus {
@@ -252,6 +275,7 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
     a.large.extend(b.large);
     a.pathological.extend(b.pathological);
     a.decode_errors += b.decode_errors;
+    a.io_errors += b.io_errors;
     a
 }
 
@@ -276,11 +300,17 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
 /// `parallel_size_bands` does.
 #[must_use]
 pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
+    archive_size_bands_limited(archive, None)
+}
+
+/// Bucket at most `limit` packed archive entries.
+#[must_use]
+pub fn archive_size_bands_limited(archive: &Archive, limit: Option<usize>) -> SizeBandedCorpus {
     use std::cell::RefCell;
     use std::mem;
 
     let utf8 = archive.is_utf8();
-    let entry_count = archive.entries().len();
+    let entry_count = archive.entries().len().min(limit.unwrap_or(usize::MAX));
 
     // Per-worker reusable decode buffer (only used for the SJIS
     // archive variants; UTF-8 archives skip the decode path).
@@ -487,7 +517,11 @@ pub fn build_pathological_aozora(target_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::hint::black_box;
+
+    use aozora_corpus::ArchiveBuilder;
+    use aozora_corpus::archive::FLAG_UTF8;
 
     use super::*;
 
@@ -583,6 +617,35 @@ mod tests {
         assert_eq!(banded.large.len(), 0);
         assert_eq!(banded.pathological.len(), 0);
         assert_eq!(banded.decode_errors, 0);
+        assert_eq!(banded.total_docs(), 2);
+    }
+
+    #[test]
+    fn limited_parallel_load_honours_the_document_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            fs::write(dir.path().join(name), b"text").expect("write fixture");
+        }
+        let corpus = FilesystemCorpus::new(dir.path()).expect("corpus");
+
+        let banded = parallel_size_bands_limited(&corpus, Some(2));
+
+        assert_eq!(banded.total_docs(), 2);
+    }
+
+    #[test]
+    fn limited_archive_load_honours_the_document_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.aozc");
+        let mut builder = ArchiveBuilder::new(FLAG_UTF8);
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            builder.push_entry(name, b"text", 0).expect("push entry");
+        }
+        builder.finish(&path).expect("finish archive");
+        let archive = Archive::open(path).expect("open archive");
+
+        let banded = archive_size_bands_limited(&archive, Some(2));
+
         assert_eq!(banded.total_docs(), 2);
     }
 

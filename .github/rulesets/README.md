@@ -38,8 +38,8 @@ gh api "repos/$REPO/rulesets" --jq '.[] | {id, name, target, enforcement}'
 id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="main-branch-protection") | .id')
 gh api "repos/$REPO/rulesets/$id" --jq '.rules'
 
-# 3. (Recommended) Confirm a normal PR still requires ci-success + the 3 codeql
-#    checks and cannot merge red, and that a direct push to main is rejected.
+# 3. (Recommended) Confirm a normal PR still requires every configured check,
+#    cannot merge red, and rejects a direct push to main.
 
 # 4. Only AFTER the ruleset is confirmed, remove the now-redundant classic rule.
 gh api "repos/$REPO/branches/main/protection" -X DELETE

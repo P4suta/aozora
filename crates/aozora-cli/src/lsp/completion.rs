@@ -199,8 +199,8 @@ fn build_completion_item(
         documentation: Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: format!(
-                "**{family:?}** {accepts}\n\n{doc}",
-                family = entry.family,
+                "**{family}** {accepts}\n\n{doc}",
+                family = family_label(lang, entry.family),
                 accepts = if entry.accepts_param {
                     i18n::t(lang, "lsp-completion-takes-param")
                 } else {
@@ -340,6 +340,25 @@ pub(crate) const fn family_to_kind(family: SlugFamily) -> CompletionItemKind {
         // to TEXT until a kind is chosen.
         _ => CompletionItemKind::TEXT,
     }
+}
+
+pub(crate) fn family_label(lang: &LanguageIdentifier, family: SlugFamily) -> String {
+    let key = match family {
+        SlugFamily::PageBreak => "lsp-completion-family-page-break",
+        SlugFamily::Section => "lsp-completion-family-section",
+        SlugFamily::BlockContainerOpen => "lsp-completion-family-block-open",
+        SlugFamily::BlockContainerClose => "lsp-completion-family-block-close",
+        SlugFamily::LeafAlign => "lsp-completion-family-leaf-align",
+        SlugFamily::Bouten => "lsp-completion-family-bouten",
+        SlugFamily::Illustration => "lsp-completion-family-illustration",
+        SlugFamily::Framed => "lsp-completion-family-framed",
+        SlugFamily::Warichu => "lsp-completion-family-warichu",
+        SlugFamily::CombineUpright => "lsp-completion-family-combine-upright",
+        SlugFamily::KaeritenSingle => "lsp-completion-family-kaeriten-single",
+        SlugFamily::KaeritenCompound => "lsp-completion-family-kaeriten-compound",
+        _ => "lsp-completion-family-other",
+    };
+    i18n::t(lang, key)
 }
 
 #[cfg(test)]
@@ -784,6 +803,8 @@ mod tests {
             "documentation must embed the slug doc string, got {:?}",
             markup.value,
         );
+        assert!(markup.value.contains("Page break"));
+        assert!(!markup.value.contains("PageBreak"));
     }
 
     #[test]
@@ -905,5 +926,26 @@ mod tests {
             family_to_kind(SlugFamily::KaeritenCompound),
             CompletionItemKind::CONSTANT
         );
+    }
+
+    #[test]
+    fn family_labels_hide_internal_variant_names() {
+        let families = [
+            (SlugFamily::PageBreak, "Page break"),
+            (SlugFamily::Section, "Section break"),
+            (SlugFamily::BlockContainerOpen, "Block start"),
+            (SlugFamily::BlockContainerClose, "Block end"),
+            (SlugFamily::LeafAlign, "Line alignment"),
+            (SlugFamily::Bouten, "Emphasis marks"),
+            (SlugFamily::Illustration, "Illustration"),
+            (SlugFamily::Framed, "Framed text"),
+            (SlugFamily::Warichu, "Warichu"),
+            (SlugFamily::CombineUpright, "Tate-chu-yoko"),
+            (SlugFamily::KaeritenSingle, "Kaeriten"),
+            (SlugFamily::KaeritenCompound, "Compound kaeriten"),
+        ];
+        for (family, expected) in families {
+            assert_eq!(family_label(&en(), family), expected);
+        }
     }
 }

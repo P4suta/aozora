@@ -33,13 +33,13 @@ use crate::spec::Diagnostic;
 use crate::syntax::ast::{
     AngleQuote, Content, ContentRange, Directive, ForwardFormat, ForwardPayload, Gaiji,
     GaijiCanonicalOwned, Heading, HeadingHint, Illustration, Kaeriten, LexOutput, MarginNote, Node,
-    NodeRef, NodeStore, Ruby, Segment,
+    NodeRef, NodeStore, Ruby, Segment, content_ruby_base_class, gaiji_ruby_base_class,
 };
 use crate::syntax::degraded::degraded_directive;
 use crate::syntax::format::ForwardOrigin;
 use crate::syntax::lint::canonical_directive;
 use crate::syntax::{
-    AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide,
+    AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubyBaseClass, RubySide,
     ruby_base_class,
 };
 
@@ -217,6 +217,7 @@ fn serialize_into_pass<W: Write>(
         store: &out.store,
         out: &mut tracking,
         directives: opts.directives,
+        predecessor: RubyPredecessor::Boundary,
     };
     walk(out, &mut sink)
 }
@@ -229,28 +230,135 @@ struct SerializeSink<'a, W: Write> {
     /// Which notation-hygiene tiers to apply to `DirectiveKind::Editorial`
     /// near-misses (`Off` = verbatim; `Canonical` = Tier1; `Degraded` = Tier1+Tier2).
     directives: DirectiveNormalization,
+    predecessor: RubyPredecessor,
 }
 
 impl<W: Write> WalkSink for SerializeSink<'_, W> {
     fn on_text(&mut self, text: &str) -> fmt::Result {
-        self.out.write_str(text)
+        self.out.write_str(text)?;
+        if let Some(ch) = text.chars().next_back() {
+            self.predecessor = RubyPredecessor::from_char(ch);
+        }
+        Ok(())
     }
 
     fn on_node(&mut self, kind: SentinelKind, node: NodeRef) -> fmt::Result {
         match (kind, node) {
             (SentinelKind::Inline, NodeRef::Inline(n))
             | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
-                emit_aozora(n, self.store, self.out, self.directives)
+                emit_aozora(
+                    n,
+                    self.store,
+                    self.out,
+                    EmitContext {
+                        directives: self.directives,
+                        predecessor: self.predecessor,
+                    },
+                )?;
+                self.predecessor = RubyPredecessor::after_node(n, self.store);
+                Ok(())
             }
             (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
-                emit_container_open(open, self.out)
+                emit_container_open(open, self.out)?;
+                self.predecessor = RubyPredecessor::Boundary;
+                Ok(())
             }
             (SentinelKind::BlockClose, NodeRef::BlockClose(close)) => {
-                emit_container_close(close, self.out)
+                emit_container_close(close, self.out)?;
+                self.predecessor = RubyPredecessor::Boundary;
+                Ok(())
             }
             // Sentinel hit without a corresponding registry entry, or a
             // kind/variant mismatch — best-effort skip.
             _ => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RubyPredecessor {
+    Boundary,
+    Bar,
+    Text(RubyBaseClass),
+    Gaiji(Option<RubyBaseClass>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EmitContext {
+    directives: DirectiveNormalization,
+    predecessor: RubyPredecessor,
+}
+
+impl RubyPredecessor {
+    fn from_char(ch: char) -> Self {
+        if ch == '｜' {
+            Self::Bar
+        } else {
+            ruby_base_class(ch).map_or(Self::Boundary, Self::Text)
+        }
+    }
+
+    fn after_node(node: Node, store: &NodeStore) -> Self {
+        match node {
+            Node::Gaiji(gaiji) => Self::Gaiji(gaiji_ruby_base_class(gaiji, store)),
+            Node::Format(format) if matches!(format.origin, ForwardOrigin::Detached) => {
+                Self::after_plain_content_range(format.target, store)
+            }
+            Node::Ruby(_)
+            | Node::Format(_)
+            | Node::MarginNote(_)
+            | Node::Line(_)
+            | Node::PageBreak
+            | Node::SectionBreak(_)
+            | Node::BodyEnd
+            | Node::ForcedBreak
+            | Node::Directive(_)
+            | Node::Kaeriten(_)
+            | Node::AngleQuote(_)
+            | Node::Illustration(_)
+            | Node::Heading(_)
+            | Node::HeadingHint(_) => Self::Boundary,
+        }
+    }
+
+    fn after_plain_content_range(range: ContentRange, store: &NodeStore) -> Self {
+        store
+            .resolve_content_range(range)
+            .iter()
+            .filter_map(|content| Self::after_plain_content(*content, store))
+            .next_back()
+            .unwrap_or(Self::Boundary)
+    }
+
+    fn after_plain_content(content: Content, store: &NodeStore) -> Option<Self> {
+        match content {
+            Content::Plain(id) => store
+                .resolve_str(id)
+                .chars()
+                .next_back()
+                .map(Self::from_char),
+            Content::Segments(range) => store
+                .resolve_seg_range(range)
+                .iter()
+                .filter_map(|segment| match *segment {
+                    Segment::Text(id) => store
+                        .resolve_str(id)
+                        .chars()
+                        .next_back()
+                        .map(Self::from_char),
+                    Segment::Gaiji(gaiji) => store
+                        .resolve_str(gaiji.hint)
+                        .chars()
+                        .next_back()
+                        .map(Self::from_char),
+                    Segment::Directive(directive) => store
+                        .resolve_str(directive.raw)
+                        .chars()
+                        .next_back()
+                        .map(Self::from_char),
+                    Segment::Node(node) => Some(Self::after_node(node, store)),
+                })
+                .next_back(),
         }
     }
 }
@@ -260,14 +368,14 @@ fn emit_aozora<W: Write>(
     node: Node,
     store: &NodeStore,
     out: &mut TrackingWriter<W>,
-    directives: DirectiveNormalization,
+    context: EmitContext,
 ) -> fmt::Result {
     match node {
-        Node::Ruby(r) => emit_ruby(&r, store, out),
+        Node::Ruby(r) => emit_ruby(&r, store, out, context.predecessor),
         Node::Format(f) => emit_format(&f, store, out),
         Node::Gaiji(g) => emit_gaiji(&g, store, out),
         Node::Kaeriten(k) => emit_kaeriten(k, store, out),
-        Node::Directive(a) => emit_annotation(a, store, out, directives),
+        Node::Directive(a) => emit_annotation(a, store, out, context.directives),
         Node::AngleQuote(d) => emit_angle_quote(d, store, out),
         Node::MarginNote(s) => emit_side_note(&s, store, out),
         Node::PageBreak => out.write_str("［＃改ページ］"),
@@ -297,6 +405,7 @@ fn emit_content_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> fmt
                     Segment::Text(id) => out.write_str(store.resolve_str(id))?,
                     Segment::Gaiji(g) => emit_gaiji(&g, store, out)?,
                     Segment::Directive(a) => out.write_str(store.resolve_str(a.raw))?,
+                    Segment::Node(node) => emit_nested_node(node, store, out)?,
                 }
             }
             Ok(())
@@ -328,11 +437,51 @@ fn emit_content_as_plain_one<W: Write>(c: Content, store: &NodeStore, out: &mut 
                     Segment::Text(id) => out.write_str(store.resolve_str(id))?,
                     Segment::Gaiji(g) => out.write_str(store.resolve_str(g.hint))?,
                     Segment::Directive(a) => out.write_str(store.resolve_str(a.raw))?,
+                    Segment::Node(node) => emit_nested_node(node, store, out)?,
                 }
             }
             Ok(())
         }
     }
+}
+
+fn emit_nested_node<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fmt::Result {
+    match node {
+        Node::Ruby(r) => emit_nested_ruby(&r, store, out),
+        Node::Format(f) => emit_format(&f, store, out),
+        Node::Gaiji(g) => emit_gaiji(&g, store, out),
+        Node::Kaeriten(k) => emit_kaeriten(k, store, out),
+        Node::Directive(a) => emit_annotation(a, store, out, DirectiveNormalization::Off),
+        Node::AngleQuote(d) => emit_angle_quote(d, store, out),
+        Node::MarginNote(s) => emit_side_note(&s, store, out),
+        Node::PageBreak => out.write_str("［＃改ページ］"),
+        Node::BodyEnd => out.write_str("［＃本文終わり］"),
+        Node::ForcedBreak => out.write_str("［＃改行］"),
+        Node::SectionBreak(kind) => emit_section_break(kind, out),
+        Node::Line(lf) => emit_line(lf, out),
+        Node::Illustration(s) => emit_sashie(&s, store, out),
+        Node::HeadingHint(h) => emit_heading_hint(h, store, out),
+        Node::Heading(h) => emit_aozora_heading(&h, store, out),
+    }
+}
+
+// mutants::skip — `node_is_content_segment` rejects `Node::Ruby`, so this
+// defensive emitter cannot be reached from an allocator-built content tree.
+#[cfg_attr(test, mutants::skip)]
+fn emit_nested_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut W) -> fmt::Result {
+    if matches!(r.side, RubySide::Left) {
+        emit_content_range(r.base, store, out)?;
+        out.write_str("［＃「")?;
+        emit_content_range(r.base, store, out)?;
+        out.write_str("」の左に「")?;
+        emit_content_range(r.reading, store, out)?;
+        return out.write_str("」のルビ］");
+    }
+    out.write_char('｜')?;
+    emit_content_range(r.base, store, out)?;
+    out.write_char('《')?;
+    emit_content_range(r.reading, store, out)?;
+    out.write_char('》')
 }
 
 /// Emit a [`ContentRange`] run as plain text.
@@ -354,7 +503,12 @@ fn emit_content_as_plain_range<W: Write>(
 /// Serialize a ruby node: a left-side ruby to its
 /// `base［＃「base」の左に「reading」のルビ］` form; a right-side ruby to
 /// `base《reading》`, prefixed with `｜` when the base needs an explicit bar.
-fn emit_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut TrackingWriter<W>) -> fmt::Result {
+fn emit_ruby<W: Write>(
+    r: &Ruby,
+    store: &NodeStore,
+    out: &mut TrackingWriter<W>,
+    predecessor: RubyPredecessor,
+) -> fmt::Result {
     if matches!(r.side, RubySide::Left) {
         emit_content_range(r.base, store, out)?;
         out.write_str("［＃「")?;
@@ -363,7 +517,12 @@ fn emit_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut TrackingWriter<W>)
         emit_content_range(r.reading, store, out)?;
         return out.write_str("」のルビ］");
     }
-    if ruby_needs_bar(store.resolve_content_range(r.base), out.last(), store) {
+    let predecessor = if out.last() == Some('｜') {
+        RubyPredecessor::Bar
+    } else {
+        predecessor
+    };
+    if ruby_needs_bar(store.resolve_content_range(r.base), predecessor, store) {
         out.write_char('｜')?;
     }
     emit_content_range(r.base, store, out)?;
@@ -374,38 +533,33 @@ fn emit_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut TrackingWriter<W>)
 
 /// Decide whether a right-side ruby base needs an explicit `｜` start bar:
 /// true when the base is not a uniform single `RubyBaseClass` run (a bare
-/// reading would re-parse a shorter base), or the preceding char is the
-/// same class as the base or `｜` (it would otherwise extend into the
-/// base). A right-side base is always a single `Plain`; the resolved run is
-/// matched accordingly. For a kanji base this is byte-for-byte the previous
-/// `is_ruby_base_char`-based rule (the `Kanji` class equals the old set);
-/// the class-awareness only governs the non-kanji bases that
-/// `trailing_ruby_base_start` newly forms — the same lockstep the
-/// classifier walks (ADR 0002).
-fn ruby_needs_bar(base_run: &[Content], prev: Option<char>, store: &NodeStore) -> bool {
-    // An all-gaiji base (`※［＃…］《…》` or an adjacent run `※…※…《…》`) re-parses
-    // implicitly via the classifier's deferred-emit accumulation, so it never
-    // needs an explicit `｜` — a preceding character cannot extend into a
-    // structured gaiji node, and adjacent gaiji re-accumulate into one base.
-    // Emitting a bar here would inject a `｜` absent from the source and break
-    // the round-trip fixed point.
-    if let [Content::Segments(range)] = base_run {
-        let segs = store.resolve_seg_range(*range);
-        if !segs.is_empty() && segs.iter().all(|s| matches!(s, Segment::Gaiji(_))) {
-            return false;
-        }
-    }
-    let plain = match base_run {
-        [Content::Plain(id)] => Some(store.resolve_str(*id)),
-        _ => None,
-    };
-    plain.is_none_or(|s| {
-        let Some(base_class) = s.chars().next_back().and_then(ruby_base_class) else {
-            return true;
+/// reading would re-parse a shorter base), or the semantic predecessor would
+/// otherwise extend into the base. Resolved gaiji participate in the same
+/// class run as plain glyphs.
+fn ruby_needs_bar(base_run: &[Content], predecessor: RubyPredecessor, store: &NodeStore) -> bool {
+    let all_gaiji = matches!(base_run, [Content::Segments(range)] if {
+        let segments = store.resolve_seg_range(*range);
+        !segments.is_empty()
+            && segments
+                .iter()
+                .all(|segment| matches!(segment, Segment::Gaiji(_)))
+    });
+    let base_class = content_ruby_base_class(base_run, store);
+    if all_gaiji {
+        return match predecessor {
+            RubyPredecessor::Boundary => false,
+            RubyPredecessor::Bar | RubyPredecessor::Gaiji(_) => true,
+            RubyPredecessor::Text(class) => base_class == Some(class),
         };
-        s.chars().any(|c| ruby_base_class(c) != Some(base_class))
-            || prev.is_some_and(|c| ruby_base_class(c) == Some(base_class) || c == '｜')
-    })
+    }
+    let Some(base_class) = base_class else {
+        return true;
+    };
+    match predecessor {
+        RubyPredecessor::Bar => true,
+        RubyPredecessor::Text(class) | RubyPredecessor::Gaiji(Some(class)) => class == base_class,
+        RubyPredecessor::Boundary | RubyPredecessor::Gaiji(None) => false,
+    }
 }
 
 /// Serialize a forward-format node to its `［＃…］` bracket form. A `Reclaimed`
@@ -415,7 +569,11 @@ fn ruby_needs_bar(base_run: &[Content], prev: Option<char>, store: &NodeStore) -
 /// `［＃「target」は<keyword>］`.
 fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> fmt::Result {
     if matches!(f.origin, ForwardOrigin::Reclaimed | ForwardOrigin::Detached) {
-        emit_content_as_plain_range(f.target, store, out)?;
+        if matches!(f.payload, ForwardPayload::QuotedTarget(_)) {
+            emit_content_range(f.target, store, out)?;
+        } else {
+            emit_content_as_plain_range(f.target, store, out)?;
+        }
     }
     // A `Detached` decoration (#333) is the styled-literal half of a
     // non-adjacent forward split: it serializes as the bare literal above,
@@ -426,11 +584,17 @@ fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> f
     }
     if let ForwardAttr::Bouten { kind, position } = f.attr {
         out.write_str("［＃")?;
-        emit_bouten_targets(store.resolve_content_range(f.target), store, out)?;
+        if let ForwardPayload::QuotedTarget(id) = f.payload {
+            out.write_char('「')?;
+            out.write_str(store.resolve_str(id))?;
+            out.write_char('」')?;
+        } else {
+            emit_bouten_targets(store.resolve_content_range(f.target), store, out)?;
+        }
         match position {
+            BoutenPosition::Right => out.write_char('に')?,
             BoutenPosition::Left => out.write_str("の左に")?,
             BoutenPosition::Both => out.write_str("の両側に")?,
-            _ => out.write_char('に')?,
         }
         out.write_str(kind.keyword())?;
         return out.write_char('］');
@@ -439,7 +603,7 @@ fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> f
         // 「□」囲み: the keyword embeds the quoted glyph, so it can't come from
         // `keyword()`. □ (U+25A1) is the canonical spelling of the Box kind.
         out.write_str("［＃「")?;
-        emit_content_as_plain_range(f.target, store, out)?;
+        emit_forward_target_spelling(f, store, out)?;
         return out.write_str("」は「□」囲み］");
     }
     if matches!(f.attr, ForwardAttr::AccentDot) {
@@ -454,7 +618,7 @@ fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> f
         return out.write_char('］');
     }
     out.write_str("［＃「")?;
-    emit_content_as_plain_range(f.target, store, out)?;
+    emit_forward_target_spelling(f, store, out)?;
     out.write_str("」は")?;
     if let ForwardAttr::FontSize(shift) = f.attr {
         let word = if shift.larger() {
@@ -481,6 +645,18 @@ fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> f
         out.write_str(f.attr.keyword())?;
     }
     out.write_char('］')
+}
+
+fn emit_forward_target_spelling<W: Write>(
+    f: &ForwardFormat,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    if let ForwardPayload::QuotedTarget(id) = f.payload {
+        out.write_str(store.resolve_str(id))
+    } else {
+        emit_content_as_plain_range(f.target, store, out)
+    }
 }
 
 /// The exact `は`-suffix source for a forward accent [`AccentMark`], for a
@@ -640,6 +816,19 @@ fn emit_side_note<W: Write>(s: &MarginNote, store: &NodeStore, out: &mut W) -> f
 /// Serialize an illustration to its `［＃…（file）…入る］` bracket form (a
 /// description, or `挿絵` + optional number; optional dimensions and caption).
 fn emit_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> fmt::Result {
+    if let Some(caption @ Content::Segments(_)) = s.caption
+        && s.description.is_none()
+    {
+        out.write_str("［＃「")?;
+        emit_content_one(caption, store, out)?;
+        out.write_str("」のキャプション付きの挿絵（")?;
+        out.write_str(store.resolve_str(s.file))?;
+        if let Some(dims) = s.dimensions {
+            out.write_char('、')?;
+            out.write_str(store.resolve_str(dims))?;
+        }
+        return out.write_str("）入る］");
+    }
     out.write_str("［＃")?;
     if let Some(description) = s.description {
         out.write_str(store.resolve_str(description))?;
@@ -658,7 +847,7 @@ fn emit_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> fm
     out.write_char('）')?;
     if let Some(caption) = s.caption {
         out.write_char('「')?;
-        emit_content_as_plain_one(caption, store, out)?;
+        emit_content_one(caption, store, out)?;
         out.write_char('」')?;
     }
     out.write_str("入る］")
@@ -696,6 +885,7 @@ mod tests {
     use super::*;
 
     use crate::pipeline::lex;
+    use crate::render::render_html;
     use crate::syntax::alloc::Allocator;
     use crate::syntax::{
         BoutenKind, HeadingKind, HeadingStyle, MarginNoteKind, RegionClose, RegionFormat,
@@ -732,9 +922,143 @@ mod tests {
             "行頭［＃改行］行末",
             "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
             "段落の文\n――――――――――――\n｜青梅《おうめ》の続き\n",
+            "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀多《かんだた》",
+            "｜A※［＃「特のへん＋廴＋聿」、第3水準1-87-71］漢《r》",
+            "｜陀※［＃「架空の字」］多《r》",
+            "川※［＃「特のへん＋廴＋聿」、第3水準1-87-71］《r》",
+            "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀※［＃「特のへん＋廴＋聿」、第3水準1-87-71］多《r》",
+            "文｜｜※［＃「目＋爭」、第3水準1-88-85］《みは》る",
+            "元｜※［＃「目＋爭」、第3水準1-88-85］《みは》る",
+            "※［＃「目＋爭」、第3水準1-88-85］｜※［＃「目＋爭」、第3水準1-88-85］《みは》",
+            "※［＃「目＋爭」、第3水準1-88-85］｜※［＃「目＋爭」、第3水準1-88-85］陀《みは》",
+            "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀《かん※［＃「特のへん＋廴＋聿」、第3水準1-87-71］》",
         ] {
             assert_parity(src);
         }
+    }
+
+    #[test]
+    fn streamed_plain_explicit_ruby_base_is_not_duplicated() {
+        let source = "｜〔canapé〕《長椅子》";
+        let parsed = lex(source);
+        let [entry] = parsed.source_nodes.as_slice() else {
+            panic!("expected one source node, got {:?}", parsed.source_nodes);
+        };
+
+        assert_eq!(entry.source_span.slice(source), source);
+        let first = serialize(&parsed);
+        let second = serialize(&lex(&first));
+        assert_eq!(first, source);
+        assert_eq!(second, first);
+        assert_eq!(render_html(&parsed).matches("canapé").count(), 1);
+    }
+
+    #[test]
+    fn structured_ruby_serialization_preserves_rendered_scope() {
+        for source in [
+            "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀多《かんだた》",
+            "｜A※［＃「特のへん＋廴＋聿」、第3水準1-87-71］漢《r》",
+            "｜陀※［＃「架空の字」］多《r》",
+            "川※［＃「特のへん＋廴＋聿」、第3水準1-87-71］《r》",
+            "※［＃「特のへん＋廴＋聿」、第3水準1-87-71］陀※［＃「特のへん＋廴＋聿」、第3水準1-87-71］多《r》",
+            "文｜｜※［＃「目＋爭」、第3水準1-88-85］《みは》る",
+            "元｜※［＃「目＋爭」、第3水準1-88-85］《みは》る",
+            "※［＃「目＋爭」、第3水準1-88-85］｜※［＃「目＋爭」、第3水準1-88-85］《みは》",
+            "※［＃「目＋爭」、第3水準1-88-85］｜※［＃「目＋爭」、第3水準1-88-85］陀《みは》",
+        ] {
+            let parsed = lex(source);
+            let canonical = serialize(&parsed);
+            let reparsed = lex(&canonical);
+            assert_eq!(
+                render_html(&parsed),
+                render_html(&reparsed),
+                "rendered scope changed for {source:?} via {canonical:?}"
+            );
+            assert_eq!(
+                serialize(&reparsed),
+                canonical,
+                "second serialization changed {canonical:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detached_format_tail_keeps_the_following_ruby_explicit() {
+        for segmented in [false, true] {
+            let mut allocator = Allocator::new();
+            let target = if segmented {
+                let prefix = allocator.seg_text("前");
+                let tail = allocator.seg_text("漢");
+                allocator.content_segments(&[prefix, tail])
+            } else {
+                allocator.content_plain("漢")
+            };
+            let detached =
+                allocator.forward_format(ForwardAttr::Bold, target, ForwardOrigin::Detached);
+            let base = allocator.content_plain("字");
+            let reading = allocator.content_plain("じ");
+            let ruby = allocator.ruby(base, reading);
+            let store = allocator.into_store();
+
+            let mut source = String::new();
+            let () = {
+                let mut writer = TrackingWriter::new(&mut source);
+                let mut sink = SerializeSink {
+                    store: &store,
+                    out: &mut writer,
+                    directives: DirectiveNormalization::Off,
+                    predecessor: RubyPredecessor::Boundary,
+                };
+                sink.on_node(SentinelKind::Inline, NodeRef::Inline(detached))
+                    .expect("serialize into String is infallible");
+                sink.on_node(SentinelKind::Inline, NodeRef::Inline(ruby))
+                    .expect("serialize into String is infallible");
+            };
+
+            let expected = if segmented {
+                "前漢｜字《じ》"
+            } else {
+                "漢｜字《じ》"
+            };
+            assert_eq!(source, expected);
+            assert_eq!(serialize(&lex(&source)), source);
+        }
+    }
+
+    #[test]
+    fn referenced_format_is_a_boundary_for_the_following_ruby() {
+        let mut allocator = Allocator::new();
+        let target = allocator.content_plain("漢");
+        let referenced =
+            allocator.forward_format(ForwardAttr::Bold, target, ForwardOrigin::Referenced);
+        let base = allocator.content_plain("字");
+        let reading = allocator.content_plain("じ");
+        let ruby = allocator.ruby(base, reading);
+        let store = allocator.into_store();
+
+        let mut source = String::new();
+        {
+            let mut writer = TrackingWriter::new(&mut source);
+            let mut sink = SerializeSink {
+                store: &store,
+                out: &mut writer,
+                directives: DirectiveNormalization::Off,
+                predecessor: RubyPredecessor::Boundary,
+            };
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(referenced))
+                .expect("serialize into String is infallible");
+            sink.on_node(SentinelKind::Inline, NodeRef::Inline(ruby))
+                .expect("serialize into String is infallible");
+        };
+
+        assert_eq!(source, "［＃「漢」は太字］字《じ》");
+        assert_eq!(serialize(&lex(&source)), source);
+    }
+
+    #[test]
+    fn different_text_class_before_ruby_does_not_force_a_bar() {
+        let source = "あ字《じ》";
+        assert_eq!(serialize(&lex(source)), source);
     }
 
     #[test]
@@ -836,8 +1160,16 @@ mod tests {
     fn emit_via_tracking(node: Node, store: &NodeStore) -> String {
         let mut buf = String::new();
         let mut tw = TrackingWriter::new(&mut buf);
-        emit_aozora(node, store, &mut tw, DirectiveNormalization::Off)
-            .expect("serialize into String is infallible");
+        emit_aozora(
+            node,
+            store,
+            &mut tw,
+            EmitContext {
+                directives: DirectiveNormalization::Off,
+                predecessor: RubyPredecessor::Boundary,
+            },
+        )
+        .expect("serialize into String is infallible");
         buf
     }
 
@@ -850,6 +1182,7 @@ mod tests {
             store,
             out: &mut tw,
             directives: DirectiveNormalization::Off,
+            predecessor: RubyPredecessor::Boundary,
         };
         sink.on_node(kind, node)
             .expect("serialize into String is infallible");
@@ -927,8 +1260,6 @@ mod tests {
         assert_eq!(buf, "前※［＃「ほげ」］");
     }
 
-    /// `emit_content_as_plain_one` walks a `Segments` content and writes each
-    /// arm — text verbatim, gaiji as its `hint`, directive as its raw bytes.
     #[test]
     fn emit_content_as_plain_one_writes_every_segment() {
         let mut a = Allocator::new();
@@ -959,20 +1290,55 @@ mod tests {
         let tail = a.make_gaiji("ふが", None, false);
         let tail_seg = a.seg_gaiji(tail);
         let mixed = a.content_segments(&[t, tail_seg]);
+        let resolved = a.make_gaiji("特のへん＋廴＋聿", Some("第3水準1-87-71"), false);
+        let resolved_seg = a.seg_gaiji(resolved);
+        let resolved_text = a.seg_text("陀多");
+        let resolved_mixed = a.content_segments(&[resolved_seg, resolved_text]);
         let store = a.into_store();
 
-        assert!(!ruby_needs_bar(&[uniform], None, &store));
-        assert!(!ruby_needs_bar(&[all_gaiji], None, &store));
-        assert!(ruby_needs_bar(&[mixed], None, &store));
+        assert!(!ruby_needs_bar(
+            &[uniform],
+            RubyPredecessor::Boundary,
+            &store
+        ));
+        assert!(!ruby_needs_bar(
+            &[all_gaiji],
+            RubyPredecessor::Boundary,
+            &store
+        ));
+        assert!(ruby_needs_bar(&[mixed], RubyPredecessor::Boundary, &store));
+        assert!(!ruby_needs_bar(
+            &[resolved_mixed],
+            RubyPredecessor::Boundary,
+            &store
+        ));
+        assert!(ruby_needs_bar(
+            &[resolved_mixed],
+            RubyPredecessor::Text(RubyBaseClass::Kanji),
+            &store
+        ));
 
         // The predecessor clause must be exercised deterministically,
         // not left to the property suite: a SAME-class predecessor forces the bar
         // even for a uniform base (kills `|| -> &&` and the `class == base`
         // `== -> !=`), a bar predecessor forces it via the `c == '｜'` arm, and a
         // DIFFERENT-class predecessor must not (the clause stays false).
-        assert!(ruby_needs_bar(&[uniform], Some('一'), &store));
-        assert!(ruby_needs_bar(&[uniform], Some('｜'), &store));
-        assert!(!ruby_needs_bar(&[uniform], Some('a'), &store));
+        assert!(ruby_needs_bar(
+            &[uniform],
+            RubyPredecessor::Text(RubyBaseClass::Kanji),
+            &store
+        ));
+        assert!(ruby_needs_bar(&[uniform], RubyPredecessor::Bar, &store));
+        assert!(!ruby_needs_bar(
+            &[uniform],
+            RubyPredecessor::Text(RubyBaseClass::Latin),
+            &store
+        ));
+        assert!(ruby_needs_bar(
+            &[all_gaiji],
+            RubyPredecessor::Gaiji(None),
+            &store
+        ));
     }
 
     /// The bouten position keyword: `の左に` / `の両側に` / bare `に`.

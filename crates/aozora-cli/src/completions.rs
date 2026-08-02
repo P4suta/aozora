@@ -6,14 +6,16 @@
 //! TypeScript artefacts); release tarballs ship the generated scripts
 //! under `completions/`. See `docs/adr/0012-*`.
 
-use std::io;
+use std::io::Write;
 use std::process::ExitCode;
 
+use anyhow::{Context, Result};
 use clap::{CommandFactory, ValueEnum};
 use clap_complete::{Shell, generate};
 use clap_complete_nushell::Nushell;
 
 use crate::Cli;
+use crate::output;
 
 /// Shells `aozora completions` can target: `clap_complete::Shell`'s
 /// built-ins plus Nushell, whose generator lives in a sibling crate and
@@ -37,21 +39,23 @@ pub(crate) struct CompletionsArgs {
     shell: CompletionShell,
 }
 
-/// Write the completion script for `args.shell` to stdout. Infallible:
-/// `clap_complete::generate` writes directly and surfaces no error, so
-/// this returns a bare [`ExitCode`] (the dispatch wraps it in `Ok`).
-pub(crate) fn run_completions(args: &CompletionsArgs) -> ExitCode {
+pub(crate) fn run_completions(args: &CompletionsArgs) -> Result<ExitCode> {
     let mut cmd = Cli::command();
-    let mut out = io::stdout().lock();
+    let mut generated = Vec::new();
     // Each arm passes a concrete `Generator`; Nushell's lives in its own
     // crate and is not a `Shell` variant, hence the explicit match.
     match args.shell {
-        CompletionShell::Bash => generate(Shell::Bash, &mut cmd, "aozora", &mut out),
-        CompletionShell::Elvish => generate(Shell::Elvish, &mut cmd, "aozora", &mut out),
-        CompletionShell::Fish => generate(Shell::Fish, &mut cmd, "aozora", &mut out),
-        CompletionShell::PowerShell => generate(Shell::PowerShell, &mut cmd, "aozora", &mut out),
-        CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, "aozora", &mut out),
-        CompletionShell::Nushell => generate(Nushell, &mut cmd, "aozora", &mut out),
+        CompletionShell::Bash => generate(Shell::Bash, &mut cmd, "aozora", &mut generated),
+        CompletionShell::Elvish => generate(Shell::Elvish, &mut cmd, "aozora", &mut generated),
+        CompletionShell::Fish => generate(Shell::Fish, &mut cmd, "aozora", &mut generated),
+        CompletionShell::PowerShell => {
+            generate(Shell::PowerShell, &mut cmd, "aozora", &mut generated);
+        }
+        CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, "aozora", &mut generated),
+        CompletionShell::Nushell => generate(Nushell, &mut cmd, "aozora", &mut generated),
     }
-    ExitCode::SUCCESS
+    output::stdout()
+        .write_all(&generated)
+        .context("write completion script to stdout")?;
+    Ok(ExitCode::SUCCESS)
 }

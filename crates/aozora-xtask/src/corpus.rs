@@ -1,8 +1,3 @@
-#![expect(
-    clippy::expect_used,
-    reason = "corpus analysis validates bounded fixture metadata before conversion"
-)]
-
 //! `xtask corpus pack` — build / refresh a single-file corpus archive
 //!.
 //!
@@ -49,9 +44,10 @@
     reason = "the audit's line_of counts '\\n' in a one-shot prefix; pulling in the bytecount crate for an offline measurement tool is not worth a new dependency."
 )]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::{self, Write as _};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -353,9 +349,6 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
 }
 
 fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Result<(), String> {
-    if !src.is_dir() {
-        return Err(format!("source is not a directory: {}", src.display()));
-    }
     let flags =
         (if zstd { archive::FLAG_ZSTD } else { 0 }) | (if utf8 { archive::FLAG_UTF8 } else { 0 });
 
@@ -373,7 +366,8 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
     let walk_start = Instant::now();
     let corpus = FilesystemCorpus::new(src.to_path_buf())
         .map_err(|e| format!("invalid corpus root: {e:?}"))?;
-    let paths: Vec<PathBuf> = corpus.walk_paths().filter_map(Result::ok).collect();
+    let mut paths = collect_corpus_results(corpus.walk_paths(), "walk corpus")?;
+    paths.sort();
     eprintln!(
         "  walkdir : {:>5} files in {:>5.2} s",
         paths.len(),
@@ -397,9 +391,12 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
             );
             None
         }
-        Err(_) => {
+        Err(aozora_corpus::ArchiveError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
             eprintln!("  prev    : no existing archive at output path; building from scratch");
             None
+        }
+        Err(error) => {
+            return Err(format!("open previous archive {}: {error}", out.display()));
         }
     };
 
@@ -408,10 +405,7 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
     // metadata; it does not touch the in-progress builder, so no
     // shared mutability.
     let scan_start = Instant::now();
-    let decisions: Vec<EntryDecision> = paths
-        .par_iter()
-        .filter_map(|path| classify_entry(path, src, prev.as_ref(), utf8).ok())
-        .collect();
+    let decisions = classify_entries(&paths, src, prev.as_ref(), utf8)?;
     eprintln!(
         "  scan    : {:>5} entries decided in {:>5.2} s",
         decisions.len(),
@@ -423,8 +417,7 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
         .count();
     let fresh = decisions.len() - reused;
     let removed = prev.as_ref().map_or(0, |p| {
-        let alive: std::collections::HashSet<&str> =
-            decisions.iter().map(|d| d.label.as_str()).collect();
+        let alive: HashSet<&str> = decisions.iter().map(|d| d.label.as_str()).collect();
         p.lookup
             .keys()
             .filter(|l| !alive.contains(l.as_str()))
@@ -445,46 +438,47 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
     //     `(label, payload_bytes, decoded_len, mtime_ns, source_blake3)`
     //     tuples ready for sequential append.
     let encode_start = Instant::now();
-    let prepared: Vec<PreparedEntry> = sorted
+    let prepared = sorted
         .into_par_iter()
-        .map(|decision| match decision.action {
-            EntryAction::Reuse => {
-                let prev_arc = prev.as_ref().expect("Reuse only emitted with prev set");
-                let (meta, payload) = prev_arc.entry_payload(&decision.label);
-                PreparedEntry::Prebuilt {
-                    meta,
-                    payload: payload.to_vec(),
+        .map(|decision| {
+            let label = decision.label;
+            match decision.action {
+                EntryAction::Reuse => {
+                    let prev_arc = prev
+                        .as_ref()
+                        .ok_or_else(|| format!("prepare {label}: previous archive is missing"))?;
+                    let (meta, payload) = prev_arc.entry_payload(&label).ok_or_else(|| {
+                        format!("prepare {label}: previous archive entry is missing")
+                    })?;
+                    Ok(PreparedEntry::Prebuilt {
+                        meta,
+                        payload: payload.to_vec(),
+                    })
                 }
-            }
-            EntryAction::Encode {
-                payload_bytes,
-                mtime_ns,
-                source_blake3,
-            } => {
-                let decoded_len =
-                    u32::try_from(payload_bytes.len()).expect("entry larger than u32 unsupported");
-                let payload = if flags & archive::FLAG_ZSTD != 0 {
-                    let mut compressed = Vec::with_capacity(payload_bytes.len() / 4);
-                    zstd::stream::copy_encode(
-                        payload_bytes.as_slice(),
-                        &mut compressed,
-                        zstd_level,
-                    )
-                    .expect("zstd encode must succeed on valid input");
-                    compressed
-                } else {
-                    payload_bytes
-                };
-                PreparedEntry::Encoded {
-                    label: decision.label,
-                    payload,
-                    decoded_len,
+                EntryAction::Encode {
+                    payload_bytes,
                     mtime_ns,
                     source_blake3,
+                } => {
+                    let decoded_len = decoded_len(&label, payload_bytes.len())?;
+                    let payload = if flags & archive::FLAG_ZSTD != 0 {
+                        encode_zstd(&label, &payload_bytes, zstd_level)?
+                    } else {
+                        payload_bytes
+                    };
+                    Ok(PreparedEntry::Encoded {
+                        label,
+                        payload,
+                        decoded_len,
+                        mtime_ns,
+                        source_blake3,
+                    })
                 }
             }
         })
-        .collect();
+        .collect::<Vec<Result<PreparedEntry, String>>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
     eprintln!(
         "  encode  : {:>5} entries encoded in {:>5.2} s ({} compression)",
         prepared.len(),
@@ -503,7 +497,10 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
     for entry in prepared {
         match entry {
             PreparedEntry::Prebuilt { meta, payload } => {
-                builder.push_prebuilt(meta, &payload);
+                let label = meta.label.clone();
+                builder
+                    .push_prebuilt(meta, &payload)
+                    .map_err(|error| format!("assemble {label}: {error}"))?;
             }
             PreparedEntry::Encoded {
                 label,
@@ -512,13 +509,9 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
                 mtime_ns,
                 source_blake3,
             } => {
-                builder.push_already_encoded(
-                    &label,
-                    &payload,
-                    decoded_len,
-                    mtime_ns,
-                    source_blake3,
-                );
+                builder
+                    .push_already_encoded(&label, &payload, decoded_len, mtime_ns, source_blake3)
+                    .map_err(|error| format!("assemble {label}: {error}"))?;
             }
         }
     }
@@ -535,6 +528,39 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
         total_start.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+fn decoded_len(label: &str, len: usize) -> Result<u32, String> {
+    u32::try_from(len)
+        .map_err(|_| format!("encode {label}: decoded payload exceeds the u32 archive limit"))
+}
+
+fn encode_zstd(label: &str, payload: &[u8], level: i32) -> Result<Vec<u8>, String> {
+    encode_zstd_with(label, payload, level, |source, destination, level| {
+        zstd::stream::copy_encode(source, destination, level)
+    })
+}
+
+fn encode_zstd_with(
+    label: &str,
+    payload: &[u8],
+    level: i32,
+    encode: impl FnOnce(&[u8], &mut Vec<u8>, i32) -> io::Result<()>,
+) -> Result<Vec<u8>, String> {
+    let mut compressed = Vec::with_capacity(payload.len() / 4);
+    encode(payload, &mut compressed, level)
+        .map_err(|error| format!("encode {label}: zstd: {error}"))?;
+    Ok(compressed)
+}
+
+fn collect_corpus_results<T>(
+    results: impl IntoIterator<Item = Result<T, aozora_corpus::CorpusError>>,
+    operation: &str,
+) -> Result<Vec<T>, String> {
+    results
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("{operation}: {error}"))
 }
 
 /// Stat an existing archive — print header summary, per-band
@@ -755,8 +781,15 @@ fn uncache(path: &Path) -> Result<(), String> {
     let (count, bytes) = if metadata.is_dir() {
         let mut count = 0usize;
         let mut bytes = 0u64;
+        let mut failures = Vec::new();
         for entry in walkdir::WalkDir::new(path) {
-            let entry = entry.map_err(|e| format!("walk: {e}"))?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    failures.push(format!("walk: {error}"));
+                    continue;
+                }
+            };
             let ft = entry.file_type();
             if ft.is_dir() || ft.is_symlink() {
                 continue;
@@ -766,13 +799,16 @@ fn uncache(path: &Path) -> Result<(), String> {
                     count += 1;
                     bytes += n;
                 }
-                Err(e) => {
-                    eprintln!(
-                        "  warning: {} could not be uncached: {e}",
-                        entry.path().display()
-                    );
-                }
+                Err(error) => failures.push(error),
             }
+        }
+        if !failures.is_empty() {
+            failures.sort();
+            return Err(format!(
+                "failed to uncache {} path(s):\n  {}",
+                failures.len(),
+                failures.join("\n  ")
+            ));
         }
         (count, bytes)
     } else {
@@ -802,7 +838,10 @@ fn uncache(_path: &Path) -> Result<(), String> {
 fn uncache_file(path: &Path) -> Result<u64, String> {
     use rustix::fs::{Advice, fadvise};
     let file = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-    let len = file.metadata().map_or(0, |m| m.len());
+    let len = file
+        .metadata()
+        .map_err(|e| format!("inspect {}: {e}", path.display()))?
+        .len();
     // `len = None` means "advise to end of file"; for our case (whole-
     // file eviction) that's exactly what we want, regardless of size.
     fadvise(&file, 0, None, Advice::DontNeed)
@@ -856,19 +895,34 @@ fn classify_entry(
     src_root: &Path,
     prev: Option<&PrevArchive>,
     utf8: bool,
-) -> Result<EntryDecision, std::io::Error> {
-    let label = path
+) -> Result<EntryDecision, io::Error> {
+    let relative = path
         .strip_prefix(src_root)
-        .map_err(|_| std::io::Error::other("path outside src root"))?
-        .display()
-        .to_string();
+        .map_err(|_| io::Error::other("path outside src root"))?;
+    let label = relative
+        .components()
+        .map(|component| {
+            component.as_os_str().to_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "corpus path is not valid UTF-8")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join("/");
 
-    let mtime_ns = fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map_or(0, archive::system_time_to_ns);
+    let mtime_ns = archive::system_time_to_ns(fs::metadata(path)?.modified()?);
 
     let bytes = fs::read(path)?;
     let source_blake3: [u8; 32] = blake3::hash(&bytes).into();
+    let payload_bytes = if utf8 {
+        Some(
+            decode_auto(&bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?
+                .into_owned()
+                .into_bytes(),
+        )
+    } else {
+        None
+    };
 
     if let Some(prev) = prev
         && let Some(prev_meta) = prev.lookup.get(&label)
@@ -888,13 +942,7 @@ fn classify_entry(
     // archives, auto-detecting Shift_JIS vs already-UTF-8 source) but
     // keep `source_blake3` pinned to the raw source bytes so the next
     // incremental pack can match identity.
-    let payload_bytes = if utf8 {
-        decode_auto(&bytes)
-            .map(|text| text.into_owned().into_bytes())
-            .unwrap_or(bytes)
-    } else {
-        bytes
-    };
+    let payload_bytes = payload_bytes.unwrap_or(bytes);
     Ok(EntryDecision {
         label,
         action: EntryAction::Encode {
@@ -903,6 +951,23 @@ fn classify_entry(
             source_blake3,
         },
     })
+}
+
+fn classify_entries(
+    paths: &[PathBuf],
+    src_root: &Path,
+    prev: Option<&PrevArchive>,
+    utf8: bool,
+) -> Result<Vec<EntryDecision>, String> {
+    paths
+        .par_iter()
+        .map(|path| {
+            classify_entry(path, src_root, prev, utf8)
+                .map_err(|error| format!("classify {}: {error}", path.display()))
+        })
+        .collect::<Vec<Result<EntryDecision, String>>>()
+        .into_iter()
+        .collect()
 }
 
 /// Wrapper around [`Archive`] that exposes `(meta, payload)` lookup by
@@ -936,11 +1001,11 @@ impl From<Archive> for PrevArchive {
 }
 
 impl PrevArchive {
-    fn entry_payload(&self, label: &str) -> (EntryMeta, &[u8]) {
-        let i = self.by_index[label];
-        let meta = self.arc.entries()[i].clone();
+    fn entry_payload(&self, label: &str) -> Option<(EntryMeta, &[u8])> {
+        let i = *self.by_index.get(label)?;
+        let meta = self.arc.entries().get(i)?.clone();
         let payload = self.arc.raw_payload(i);
-        (meta, payload)
+        Some((meta, payload))
     }
 }
 
@@ -984,6 +1049,7 @@ const GAIJI_FORM_LABELS: &[&str] = &[
 struct FileStat {
     label: String,
     decode_error: bool,
+    parse_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
     node_kinds: [u64; NodeKind::ALL.len()],
@@ -1036,6 +1102,7 @@ struct AuditReport {
     files_total: usize,
     files_analyzed: usize,
     decode_errors: usize,
+    parse_errors: usize,
     walk_errors: usize,
     panic_count: usize,
     panics: Vec<String>,
@@ -1050,6 +1117,17 @@ struct AuditReport {
     unknown_bodies: Vec<UnknownRow>,
 }
 
+fn with_suppressed_panic_hook<T>(f: impl FnOnce() -> T) -> T {
+    let previous = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let outcome = panic::catch_unwind(AssertUnwindSafe(f));
+    panic::set_hook(previous);
+    match outcome {
+        Ok(value) => value,
+        Err(payload) => panic::resume_unwind(payload),
+    }
+}
+
 /// Walk the corpus and build the [`AuditReport`] without emitting any
 /// human/JSON output — the shared core behind both `corpus audit` and the
 /// strict zero-residue `corpus audit-gate`.
@@ -1062,21 +1140,19 @@ fn run_audit(root: Option<&Path>, limit: Option<usize>) -> Result<AuditReport, S
     // Per-document parse panics are recorded as a datum (see
     // `audit_one`); suppress the default backtrace printer so a
     // pathological doc does not flood stderr. Restored after the run.
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-
-    let results: Vec<Result<FileStat, aozora_corpus::CorpusError>> = limit.map_or_else(
-        || par_load_decoded(&corpus, audit_one),
-        |n| {
-            corpus
-                .walk_paths()
-                .take(n)
-                .map(|pr| pr.and_then(|p| corpus.read_path(&p)).map(audit_one))
-                .collect()
-        },
-    );
-
-    panic::set_hook(prev_hook);
+    let results: Vec<Result<FileStat, aozora_corpus::CorpusError>> =
+        with_suppressed_panic_hook(|| {
+            limit.map_or_else(
+                || par_load_decoded(&corpus, audit_one),
+                |n| {
+                    corpus
+                        .walk_paths()
+                        .take(n)
+                        .map(|pr| pr.and_then(|p| corpus.read_path(&p)).map(audit_one))
+                        .collect()
+                },
+            )
+        });
 
     Ok(merge(results, root_display, start.elapsed().as_secs_f64()))
 }
@@ -1113,6 +1189,12 @@ fn audit_gate(root: Option<&Path>) -> Result<(), String> {
             report.decode_errors
         ));
     }
+    if report.parse_errors != 0 {
+        problems.push(format!(
+            "{} document(s) exceeded parser input limits",
+            report.parse_errors
+        ));
+    }
     if report.walk_errors != 0 {
         problems.push(format!(
             "{} corpus path(s) failed to read",
@@ -1143,7 +1225,7 @@ fn audit_gate(root: Option<&Path>) -> Result<(), String> {
     }
     if problems.is_empty() {
         eprintln!(
-            "audit-gate: PASS — {} documents, zero decode/read/panic/internal/unknown failures",
+            "audit-gate: PASS — {} documents, zero decode/parse/read/panic/internal/unknown failures",
             report.files_analyzed
         );
         Ok(())
@@ -1161,6 +1243,8 @@ enum VerbatimOutcome {
     Match,
     /// Source decoded as neither UTF-8 nor Shift_JIS.
     DecodeSkipped,
+    /// The decoded source exceeded the parser's accepted input range.
+    ParseRejected(String),
     /// The invariant broke (or the parse panicked); carries the label.
     Mismatch(String),
 }
@@ -1175,13 +1259,8 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
     // Per-document parse panics are folded into `Mismatch` (see
     // `verbatim_one`); silence the default backtrace printer so a
     // pathological doc does not flood stderr. Restored after the run.
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-
     let results: Vec<Result<VerbatimOutcome, aozora_corpus::CorpusError>> =
-        par_load_decoded(&corpus, verbatim_one);
-
-    panic::set_hook(prev_hook);
+        with_suppressed_panic_hook(|| par_load_decoded(&corpus, verbatim_one));
 
     let mut checked = 0usize;
     let mut decode_skipped = 0usize;
@@ -1191,6 +1270,10 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
         match r {
             Ok(VerbatimOutcome::Match) => checked += 1,
             Ok(VerbatimOutcome::DecodeSkipped) => decode_skipped += 1,
+            Ok(VerbatimOutcome::ParseRejected(label)) => {
+                checked += 1;
+                failures.push(format!("{label} (parse rejected)"));
+            }
             Ok(VerbatimOutcome::Mismatch(label)) => {
                 checked += 1;
                 failures.push(label);
@@ -1244,11 +1327,14 @@ fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
         Ok(text) => Arc::from(text.into_owned()),
         Err(_) => return VerbatimOutcome::DecodeSkipped,
     };
+    let document =
+        match panic::catch_unwind(AssertUnwindSafe(|| aozora::parse(Arc::clone(&source)))) {
+            Ok(Ok(document)) => document,
+            Ok(Err(_)) => return VerbatimOutcome::ParseRejected(label),
+            Err(_) => return VerbatimOutcome::Mismatch(label),
+        };
     let Ok(got) = panic::catch_unwind(AssertUnwindSafe(|| {
-        aozora::parse(Arc::clone(&source))
-            .expect("source fits parser span limit")
-            .snapshot()
-            .to_source_verbatim()
+        document.snapshot().to_source_verbatim()
     })) else {
         return VerbatimOutcome::Mismatch(label);
     };
@@ -1285,6 +1371,8 @@ enum DocRenderOutcome {
     Clean,
     /// Neither UTF-8 nor Shift_JIS — skipped (mirrors `corpus_sweep`).
     DecodeSkipped,
+    /// Decoded input exceeded the parser's accepted span range.
+    ParseRejected(String),
     /// `to_html()` panicked; carries the label.
     Panicked(String),
     /// Rendered and leaked ≥1 marker.
@@ -1326,8 +1414,12 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     // Render only the literary body — the standard header legend
     // documents the notation glyphs verbatim and would swamp the signal.
     let text = aozora_body(&decoded);
+    let document = match panic::catch_unwind(AssertUnwindSafe(|| aozora::parse(text))) {
+        Ok(Ok(document)) => document,
+        Ok(Err(_)) => return DocRenderOutcome::ParseRejected(label),
+        Err(_) => return DocRenderOutcome::Panicked(label),
+    };
     let Ok((html, literal_markup)) = panic::catch_unwind(AssertUnwindSafe(|| {
-        let document = aozora::parse(text).expect("source fits parser span limit");
         let snapshot = document.snapshot();
         let literal_markup = snapshot
             .literal_markup()
@@ -1369,6 +1461,7 @@ enum CorrCat {
 enum DocCorrOutcome {
     Clean,
     DecodeSkipped,
+    ParseRejected,
     Panicked,
     Defective { label: String, hits: Vec<CorrHit> },
 }
@@ -1431,10 +1524,15 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
         i = end + 1;
         if tag.starts_with("</") {
             let name = tag_name(tag);
-            if !broken && stack.pop() != Some(name) {
+            let open = stack.pop();
+            if !broken && open != Some(name) {
+                let snippet = open.map_or_else(
+                    || format!("stray </{name}>"),
+                    |open| format!("mismatched </{name}> while <{open}> was open"),
+                );
                 hits.push(CorrHit {
                     cat: CorrCat::Unbalanced,
-                    snippet: format!("stray/mismatched </{name}>"),
+                    snippet,
                 });
                 broken = true;
             }
@@ -1488,12 +1586,12 @@ fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
         Err(_) => return DocCorrOutcome::DecodeSkipped,
     };
     let text = aozora_body(&decoded);
-    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| {
-        aozora::parse(text)
-            .expect("source fits parser span limit")
-            .snapshot()
-            .to_html()
-    })) else {
+    let document = match panic::catch_unwind(AssertUnwindSafe(|| aozora::parse(text))) {
+        Ok(Ok(document)) => document,
+        Ok(Err(_)) => return DocCorrOutcome::ParseRejected,
+        Err(_) => return DocCorrOutcome::Panicked,
+    };
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| document.snapshot().to_html())) else {
         return DocCorrOutcome::Panicked;
     };
     let hits = scan_correctness(&html);
@@ -1521,45 +1619,50 @@ fn record_corr(agg: &mut CatAgg, cat: CorrCat, label: &str, hits: &[CorrHit], to
 
 #[derive(Default)]
 struct RenderCorrectnessCounts {
-    unbalanced: MarkerStat,
-    bad_ruby: MarkerStat,
-    undeclared: MarkerStat,
+    unbalanced: CatAgg,
+    bad_ruby: CatAgg,
+    undeclared: CatAgg,
 }
 
 fn tally_render_correctness(
     results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>>,
-) -> (RenderCorrectnessCounts, usize, usize, usize, usize) {
+) -> (RenderCorrectnessCounts, usize, usize, usize, usize, usize) {
     let mut unbalanced = CatAgg::default();
     let mut bad_ruby = CatAgg::default();
     let mut undeclared = CatAgg::default();
-    let (mut scanned, mut decode_errors, mut panicked, mut walk_errors) = (0, 0, 0, 0);
+    let (mut scanned, mut decode_errors, mut parse_rejected, mut panicked, mut walk_errors) =
+        (0, 0, 0, 0, 0);
     for r in results {
         match r {
             Ok(DocCorrOutcome::Clean) => scanned += 1,
             Ok(DocCorrOutcome::DecodeSkipped) => decode_errors += 1,
+            Ok(DocCorrOutcome::ParseRejected) => parse_rejected += 1,
             Ok(DocCorrOutcome::Panicked) => {
                 scanned += 1;
                 panicked += 1;
             }
             Ok(DocCorrOutcome::Defective { label, hits }) => {
                 scanned += 1;
-                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, 0);
-                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, 0);
-                record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 0);
+                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, 5);
+                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, 5);
+                record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 5);
             }
             Err(_) => walk_errors += 1,
         }
     }
-    let stat = |a: &CatAgg| MarkerStat {
-        files: a.files,
-        occurrences: a.occurrences,
-    };
     let current = RenderCorrectnessCounts {
-        unbalanced: stat(&unbalanced),
-        bad_ruby: stat(&bad_ruby),
-        undeclared: stat(&undeclared),
+        unbalanced,
+        bad_ruby,
+        undeclared,
     };
-    (current, scanned, decode_errors, panicked, walk_errors)
+    (
+        current,
+        scanned,
+        decode_errors,
+        parse_rejected,
+        panicked,
+        walk_errors,
+    )
 }
 
 fn render_correctness_gate(root: Option<&Path>) -> Result<(), String> {
@@ -1569,11 +1672,8 @@ fn render_correctness_gate(root: Option<&Path>) -> Result<(), String> {
         corpus.root().display()
     );
     let start = Instant::now();
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let results = par_load_decoded(&corpus, render_correctness_one);
-    panic::set_hook(prev_hook);
-    let (current, scanned, decode_errors, panicked, walk_errors) =
+    let results = with_suppressed_panic_hook(|| par_load_decoded(&corpus, render_correctness_one));
+    let (current, scanned, decode_errors, parse_rejected, panicked, walk_errors) =
         tally_render_correctness(results);
     let elapsed = start.elapsed().as_secs_f64();
     eprintln!(
@@ -1591,16 +1691,26 @@ fn render_correctness_gate(root: Option<&Path>) -> Result<(), String> {
     if walk_errors != 0 {
         problems.push(format!("{walk_errors} corpus path(s) failed to read"));
     }
+    if parse_rejected != 0 {
+        problems.push(format!(
+            "{parse_rejected} document(s) exceeded parser input limits"
+        ));
+    }
     if panicked != 0 {
         problems.push(format!("{panicked} document(s) panicked while rendering"));
     }
     for (name, stat) in [
-        ("unbalanced tags", current.unbalanced),
-        ("empty ruby bases", current.bad_ruby),
-        ("undeclared classes", current.undeclared),
+        ("unbalanced tags", &current.unbalanced),
+        ("empty ruby bases", &current.bad_ruby),
+        ("undeclared classes", &current.undeclared),
     ] {
         if stat.occurrences != 0 {
             problems.push(format!("{} {name}", stat.occurrences));
+            problems.extend(
+                stat.samples
+                    .iter()
+                    .map(|(label, snippet)| format!("{name}: {label}: {snippet}")),
+            );
         }
     }
     if !problems.is_empty() {
@@ -1628,18 +1738,27 @@ struct RenderLeakCounts {
 
 fn tally_render_leaks(
     results: Vec<Result<DocRenderOutcome, aozora_corpus::CorpusError>>,
-) -> (RenderLeakCounts, usize, usize, Vec<String>, usize) {
+) -> (
+    RenderLeakCounts,
+    usize,
+    usize,
+    Vec<String>,
+    Vec<String>,
+    usize,
+) {
     let mut ruby = CatAgg::default();
     let mut bar = CatAgg::default();
     let mut directive = CatAgg::default();
     let mut scanned = 0usize;
     let mut decode_errors = 0usize;
+    let mut parse_rejected: Vec<String> = Vec::new();
     let mut panicked: Vec<String> = Vec::new();
     let mut walk_errors = 0usize;
     for r in results {
         match r {
             Err(_) => walk_errors += 1,
             Ok(DocRenderOutcome::DecodeSkipped) => decode_errors += 1,
+            Ok(DocRenderOutcome::ParseRejected(label)) => parse_rejected.push(label),
             Ok(DocRenderOutcome::Clean) => scanned += 1,
             Ok(DocRenderOutcome::Panicked(label)) => {
                 scanned += 1;
@@ -1667,7 +1786,14 @@ fn tally_render_leaks(
             occurrences: directive.occurrences,
         },
     };
-    (current, scanned, decode_errors, panicked, walk_errors)
+    (
+        current,
+        scanned,
+        decode_errors,
+        parse_rejected,
+        panicked,
+        walk_errors,
+    )
 }
 
 fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
@@ -1678,12 +1804,10 @@ fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
     );
     let start = Instant::now();
 
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let results = par_load_decoded(&corpus, render_audit_one);
-    panic::set_hook(prev_hook);
+    let results = with_suppressed_panic_hook(|| par_load_decoded(&corpus, render_audit_one));
 
-    let (current, scanned, decode_errors, mut panicked, walk_errors) = tally_render_leaks(results);
+    let (current, scanned, decode_errors, mut parse_rejected, mut panicked, walk_errors) =
+        tally_render_leaks(results);
     let elapsed = start.elapsed().as_secs_f64();
 
     let mut problems = Vec::new();
@@ -1695,6 +1819,19 @@ fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
     }
     if walk_errors != 0 {
         problems.push(format!("{walk_errors} corpus path(s) failed to read"));
+    }
+    if !parse_rejected.is_empty() {
+        parse_rejected.sort();
+        problems.push(format!(
+            "{} document(s) exceeded parser input limits: {}",
+            parse_rejected.len(),
+            parse_rejected
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     if !panicked.is_empty() {
         panicked.sort();
@@ -1926,10 +2063,15 @@ fn audit_one(item: CorpusItem) -> FileStat {
         }
     };
     match panic::catch_unwind(AssertUnwindSafe(|| analyze(&text))) {
-        Ok(mut stat) => {
+        Ok(Ok(mut stat)) => {
             stat.label = label;
             stat
         }
+        Ok(Err(_)) => FileStat {
+            label,
+            parse_error: true,
+            ..Default::default()
+        },
         Err(_) => FileStat {
             label,
             panicked: true,
@@ -1941,8 +2083,8 @@ fn audit_one(item: CorpusItem) -> FileStat {
 /// Walk the owned AST and tally everything we report. Payload text is
 /// resolved through the output's store; the returned `FileStat` owns its
 /// strings.
-fn analyze(text: &str) -> FileStat {
-    let doc = aozora::parse(text).expect("source fits parser span limit");
+fn analyze(text: &str) -> Result<FileStat, aozora::ParseError> {
+    let doc = aozora::parse(text)?;
     let snapshot = doc.snapshot();
     let mut s = FileStat::default();
 
@@ -1984,7 +2126,7 @@ fn analyze(text: &str) -> FileStat {
     for d in snapshot.diagnostics() {
         s.diags.push(d.code());
     }
-    s
+    Ok(s)
 }
 
 /// 1-based source line of a sanitized-source byte offset. Offsets are in
@@ -2091,6 +2233,7 @@ fn merge(
     let mut files_total = 0usize;
     let mut files_analyzed = 0usize;
     let mut decode_errors = 0usize;
+    let mut parse_errors = 0usize;
     let mut walk_errors = 0usize;
     let mut panics: Vec<String> = Vec::new();
 
@@ -2102,6 +2245,10 @@ fn merge(
         files_total += 1;
         if s.decode_error {
             decode_errors += 1;
+            continue;
+        }
+        if s.parse_error {
+            parse_errors += 1;
             continue;
         }
         if s.panicked {
@@ -2189,6 +2336,7 @@ fn merge(
         files_total,
         files_analyzed,
         decode_errors,
+        parse_errors,
         walk_errors,
         panic_count: panics.len(),
         panics,
@@ -2228,8 +2376,8 @@ fn print_human_summary(r: &AuditReport, top: usize) {
     eprintln!("=== corpus audit ===");
     eprintln!("corpus root      : {}", r.corpus_root);
     eprintln!(
-        "files            : {} analyzed / {} read ({} decode-errors, {} walk-errors)",
-        r.files_analyzed, r.files_total, r.decode_errors, r.walk_errors
+        "files            : {} analyzed / {} read ({} decode-errors, {} parse-errors, {} walk-errors)",
+        r.files_analyzed, r.files_total, r.decode_errors, r.parse_errors, r.walk_errors
     );
     eprintln!("parse panics     : {}", r.panic_count);
     eprintln!("elapsed          : {:.2}s", r.elapsed_secs);
@@ -2502,7 +2650,7 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
 
 /// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
 /// pure set-difference behind `family-coverage`.
-fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static str> {
+fn missing_families(covered: &HashSet<usize>) -> Vec<&'static str> {
     (0..FAM_TOTAL)
         .filter(|id| !covered.contains(id))
         .map(family_name)
@@ -2515,8 +2663,8 @@ fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
         return Err(format!("not a directory: {}", vendored.display()));
     }
     // Union coverage from the real golden works AND the crafted render fixtures.
-    let (mut covered, _hw) = load_vendored(vendored);
-    let (render_covered, _hr) = load_vendored(render);
+    let (mut covered, _hw) = load_vendored(vendored)?;
+    let (render_covered, _hr) = load_vendored(render)?;
     covered.extend(render_covered);
     let missing = missing_families(&covered);
 
@@ -2552,7 +2700,8 @@ fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
         (None, None) => return Err("pass --text <SOURCE> or --file <PATH>".to_owned()),
     };
     let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&src)))
-        .map_err(|_| "parse panicked".to_owned())?;
+        .map_err(|_| "parse panicked".to_owned())?
+        .map_err(|error| format!("parse input: {error}"))?;
     let names: Vec<&'static str> = family_ids(&stat)
         .iter()
         .map(|&id| family_name(id))
@@ -2574,23 +2723,29 @@ fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-/// A deterministic ASCII slug from the aozora card id (the first digit run in
-/// the filename), e.g. `作品/種田山頭火/其中日記（49258…）.txt` → `w49258`. Card
-/// ids are unique per work, so slugs do not collide; a human may rename to a
-/// mnemonic before vendoring, but this keeps the bulk selection reproducible
-/// without romanising 80 kanji titles by hand.
+/// A deterministic ASCII slug from the trailing Aozora card-id field.
 fn slug_from_label(label: &str) -> String {
     let stem = label.rsplit('/').next().unwrap_or(label);
-    let digits: String = stem
-        .chars()
-        .skip_while(|c| !c.is_ascii_digit())
-        .take_while(char::is_ascii_digit)
-        .collect();
-    if digits.is_empty() {
-        format!("w{}", &blake3::hash(label.as_bytes()).to_hex()[..10])
-    } else {
-        format!("w{digits}")
-    }
+    card_id_from_stem(stem).map_or_else(
+        || format!("w{}", &blake3::hash(label.as_bytes()).to_hex()[..10]),
+        |digits| format!("w{digits}"),
+    )
+}
+
+fn card_id_from_stem(stem: &str) -> Option<&str> {
+    stem.char_indices()
+        .rev()
+        .filter(|(_, ch)| matches!(ch, '（' | '('))
+        .find_map(|(offset, opener)| {
+            let tail = &stem[offset + opener.len_utf8()..];
+            let digits_end = tail
+                .char_indices()
+                .take_while(|(_, ch)| ch.is_ascii_digit())
+                .map(|(offset, ch)| offset + ch.len_utf8())
+                .last()?;
+            matches!(tail[digits_end..].chars().next(), Some('_' | '）' | ')'))
+                .then_some(&tail[..digits_end])
+        })
 }
 
 /// The corpus filename's orthography tag, informational. (`mtime` is a vacuous
@@ -2644,7 +2799,10 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
     let len = normalized.len();
     let band = band_slot(u32::try_from(len).unwrap_or(u32::MAX));
 
-    let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&text))).ok();
+    let body = aozora_body(&text);
+    let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&body)))
+        .ok()
+        .and_then(Result::ok);
     let (families, unknown_ratio) = stat.as_ref().map_or_else(
         || (Vec::new(), 1.0),
         |s| {
@@ -2659,11 +2817,17 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
     );
     let clean = stat.is_some()
         && panic::catch_unwind(AssertUnwindSafe(|| {
-            let html = aozora::parse(text.clone())
-                .expect("source fits parser span limit")
-                .snapshot()
-                .to_html();
-            scan_correctness(&html).is_empty() && visible_leak_markers(&html).is_empty()
+            aozora::parse(body).is_ok_and(|document| {
+                let snapshot = document.snapshot();
+                let literal_markup = snapshot
+                    .literal_markup()
+                    .iter()
+                    .map(|view| view.kind())
+                    .collect::<Vec<_>>();
+                let html = snapshot.to_html();
+                scan_correctness(&html).is_empty()
+                    && unaccounted_leak_markers(&html, &literal_markup).is_empty()
+            })
         }))
         .unwrap_or(false);
 
@@ -2681,31 +2845,34 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
 }
 
 /// Seed family coverage and the dedup hash-set from the already-vendored works.
-fn load_vendored(
-    dir: &Path,
-) -> (
-    std::collections::HashSet<usize>,
-    std::collections::HashSet<[u8; 32]>,
-) {
-    let mut covered = std::collections::HashSet::new();
-    let mut hashes = std::collections::HashSet::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return (covered, hashes);
-    };
-    for entry in entries.flatten() {
-        let src = entry.path().join("source.txt");
-        let Ok(text) = fs::read_to_string(&src) else {
+fn load_vendored(dir: &Path) -> Result<(HashSet<usize>, HashSet<[u8; 32]>), String> {
+    let mut covered = HashSet::new();
+    let mut hashes = HashSet::new();
+    let entries = fs::read_dir(dir)
+        .map_err(|error| format!("read fixture directory {}: {error}", dir.display()))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("read fixture entry in {}: {error}", dir.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("inspect fixture {}: {error}", entry.path().display()))?;
+        if !file_type.is_dir() {
             continue;
-        };
+        }
+        let src = entry.path().join("source.txt");
+        let text = fs::read_to_string(&src)
+            .map_err(|error| format!("read fixture {}: {error}", src.display()))?;
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         hashes.insert(*blake3::hash(normalized.as_bytes()).as_bytes());
-        if let Ok(stat) = panic::catch_unwind(AssertUnwindSafe(|| analyze(&text))) {
-            for f in family_ids(&stat) {
-                covered.insert(f);
-            }
+        let body = aozora_body(&text);
+        let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&body)))
+            .map_err(|_| format!("analyze fixture {}: parser panicked", src.display()))?
+            .map_err(|error| format!("analyze fixture {}: {error}", src.display()))?;
+        for f in family_ids(&stat) {
+            covered.insert(f);
         }
     }
-    (covered, hashes)
+    Ok((covered, hashes))
 }
 
 #[derive(Serialize)]
@@ -2738,6 +2905,7 @@ fn select_works(
     max_total_source_bytes: usize,
     require_family: &[String],
 ) -> Result<(), String> {
+    validate_unknown_ratio(max_unknown_ratio)?;
     // Resolve --require-family names up front — a typo fails before the walk.
     let required: Vec<(String, usize)> = require_family
         .iter()
@@ -2757,18 +2925,13 @@ fn select_works(
     );
     let start = Instant::now();
 
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let mut profiles: Vec<WorkProfile> = par_load_decoded(&corpus, profile_one)
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect();
-    panic::set_hook(prev_hook);
+    let profile_results = with_suppressed_panic_hook(|| par_load_decoded(&corpus, profile_one));
+    let mut profiles = collect_corpus_results(profile_results, "profile corpus")?;
 
     // Determinism: `par_load_decoded` is unordered — sort by label first.
     profiles.sort_by(|a, b| a.label.cmp(&b.label));
 
-    let (seed_covered, vendored_hashes) = load_vendored(vendored);
+    let (seed_covered, vendored_hashes) = load_vendored(vendored)?;
 
     // Rarity weights from global family frequency over decodable works.
     let mut global = [0u64; FAM_TOTAL];
@@ -2824,8 +2987,12 @@ fn select_works(
         match pick {
             Some(i) => {
                 let c = candidates[i];
+                spent = add_within_budget(spent, c.len, max_total_source_bytes).map_err(|()| {
+                    format!(
+                        "required family {name} cannot fit the {max_total_source_bytes}-byte source budget"
+                    )
+                })?;
                 used[i] = true;
-                spent += c.len;
                 let new_families: Vec<usize> = c
                     .families
                     .iter()
@@ -2857,7 +3024,7 @@ fn select_works(
         let mut best: Option<usize> = None;
         let mut best_key = (i64::MIN, i64::MIN, i64::MIN);
         for (i, c) in candidates.iter().enumerate() {
-            if used[i] || spent + c.len > max_total_source_bytes {
+            if used[i] || add_within_budget(spent, c.len, max_total_source_bytes).is_err() {
                 continue;
             }
             let gain: f64 = c
@@ -2895,7 +3062,8 @@ fn select_works(
         }
         let Some(i) = best else { break };
         used[i] = true;
-        spent += candidates[i].len;
+        spent = add_within_budget(spent, candidates[i].len, max_total_source_bytes)
+            .map_err(|()| "selected source byte total exceeded its hard budget".to_owned())?;
         let new_families: Vec<usize> = candidates[i]
             .families
             .iter()
@@ -2954,6 +3122,21 @@ fn select_works(
     Ok(())
 }
 
+fn validate_unknown_ratio(value: f64) -> Result<(), String> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err("--max-unknown-ratio must be a finite number from 0 through 1".to_owned())
+    }
+}
+
+fn add_within_budget(spent: usize, additional: usize, budget: usize) -> Result<usize, ()> {
+    spent
+        .checked_add(additional)
+        .filter(|total| *total <= budget)
+        .ok_or(())
+}
+
 #[derive(Deserialize)]
 struct WorksManifestIn {
     #[serde(default)]
@@ -2976,31 +3159,49 @@ fn vendor_works(root: Option<&Path>, manifest: &Path, dest: &Path) -> Result<(),
     let parsed: WorksManifestIn =
         toml::from_str(&raw).map_err(|e| format!("parse manifest: {e}"))?;
 
+    fs::create_dir_all(dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
+    let canonical_dest = fs::canonicalize(dest)
+        .map_err(|e| format!("resolve destination {}: {e}", dest.display()))?;
+    let mut slugs = HashSet::new();
     let (mut added, mut updated, mut unchanged, mut skipped) = (0u32, 0u32, 0u32, 0u32);
     for row in &parsed.work {
         if row.slug.trim().is_empty() {
             skipped += 1;
             continue;
         }
-        let path = corpus.root().join(&row.path);
-        let bytes = fs::read(&path).map_err(|e| format!("read corpus {}: {e}", path.display()))?;
-        let text = decode_auto(&bytes).map_err(|e| format!("decode {}: {e:?}", row.path))?;
+        validate_slug(&row.slug)?;
+        if !slugs.insert(row.slug.to_ascii_lowercase()) {
+            return Err(format!("duplicate work slug {:?}", row.slug));
+        }
+        let relative = validate_relative_corpus_path(&row.path)?;
+        let path = corpus.root().join(relative);
+        let item = corpus
+            .read_path(&path)
+            .map_err(|e| format!("read corpus {}: {e}", path.display()))?;
+        let text = decode_auto(&item.bytes).map_err(|e| format!("decode {}: {e:?}", row.path))?;
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let dir = dest.join(&row.slug);
-        fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        create_vendor_dir(&dir, &canonical_dest)?;
         let src = dir.join("source.txt");
+        if fs::symlink_metadata(&src).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(format!(
+                "refusing symbolic-link vendor target {}",
+                src.display()
+            ));
+        }
         match fs::read_to_string(&src) {
             Ok(old) if old == normalized => unchanged += 1,
             Ok(_) => {
-                fs::write(&src, &normalized)
+                replace_file(&src, normalized.as_bytes())
                     .map_err(|e| format!("write {}: {e}", src.display()))?;
                 updated += 1;
             }
-            Err(_) => {
-                fs::write(&src, &normalized)
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                replace_file(&src, normalized.as_bytes())
                     .map_err(|e| format!("write {}: {e}", src.display()))?;
                 added += 1;
             }
+            Err(error) => return Err(format!("read existing {}: {error}", src.display())),
         }
     }
     eprintln!(
@@ -3010,9 +3211,239 @@ fn vendor_works(root: Option<&Path>, manifest: &Path, dest: &Path) -> Result<(),
     Ok(())
 }
 
+fn validate_relative_corpus_path(path: &str) -> Result<&Path, String> {
+    let path = Path::new(path);
+    let mut components = path.components();
+    if path.as_os_str().is_empty()
+        || components.any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "corpus path must be normalized and relative: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+fn validate_slug(slug: &str) -> Result<(), String> {
+    let portable = !slug.is_empty()
+        && slug
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    let reserved = matches!(
+        slug.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    if portable && !reserved {
+        Ok(())
+    } else {
+        Err(format!(
+            "work slug must be one portable ASCII path component: {slug:?}"
+        ))
+    }
+}
+
+fn create_vendor_dir(dir: &Path, canonical_dest: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(format!(
+                "vendor destination is not a real directory: {}",
+                dir.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+        }
+        Err(error) => return Err(format!("inspect {}: {error}", dir.display())),
+    }
+    let canonical =
+        fs::canonicalize(dir).map_err(|error| format!("resolve {}: {error}", dir.display()))?;
+    if canonical.parent() == Some(canonical_dest) {
+        Ok(())
+    } else {
+        Err(format!(
+            "vendor destination escapes {}: {}",
+            canonical_dest.display(),
+            dir.display()
+        ))
+    }
+}
+
+fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "refusing to replace a symbolic link",
+        ));
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let permissions = match fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(fs::Permissions::from_mode(0o666))
+    };
+    let mut temporary = builder.tempfile_in(parent)?;
+    if let Some(permissions) = permissions {
+        temporary.as_file().set_permissions(permissions)?;
+    }
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    sync_directory(parent)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_selection_ratio_is_bounded() {
+        for value in [0.0, 0.25, 1.0] {
+            assert!(validate_unknown_ratio(value).is_ok(), "{value}");
+        }
+        for value in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            assert!(validate_unknown_ratio(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn collect_corpus_results_preserves_item_errors() {
+        let results = vec![
+            Ok(1_u8),
+            Err(aozora_corpus::CorpusError::Io {
+                path: PathBuf::from("missing.txt"),
+                source: io::Error::from(io::ErrorKind::NotFound),
+            }),
+        ];
+        let error = collect_corpus_results(results, "profile corpus")
+            .expect_err("corpus item error must fail the operation");
+        assert!(error.contains("profile corpus"), "{error}");
+        assert!(error.contains("missing.txt"), "{error}");
+    }
+
+    #[test]
+    fn classify_entries_preserves_per_file_errors() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing = root.path().join("missing.txt");
+        let Err(error) = classify_entries(&[missing], root.path(), None, false) else {
+            panic!("missing source must fail classification");
+        };
+        assert!(error.contains("missing.txt"), "{error}");
+    }
+
+    #[test]
+    fn pack_utf8_rejects_undecodable_source_without_replacing_output() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = root.path().join("source");
+        fs::create_dir(&source).expect("source dir");
+        fs::write(source.join("bad.txt"), [0xff, 0xff]).expect("source file");
+        let output = root.path().join("corpus.aozc");
+        let mut previous = ArchiveBuilder::new(0);
+        previous
+            .push_entry("old.txt", b"previous archive bytes", 0)
+            .expect("previous entry");
+        previous.finish(&output).expect("previous archive");
+        let previous_bytes = fs::read(&output).expect("read previous archive");
+
+        let error = pack(&source, &output, true, false, 1)
+            .expect_err("undecodable source must fail UTF-8 packing");
+
+        assert!(error.contains("bad.txt"), "{error}");
+        assert_eq!(fs::read(&output).expect("preserved output"), previous_bytes);
+    }
+
+    #[test]
+    fn pack_rejects_a_malformed_existing_archive() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = root.path().join("source");
+        fs::create_dir(&source).expect("source dir");
+        fs::write(source.join("work.txt"), b"body").expect("source file");
+        let output = root.path().join("corpus.aozc");
+        fs::write(&output, b"malformed archive").expect("malformed output");
+
+        let error = pack(&source, &output, false, false, 1)
+            .expect_err("malformed previous archive must not be replaced");
+
+        assert!(error.contains("previous archive"), "{error}");
+        assert_eq!(
+            fs::read(output).expect("preserved malformed archive"),
+            b"malformed archive"
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn decoded_len_rejects_entries_beyond_the_archive_limit() {
+        let error = decoded_len("oversized.txt", u32::MAX as usize + 1)
+            .expect_err("oversized entry must be rejected");
+        assert!(error.contains("oversized.txt"), "{error}");
+        assert!(error.contains("u32"), "{error}");
+    }
+
+    #[test]
+    fn zstd_encode_errors_include_the_entry_label() {
+        let error = encode_zstd_with("work.txt", b"plain text", 9, |_, _, _| {
+            Err(io::Error::other("injected writer failure"))
+        })
+        .expect_err("codec failure must be propagated");
+        assert!(error.contains("work.txt"), "{error}");
+        assert!(error.contains("zstd"), "{error}");
+        assert!(error.contains("injected writer failure"), "{error}");
+    }
+
+    #[test]
+    fn load_vendored_propagates_directory_and_source_read_errors() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing_root = root.path().join("missing");
+        let error = load_vendored(&missing_root).expect_err("missing directory must fail");
+        assert!(
+            error.contains(&missing_root.display().to_string()),
+            "{error}"
+        );
+
+        let fixture = root.path().join("fixture-without-source");
+        fs::create_dir(&fixture).expect("fixture dir");
+        let error = load_vendored(root.path()).expect_err("missing source.txt must fail");
+        assert!(error.contains("source.txt"), "{error}");
+    }
 
     // ---- scan_correctness (I-A / I-B / I-C) ---------------------------
 
@@ -3429,7 +3860,7 @@ mod tests {
     #[test]
     fn analyze_counts_ruby_node_kind() {
         // `｜青空《あおぞら》` is a base-ruby span → one Ruby node.
-        let stat = analyze("｜青空《あおぞら》文庫");
+        let stat = analyze("｜青空《あおぞら》文庫").expect("parse");
         let ruby_idx = NodeKind::ALL
             .iter()
             .position(|k| *k == NodeKind::Ruby)
@@ -3439,7 +3870,7 @@ mod tests {
 
     #[test]
     fn analyze_plain_text_has_no_annotations_or_gaiji() {
-        let stat = analyze("ただのテキストです");
+        let stat = analyze("ただのテキストです").expect("parse");
         assert_eq!(stat.gaiji_total, 0, "no gaiji in plain text");
         assert_eq!(
             stat.annotation_kinds.iter().sum::<u64>(),
@@ -3450,7 +3881,7 @@ mod tests {
 
     #[test]
     fn analyze_editorial_annotation_has_an_explicit_bucket() {
-        let stat = analyze("前置き\n［＃まったく未知の指示］");
+        let stat = analyze("前置き\n［＃まったく未知の指示］").expect("parse");
         assert_eq!(stat.annotation_kinds[1], 1);
         assert!(stat.unknown.is_empty());
     }
@@ -3518,7 +3949,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_separates_decode_errors_panics_and_walk_errors() {
+    fn merge_separates_decode_parse_panic_and_walk_errors() {
         let decode = FileStat {
             label: "decode".to_owned(),
             decode_error: true,
@@ -3529,23 +3960,33 @@ mod tests {
             panicked: true,
             ..Default::default()
         };
+        let parse = FileStat {
+            label: "huge".to_owned(),
+            parse_error: true,
+            ..Default::default()
+        };
         let walk_err = Err(aozora_corpus::CorpusError::RootNotDirectory {
             path: PathBuf::from("/nope"),
         });
-        let results = vec![Ok(decode), Ok(panicked), walk_err, Ok(stat_labeled("good"))];
+        let results = vec![
+            Ok(decode),
+            Ok(parse),
+            Ok(panicked),
+            walk_err,
+            Ok(stat_labeled("good")),
+        ];
         let report = merge(results, "r".to_owned(), 0.0);
 
         assert_eq!(report.walk_errors, 1, "one walk error");
         assert_eq!(report.decode_errors, 1, "one decode error");
+        assert_eq!(report.parse_errors, 1, "one parse rejection");
         assert_eq!(report.panic_count, 1, "one panic");
         assert_eq!(
             report.panics,
             vec!["boom".to_owned()],
             "panic label captured"
         );
-        // files_total counts everything that read OK (decode + panic + good),
-        // not the walk error; files_analyzed only the clean one.
-        assert_eq!(report.files_total, 3, "three files read OK");
+        assert_eq!(report.files_total, 4, "four files read OK");
         assert_eq!(report.files_analyzed, 1, "only one fully analyzed");
     }
 
@@ -3647,12 +4088,14 @@ mod tests {
             Ok(DocRenderOutcome::Clean),
             Ok(DocRenderOutcome::DecodeSkipped),
         ];
-        let (cur, scanned, decode_errors, panicked, walk_errors) = tally_render_leaks(results);
+        let (cur, scanned, decode_errors, parse_rejected, panicked, walk_errors) =
+            tally_render_leaks(results);
         assert_eq!(cur.ruby, stat(2, 3));
         assert_eq!(cur.bar, stat(1, 1));
         assert_eq!(cur.directive, stat(0, 0));
         assert_eq!(scanned, 3, "2 leaked + 1 clean; decode-skip not scanned");
         assert_eq!(decode_errors, 1);
+        assert!(parse_rejected.is_empty());
         assert!(panicked.is_empty());
         assert_eq!(walk_errors, 0);
     }
@@ -3667,6 +4110,11 @@ mod tests {
             slug_from_label("作品/岩野泡鳴/神秘的半獣主義（733_txt）.txt"),
             "w733"
         );
+        assert_eq!(
+            slug_from_label("作品/著者/1984年の話（733_txt）.txt"),
+            "w733",
+            "digits in the title are not the card id"
+        );
         // No digits in the filename → deterministic content-hash fallback.
         let a = slug_from_label("作品/中原中也/コキューの憶ひ出.txt");
         assert!(a.starts_with('w') && a.len() == 11, "hash slug: {a}");
@@ -3675,6 +4123,109 @@ mod tests {
             slug_from_label("作品/中原中也/コキューの憶ひ出.txt"),
             "slug is deterministic"
         );
+    }
+
+    #[test]
+    fn profile_ignores_the_standard_header_legend() {
+        let source = "表題\n著者\n\n\
+                      -------------------------------------------------------\n\
+                      【テキスト中に現れる記号について】\n\
+                      《》：ルビ\n\
+                      ｜：ルビの付く文字列の始まりを特定する記号\n\
+                      ［＃］：入力者注\n\
+                      -------------------------------------------------------\n\n\
+                      ただの本文です。\n\n\
+                      底本：「本」出版社\n";
+
+        let profile = profile_one(CorpusItem::new("work.txt", source.as_bytes().to_vec()));
+
+        assert!(profile.decodable);
+        assert!(profile.clean);
+        assert!(profile.families.is_empty(), "header must not add families");
+    }
+
+    #[test]
+    fn source_budget_addition_is_checked_and_hard() {
+        assert_eq!(add_within_budget(3, 4, 7), Ok(7));
+        assert_eq!(add_within_budget(3, 5, 7), Err(()));
+        assert_eq!(add_within_budget(usize::MAX, 1, usize::MAX), Err(()));
+    }
+
+    #[test]
+    fn vendor_path_and_slug_validation_reject_escapes() {
+        validate_relative_corpus_path("cards/work.txt").expect("relative corpus path");
+        validate_relative_corpus_path("../outside.txt").expect_err("parent path escape");
+        validate_relative_corpus_path("/outside.txt").expect_err("absolute path escape");
+        validate_slug("w123-readable").expect("portable slug");
+        validate_slug("../outside").expect_err("slug path escape");
+        validate_slug("CON").expect_err("reserved Windows slug");
+    }
+
+    #[test]
+    fn vendor_works_preserves_an_unreadable_existing_source() {
+        let root = tempfile::tempdir().expect("tempdir");
+        fs::write(root.path().join("work.txt"), b"body").expect("corpus source");
+        let manifest = root.path().join("works.toml");
+        fs::write(
+            &manifest,
+            "[[work]]\npath = \"work.txt\"\nslug = \"work\"\n",
+        )
+        .expect("manifest");
+        let dest = root.path().join("dest");
+        let fixture = dest.join("work");
+        fs::create_dir_all(&fixture).expect("fixture dir");
+        fs::write(fixture.join("source.txt"), [0xff]).expect("invalid source");
+
+        let error = vendor_works(Some(root.path()), &manifest, &dest)
+            .expect_err("invalid existing UTF-8 must not be overwritten");
+
+        assert!(error.contains("read existing"), "{error}");
+        assert_eq!(fs::read(fixture.join("source.txt")).unwrap(), [0xff]);
+    }
+
+    #[test]
+    fn vendor_works_rejects_duplicate_slugs_portably() {
+        let root = tempfile::tempdir().expect("tempdir");
+        fs::write(root.path().join("a.txt"), b"a").expect("source a");
+        fs::write(root.path().join("b.txt"), b"b").expect("source b");
+        let manifest = root.path().join("works.toml");
+        fs::write(
+            &manifest,
+            "[[work]]\npath = \"a.txt\"\nslug = \"Work\"\n\n\
+             [[work]]\npath = \"b.txt\"\nslug = \"work\"\n",
+        )
+        .expect("manifest");
+
+        let error = vendor_works(Some(root.path()), &manifest, &root.path().join("dest"))
+            .expect_err("case-colliding slugs must fail");
+
+        assert!(error.contains("duplicate work slug"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vendor_works_rejects_an_escaping_destination_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        fs::write(root.path().join("work.txt"), b"body").expect("corpus source");
+        let manifest = root.path().join("works.toml");
+        fs::write(
+            &manifest,
+            "[[work]]\npath = \"work.txt\"\nslug = \"work\"\n",
+        )
+        .expect("manifest");
+        let dest = root.path().join("dest");
+        let outside = root.path().join("outside");
+        fs::create_dir(&dest).expect("dest");
+        fs::create_dir(&outside).expect("outside");
+        symlink(&outside, dest.join("work")).expect("escaping link");
+
+        let error = vendor_works(Some(root.path()), &manifest, &dest)
+            .expect_err("destination symlink must fail");
+
+        assert!(error.contains("not a real directory"), "{error}");
+        assert!(!outside.join("source.txt").exists());
     }
 
     #[test]
@@ -3769,7 +4320,7 @@ mod tests {
 
     #[test]
     fn missing_families_is_the_uncovered_complement() {
-        let mut covered: std::collections::HashSet<usize> = (0..FAM_TOTAL).collect();
+        let mut covered: HashSet<usize> = (0..FAM_TOTAL).collect();
         assert!(
             missing_families(&covered).is_empty(),
             "full set → none missing"

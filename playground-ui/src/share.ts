@@ -1,8 +1,9 @@
 import LZString, { decompressFromBase64 } from 'lz-string';
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+const decoder = new TextDecoder('utf-8', { fatal: true });
 export const SHARE_URL_LIMIT = 3500;
+export const SHARE_SOURCE_LIMIT = 1_000_000;
 
 export class ShareUrlTooLongError extends Error {
   constructor() {
@@ -21,15 +22,43 @@ function fromBase64Url(value: string): string {
   return base64 + '='.repeat((4 - (base64.length % 4)) % 4);
 }
 
+function normalizedBase64(value: string): string {
+  if (!/^[A-Za-z0-9+/_-]*={0,3}$/u.test(value)) {
+    throw new Error('legacy shared source is invalid');
+  }
+  const unpadded = value.replace(/=+$/u, '');
+  return unpadded.replaceAll('-', '+').replaceAll('_', '/');
+}
+
+function requireSupportedEncodedLength(value: string): void {
+  if (value.length > SHARE_URL_LIMIT) {
+    throw new Error('encoded shared source is too large');
+  }
+}
+
+function requireSupportedSourceLength(source: string): string {
+  if (source.length > SHARE_SOURCE_LIMIT) {
+    throw new Error('shared source is too large');
+  }
+  return source;
+}
+
 function decodeLegacyText(value: string): string {
+  requireSupportedEncodedLength(value);
   const binary = atob(fromBase64Url(value));
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return decoder.decode(bytes);
+  return requireSupportedSourceLength(decoder.decode(bytes));
 }
 
 function decodeLegacyCompressed(value: string): string {
+  requireSupportedEncodedLength(value);
+  const normalized = normalizedBase64(value);
   const result = decompressFromBase64(fromBase64Url(value));
-  if (!result) throw new Error('legacy compressed source is invalid');
+  if (result === null) throw new Error('legacy compressed source is invalid');
+  requireSupportedSourceLength(result);
+  if (normalizedBase64(LZString.compressToBase64(result)) !== normalized) {
+    throw new Error('legacy compressed source is invalid');
+  }
   return result;
 }
 
@@ -41,11 +70,17 @@ function decodeSourceHash(hash: string): string | null {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const encoded = params.get('src');
   if (encoded === null) return null;
-  const decoded = LZString.decompressFromEncodedURIComponent(encoded);
-  if (
-    decoded === null ||
-    (decoded === '' && encoded !== LZString.compressToEncodedURIComponent(''))
-  ) {
+  requireSupportedEncodedLength(encoded);
+  const normalized = encoded.replaceAll(' ', '+');
+  if (!/^[A-Za-z0-9+$-]+$/u.test(normalized)) {
+    throw new Error('source hash is invalid');
+  }
+  const decoded = LZString.decompressFromEncodedURIComponent(normalized);
+  if (decoded === null) {
+    throw new Error('source hash is invalid');
+  }
+  requireSupportedSourceLength(decoded);
+  if (LZString.compressToEncodedURIComponent(decoded) !== normalized) {
     throw new Error('source hash is invalid');
   }
   return decoded;
@@ -75,6 +110,9 @@ export function readSharedSource(url: URL): SharedSourceResult {
 }
 
 export async function copyShareUrl(source: string): Promise<void> {
+  if (source.length > SHARE_SOURCE_LIMIT) {
+    throw new ShareUrlTooLongError();
+  }
   const url = new URL(globalThis.location.href);
   url.searchParams.delete('text');
   url.searchParams.delete('c');

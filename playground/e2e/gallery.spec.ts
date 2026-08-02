@@ -99,18 +99,37 @@ test.describe('notation gallery', () => {
     );
   });
 
-  test('gaiji has an opaque background in both writing modes', async ({
+  test('only unresolved gaiji is highlighted in both writing modes', async ({
     page,
   }) => {
     await ready(page);
-    const { h, v } = columns(page, 'gaiji', '.aozora-gaiji');
-    await expect(h).toBeVisible();
-    await expect(v).toBeVisible();
+    const resolved = columns(page, 'gaiji', '.aozora-gaiji[data-codepoint]');
+    const unresolved = columns(
+      page,
+      'gaiji',
+      '.aozora-gaiji[data-description]',
+    );
     const transparent = ['rgba(0, 0, 0, 0)', 'transparent'];
-    const bgH = await h.evaluate((el) => getComputedStyle(el).backgroundColor);
-    const bgV = await v.evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(transparent).not.toContain(bgH);
-    expect(transparent).not.toContain(bgV);
+    for (const element of [resolved.h, resolved.v]) {
+      await expect(element).toBeVisible();
+      const { backgroundColor, color, parentColor } = await element.evaluate(
+        (node) => ({
+          backgroundColor: getComputedStyle(node).backgroundColor,
+          color: getComputedStyle(node).color,
+          parentColor: getComputedStyle(node.parentElement!).color,
+        }),
+      );
+      expect(transparent).toContain(backgroundColor);
+      expect(color).toBe(parentColor);
+    }
+    for (const element of [unresolved.h, unresolved.v]) {
+      await expect(element).toBeVisible();
+      expect(transparent).not.toContain(
+        await element.evaluate(
+          (node) => getComputedStyle(node).backgroundColor,
+        ),
+      );
+    }
   });
 
   // The canonical sheet must set the writing mode per column so both previews

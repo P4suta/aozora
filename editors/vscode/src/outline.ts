@@ -44,6 +44,7 @@ import {
   TextEditorRevealType,
   window,
 } from "vscode";
+import { documentVersionMatches } from "./extensionLogic";
 
 const LANG_ID = "aozora";
 
@@ -67,6 +68,8 @@ export function registerShowOutlineCommand(context: ExtensionContext): void {
         );
         return;
       }
+      const document = editor.document;
+      const version = document.version;
 
       // `vscode.executeDocumentSymbolProvider` is the officially-
       // sanctioned passthrough that asks every registered
@@ -76,8 +79,15 @@ export function registerShowOutlineCommand(context: ExtensionContext): void {
       // preserves that shape so we get nested children to walk.
       const symbols = await commands.executeCommand<DocumentSymbol[]>(
         "vscode.executeDocumentSymbolProvider",
-        editor.document.uri,
+        document.uri,
       );
+
+      if (!documentVersionMatches(version, document.version)) {
+        void window.showInformationMessage(
+          "文書が変更されたため、アウトラインをもう一度開いてください。",
+        );
+        return;
+      }
 
       if (!symbols || symbols.length === 0) {
         void window.showInformationMessage(
@@ -112,15 +122,27 @@ export function registerShowOutlineCommand(context: ExtensionContext): void {
       if (!picked) {
         return;
       }
+      if (!documentVersionMatches(version, document.version)) {
+        void window.showInformationMessage(
+          "文書が変更されたため、アウトラインをもう一度開いてください。",
+        );
+        return;
+      }
 
       // Move the cursor to the heading line and recenter the
       // viewport. `showTextDocument` reaffirms editor focus so the
       // typed cursor sits at the new selection rather than staying
       // in the (now-dismissed) Quick Pick input.
+      const targetEditor = await window.showTextDocument(document, editor.viewColumn);
+      if (!documentVersionMatches(version, document.version)) {
+        void window.showInformationMessage(
+          "文書が変更されたため、アウトラインをもう一度開いてください。",
+        );
+        return;
+      }
       const head = picked.range.start;
-      editor.selection = new Selection(head, head);
-      editor.revealRange(picked.range, TextEditorRevealType.InCenter);
-      void window.showTextDocument(editor.document, editor.viewColumn);
+      targetEditor.selection = new Selection(head, head);
+      targetEditor.revealRange(picked.range, TextEditorRevealType.InCenter);
     }),
   );
 }

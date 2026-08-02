@@ -72,6 +72,7 @@ pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
 /// should make unreachable, but is still surfaced rather than
 /// silently truncated).
 pub fn decode_sjis_into(input: &[u8], dst: &mut String) -> Result<(), DecodeError> {
+    let original_len = dst.len();
     let mut decoder = SHIFT_JIS.new_decoder_without_bom_handling();
     let needed = decoder
         .max_utf8_buffer_length_without_replacement(input.len())
@@ -81,6 +82,7 @@ pub fn decode_sjis_into(input: &[u8], dst: &mut String) -> Result<(), DecodeErro
     match result {
         DecoderResult::InputEmpty => Ok(()),
         DecoderResult::Malformed(_, _) | DecoderResult::OutputFull => {
+            dst.truncate(original_len);
             Err(DecodeError::ShiftJisInvalid)
         }
     }
@@ -303,6 +305,18 @@ mod tests {
         decode_auto_into("青空".as_bytes(), &mut buf).unwrap(); // UTF-8
         decode_auto_into(&[0x95, 0xB6, 0x8C, 0xC9], &mut buf).unwrap(); // 文庫 in SJIS
         assert_eq!(buf, "青空文庫");
+    }
+
+    #[test]
+    fn decode_sjis_into_appends_only_on_success() {
+        let mut dst = "prefix:".to_owned();
+        decode_sjis_into(&[0x95, 0xB6, 0x8C, 0xC9], &mut dst).expect("valid Shift_JIS");
+        assert_eq!(dst, "prefix:文庫");
+
+        let before = dst.clone();
+        let result = decode_sjis_into(b"valid prefix\x82", &mut dst);
+        assert!(matches!(result, Err(DecodeError::ShiftJisInvalid)));
+        assert_eq!(dst, before);
     }
 
     // ------------------------------------------------------------------

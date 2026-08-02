@@ -6,7 +6,10 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+unused-ignored-advisory = "deny"
+ignore = [
+  { id = "RUSTSEC-2026-0222", reason = "Extism 1.30 has no fixed Wasmtime line; aozora uses it only in host-smoke with one engine and its own trusted plugin, so cross-engine type confusion is unreachable" },
+]
 
 [licenses]
 version = 2

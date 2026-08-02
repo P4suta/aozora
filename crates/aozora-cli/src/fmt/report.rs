@@ -15,6 +15,7 @@ use crate::fmt::Ctx;
 use crate::fmt::cli::ColorChoice;
 use crate::fmt::discover::Resolved;
 use crate::fmt::process;
+use crate::output::{self, StdoutWriter};
 use crate::wire::Envelope;
 #[cfg(test)]
 use aozora::json::SCHEMA_VERSION;
@@ -73,12 +74,12 @@ impl FileOutcome {
 /// Re-exported from the crate root so the `aozora` CLI's terminal renderers
 /// share one TTY/`NO_COLOR` policy with the formatter's diffs.
 #[must_use]
-pub(super) fn auto_stdout(color: ColorChoice) -> AutoStream<io::Stdout> {
-    match color {
+pub(super) fn auto_stdout(color: ColorChoice) -> StdoutWriter<AutoStream<io::Stdout>> {
+    output::guard(match color {
         ColorChoice::Auto => AutoStream::auto(io::stdout()),
         ColorChoice::Always => AutoStream::always(io::stdout()),
         ColorChoice::Never => AutoStream::never(io::stdout()),
-    }
+    })
 }
 
 /// Write a coloured unified diff of `old` → `new` under a `label` header.
@@ -180,8 +181,9 @@ struct JsonReportData {
 pub(crate) fn emit_json(files: Vec<JsonFile>) -> io::Result<()> {
     let formatted = files.iter().all(|file| file.status == "ok");
     let report = Envelope::new(JsonReportData { formatted, files });
-    let mut out = io::stdout().lock();
-    serde_json::to_writer_pretty(&mut out, &report)?;
+    let encoded = serde_json::to_vec_pretty(&report).map_err(io::Error::other)?;
+    let mut out = output::stdout();
+    out.write_all(&encoded)?;
     out.write_all(b"\n")
 }
 

@@ -65,9 +65,9 @@
 //!   See ADR-0025 (`docs/adr/`).
 //! * **A stray `［` is line-scoped** (the temporal dual of the hard scope):
 //!   a `［＃…］` body never spans a line break, so a `［` still open when a
-//!   `Newline` arrives is stray. The pair stage force-resolves the
-//!   contiguous top run of such brackets as [`PairEvent::Unclosed`]
-//!   (innermost-first) before the newline, so a lone trailing `［`
+//!   `Newline` arrives is stray. The pair stage force-resolves its nested
+//!   frames and the bracket as [`PairEvent::Unclosed`] (innermost-first)
+//!   before the newline, so a lone trailing `［`
 //!   (江戸川乱歩『影男』L548) no longer keeps its classifier frame open to EOF
 //!   and sinks the rest of the document to plain. Ruby / angle-quote resolve
 //!   on their own delimiters and dialogue `「」` / kaeriten `〔〕` span lines,
@@ -207,11 +207,11 @@ where
 /// * `links`: resolved `(open, close)` pairs accumulated as the
 ///   stack matches; mirrors `PairOutputIn::links` for streaming
 ///   callers that don't go through `pair_in`.
-/// * `pending`: FIFO queue of events a single trigger produced beyond
+/// * `pending`: reverse-order stack of events a single trigger produced beyond
 ///   the one it returns directly. A `］` that closes a bracket buried
 ///   under dangling non-bracket opens yields several events at once
-///   (`Unclosed`… then `PairClose`); the head is returned and the tail
-///   is buffered here, drained front-first before the next token.
+///   (`Unclosed`… then `PairClose`); the batch is reversed once and popped
+///   without shifting the remaining events.
 /// * `eof_drain`: cursor through the residual stack at end-of-input
 ///   used to emit one `Unclosed` event per remaining open frame.
 /// * `finished`: terminal flag set after the eof drain completes,
@@ -230,7 +230,7 @@ where
     /// callers that don't go through `pair_in`.
     links: Vec<PairLink>,
     /// Events queued by the current trigger to surface on later
-    /// `next()` calls, drained front-first. Empty on the fast paths.
+    /// `next()` calls, stored in reverse emission order. Empty on the fast paths.
     pending: SmallVec<[PairEvent; 4]>,
     eof_drain: bool,
     finished: bool,
@@ -336,9 +336,8 @@ where
                     kind: PairKind::Bracket,
                     span,
                 });
-                // `pending` now holds [Unclosed…(innermost-first), PairClose];
-                // surface the head and let `next` drain the rest in order.
-                return self.pending.remove(0);
+                self.pending.reverse();
+                return self.pending.pop().expect("hard-scope unwind is non-empty");
             }
 
             self.diagnostics
@@ -356,42 +355,32 @@ where
     /// Emit a `Newline`, force-resolving any stray `［` bracket that is still
     /// open when the line ends.
     ///
-    /// A `［＃…］` directive body never spans a line break: a real directive
-    /// closes its `］` on the same line, so a `［` still on the stack at a
-    /// newline is *stray* — an unmatched open with no partner (江戸川乱歩
-    /// 『影男』L548's trailing `［` is the corpus archetype). Left on the stack
-    /// the bracket's classifier frame buffers the *entire rest of the document*
-    /// and, never closing, sinks it to plain at EOF, so every following ruby,
-    /// heading and directive renders as literal source — the F21 leak cascade.
-    ///
-    /// Force-resolve the contiguous top run of stray brackets as `Unclosed`
-    /// (innermost-first, mirroring the EOF drain and the ADR-0025 hard-scope
-    /// unwind order) *before* the newline, so the pair events after the line
-    /// break pair at a clean scope and classify normally on the live stream.
-    /// Ruby / angle-quote resolve on their own delimiters and dialogue `「」` /
-    /// kaeriten `〔〕` legitimately span lines, so only `［` gets this line
-    /// scope — the dual of ADR-0025's `］` hard scope.
+    /// A directive body cannot span a line break. Frames below its stray
+    /// bracket remain open because dialogue and other outer scopes may span
+    /// lines; this is the opening-side dual of ADR-0025's `］` hard scope.
     fn newline_event(&mut self, pos: u32) -> PairEvent {
-        while self
+        if let Some(bracket_pos) = self
             .stack
-            .last()
-            .is_some_and(|&(kind, _)| kind == PairKind::Bracket)
+            .iter()
+            .position(|&(kind, _)| kind == PairKind::Bracket)
         {
-            let (kind, open_span) = self.stack.pop().expect("checked last is a Bracket");
-            self.diagnostics
-                .push(Diagnostic::unclosed_bracket(open_span, kind));
-            self.pending.push(PairEvent::Unclosed {
-                kind,
-                span: open_span,
-            });
+            while self.stack.len() > bracket_pos {
+                let (kind, open_span) = self.stack.pop().expect("frame at bracket position");
+                self.diagnostics
+                    .push(Diagnostic::unclosed_bracket(open_span, kind));
+                self.pending.push(PairEvent::Unclosed {
+                    kind,
+                    span: open_span,
+                });
+            }
         }
         if self.pending.is_empty() {
             return PairEvent::Newline { pos };
         }
-        // Surface the unwound `Unclosed` events first, then the newline; the
-        // head is returned now and `next` drains the tail in order.
+        // Surface the unwound `Unclosed` events first, then the newline.
         self.pending.push(PairEvent::Newline { pos });
-        self.pending.remove(0)
+        self.pending.reverse();
+        self.pending.pop().expect("newline unwind is non-empty")
     }
 }
 
@@ -408,8 +397,8 @@ where
         // A single `］` may have produced several events (dangling-open
         // unwind + the bracket close); surface the buffered tail before
         // pulling the next token so ordering is preserved.
-        if !self.pending.is_empty() {
-            return Some(self.pending.remove(0));
+        if let Some(event) = self.pending.pop() {
+            return Some(event);
         }
         if self.eof_drain {
             // Drain residual stack entries as Unclosed events. We pop
@@ -729,6 +718,77 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn stray_bracket_unwinds_inner_frames_but_preserves_outer_scope() {
+        let (events, diagnostics) = run("「外［＃「未閉じ\n《か》続き」");
+        assert_eq!(
+            pair_kinds(&events),
+            vec![
+                ("open", PairKind::Quote),
+                ("open", PairKind::Bracket),
+                ("open", PairKind::Quote),
+                ("unclosed", PairKind::Quote),
+                ("unclosed", PairKind::Bracket),
+                ("open", PairKind::Ruby),
+                ("close", PairKind::Ruby),
+                ("close", PairKind::Quote),
+            ]
+        );
+        assert_eq!(diagnostics.len(), 2);
+        assert!(matches!(
+            diagnostics[0],
+            Diagnostic::UnclosedBracket {
+                kind: PairKind::Quote,
+                ..
+            }
+        ));
+        assert!(matches!(
+            diagnostics[1],
+            Diagnostic::UnclosedBracket {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+
+        let newline = events
+            .iter()
+            .position(|event| matches!(event, PairEvent::Newline { .. }))
+            .expect("newline event");
+        assert!(
+            events
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| matches!(event, PairEvent::Unclosed { .. }))
+                .all(|(index, _)| index < newline)
+        );
+    }
+
+    #[test]
+    fn malformed_directive_line_does_not_capture_following_ruby() {
+        let document = crate::Document::new("［＃「oops\n漢《かん》");
+        let snapshot = document.snapshot();
+        assert!(
+            snapshot
+                .nodes()
+                .iter()
+                .any(|node| node.kind() == crate::NodeKind::Ruby)
+        );
+        assert!(
+            snapshot
+                .to_html()
+                .contains("<ruby>漢<rp>(</rp><rt>かん</rt><rp>)</rp></ruby>")
+        );
+        let unclosed = snapshot
+            .diagnostics()
+            .iter()
+            .filter_map(|diagnostic| match diagnostic {
+                Diagnostic::UnclosedBracket { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(unclosed, vec![PairKind::Bracket, PairKind::Quote]);
+    }
+
     /// After the stray `［` is line-scoped, a later `］` no longer closes it —
     /// it is a stray `Unmatched`, so the bracket cannot capture the
     /// intervening document (the F21 cascade). The dual of the ADR-0025 `］`
@@ -764,6 +824,38 @@ mod tests {
             starts[0] > starts[1],
             "innermost (later start) resolves first; got {starts:?}"
         );
+    }
+
+    #[test]
+    fn deep_scope_unwind_drains_in_emission_order() {
+        let depth = 4_096;
+        for terminator in ["］", "\n"] {
+            let mut source = String::from("［");
+            source.push_str(&"「".repeat(depth));
+            source.push_str(terminator);
+
+            let (events, diagnostics) = run(&source);
+            let starts = events
+                .iter()
+                .filter_map(|event| match event {
+                    PairEvent::Unclosed { span, .. } => Some(span.start),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let expected = depth + usize::from(terminator == "\n");
+            assert_eq!(starts.len(), expected);
+            assert_eq!(diagnostics.len(), expected);
+            assert!(starts.windows(2).all(|window| window[0] > window[1]));
+            assert!(
+                matches!(
+                    events.last(),
+                    Some(PairEvent::PairClose {
+                        kind: PairKind::Bracket,
+                        ..
+                    }) if terminator == "］"
+                ) || matches!(events.last(), Some(PairEvent::Newline { .. }))
+            );
+        }
     }
 
     /// The line scope is additive: a never-closed `［` with NO line break
