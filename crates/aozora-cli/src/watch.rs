@@ -67,14 +67,14 @@ fn wait_for_change(
             continue;
         }
         debug!(kind = ?event.kind, "watch: target changed; draining the debounce window");
-        let mut deadline = Instant::now() + debounce;
+        let mut deadline = debounce_deadline(Instant::now(), debounce);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match rx.recv_timeout(remaining) {
                 Ok(Ok(event)) => {
                     let now = Instant::now();
                     if !should_skip(&event, path) {
-                        deadline = now + debounce;
+                        deadline = debounce_deadline(now, debounce);
                     } else if now >= deadline {
                         return Ok(());
                     }
@@ -87,6 +87,10 @@ fn wait_for_change(
             }
         }
     }
+}
+
+fn debounce_deadline(now: Instant, debounce: Duration) -> Instant {
+    now + debounce
 }
 
 fn receive_event(rx: &mpsc::Receiver<notify::Result<Event>>) -> Result<Event> {
@@ -287,6 +291,17 @@ mod tests {
 
         assert!(started.elapsed() < Duration::from_millis(30));
         sender.join().expect("sender");
+    }
+
+    #[test]
+    fn debounce_deadline_advances_by_the_full_window() {
+        let now = Instant::now();
+        let debounce = Duration::from_millis(75);
+
+        assert_eq!(
+            debounce_deadline(now, debounce).duration_since(now),
+            debounce
+        );
     }
 
     #[test]
