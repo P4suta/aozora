@@ -34,7 +34,7 @@ export function registerCliCommands(
 
 async function exportHtml(client: LanguageClient): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== "aozora") {
+  if (editor?.document.languageId !== "aozora") {
     void vscode.window.showInformationMessage(
       "Open an aozora document first, then run this command.",
     );
