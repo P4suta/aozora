@@ -256,7 +256,7 @@ pandoc_ast = "0.8"
 # alignment would mis-handle the East-Asian-Wide camelCase tags some
 # `NodeKind` rows carry; comfy-table is the maintained mainstream
 # choice (1.5M+ downloads/mo, used by sqlx / cargo-edit / lazygit-ui).
-comfy-table = { version = "7.2", default-features = false }
+comfy-table = { version = "8.0", default-features = false }
 
 # Physical-core count detection — used by aozora-corpus's
 # parallel-load helper to size the rayon thread pool to *physical*
