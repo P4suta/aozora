@@ -16,7 +16,7 @@ name: spec-freshness
 # gate — it opens (or updates) a tracking issue labelled `spec-freshness`,
 # and closes it again once the vendored copy is back in sync.
 #
-# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
+# Action SHAs are pinned to match the other workflows; Renovate bumps them.
 
 on:
   schedule:

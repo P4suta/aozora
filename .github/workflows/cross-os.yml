@@ -21,7 +21,7 @@
 # is excluded — its benches drive the vendored/synthetic corpus harness and
 # add no behavioural coverage the test binaries lack.
 #
-# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
+# Action SHAs are pinned to match the other workflows; Renovate bumps them.
 name: cross-os
 
 on:
