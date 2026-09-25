@@ -321,38 +321,59 @@ fn unit_installed() -> Result<bool, String> {
 mod tests {
     use super::*;
 
-    fn ecosystems_for_directory<'a>(text: &'a str, directory: &str) -> Vec<&'a str> {
-        let quoted = format!("\"{directory}\"");
-        let scalar = format!("directory: {quoted}");
-        let list_item = format!("- {quoted}");
-        text.split("\n  - package-ecosystem: ")
-            .skip(1)
-            .filter_map(|block| {
-                let (ecosystem, body) = block.split_once('\n')?;
-                body.lines()
-                    .map(str::trim)
-                    .any(|line| line == scalar || line == list_item)
-                    .then_some(ecosystem.trim())
-            })
-            .collect()
+    fn workspace_root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root")
+    }
+
+    fn read_json(relative: &str) -> serde_json::Value {
+        let path = workspace_root().join(relative);
+        let text =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
     }
 
     #[test]
-    fn dependabot_uses_each_manifest_ecosystem() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("workspace root");
-        let config = fs::read_to_string(root.join(".github/dependabot.yml"))
-            .expect("dependabot configuration");
-        assert_eq!(ecosystems_for_directory(&config, "/playground"), ["bun"]);
-        assert_eq!(
-            ecosystems_for_directory(&config, "/editors/vscode"),
-            ["bun"]
+    fn renovate_is_the_only_update_bot() {
+        assert!(
+            !workspace_root().join(".github/dependabot.yml").exists(),
+            "Dependabot would reopen every update Renovate already proposes"
         );
+        let config = read_json("renovate.json");
+        let extends = config["extends"].as_array().expect("an extends list");
+        assert!(
+            extends
+                .iter()
+                .any(|preset| preset == "github>P4suta/renovate-config"),
+            "renovate.json layers on the shared P4suta policy: {extends:?}"
+        );
+    }
+
+    #[test]
+    fn vscode_typings_ceiling_is_the_engine_floor() {
+        let config = read_json("renovate.json");
+        let ceiling = config["packageRules"]
+            .as_array()
+            .expect("a packageRules list")
+            .iter()
+            .find(|rule| {
+                rule["matchPackageNames"]
+                    .as_array()
+                    .is_some_and(|names| names.iter().any(|name| name == "@types/vscode"))
+            })
+            .and_then(|rule| rule["allowedVersions"].as_str())
+            .and_then(|range| range.strip_prefix("<="))
+            .expect("renovate.json caps @types/vscode with `<=`");
+        let manifest = read_json("editors/vscode/package.json");
+        let floor = manifest["engines"]["vscode"]
+            .as_str()
+            .and_then(|range| range.strip_prefix('^'))
+            .expect("engines.vscode is a caret range");
         assert_eq!(
-            ecosystems_for_directory(&config, "/crates/tree-sitter-aozora"),
-            ["npm"]
+            ceiling, floor,
+            "raise the @types/vscode ceiling together with engines.vscode"
         );
     }
 

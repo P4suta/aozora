@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Repository rules layered on the shared P4suta policy, which already covers every manifest Renovate detects.",
+    "The Python tools the workflows `pip install` inline (maturin, pytest, mypy, twine) sit in no manifest, so bump those by hand in the workflow files."
+  ],
+  "extends": ["github>P4suta/renovate-config"],
+  "packageRules": [
+    {
+      "description": "ADR-0033 rejects the ICU identifier split introduced in fluent-langneg 0.14.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["fluent-langneg"],
+      "allowedVersions": "<0.14"
+    },
+    {
+      "description": "hdrhistogram 7.6.0 declares the non-SPDX expression MIT/Apache-2.0.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["hdrhistogram"],
+      "allowedVersions": "!/^7\\.6\\.0$/"
+    },
+    {
+      "description": [
+        "VS Code typings track the minimum supported editor, not an independent library.",
+        "Raise this ceiling together with `engines.vscode` and the Electron/Node target asserted by editors/vscode/esbuild.mjs."
+      ],
+      "matchPackageNames": ["@types/vscode"],
+      "allowedVersions": "<=1.91.0"
+    },
+    {
+      "description": [
+        "ADR-0034: a new stable is a signal for a maintainer, not an update to merge unattended.",
+        "Renovate bumps rust-toolchain.toml, mise.toml, and the rust-toolchain action inputs, but not the `rust@` install pins in the workflows and the Justfile, so `xtask msrv check` holds this pull request red until a maintainer syncs them.",
+        "Kept apart, it cannot hold back the automerged group."
+      ],
+      "matchDatasources": ["rust-version"],
+      "groupName": "Rust toolchain",
+      "groupSlug": "rust-toolchain",
+      "automerge": false
+    }
+  ]
+}
