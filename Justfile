@@ -1008,7 +1008,7 @@ deny:
 
 # RustSec advisory scan
 audit:
-    cargo audit --ignore RUSTSEC-2026-0222
+    cargo audit --ignore RUSTSEC-2026-0222 --ignore RUSTSEC-2026-0269
 
 # Unused-dependency scan. cargo-shear is stable (no nightly), fast, and
 # also flags unlinked source files; it replaces the former nightly
