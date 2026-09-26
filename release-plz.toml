@@ -26,8 +26,8 @@ release_always = true
 publish = true
 # cargo-semver-checks gate on every Release PR (mirrors `just semver`).
 semver_check = true
-# Do not refresh third-party dependencies inside the Release PR; that is
-# Dependabot's job. release-plz still rewrites Cargo.lock for the version bump.
+# Do not refresh third-party dependencies inside the Release PR; that is Renovate's job.
+# release-plz still rewrites Cargo.lock for the version bump.
 dependencies_update = false
 # Default branch prefix; spelled out because require-signed-commits.json's App
 # bypass and the no-automerge-on-release-pr.yml guard both key on it.

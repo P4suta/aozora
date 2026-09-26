@@ -1038,9 +1038,8 @@ semver *ARGS:
         --exclude tree-sitter-aozora {{ARGS}}
 
 # --- dependency follow-up ----------------------------------------------------
-# Dependabot proposes repository updates. The local `deps-check` adds the full
-# dependency-health gate (outdated + audit + deny), and its systemd timer
-# surfaces new advisories even on quiet branches.
+# Renovate proposes repository updates.
+# The local `deps-check` adds the full dependency-health gate (outdated + audit + deny), and its systemd timer surfaces new advisories even on quiet branches.
 
 # `target/.deps-check.timestamp` is the last-success marker that
 # `deps-status` reads. Written under `target/` and intentionally ephemeral —

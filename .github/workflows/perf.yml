@@ -8,7 +8,7 @@
 # The committed instruction ceilings make every ephemeral runner a regression
 # check; any case exceeding its ceiling fails.
 #
-# Action SHAs are pinned; Dependabot bumps weekly.
+# Action SHAs are pinned; Renovate bumps them weekly.
 name: perf
 
 on:

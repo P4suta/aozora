@@ -4,9 +4,7 @@
 # our licence and advisory rules, while dependency-review focuses on changes
 # a PR introduces and comments the diff directly in the review UI.
 #
-# Action pinning: the actions below are pinned to full commit SHAs
-# (the `# vX.Y.Z` trailer is the resolved tag); Dependabot's
-# github-actions ecosystem keeps the SHAs current.
+# Action pinning: the actions below are pinned to full commit SHAs (the `# vX.Y.Z` trailer is the resolved tag); Renovate's github-actions manager keeps the SHAs current.
 
 name: dependency-review
 

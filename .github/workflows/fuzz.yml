@@ -32,7 +32,7 @@
 # A weekly nightly-toolchain soak is not a per-push gate; the non-skippable
 # release proof lives in `release-ready`.
 #
-# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
+# Action SHAs are pinned to match the other workflows; Renovate bumps them.
 name: fuzz
 
 on:
