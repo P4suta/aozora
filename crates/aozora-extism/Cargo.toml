@@ -59,9 +59,10 @@ mutants = { workspace = true }
 # test loads the plugin from in-memory bytes (`Wasm::data`), never a URL,
 # so the HTTP fetcher is dead weight. `wasmtime-default-features` keeps
 # the runtime (cranelift) needed to actually execute the wasm.
+# Extism 1.30 is pinned to vulnerable Wasmtime 43, so use the exact upstream security commit that moves the runtime to Wasmtime 48 LTS until its crates.io release.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow = { workspace = true }
-extism = { version = "1", optional = true, default-features = false, features = [
+extism = { git = "https://github.com/extism/extism", rev = "d5da29759bba88645f886d9e12d3f4e4376df7b3", optional = true, default-features = false, features = [
   "wasmtime-default-features",
 ] }
 serde = { workspace = true }
@@ -74,10 +75,3 @@ crate-type = ["cdylib", "lib"]
 name = "aozora-real-work-extism"
 path = "src/bin/aozora-real-work-extism.rs"
 required-features = ["host-smoke"]
-
-[package.metadata.cargo-shear]
-# `extism` is an intentional optional host-SDK dependency, pulled only by
-# the `host-smoke` feature's integration test. cargo-shear flags it as a
-# misplaced optional dep, but moving it to dev-dependencies would drop the
-# feature gate that keeps wasmtime out of the default build.
-ignored = ["extism"]
