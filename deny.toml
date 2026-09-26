@@ -7,13 +7,6 @@ all-features = true
 version = 2
 yanked = "deny"
 unused-ignored-advisory = "deny"
-ignore = [
-  { id = "RUSTSEC-2026-0222", reason = "Extism 1.30 has no fixed Wasmtime line; aozora uses it only in host-smoke with one engine and its own trusted plugin, so cross-engine type confusion is unreachable" },
-  { id = "RUSTSEC-2026-0269", reason = "Extism 1.30 has no fixed Wasmtime line; both of aozora's Extism hosts call Plugin::new(&manifest, [], false), so WASI is off and the filesystem sandbox escape is unreachable; remove once Extism accepts Wasmtime >= 46.0.3" },
-  { id = "RUSTSEC-2026-0247", reason = "bitmaps is unmaintained and reaches aozora only through Wasmtime's wasm-compose under Extism 1.30; remove once Extism accepts Wasmtime >= 46.0.3, whose wasm-compose no longer depends on it" },
-  { id = "RUSTSEC-2026-0250", reason = "im-rc is unmaintained and reaches aozora only through Wasmtime's wasm-compose under Extism 1.30; remove once Extism accepts Wasmtime >= 46.0.3, whose wasm-compose no longer depends on it" },
-  { id = "RUSTSEC-2026-0251", reason = "sized-chunks is unmaintained and reaches aozora only through Wasmtime's wasm-compose under Extism 1.30; remove once Extism accepts Wasmtime >= 46.0.3, whose wasm-compose no longer depends on it" },
-]
 
 [licenses]
 version = 2
@@ -60,4 +53,5 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# The only Git source is the exact Extism security commit declared by aozora-extism.
+allow-git = ["https://github.com/extism/extism"]

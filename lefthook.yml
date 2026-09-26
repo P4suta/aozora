@@ -42,7 +42,7 @@ pre-push:
       run: scripts/check-signed-commits.sh
       fail_text: Push refused because the outgoing range contains an unsigned commit.
     ci:
-      run: just ci
+      run: if [ "$(uname -s)" = Linux ]; then just ci; else echo "Full native CI requires Linux; running the portable repository policy suite locally."; just ci-repo; fi
       fail_text: Re-run the failing fixed CI suite shown above.
     corpus:
       run: if [ -n "${AOZORA_CORPUS_ROOT:-}" ]; then just ci-corpus; fi
