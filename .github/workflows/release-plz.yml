@@ -86,7 +86,12 @@ jobs:
           inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
         if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' || startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') || steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' || startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')) }}
+          ${{ steps.doppler_automation_0.outcome == 'success' && (
+          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
+          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
+          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
+          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
+          ) }}
         shell: bash
         run: exit 1
 
@@ -161,7 +166,12 @@ jobs:
           inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
         if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' || startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') || steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' || startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')) }}
+          ${{ steps.doppler_automation_0.outcome == 'success' && (
+          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
+          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
+          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
+          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
+          ) }}
         shell: bash
         run: exit 1
 

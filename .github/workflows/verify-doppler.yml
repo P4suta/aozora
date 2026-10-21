@@ -1,6 +1,7 @@
+---
 name: Verify credential access
 
-on:
+'on':
   workflow_dispatch:
 
 permissions: {}
@@ -30,7 +31,12 @@ jobs:
           inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
         if: >-
-          ${{ steps.credentials.outcome == 'success' && (steps.credentials.outputs.GITHUB_APP_CLIENT_ID == '' || startsWith(steps.credentials.outputs.GITHUB_APP_CLIENT_ID, '${') || steps.credentials.outputs.GITHUB_APP_PRIVATE_KEY == '' || startsWith(steps.credentials.outputs.GITHUB_APP_PRIVATE_KEY, '${')) }}
+          ${{ steps.credentials.outcome == 'success' && (
+          steps.credentials.outputs.GITHUB_APP_CLIENT_ID == '' ||
+          startsWith(steps.credentials.outputs.GITHUB_APP_CLIENT_ID, '${') ||
+          steps.credentials.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
+          startsWith(steps.credentials.outputs.GITHUB_APP_PRIVATE_KEY, '${')
+          ) }}
         shell: bash
         run: exit 1
 
