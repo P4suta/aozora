@@ -724,7 +724,10 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_empty_for_plain_text() {
-        assert!(gaiji_resolutions("plain text, no gaiji").is_empty());
+        assert_eq!(
+            gaiji_resolutions("plain text, no gaiji"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]
@@ -787,9 +790,18 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_excludes_plain_directives() {
-        assert!(gaiji_resolutions("本文［＃改ページ］続き").is_empty());
-        assert!(gaiji_resolutions("［＃ここから2字下げ］字下げ").is_empty());
-        assert!(gaiji_resolutions("東京［＃「東京」に傍点］へ").is_empty());
+        assert_eq!(
+            gaiji_resolutions("本文［＃改ページ］続き"),
+            Vec::<GaijiResolution>::new()
+        );
+        assert_eq!(
+            gaiji_resolutions("［＃ここから2字下げ］字下げ"),
+            Vec::<GaijiResolution>::new()
+        );
+        assert_eq!(
+            gaiji_resolutions("東京［＃「東京」に傍点］へ"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]
@@ -843,7 +855,10 @@ mod tests {
         let resolutions = gaiji_resolutions(src);
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0].span().slice(src), "※［＃「々」］");
-        assert!(gaiji_resolutions("［＃外側［＃内側").is_empty());
+        assert_eq!(
+            gaiji_resolutions("［＃外側［＃内側"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]

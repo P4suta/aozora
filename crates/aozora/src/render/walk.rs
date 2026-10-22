@@ -197,7 +197,7 @@ mod tests {
         let out = output_with(normalized, registry);
         let mut sink = CollectSink::default();
         walk(&out, &mut sink).expect("walk into a collector is infallible");
-        assert!(sink.text.is_empty());
+        assert_eq!(sink.text, "");
         assert_eq!(sink.nodes, 1);
     }
 

@@ -25,7 +25,6 @@ impl NaiveScanner {
                   called as NaiveScanner.method(), the zero-sized-handle convention callers use"
     )]
     pub(crate) fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
-        const TRIGGER_BYTE_LEN: usize = 3;
         let bytes = source.as_bytes();
         if bytes.len() < TRIGGER_BYTE_LEN {
             return;

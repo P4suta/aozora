@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_tokens() {
-        assert!(collect("").is_empty());
+        assert_eq!(collect(""), Vec::<Token>::new());
     }
 
     #[test]

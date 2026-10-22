@@ -65,6 +65,6 @@ mod tests {
 
     #[test]
     fn skips_kana_sharing_the_e3_lead_byte() {
-        assert!(scan_offsets("あいうえおこんにちは").is_empty());
+        assert_eq!(scan_offsets("あいうえおこんにちは"), Vec::<u32>::new());
     }
 }

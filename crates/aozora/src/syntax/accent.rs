@@ -763,8 +763,14 @@ mod tests {
     fn decompose_fragment_edits_reports_exact_length_deltas() {
         assert_eq!(decompose_fragment_edits("ae&on"), vec![(0, 3, 2)]);
         assert_eq!(decompose_fragment_edits("m'a"), vec![(0, 2, 3)]);
-        assert!(decompose_fragment_edits("stras&e").is_empty());
-        assert!(decompose_fragment_edits("plain 日本語").is_empty());
+        assert_eq!(
+            decompose_fragment_edits("stras&e"),
+            Vec::<(usize, usize, usize)>::new()
+        );
+        assert_eq!(
+            decompose_fragment_edits("plain 日本語"),
+            Vec::<(usize, usize, usize)>::new()
+        );
         assert_eq!(
             decompose_fragment_edits("ae&m'"),
             vec![(0, 3, 2), (3, 2, 3)],

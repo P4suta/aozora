@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn empty_source_round_trips() {
         let out = lex("");
-        assert!(out.normalized.is_empty());
+        assert_eq!(out.normalized, "");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
         assert!(out.sanitized.is_empty());
