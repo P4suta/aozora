@@ -1,22 +1,3 @@
-//! `textDocument/{prepareRename,rename}` — the LSP face of the #202
-//! splice engine.
-//!
-//! Renaming one site of an aozora *coupling* edits its partner
-//! coherently: a container open marker and its matching close, or a
-//! forward-reference / heading-hint / margin-note directive and the
-//! upstream literal it points at. This module is a thin surface over the
-//! core replacement engine, which is the single source of truth for what
-//! couples to what. Partner derivation is not reimplemented here.
-//!
-//! ## What the user renames
-//!
-//! prepareRename returns the span of the **whole** primary marker / bracket
-//! (the `［＃…］` directive or the `［＃ここから…］` open marker), and the
-//! `new_name` the client sends back maps 1:1 to the splice's `replacement`.
-//! Exposing a narrower inner token would force us to duplicate splice's
-//! private `first_quoted` partner-derivation — exactly what this layer must
-//! not do.
-//!
 use std::collections::HashMap;
 
 use aozora::{EditError, Snapshot, Span};
@@ -24,11 +5,6 @@ use tower_lsp::lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url
 
 use crate::lsp::line_index::LineIndex;
 
-/// `prepareRename`: `Some(range + placeholder)` when `position` sits on a
-/// coupled region, else `None`.
-///
-/// Returns `None` for a `Direct` or `Opaque` region (nothing to couple), for
-/// a position past the end of the document.
 #[must_use]
 pub(super) fn prepare_rename_at(
     tree: &Snapshot,
@@ -45,22 +21,6 @@ pub(super) fn prepare_rename_at(
     })
 }
 
-/// `rename`: the coherent coupled edit for renaming the region at `position`
-/// to `new_name`.
-///
-/// - `Ok(Some(edit))` — a coherent coupled edit.
-/// - `Ok(None)` — the position is not on a coupled region or the splice was a
-///   no-op.
-/// - `Err(e)` — the splice engine *declined* the edit (an ambiguous referent,
-///   a ruby-base target literal, a 、-joined multi-target, or an opaque node).
-///
-/// `new_name` is passed verbatim to [`Snapshot::replacement_edits`] as the full
-/// new region text. The core derives the partner change and returns edits in
-/// original-source coordinates.
-///
-/// # Errors
-///
-/// Returns [`EditError::Unverifiable`] when the core declines the coupled edit.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors the LSP rename request shape (document, position, new name) \
@@ -100,7 +60,6 @@ pub(super) fn rename_edit(
     }))
 }
 
-/// Convert an original-source [`Span`] into an LSP [`Range`].
 fn span_to_range(line_index: &LineIndex, text: &str, span: Span) -> Range {
     Range::new(
         line_index.position(text, span.start as usize),
@@ -118,14 +77,10 @@ mod tests {
         Url::parse("file:///fake.aozora").expect("valid URL")
     }
 
-    /// Position of the byte offset `off` in `src`.
     fn pos(src: &str, off: usize) -> Position {
         LineIndex::new(src).position(src, off)
     }
 
-    /// Apply `edits` (disjoint, against the original document) to `text`,
-    /// returning the result. Edits are applied back-to-front so earlier byte
-    /// offsets stay valid.
     fn apply_text_edits(text: &str, line_index: &LineIndex, edits: &[TextEdit]) -> String {
         let mut spans: Vec<(usize, usize, String)> = edits
             .iter()
@@ -147,7 +102,6 @@ mod tests {
         out
     }
 
-    /// Convenience: parse `src`, run `prepare_rename_at` at byte offset `off`.
     fn prepare_at(src: &str, off: usize) -> Option<PrepareRenameResponse> {
         let tree = aozora::parse(src)
             .expect("source fits parser span limit")
@@ -155,7 +109,6 @@ mod tests {
         prepare_rename_at(&tree, src, &LineIndex::new(src), pos(src, off))
     }
 
-    /// Convenience: parse `src`, run `rename_edit` at byte offset `off`.
     fn rename_at(
         src: &str,
         off: usize,
@@ -174,7 +127,6 @@ mod tests {
         )
     }
 
-    /// The single change-list of a workspace edit.
     fn changes(edit: &WorkspaceEdit) -> &Vec<TextEdit> {
         edit.changes
             .as_ref()
@@ -183,8 +135,6 @@ mod tests {
             .next()
             .expect("one uri")
     }
-
-    // ---- prepareRename -------------------------------------------------
 
     #[test]
     fn prepare_on_container_open_is_renameable() {
@@ -220,7 +170,6 @@ mod tests {
 
     #[test]
     fn prepare_on_ruby_is_not_renameable() {
-        // Ruby is Direct (self-contained), so it is not a coupled rename site.
         let src = "日本《にほん》";
         let off = src.find('《').expect("ruby reading");
         assert!(prepare_at(src, off).is_none());
@@ -229,7 +178,6 @@ mod tests {
     #[test]
     fn prepare_past_eof_is_none() {
         let src = "本文";
-        // A position on a line past the buffer maps to no byte offset.
         let tree = aozora::parse(src)
             .expect("source fits parser span limit")
             .snapshot();
@@ -246,8 +194,6 @@ mod tests {
         };
         assert_eq!(placeholder, "［＃ここから2字下げ］");
     }
-
-    // ---- rename: container ---------------------------------------------
 
     const CONTAINER_DOC: &str = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
 
@@ -274,7 +220,6 @@ mod tests {
         let edit = rename_at(CONTAINER_DOC, off, "［＃ここから4字下げ］")
             .expect("amount change is verifiable")
             .expect("edit emitted");
-        // The close keyword (字下げ終わり) carries no amount, so it is verbatim:
         assert!(!changes(&edit).is_empty());
         let applied = apply_text_edits(
             CONTAINER_DOC,
@@ -284,8 +229,6 @@ mod tests {
         assert!(applied.contains("［＃ここから4字下げ］"));
         assert!(applied.contains("［＃ここで字下げ終わり］"));
     }
-
-    // ---- rename: forward reference -------------------------------------
 
     #[test]
     fn rename_forward_target_change_edits_literal_and_bracket() {
@@ -301,7 +244,6 @@ mod tests {
 
     #[test]
     fn rename_forward_attribute_only_change_edits_one_region() {
-        // 傍点 → 傍線 keeps the same target, so the literal is unchanged: one edit.
         let src = "青空がひろがる、その［＃「青空」に傍点］";
         let off = src.rfind('［').expect("directive bracket");
         let edit = rename_at(src, off, "［＃「青空」に傍線］")
@@ -314,7 +256,6 @@ mod tests {
 
     #[test]
     fn rename_ambiguous_referent_declines() {
-        // 青空 appears twice upstream → no unique referent → splice declines.
         let src = "青空と青空、その［＃「青空」に傍点］";
         let off = src.rfind('［').expect("directive bracket");
         let err =
@@ -336,7 +277,6 @@ mod tests {
         );
     }
 
-    /// The emitted LSP edits must reproduce the core edit plan byte-for-byte.
     fn assert_round_trip(src: &str, off: usize, new_name: &str) {
         let tree = aozora::parse(src)
             .expect("source fits parser span limit")

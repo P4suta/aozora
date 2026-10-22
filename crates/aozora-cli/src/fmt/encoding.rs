@@ -1,10 +1,3 @@
-//! Source-encoding selection for `aozora fmt`.
-//!
-//! `aozora fmt` reads real Aozora Bunko files, which ship as Shift_JIS; the
-//! [`Encoding`] value-enum and [`decode`] resolve their bytes to text. clap
-//! lives here rather than in the lower-level `aozora-encoding` crate, which
-//! stays dependency-light.
-
 use std::borrow::Cow;
 
 use anyhow::{Context, Result};
@@ -21,10 +14,8 @@ use crate::fmt::source;
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Encoding {
-    /// Detect the source encoding: valid UTF-8 is used as-is, otherwise the
-    /// bytes are decoded as Shift_JIS. The right default — Aozora files ship
-    /// as Shift_JIS, but UTF-8 mirrors are common, and the caller should not
-    /// have to know which they have.
+    /// Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are decoded as Shift_JIS.
+    /// The right default — Aozora files ship as Shift_JIS, but UTF-8 mirrors are common, and the caller should not have to know which they have.
     #[default]
     Auto,
     /// Force UTF-8; error if the input is not valid UTF-8.
@@ -44,18 +35,6 @@ pub(super) struct Decoded {
     pub encoding: FileEncoding,
 }
 
-/// Decode `raw` under `encoding` into an owned `String`.
-///
-/// The decoded text is checked against the parser core's `u32` span limit:
-/// Shift_JIS → UTF-8 can expand past it even when the raw bytes fit, so this is
-/// the choke point every read path shares.
-///
-/// # Errors
-///
-/// Returns an error when the bytes do not decode under the chosen encoding
-/// (invalid UTF-8 for [`Encoding::Utf8`], a Shift_JIS decode failure for
-/// [`Encoding::Sjis`], or neither for [`Encoding::Auto`]), or when the decoded
-/// text exceeds [`MAX_SOURCE_BYTES`](crate::fmt::source::MAX_SOURCE_BYTES).
 pub(crate) fn decode(raw: &[u8], encoding: Encoding) -> Result<String> {
     decode_with_encoding(raw, encoding).map(|decoded| decoded.text)
 }
@@ -124,10 +103,8 @@ mod tests {
 
     #[test]
     fn sjis_decodes_shift_jis_bytes() {
-        // 「日本」in Shift_JIS.
         let sjis = [0x93, 0xfa, 0x96, 0x7b];
         assert_eq!(decode(&sjis, Encoding::Sjis).unwrap(), "日本");
-        // Auto falls back to Shift_JIS for non-UTF-8 bytes.
         assert_eq!(decode(&sjis, Encoding::Auto).unwrap(), "日本");
     }
 

@@ -1,41 +1,12 @@
-//! Cross-surface parity gate — CLI channel.
-//!
-//! One golden authority (`crates/aozora-conformance/fixtures/render`),
-//! N thin walkers. This walker drives the real `aozora` binary over
-//! every render fixture and asserts each subcommand's stdout is
-//! byte-identical to the committed golden the in-process `render_gate`
-//! pins. A binding that reframes, re-orders, or drops a byte lights up
-//! here without the golden itself having to be duplicated per channel.
-//!
-//! Surface → invocation:
-//!
-//! | surface           | `aozora …`                       | framing |
-//! |-------------------|----------------------------------|---------|
-//! | `html`            | `render FILE`                    | verbatim |
-//! | `serialize`       | `fmt FILE`                       | verbatim |
-//! | `diagnostics`     | `inspect diagnostics FILE`       | + `\n` |
-//! | `nodes`           | `inspect nodes FILE`             | + `\n` |
-//! | `pairs`           | `inspect pairs FILE`             | + `\n` |
-//! | `container_pairs` | `inspect container-pairs FILE`   | + `\n` |
-//!
-//! Framing: `render` / `fmt` `write_all` their payload verbatim, so the
-//! bytes equal the golden exactly. `inspect` is line-oriented — it frames
-//! its JSON with `writeln!`, appending exactly one `\n` after the
-//! conformance loader removes an optional storage line ending — so the four
-//! `inspect` surfaces are compared against `golden + "\n"`. The trailing
-//! newline is asserted, not trimmed: a
-//! *second* stray newline (or a missing one) still fails the gate.
+//! CLI output parity with the shared conformance fixtures.
 
 use aozora_conformance::{RenderFixture, fixtures_root};
 
 mod common;
 
-/// Whether a subcommand appends a trailing newline to its payload.
 #[derive(Clone, Copy)]
 enum Framing {
-    /// `write_all(payload)` — bytes reach stdout unframed (`render` / `fmt`).
     Verbatim,
-    /// `writeln!(payload)` — exactly one `\n` is appended (`inspect …`).
     TrailingNewline,
 }
 
@@ -45,8 +16,6 @@ fn load() -> Vec<RenderFixture> {
     fixtures
 }
 
-/// Run `aozora <argv> <fixture-source>` and return its stdout as a
-/// `String`, asserting a clean exit.
 fn run(argv: &[&str], source_path: &str) -> String {
     let mut cmdline: Vec<&str> = argv.to_vec();
     cmdline.push(source_path);
@@ -64,8 +33,6 @@ fn run(argv: &[&str], source_path: &str) -> String {
     String::from_utf8(out.stdout).expect("aozora stdout is valid UTF-8")
 }
 
-/// Walk every fixture, comparing `aozora <argv> source.txt` against the
-/// golden selected by `golden`, under the given `framing`.
 fn walk(
     surface: &str,
     argv: &[&str],

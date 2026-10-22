@@ -77,8 +77,6 @@ fn serve<R: BufRead, W: Write>(reader: R, writer: &mut W) -> anyhow::Result<()> 
     Ok(())
 }
 
-// The CLI integration smoke owns process stdio; protocol behavior is tested
-// without global handles through `serve` below.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn run() -> anyhow::Result<ExitCode> {
     let stdin = io::stdin();

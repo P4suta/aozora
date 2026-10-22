@@ -1,14 +1,3 @@
-//! tower-lsp `LanguageServer` implementation for aozora documents.
-//!
-//! Each open document is an `Arc<OpenDocument>` in a [`DashMap`]: a
-//! mutable core `Document` behind a `parking_lot::Mutex` and a reader-side
-//! `DocSnapshot` in an `ArcSwap`. Handlers read via `state.snapshot()` without
-//! contending with edits.
-//!
-//! Text sync is incremental (see [`crate::lsp::capabilities`]): `did_change`
-//! applies source-byte edits through the core document and debounces diagnostic
-//! publication.
-
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,35 +44,18 @@ use crate::lsp::position::{byte_offset_to_position, position_to_byte_offset};
 use crate::lsp::semantic_tokens::semantic_tokens_full;
 use aozora::resolve_gaiji;
 
-/// LSP backend for aozora documents.
-///
-/// `Clone` so the debounced publish task (`schedule_publish_debounced`)
-/// can hold its own backend handle for the duration of the sleep
-/// without keeping a borrow on the original. The fields are cheap to
-/// clone — `Client` is a channel handle and `docs` is
-/// `Arc<DashMap<...>>`.
 #[derive(Debug, Clone)]
 pub(crate) struct AozoraLanguageServer {
     client: Client,
     docs: Arc<DashMap<Url, Arc<OpenDocument>>>,
 }
 
-/// Quiet-period before the slow Rust parse + `publishDiagnostics`
-/// runs. While the user is actively typing, every keystroke bumps
-/// `parse_version`, and the debounced task at the tail end of the
-/// burst is the only one that actually proceeds to parse — earlier
-/// tasks see a stale version and exit.
 const PUBLISH_DEBOUNCE_MS: u64 = 150;
 
-/// Render a byte length as whole MiB for user-facing messages. Integer
-/// division sidesteps the `clippy::cast_precision_loss` a float cast
-/// would trip.
 const fn as_mib(bytes: usize) -> usize {
     bytes / (1024 * 1024)
 }
 
-/// `$size` / `$limit` for the oversize catalog messages: the document's own
-/// size and the cap it crossed, both in whole MiB.
 fn oversize_args(byte_len: usize) -> FluentArgs<'static> {
     let mut args = FluentArgs::new();
     args.set("size", as_mib(byte_len).to_string());
@@ -91,8 +63,6 @@ fn oversize_args(byte_len: usize) -> FluentArgs<'static> {
     args
 }
 
-/// The single informational diagnostic published for a document above
-/// [`MAX_DOCUMENT_BYTES`], anchored at the start of the file.
 fn oversize_notice(byte_len: usize, lang: &LanguageIdentifier) -> Diagnostic {
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
@@ -102,10 +72,6 @@ fn oversize_notice(byte_len: usize, lang: &LanguageIdentifier) -> Diagnostic {
     }
 }
 
-/// Inert HTML fragment returned by `aozora/renderHtml` for an oversized
-/// document. The prose is the built-in catalog's and the only interpolations
-/// are two integers — no document content reaches it, so it is safe in the
-/// (script-free, strict-CSP) preview webview.
 fn oversize_html_notice(byte_len: usize, lang: &LanguageIdentifier) -> String {
     format!(
         "<p>{}</p>",
@@ -114,9 +80,6 @@ fn oversize_html_notice(byte_len: usize, lang: &LanguageIdentifier) -> String {
 }
 
 impl AozoraLanguageServer {
-    /// Build a new backend. Signature matches `LspService::new`'s
-    /// `FnOnce(Client) -> AozoraLanguageServer` requirement, so users call this
-    /// as `LspService::new(AozoraLanguageServer::new)`.
     #[must_use]
     pub(crate) fn new(client: Client) -> Self {
         Self {
@@ -129,29 +92,15 @@ impl AozoraLanguageServer {
         let diags = self.lookup(&uri).map_or_else(Vec::new, |state| {
             let snap = state.snapshot();
             let rope = snap.doc_rope();
-            // Oversized documents skip semantic analysis; surface a
-            // single informational notice in place of (empty)
-            // diagnostics so the absence of squiggles is explained.
-            // (`len_bytes()` off the rope avoids materialising `doc_text()`
-            // solely for the size check.)
             if exceeds_document_cap(rope.len_bytes()) {
                 return vec![oversize_notice(rope.len_bytes(), ui_lang())];
             }
-            // Map diagnostic spans against the doc-level rope (O(log n) line
-            // lookups, byte-identical to a LineIndex over the raw text since
-            // ropey counts only `\n`) — no per-publish line-table rebuild.
             let view = DocLineView::Rope(rope);
             diagnostics_from_aozora(&view, snap.core().diagnostics(), ui_lang())
         });
         self.client.publish_diagnostics(uri, diags, None).await;
     }
 
-    /// Schedule a diagnostic publish after `PUBLISH_DEBOUNCE_MS` quiet time.
-    /// Multiple rapid edits coalesce — only the task whose recorded
-    /// `target_version` matches the doc's current `edit_version`
-    /// after the sleep proceeds. Earlier tasks observe a newer
-    /// version and exit silently, so a 100-keystroke burst still
-    /// produces exactly one parse + one publish.
     fn schedule_publish_debounced(&self, uri: Url) {
         let Some(state) = self.lookup(&uri) else {
             return;
@@ -162,10 +111,6 @@ impl AozoraLanguageServer {
             sleep(Duration::from_millis(PUBLISH_DEBOUNCE_MS)).await;
             backend.publish_if_current(uri, target_version).await;
         });
-        // Cap in-flight debounce tasks at one per document: aborting the
-        // previous pending task stops an edit flood from piling up
-        // sleeping tasks. The version guard in the task body still
-        // decides who actually publishes.
         state.replace_debounce_task(task.abort_handle());
     }
 
@@ -173,7 +118,6 @@ impl AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return;
         };
-        // Cheap early-out: a newer edit's own debounce task will publish.
         if state.edit_version() != target_version {
             return;
         }
@@ -199,38 +143,16 @@ impl AozoraLanguageServer {
             .await;
     }
 
-    /// Lookup helper — returns an `Arc<OpenDocument>` clone so the caller
-    /// can drop the dashmap shard reference immediately and operate
-    /// on a wait-free snapshot. The dashmap shard read is microseconds;
-    /// the Arc clone is a single atomic increment.
     fn lookup(&self, uri: &Url) -> Option<Arc<OpenDocument>> {
         self.docs.get(uri).map(|entry| Arc::clone(&*entry))
     }
 
-    /// Custom LSP request `aozora/renderHtml`.
-    ///
-    /// Returns the document's HTML rendering (via `aozora`'s AST
-    /// HTML renderer). The `VSCode` preview pane consumes this on
-    /// every `did_change` (debounced) so the webview stays in
-    /// lock-step with the editor buffer.
-    ///
-    /// Argument shape: `{ "uri": "file:///…" }`. Returns
-    /// `{ "html": "<…>", "paused": false }` or an `invalid_params`
-    /// error when no document is open at the URI.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`JsonRpcError::invalid_params`] if no open document
-    /// matches `params.uri`.
     pub(crate) async fn render_html(&self, params: RenderHtmlParams) -> Result<RenderHtmlResult> {
-        // Wait-free snapshot — reads never contend with the writer hot path.
         let state = self
             .lookup(&params.uri)
             .ok_or_else(|| JsonRpcError::invalid_params("no document at uri"))?;
         let snapshot = state.snapshot();
         let text_len = snapshot.doc_text().len();
-        // The preview drives the same O(n) renderer; skip it for
-        // oversized documents and return a short inert notice instead.
         if exceeds_document_cap(text_len) {
             return Ok(RenderHtmlResult {
                 html: oversize_html_notice(text_len, ui_lang()),
@@ -251,31 +173,7 @@ impl AozoraLanguageServer {
         })
     }
 
-    /// Custom LSP request `aozora/gaijiSpans`.
-    ///
-    /// Returns every resolvable `※［＃...］` gaiji span in the
-    /// requested document, mapped to its resolved glyph and the
-    /// LSP-coordinate range that the editor should fold over. The
-    /// VS Code extension consumes this on every `did_change` to
-    /// drive its inline-collapse decoration.
-    ///
-    /// Reads run lock-free against the pre-extracted
-    /// [`crate::lsp::gaiji_spans::GaijiSpan`] list maintained by
-    /// `OpenDocument`; no parser is invoked.
-    ///
-    /// # Errors
-    /// Returns [`JsonRpcError::invalid_params`] if no document at
-    /// `params.uri` is open.
     pub(crate) async fn gaiji_spans(&self, params: GaijiSpansParams) -> Result<GaijiSpansResult> {
-        // tower-lsp's `custom_method` macro requires an async fn, but
-        // the body is purely sync: the gaiji span list is pre-built
-        // by `OpenDocument`, lookup is lock-free, no I/O happens. Make
-        // the async signature *real* by yielding once to the tokio
-        // runtime — that turns "fake async with `clippy::unused_async`"
-        // into a genuine cooperative yield point, which is also what
-        // a well-behaved LSP request handler should do anyway (lets
-        // higher-priority tasks like `did_change` not starve when
-        // many `gaiji_spans` requests pile up after a paste).
         yield_now().await;
         let state = self
             .lookup(&params.uri)
@@ -301,61 +199,35 @@ impl AozoraLanguageServer {
     }
 }
 
-/// Parameters for the `aozora/renderHtml` custom LSP request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenderHtmlParams {
     pub(crate) uri: Url,
 }
 
-/// Result for the `aozora/renderHtml` custom LSP request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RenderHtmlResult {
     pub(crate) html: String,
-    /// True when `html` is the oversize placeholder rather than a rendering
-    /// of the document. A client that treats the placeholder as the
-    /// document's HTML silently loses the document — the VS Code
-    /// extension's "Export HTML" would write the notice to disk and report
-    /// success — so the distinction is on the wire, not left to prose
-    /// sniffing.
     pub(crate) paused: bool,
 }
 
-/// Parameters for the `aozora/gaijiSpans` custom LSP request — the
-/// VS Code extension polls this on every `did_change` to refresh
-/// its inline-fold decorations. The extension swaps each
-/// `※［＃...］` source span for its resolved character so the
-/// reader sees clean prose; the source re-appears when the cursor
-/// enters the span.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GaijiSpansParams {
     pub(crate) uri: Url,
 }
 
-/// One gaiji span exposed to the editor for visual collapse.
-/// `range` is in LSP coordinates (line/UTF-16 column); `resolved`
-/// is the rendered glyph (may be a single char or a 2-codepoint
-/// combining sequence).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct GaijiSpanView {
     pub(crate) range: Range,
     pub(crate) resolved: String,
 }
 
-/// Result for `aozora/gaijiSpans` — every resolvable gaiji in the
-/// document. Unresolved spans (description not in any table, no
-/// `U+XXXX` form) are omitted because the editor has nothing to
-/// substitute in their place.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct GaijiSpansResult {
     pub(crate) spans: Vec<GaijiSpanView>,
 }
 
-/// JSON shape of the `aozora.canonicalizeSlug` `execute_command`
-/// argument. Lifted to the top level so the
-/// `clippy::items_after_statements` lint does not fire from inside
-/// the `LanguageServer::execute_command` body.
 #[derive(serde::Deserialize)]
 struct CanonicalizeArgs {
     uri: Url,
@@ -390,10 +262,6 @@ fn validate_lsp_changes(
     Some(validated)
 }
 
-/// Convert an LSP `TextDocumentContentChangeEvent` into a
-/// [`ByteEdit`] against `source`. Returns `None` when the event
-/// has no range (caller handles full-replacement separately) or when
-/// either Position fails to resolve to a valid byte offset.
 fn lsp_change_to_edit(source: &str, change: &TextDocumentContentChangeEvent) -> Option<ByteEdit> {
     let range = change.range?;
     let start = position_to_byte_offset(source, range.start)?;
@@ -412,10 +280,6 @@ fn exact_position_to_byte_offset(source: &str, position: Position) -> Option<usi
 #[tower_lsp::async_trait]
 impl LanguageServer for AozoraLanguageServer {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        // The editor's own UI language, reported by every client that speaks
-        // the spec (VS Code's `env.language`, and the same field helix /
-        // neovim / Zed send). It decides the server's, once — see
-        // `super::server_locale` for where it sits in the precedence chain.
         init_ui_lang(params.locale.as_deref());
         Ok(InitializeResult {
             capabilities: server_capabilities(),
@@ -483,20 +347,12 @@ impl LanguageServer for AozoraLanguageServer {
         }
         state.set_lsp_version(p.text_document.version);
         drop(update);
-        // Schedule the slow semantic parse + publish as a debounced
-        // background task. `did_change` itself returns now (microseconds
-        // later), so subsequent LSP requests are not blocked by
-        // tower-lsp's notification ordering.
         self.schedule_publish_debounced(uri);
     }
 
     #[tracing::instrument(skip_all, fields(uri = %p.text_document.uri))]
     async fn did_close(&self, p: DidCloseTextDocumentParams) {
         let uri = p.text_document.uri;
-        // Dump the per-document Metrics snapshot at INFO so a third
-        // party reading the log can reconstruct the document's
-        // session-long behaviour. Done BEFORE the remove so we
-        // still have access to the entry.
         if let Some(state) = self.lookup(&uri) {
             let snapshot = state.metrics.snapshot();
             tracing::info!(
@@ -516,9 +372,6 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Wait-free snapshot read; the parse + serialize runs on the
-        // blocking pool so concurrent hover/codeAction requests on the
-        // async runtime don't stall.
         let text = state.snapshot().doc_text().to_owned();
         let edits = spawn_blocking(move || format_edits(&text))
             .await
@@ -573,9 +426,6 @@ impl LanguageServer for AozoraLanguageServer {
         Ok(hover_at(snap.core(), position, ui_lang()))
     }
 
-    // `inlay_hint` deliberately *not* implemented — see
-    // `crate::lsp::capabilities`, which declines to advertise it.
-
     #[tracing::instrument(
         skip_all,
         fields(
@@ -593,8 +443,6 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Tree-free source scan — bounded look-window around the
-        // cursor (≤ 1 KB each side). No parser invoked.
         let snap = state.snapshot();
         Ok(linked_editing_at(
             snap.doc_text(),
@@ -645,10 +493,6 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        // The splice engine is the authority: `rename_edit` returns
-        // `Ok(None)` for a non-coupled / no-op / gate-failed position and
-        // `Err(SpliceError)` when the splice is honestly declined (an
-        // ambiguous referent, a ruby-base literal, a 、-joined multi-target).
         let outcome = rename_edit(
             snap.core(),
             snap.doc_text(),
@@ -679,25 +523,9 @@ impl LanguageServer for AozoraLanguageServer {
             return Ok(None);
         };
         let snap = state.snapshot();
-        // Tree-free: completion_at does its own bounded look-back
-        // scan from the cursor (no parser needed). Removing the
-        // `with_tree` call eliminates a full document re-parse on
-        // every keystroke during slug completion — a major win on
-        // 40 KB+ documents.
         let lang = ui_lang();
         let mut items: Vec<CompletionItem> = completion_at(snap.doc_text(), position, lang);
-        // Append the half-width emmet suggestions. They are
-        // independent of the parsed tree (the trigger detection is a
-        // pure prefix scan), so we don't pay for a `with_tree` call
-        // and the slug catalogue + emmet items merge into one
-        // response — VS Code's own ranker decides ordering.
         items.extend(emmet_completions(snap.doc_text(), position, lang));
-        // Plus the structured-snippet items that fire after the
-        // user just typed `#` / `｜` / `《` / `※`. Each item carries
-        // a snippet body with `${…}` Tab-stops so accepting expands
-        // into a fully-structured form (`［＃改ページ］` etc) and
-        // leaves the cursor in the next placeholder for IDE-style
-        // Tab navigation (the user-asked feature, 2026-04-29).
         items.extend(snippet_completions(snap.doc_text(), position, lang));
         if items.is_empty() {
             Ok(None)
@@ -712,16 +540,8 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Quick fixes for diagnostics in the request range. Each
-        // diagnostic carries a `data` payload describing what kind
-        // of fix is appropriate; `quick_fix_actions` decodes those
-        // and returns concrete `WorkspaceEdit`s.
         let lang = ui_lang();
         let mut actions = quick_fix_actions(&uri, &p.context.diagnostics, lang);
-        // Plus the wrap-selection actions when the user has a
-        // non-empty selection. Both kinds are returned together so
-        // the editor's lightbulb / right-click menu shows them in
-        // one list.
         let snap = state.snapshot();
         actions.extend(wrap_selection_actions(
             snap.doc_text(),
@@ -809,8 +629,6 @@ impl LanguageServer for AozoraLanguageServer {
         let Some(state) = self.lookup(&uri) else {
             return Ok(None);
         };
-        // Pure text-scan against the snapshot — no parser invoked.
-        // Wait-free: a single ArcSwap load + a linear pass over the snapshot.
         let snap = state.snapshot();
         let ranges = folding_ranges(snap.doc_text());
         if ranges.is_empty() {
@@ -859,31 +677,10 @@ impl LanguageServer for AozoraLanguageServer {
 
 #[cfg(test)]
 mod tests {
-    //! Multi-angle test suite for the LSP incremental sync layer.
-    //!
-    //! Test sections:
-    //!
-    //! 1. **Conversion** — `lsp_change_to_edit` handles every well-formed
-    //!    LSP `Range` correctly (ASCII, multibyte, multi-line, surrogate
-    //!    pairs, edge offsets) and rejects ill-formed ones.
-    //! 2. **`OpenDocument` mechanics** — `apply_changes` / `replace_text`
-    //!    move the buffer through the right transitions including
-    //!    failure recovery.
-    //! 3. **Batch semantics** — multiple `TextDocumentContentChangeEvent`
-    //!    events in one notification compose to the same final state
-    //!    as individual notifications, preserving LSP's source-order
-    //!    rule.
-    //! 4. **Edit content shapes** — pure-text fast path vs aozora-trigger
-    //!    fallback path; both must remain byte-equivalent to a full parse.
-    //! 5. **End-to-end equivalence** — long edit sequences and full
-    //!    replacements both converge to the buffer the user actually sees.
 
     use super::*;
     use tower_lsp::lsp_types::{Position, Range};
 
-    /// The locale-parameterised helpers below are pinned to English rather
-    /// than read through `ui_lang()` — these tests must not depend on a
-    /// process-global the rest of the binary also seeds.
     fn en() -> LanguageIdentifier {
         "en".parse().expect("en parses")
     }
@@ -896,10 +693,6 @@ mod tests {
         }
     }
 
-    /// Replay a batch of LSP changes against a starting buffer using
-    /// the same logic the backend uses, so tests can compare against
-    /// "what the editor thinks the buffer looks like" without booting
-    /// tower-lsp.
     fn replay_lsp_changes(initial: &str, changes: &[TextDocumentContentChangeEvent]) -> String {
         let state = OpenDocument::new(initial.to_owned());
         for change in changes {
@@ -911,15 +704,11 @@ mod tests {
                 None if change.range.is_none() => {
                     state.replace_text(change.text.clone());
                 }
-                None => {} // unresolvable range: skip (matches backend behaviour)
+                None => {}
             }
         }
         state.snapshot().doc_text().to_owned()
     }
-
-    // ---------------------------------------------------------------
-    // 1. Conversion: lsp_change_to_edit
-    // ---------------------------------------------------------------
 
     #[test]
     fn lsp_change_to_edit_returns_none_for_full_replacement() {
@@ -941,7 +730,6 @@ mod tests {
 
     #[test]
     fn lsp_change_to_edit_handles_multibyte_position() {
-        // 「あ」 is 1 UTF-16 unit, 3 UTF-8 bytes.
         let source = "あいう";
         let change = synth_change(
             Some(Range::new(Position::new(0, 1), Position::new(0, 2))),
@@ -954,8 +742,6 @@ mod tests {
 
     #[test]
     fn lsp_change_to_edit_rejects_inverted_range() {
-        // end < start must be refused rather than producing a backwards
-        // splice that would corrupt the buffer.
         let change = synth_change(
             Some(Range::new(Position::new(0, 5), Position::new(0, 2))),
             "x",
@@ -966,7 +752,6 @@ mod tests {
     #[test]
     fn lsp_change_to_edit_handles_pure_deletion() {
         let source = "abcdef";
-        // Delete bytes 2..4 ("cd").
         let change = synth_change(
             Some(Range::new(Position::new(0, 2), Position::new(0, 4))),
             "",
@@ -975,10 +760,6 @@ mod tests {
         assert_eq!(edit.range, 2..4);
         assert_eq!(edit.new_text, "");
     }
-
-    // ---------------------------------------------------------------
-    // 2. OpenDocument mechanics
-    // ---------------------------------------------------------------
 
     #[test]
     fn doc_state_new_populates_snapshot() {
@@ -1007,7 +788,7 @@ mod tests {
 
     #[test]
     fn doc_state_apply_changes_rejects_non_char_boundary_edit() {
-        let state = OpenDocument::new("あ".to_owned()); // 3 bytes
+        let state = OpenDocument::new("あ".to_owned());
         let edit = ByteEdit::new(1..2, "x".to_owned());
         let result = state.apply_changes(&[edit]);
         assert!(result.is_none(), "cross-boundary edit must be rejected");
@@ -1024,10 +805,6 @@ mod tests {
         state.replace_text("｜青梅《おうめ》".to_owned());
         assert_eq!(state.snapshot().doc_text(), "｜青梅《おうめ》");
     }
-
-    // ---------------------------------------------------------------
-    // 3. Batch semantics
-    // ---------------------------------------------------------------
 
     #[test]
     fn two_events_in_one_batch_apply_in_source_order() {
@@ -1060,10 +837,6 @@ mod tests {
         assert_eq!(final_text, "FRESH");
     }
 
-    // ---------------------------------------------------------------
-    // 4. Edit content shapes
-    // ---------------------------------------------------------------
-
     #[test]
     fn edit_inserting_aozora_trigger_reparses() {
         let state = OpenDocument::new("plain text".to_owned());
@@ -1087,10 +860,6 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------
-    // 5. End-to-end
-    // ---------------------------------------------------------------
-
     #[test]
     fn sequence_of_incremental_edits_converges_to_full_text() {
         let state = OpenDocument::new(String::new());
@@ -1101,11 +870,6 @@ mod tests {
         assert_eq!(state.snapshot().doc_text(), "hello world");
     }
 
-    /// Replay-style helper that mirrors the production `did_change`
-    /// loop *including* the post-edit `rebuild_snapshot_now()` so the
-    /// next iteration's snapshot reflects every prior apply. The
-    /// production loop is bounded by `multi`, but the test driver
-    /// always rebuilds since we want a deterministic final state.
     fn replay_lsp_changes_with_sync_rebuild(
         initial: &str,
         changes: &[TextDocumentContentChangeEvent],
@@ -1127,31 +891,14 @@ mod tests {
         state.snapshot().doc_text().to_owned()
     }
 
-    /// Regression: `did_change` defers snapshot rebuilds onto a tokio
-    /// blocking task, so the 2nd change in a multi-change batch saw
-    /// the *pre-batch* snapshot text. With the in-batch rebuild
-    /// added, the second change resolves against the post-1st-change
-    /// text — matching LSP's "apply in array order" semantics. We
-    /// rebuild eagerly between every iteration in this test driver
-    /// to mirror the multi-change branch deterministically.
     #[test]
     fn multi_change_batch_resolves_against_post_prior_change_text() {
-        // Insert at byte 0, then insert at byte 1 (which only exists
-        // after the first insert). Without the rebuild, the second
-        // edit would be evaluated against the original text where
-        // byte 1 means a different position.
         let initial = "abc";
         let changes = vec![
-            // Change 0: insert "X" at start. Post-1st text: "Xabc".
             synth_change(
                 Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
                 "X",
             ),
-            // Change 1: insert "Y" at column 4 of the post-1st text
-            // (= byte 4 = end of "Xabc"). The pre-batch text is
-            // only 3 chars wide, so column 4 there clamps to EOF; if
-            // the snapshot rebuild were skipped the apply would
-            // either reject the edit or land it in the wrong spot.
             synth_change(
                 Some(Range::new(Position::new(0, 4), Position::new(0, 4))),
                 "Y",
@@ -1161,23 +908,14 @@ mod tests {
         assert_eq!(final_text, "XabcY");
     }
 
-    /// The same batch driven through the *production* code path with
-    /// `AozoraLanguageServer::did_change` would also need the in-batch rebuild;
-    /// pin a mid-batch insert that's only valid against the
-    /// post-1st-change text, exercised through `OpenDocument` directly.
     #[test]
     fn multi_change_batch_dependent_offsets_round_trip_via_doc_state() {
-        // Initial: "本文" (6 bytes). Change 0 inserts "｜" (3 bytes)
-        // at the start. Change 1 inserts "" + "あ"《"a"》 form needs
-        // an offset only present after the first insert. Pin the
-        // expected final text so any drift fails loudly.
         let initial = "本文";
         let changes = vec![
             synth_change(
                 Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
                 "｜",
             ),
-            // Column 1 of post-1st text = 1 char in (just past `｜`).
             synth_change(
                 Some(Range::new(Position::new(0, 1), Position::new(0, 1))),
                 "X",
@@ -1187,11 +925,6 @@ mod tests {
         assert_eq!(final_text, "｜X本文");
     }
 
-    /// `DocSnapshot` rebuild between iterations must be a no-op for
-    /// single-change batches — we don't want to pay the rebuild cost
-    /// when the next iteration won't run. Pin that the rebuild path
-    /// produces the same final state as the no-rebuild path for a
-    /// single change.
     #[test]
     fn single_change_batch_does_not_need_in_batch_rebuild() {
         let initial = "abc";
@@ -1205,37 +938,14 @@ mod tests {
         assert_eq!(with_rebuild, "aXc");
     }
 
-    // ---------------------------------------------------------------
-    // 6. Byte-length → MiB helper + oversize notice construction
-    // ---------------------------------------------------------------
-
-    /// Pin `as_mib` to exact whole-MiB integer division. The single
-    /// `2 MiB → 2` assertion alone distinguishes the correct
-    /// `bytes / (1024 * 1024)` from every mutation cargo-mutants
-    /// applies to it:
-    ///
-    /// * `-> 0` and `-> 1` constant returns (2 ≠ 0, 2 ≠ 1),
-    /// * `/` → `%` (`2 MiB % 1 MiB == 0`),
-    /// * `/` → `*` (a value in the trillions),
-    /// * `1024 * 1024` divisor with `*` → `+` (divisor `2048` → `1024`),
-    /// * `1024 * 1024` divisor with `*` → `/` (divisor `1` → `2 MiB`).
     #[test]
     fn as_mib_is_whole_mebibyte_floor_division() {
         assert_eq!(as_mib(2 * 1024 * 1024), 2);
-        // A second, larger reference point rules out any accidental
-        // affine relationship that happens to pass at 2 MiB.
         assert_eq!(as_mib(48 * 1024 * 1024), 48);
-        // Whole-MiB floor: one byte under a MiB truncates to zero, and
-        // exactly one MiB is one.
         assert_eq!(as_mib(1024 * 1024 - 1), 0);
         assert_eq!(as_mib(1024 * 1024), 1);
     }
 
-    /// Pin the mutable fields of the oversize notice `Diagnostic`.
-    /// Deleting the `source` field defaults it to `None`; deleting the
-    /// `message` field defaults it to the empty string — both are
-    /// caught here. The `severity` and `range` are pinned for the
-    /// contract even though they are not the mutation targets.
     #[test]
     fn oversize_notice_pins_source_severity_and_message() {
         let diag = oversize_notice(20 * 1024 * 1024, &en());
@@ -1252,10 +962,6 @@ mod tests {
         );
     }
 
-    /// Both oversize messages resolve out of the catalog with their `$size` /
-    /// `$limit` bound. A missing key surfaces as the bare key (`crate::i18n`'s
-    /// gap signal) and an unbound placeable as `{$size}` — neither carries the
-    /// numbers, so asserting on those catches either.
     #[test]
     fn oversize_messages_resolve_in_every_locale() {
         for tag in ["en", "ja", "zh"] {
@@ -1273,8 +979,6 @@ mod tests {
         }
     }
 
-    /// The preview notice is a single inert paragraph — the webview renders it
-    /// as HTML, so nothing but the catalog's prose may reach it.
     #[test]
     fn oversize_html_notice_is_one_inert_paragraph() {
         let html = oversize_html_notice(20 * 1024 * 1024, &en());
@@ -1285,20 +989,6 @@ mod tests {
 
 #[cfg(test)]
 mod e2e {
-    //! In-process **end-to-end** tests that drive the real [`LspService`]
-    //! as a [`tower::Service`] — the same path tower-lsp's stdio runloop
-    //! uses, minus the stdin/stdout framing. This exercises the async
-    //! `LanguageServer` handler bodies, the custom-method router
-    //! (`aozora/renderHtml`, `aozora/gaijiSpans`), the
-    //! `initialize → initialized` state transition that ungates
-    //! server→client traffic, the debounced publish path, and the
-    //! loopback `ClientSocket` — none of which the pure-helper tests in
-    //! `mod tests` (which deliberately skip booting tower-lsp) can reach.
-    //!
-    //! The harness splits the loopback socket and answers any
-    //! server-issued request (e.g. `workspace/applyEdit` from
-    //! `execute_command`) with a success response, so handlers that await
-    //! a client reply make progress instead of hanging.
 
     use super::*;
 
@@ -1314,19 +1004,13 @@ mod e2e {
 
     const URI: &str = "file:///doc.aozora";
 
-    /// A live `LspService` plus the server→client traffic a background
-    /// drain task has collected.
     struct TestServer {
         service: LspService<AozoraLanguageServer>,
-        /// Every server→client message observed so far (publishDiagnostics,
-        /// logMessage, applyEdit, …), in arrival order.
         outbound: Arc<Mutex<Vec<Request>>>,
         next_id: i64,
     }
 
     impl TestServer {
-        /// Build the service through the same `crate::lsp::build_service` the
-        /// daemon uses, then spawn the loopback drain + auto-responder.
         fn new() -> Self {
             let (service, socket) = super::super::build_service();
             let outbound = Arc::new(Mutex::new(Vec::new()));
@@ -1336,9 +1020,6 @@ mod e2e {
                 while let Some(req) = requests.next().await {
                     let id = req.id().cloned();
                     collected.lock().push(req);
-                    // A server→client *request* (has an id) expects a reply;
-                    // a permissive success body keeps `apply_edit` and any
-                    // future client request from blocking forever.
                     if let Some(id) = id {
                         let resp = Response::from_parts(id, Ok(json!({ "applied": true })));
                         _ = responses.send(resp).await;
@@ -1352,7 +1033,6 @@ mod e2e {
             }
         }
 
-        /// Drive one message through the tower stack (ready → call).
         async fn call(&mut self, req: Request) -> Option<Response> {
             poll_fn(|cx| self.service.poll_ready(cx))
                 .await
@@ -1360,12 +1040,8 @@ mod e2e {
             self.service.call(req).await.expect("service call")
         }
 
-        /// Issue a request (auto-incrementing id) and return the raw
-        /// jsonrpc result so callers can assert on error paths too.
         async fn try_request(&mut self, method: &'static str, params: Value) -> Result<Value> {
             self.next_id += 1;
-            // `Value::Null` means "omit params" (e.g. `shutdown`), matching a
-            // real client — the router rejects an explicit `params: null`.
             let mut builder = Request::build(method).id(self.next_id);
             if !params.is_null() {
                 builder = builder.params(params);
@@ -1377,14 +1053,12 @@ mod e2e {
             resp.into_parts().1
         }
 
-        /// Issue a request expected to succeed, returning its result value.
         async fn request(&mut self, method: &'static str, params: Value) -> Value {
             self.try_request(method, params)
                 .await
                 .expect("request result is Ok")
         }
 
-        /// Fire a notification (no id); asserts the server returns no response.
         async fn notify(&mut self, method: &'static str, params: Value) {
             let mut builder = Request::build(method);
             if !params.is_null() {
@@ -1396,11 +1070,6 @@ mod e2e {
             );
         }
 
-        /// `initialize` + `initialized` so the client send-gate opens.
-        ///
-        /// Reports a locale like a real client does, which fixes the UI
-        /// language these tests run against instead of leaving it to the
-        /// `LANG` of whoever runs them.
         async fn handshake(&mut self) -> Value {
             let caps = self
                 .request("initialize", json!({ "capabilities": {}, "locale": "en" }))
@@ -1424,17 +1093,12 @@ mod e2e {
             .await;
         }
 
-        /// Spin (real time, generously bounded — covers the 150 ms publish
-        /// debounce) until `f` extracts a value from the collected
-        /// server→client traffic.
         #[expect(
             clippy::future_not_send,
             reason = "test-only harness driven by block_on in #[tokio::test]; never spawned, so Send is not required"
         )]
         async fn wait_until<T>(&self, f: impl Fn(&[Request]) -> Option<T>) -> T {
             for _ in 0..400 {
-                // Bind so the parking_lot guard drops at the end of this
-                // statement — never held across the `.await` below.
                 let found = f(&self.outbound.lock());
                 if let Some(found) = found {
                     return found;
@@ -1450,7 +1114,6 @@ mod e2e {
             panic!("timed out waiting on outbound traffic; saw: {seen:?}");
         }
 
-        /// Count how many server→client messages of `method` arrived.
         fn outbound_count(&self, method: &str) -> usize {
             self.outbound
                 .lock()
@@ -1462,7 +1125,6 @@ mod e2e {
 
     const PUBLISH: &str = "textDocument/publishDiagnostics";
 
-    /// Pull the `diagnostics` array out of a `publishDiagnostics` request.
     fn published_diagnostics(req: &Request) -> Vec<Value> {
         req.params()
             .and_then(|p| p.get("diagnostics"))
@@ -1471,20 +1133,10 @@ mod e2e {
             .unwrap_or_default()
     }
 
-    /// True when `diag` is the single informational oversize notice
-    /// (`oversize_notice`) rather than a real analysis diagnostic. Used
-    /// by the boundary tests to tell "analysed normally" apart from
-    /// "replaced by the oversize notice". The MiB figures it quotes are the
-    /// one thing no analysis diagnostic says — and they read the same in
-    /// every locale, so this does not pin the notice's prose.
     fn is_oversize_notice(diag: &Value) -> bool {
-        diag["severity"] == json!(3 /* INFORMATION */)
-            && diag["message"].as_str().is_some_and(|m| m.contains("MiB"))
+        diag["severity"] == json!(3) && diag["message"].as_str().is_some_and(|m| m.contains("MiB"))
     }
 
-    /// Fetch a document's rendered HTML body (custom `aozora/renderHtml`).
-    /// A read-back probe for tests that need to inspect the settled
-    /// buffer text after a `did_change`.
     async fn rendered_html(server: &mut TestServer) -> String {
         let resp = server
             .request("aozora/renderHtml", json!({ "uri": URI }))
@@ -1492,8 +1144,6 @@ mod e2e {
         resp["html"].as_str().unwrap_or_default().to_owned()
     }
 
-    /// Wait until at least `n` `publishDiagnostics` have been observed,
-    /// returning the `n`-th (1-indexed) one.
     #[expect(
         clippy::future_not_send,
         reason = "test-only helper driven by block_on in #[tokio::test]; never spawned, so Send is not required"
@@ -1509,17 +1159,6 @@ mod e2e {
             .await
     }
 
-    // -----------------------------------------------------------------
-    // Lifecycle + capabilities
-    // -----------------------------------------------------------------
-
-    /// The handshake hands back exactly what [`crate::lsp::capabilities`]
-    /// declares. The equality pins the seam; the field assertions pin the
-    /// contents against the wire, naming each provider by the key a client
-    /// reads — so deleting one from `server_capabilities` fails here, in a
-    /// test that runs without the `internals` feature (the capability
-    /// snapshot in `tests/snapshots.rs` is behind it, and a self-referential
-    /// `to_value(server_capabilities())` compare would move with the deletion).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn initialize_advertises_capabilities_and_server_info() {
         let mut server = TestServer::new();
@@ -1530,10 +1169,7 @@ mod e2e {
             serde_json::to_value(server_capabilities()).expect("capabilities serialize"),
         );
 
-        // Incremental sync (kind 2), so a keystroke ships a delta not the file.
         assert_eq!(advertised["textDocumentSync"], json!(2));
-        // The provider set clients dispatch on: each must be present, and
-        // deleting its field from `server_capabilities` must reach this test.
         assert_eq!(advertised["documentFormattingProvider"], json!(true));
         assert_eq!(advertised["hoverProvider"], json!(true));
         assert_eq!(advertised["documentSymbolProvider"], json!(true));
@@ -1564,7 +1200,6 @@ mod e2e {
             advertised["semanticTokensProvider"]["legend"]["tokenTypes"].is_array(),
             "semantic tokens must advertise a legend: {caps}",
         );
-        // The deliberate omission is a contract too (see `crate::lsp::capabilities`).
         assert!(
             advertised["inlayHintProvider"].is_null(),
             "inlay hints are deliberately not advertised: {caps}",
@@ -1576,10 +1211,6 @@ mod e2e {
         );
         assert_eq!(caps["serverInfo"]["name"], json!("aozora-lsp"));
     }
-
-    // -----------------------------------------------------------------
-    // Read-only request handlers
-    // -----------------------------------------------------------------
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn formatting_returns_edit_for_noncanonical_and_empty_when_canonical() {
@@ -1655,10 +1286,6 @@ mod e2e {
         assert!(hover.is_null());
     }
 
-    // -----------------------------------------------------------------
-    // Diagnostics publish (requires the initialized send-gate)
-    // -----------------------------------------------------------------
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn did_open_publishes_diagnostics_for_pua_collision() {
         let mut server = TestServer::new();
@@ -1670,9 +1297,7 @@ mod e2e {
             .await;
         let diags = published_diagnostics(&publish);
         assert!(
-            diags
-                .iter()
-                .any(|d| d["severity"] == json!(2 /* WARNING */)),
+            diags.iter().any(|d| d["severity"] == json!(2)),
             "expected a warning diagnostic, got: {diags:?}",
         );
     }
@@ -1682,13 +1307,10 @@ mod e2e {
         let mut server = TestServer::new();
         server.handshake().await;
         server.did_open("abc").await;
-        // Wait for the open-time publish so we can detect the *second*,
-        // debounced publish the change schedules.
         server
             .wait_until(|reqs| (reqs.iter().any(|r| r.method() == PUBLISH)).then_some(()))
             .await;
 
-        // Incremental insert "d" at end → "abcd".
         server
             .notify(
                 "textDocument/didChange",
@@ -1705,17 +1327,12 @@ mod e2e {
             )
             .await;
 
-        // The debounced reparse must republish (exercises the
-        // schedule → reparse_and_publish_if_current path).
         server
             .wait_until(|reqs| {
                 (reqs.iter().filter(|r| r.method() == PUBLISH).count() >= 2).then_some(())
             })
             .await;
 
-        // The post-change buffer is the canonical plain ASCII "abcd", so a
-        // formatting request returns zero edits — a read-back probe that the
-        // incremental edit landed cleanly in the snapshot.
         let edits = server
             .request(
                 "textDocument/formatting",
@@ -1745,7 +1362,6 @@ mod e2e {
             )
             .await;
 
-        // didClose publishes an empty diagnostic set to clear squiggles.
         let cleared = server
             .wait_until(|reqs| {
                 reqs.iter()
@@ -1757,17 +1373,11 @@ mod e2e {
         assert!(published_diagnostics(&cleared).is_empty());
     }
 
-    // -----------------------------------------------------------------
-    // The remaining read-only request handlers (shape-level wiring;
-    // each module's own unit tests pin the detailed output).
-    // -----------------------------------------------------------------
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn completion_handler_returns_items_at_trigger() {
         let mut server = TestServer::new();
         server.handshake().await;
         server.did_open("｜青空《あおぞら》").await;
-        // Inside the reading `《…》` the slug/emmet catalogues fire.
         let resp = server
             .request(
                 "textDocument/completion",
@@ -1777,8 +1387,6 @@ mod e2e {
                 }),
             )
             .await;
-        // Either an array or a CompletionList object, or null — assert the
-        // handler produced well-formed JSON (no error path).
         assert!(resp.is_array() || resp.is_object() || resp.is_null());
     }
 
@@ -1798,7 +1406,6 @@ mod e2e {
                 }),
             )
             .await;
-        // Typing `[` converts to full-width `［`.
         let edits = resp.as_array().expect("onType yields edits");
         assert!(
             edits.iter().any(|e| e["newText"].as_str() == Some("［")),
@@ -1814,7 +1421,6 @@ mod e2e {
             .did_open("｜青空《あおぞら》\n［＃大見出し］序章\n本文")
             .await;
 
-        // linkedEditingRange: cursor inside a paired delimiter.
         let linked = server
             .request(
                 "textDocument/linkedEditingRange",
@@ -1858,7 +1464,6 @@ mod e2e {
     async fn rename_provider_prepare_and_apply_drive() {
         let mut server = TestServer::new();
         let caps = server.handshake().await;
-        // initialize advertises a rename provider with prepareProvider true.
         assert_eq!(
             caps["capabilities"]["renameProvider"]["prepareProvider"],
             json!(true),
@@ -1869,7 +1474,6 @@ mod e2e {
             .did_open("前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後")
             .await;
 
-        // prepareRename on the open marker → non-null RangeWithPlaceholder.
         let prep = server
             .request(
                 "textDocument/prepareRename",
@@ -1886,7 +1490,6 @@ mod e2e {
             "prepareRename on the open marker must return a placeholder, got: {prep}",
         );
 
-        // prepareRename on plain text → null.
         let prep_plain = server
             .request(
                 "textDocument/prepareRename",
@@ -1901,7 +1504,6 @@ mod e2e {
             "plain text is not renameable: {prep_plain}"
         );
 
-        // rename newName "［＃ここから罫囲み］" → WorkspaceEdit mentioning 罫囲み終わり.
         let rename = server
             .request(
                 "textDocument/rename",
@@ -1950,10 +1552,6 @@ mod e2e {
         assert!(resp.is_array() || resp.is_null());
     }
 
-    // -----------------------------------------------------------------
-    // execute_command
-    // -----------------------------------------------------------------
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn execute_command_canonicalize_applies_workspace_edit() {
         let mut server = TestServer::new();
@@ -1978,7 +1576,6 @@ mod e2e {
             )
             .await;
         assert!(result.is_null(), "command returns null on success");
-        // The server must have asked the client to apply the canonicalised edit.
         let apply = server
             .wait_until(|reqs| {
                 reqs.iter()
@@ -2294,8 +1891,6 @@ mod e2e {
     async fn execute_command_malformed_argument_is_invalid_params() {
         let mut server = TestServer::new();
         server.handshake().await;
-        // Right command, but the argument object is missing `range`/`body`,
-        // so `serde_json::from_value::<CanonicalizeArgs>` fails.
         let err = server
             .try_request(
                 "workspace/executeCommand",
@@ -2334,10 +1929,6 @@ mod e2e {
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert_eq!(server.outbound_count("workspace/applyEdit"), 0);
     }
-
-    // -----------------------------------------------------------------
-    // Custom methods
-    // -----------------------------------------------------------------
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn render_html_returns_markup_and_errors_on_unopened() {
@@ -2383,11 +1974,6 @@ mod e2e {
         assert_eq!(err.code, ErrorCode::InvalidParams);
     }
 
-    // -----------------------------------------------------------------
-    // Oversize document path (>16 MiB): semantic analysis is skipped and
-    // an informational notice replaces diagnostics / preview HTML.
-    // -----------------------------------------------------------------
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn oversize_document_gets_notice_not_analysis() {
         let mut server = TestServer::new();
@@ -2400,7 +1986,7 @@ mod e2e {
             .await;
         let diags = published_diagnostics(&publish);
         assert_eq!(diags.len(), 1, "oversize doc gets exactly one notice");
-        assert_eq!(diags[0]["severity"], json!(3 /* INFORMATION */));
+        assert_eq!(diags[0]["severity"], json!(3));
 
         let render = server
             .request("aozora/renderHtml", json!({ "uri": URI }))
@@ -2419,8 +2005,6 @@ mod e2e {
         );
     }
 
-    /// The counterpart to the oversize path: an analysed document renders its
-    /// own HTML and says so, so `paused` actually discriminates.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rendered_document_is_not_flagged_paused() {
         let mut server = TestServer::new();
@@ -2446,8 +2030,6 @@ mod e2e {
         assert!(resp.is_null());
     }
 
-    /// The `initialized` handler logs a readiness line to the client.
-    /// Replacing its body with `()` drops that message.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn initialized_logs_ready_message() {
         let mut server = TestServer::new();
@@ -2468,14 +2050,6 @@ mod e2e {
         assert_eq!(log.method(), "window/logMessage");
     }
 
-    // -----------------------------------------------------------------
-    // did_change match-arm + multi-change semantics
-    // -----------------------------------------------------------------
-
-    /// A content change with no `range` is a whole-document replacement,
-    /// routed through the `None if change.range.is_none()` arm to
-    /// `replace_text`. Forcing that guard to `false` would drop the
-    /// change and leave the buffer stale.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn did_change_full_replacement_replaces_buffer() {
         let mut server = TestServer::new();
@@ -2501,11 +2075,6 @@ mod e2e {
         );
     }
 
-    /// An inverted range (`end < start`) makes `lsp_change_to_edit`
-    /// return `None` while `change.range.is_some()`, so the correct
-    /// guard `change.range.is_none()` is false and the change is
-    /// skipped. Forcing the guard to `true` would wrongly call
-    /// `replace_text(change.text)` and clobber the buffer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn did_change_inverted_range_is_skipped_not_applied() {
         let mut server = TestServer::new();
@@ -2581,18 +2150,11 @@ mod e2e {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Handlers whose whole body a "-> Ok(None)" mutation could stub out
-    // -----------------------------------------------------------------
-
-    /// `linkedEditingRange` on a ruby-open delimiter must return the
-    /// paired open/close ranges — a bare `Ok(None)` stub would drop them.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn linked_editing_returns_pair_on_ruby_delimiter() {
         let mut server = TestServer::new();
         server.handshake().await;
         server.did_open("｜青空《あおぞら》").await;
-        // 《 sits at UTF-16 column 3; 》 at column 8.
         let linked = server
             .request(
                 "textDocument/linkedEditingRange",
@@ -2607,8 +2169,6 @@ mod e2e {
         assert_eq!(ranges[1]["start"]["character"], json!(8), "{linked}");
     }
 
-    /// `completion` right after a half-width `[` must surface the emmet
-    /// full-width `［` item — a bare `Ok(None)` stub would drop it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn completion_returns_emmet_item_on_half_width_bracket() {
         let mut server = TestServer::new();
@@ -2631,11 +2191,6 @@ mod e2e {
         );
     }
 
-    /// `foldingRange` over a `ここから … 終わり` block returns exactly one
-    /// fold with a specific span. Pins the whole handler against the
-    /// `Ok(None)`, `Ok(Some(vec![]))`, and `Ok(Some(vec![Default::default()]))`
-    /// stubs: `None` → null, empty vec → wrong length, and the default
-    /// fold has `startLine`/`endLine` 0, not the real 1..3.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn folding_range_returns_exact_block_fold() {
         let mut server = TestServer::new();
@@ -2655,8 +2210,6 @@ mod e2e {
         assert_eq!(ranges[0]["endLine"], json!(3), "{folding}");
     }
 
-    /// `documentSymbol` over a heading returns exactly that heading — a
-    /// bare `Ok(None)` stub would drop the outline.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn document_symbol_returns_heading_symbol() {
         let mut server = TestServer::new();
@@ -2673,29 +2226,10 @@ mod e2e {
         assert_eq!(arr[0]["name"], json!("序章"), "{symbols}");
     }
 
-    // -----------------------------------------------------------------
-    // The `exceeds_document_cap` size gate — behavioural side.
-    //
-    // The exclusive boundary itself (`len > cap`) is pinned cheaply on the
-    // pure predicate in `document_limit::tests` (integer lengths, no fixture),
-    // which kills every `>`→`>=`/`==`/`<` mutant at all five call sites. What
-    // still needs a real over-limit buffer is the BEHAVIOUR on the oversize
-    // side: the debounced reparse must post the notice instead of analysing.
-    // -----------------------------------------------------------------
-
-    /// A document one byte ABOVE the limit must always take the oversize
-    /// branch in the debounced reparse. `raw.len_bytes() > MAX` mutated
-    /// to `<` would push an over-limit buffer into full analysis. This
-    /// stays cheap on the correct path — an over-limit buffer skips the
-    /// parse entirely, so only the mutant does real work.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn over_limit_reparse_posts_oversize_notice() {
         let mut server = TestServer::new();
         server.handshake().await;
-        // One byte over MAX, as moderate-length lines (see
-        // `exact_max_document_is_analysed_not_noticed`): the correct path
-        // skips analysis entirely, and only the mutant that flips the gate
-        // parses, so keep even that off any per-line quadratic path.
         let line: String = "a".repeat(63) + "\n";
         let mut big = line.repeat(MAX_DOCUMENT_BYTES / 64);
         big.push('a');

@@ -3,43 +3,6 @@
     reason = "REPL initialization validates parser bounds and history state"
 )]
 
-//! `aozora repl` — an interactive read-eval-print loop for the notation.
-//!
-//! The terminal counterpart to the web playground: type one line of Aozora
-//! notation and see its parsed `nodes`, rendered `html`, projected Pandoc AST,
-//! and diagnostics immediately. Ideal for learning the notation and prototyping
-//! a fragment without creating a file.
-//!
-//! It owns **no** parsing, rendering, or diagnostic logic. Every view is the
-//! exact engine surface the other subcommands emit — [`json::nodes`] (as
-//! `aozora inspect nodes`), [`aozora::Snapshot::to_html`] (as `aozora render`),
-//! [`aozora::pandoc::to_pandoc`] (as `aozora pandoc`), and
-//! [`aozora::diagnostics_text`] (the portable plain-text report) — so the REPL
-//! can never disagree with the rest of the CLI. It defines no machine surface
-//! of its own: the output is human chrome around unmodified engine bytes.
-//!
-//! Meta-commands, all prefixed with `:`, tune the session without leaving it:
-//!
-//! - `:mode {nodes,html,pandoc,all}` — which view(s) to show (default `all`).
-//! - `:lang {en,ja,zh}` — the message language of the chrome (resolved through
-//!   the same [`crate::i18n::resolve`] the `--lang` flag uses).
-//! - `:encoding {auto,utf8,sjis}` — the decoder `:load` applies (typed lines
-//!   are already UTF-8, so this only affects file loads).
-//! - `:load FILE` — parse a file's contents through the current mode.
-//! - `:help` — list the commands.
-//! - `:quit` — leave (Ctrl-D does the same).
-//!
-//! The heart is the pure [`eval`] function (`source + mode + lang → output
-//! string`) and the pure [`Repl::handle`] line dispatcher: both are exercised
-//! without a terminal by the unit tests. Line editing and history come from
-//! `rustyline` on a TTY; a piped stdin falls through to a plain line reader, so
-//! `printf '…\n:quit\n' | aozora repl` is scriptable.
-//!
-//! The chrome (banner, labels, acknowledgements, help, errors) is localized
-//! through the `i18n` catalog; the view *bytes* — node JSON, HTML, Pandoc JSON, and
-//! the English diagnostic report — are the machine axis and stay identical in
-//! every locale (ADR-0033).
-
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -57,7 +20,6 @@ use tracing::debug;
 
 use crate::Encoding;
 
-/// The interactive prompt shown before each typed line on a terminal.
 const PROMPT: &str = "aozora> ";
 
 /// `aozora repl` — start the interactive notation loop.
@@ -70,21 +32,18 @@ const PROMPT: &str = "aozora> ";
 Inside the loop, type notation to see it parsed, or a :command:
   :mode html   :lang ja   :encoding sjis   :load FILE   :help   :quit")]
 pub(crate) struct ReplArgs {
-    /// Which view(s) to show for each line: `nodes`, `html`, `pandoc`, or
-    /// `all` (the default). Changeable in-session with `:mode`.
+    /// Which view(s) to show for each line: `nodes`, `html`, `pandoc`, or `all` (the default).
+    /// Changeable in-session with `:mode`.
     #[arg(long, value_enum, default_value_t = Mode::default())]
     mode: Mode,
 
-    /// Source encoding for `:load`: `auto` (default), `utf8`, or `sjis`. Typed
-    /// lines are already UTF-8, so this only governs file loads. Changeable
-    /// in-session with `:encoding`.
+    /// Source encoding for `:load`: `auto` (default), `utf8`, or `sjis`.
+    /// Typed lines are already UTF-8, so this only governs file loads.
+    /// Changeable in-session with `:encoding`.
     #[arg(long, short = 'E', value_enum, default_value_t = Encoding::default())]
     encoding: Encoding,
 }
 
-/// Which view(s) each evaluated line prints. Diagnostics are always shown
-/// after the selected views — they are the point of the loop — so this only
-/// selects the *representation* of the parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 enum Mode {
     /// The parsed source nodes as JSON (as `aozora inspect nodes`).
@@ -112,8 +71,6 @@ impl Mode {
     }
 }
 
-/// The mutable session state a meta-command tunes: the active view mode, the
-/// chrome language, and the `:load` decoder.
 #[derive(Debug)]
 struct Repl {
     mode: Mode,
@@ -121,17 +78,10 @@ struct Repl {
     encoding: Encoding,
 }
 
-/// What handling one input line produces — the pure result [`Repl::handle`]
-/// returns, kept free of I/O so the whole dispatch is unit-testable.
 #[derive(Debug, PartialEq, Eq)]
 enum Effect {
-    /// Emit this text (an evaluated line, an acknowledgement, help, or an
-    /// error), then keep looping. Carries no trailing newline; the caller adds
-    /// exactly one.
     Print(String),
-    /// A blank line: emit nothing, keep looping.
     Silent,
-    /// Leave the loop (`:quit` or Ctrl-D).
     Quit,
 }
 
@@ -144,9 +94,6 @@ impl Repl {
         }
     }
 
-    /// Dispatch one input `line`: a blank line is [`Effect::Silent`], a
-    /// `:`-prefixed line is a meta-command, and anything else is notation
-    /// evaluated through the current mode. Pure apart from `:load`'s file read.
     fn handle(&mut self, line: &str) -> Effect {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -155,15 +102,9 @@ impl Repl {
         if let Some(rest) = trimmed.strip_prefix(':') {
             return self.meta(rest);
         }
-        // Evaluate the raw line (not the trimmed copy) so leading notation
-        // whitespace, which can be significant, survives into the parse.
         Effect::Print(eval(line, self.mode, &self.lang))
     }
 
-    /// Handle a meta-command: `rest` is the text after the leading `:`, e.g.
-    /// `mode html` or `load book.txt`. Splits the verb from its argument and
-    /// routes to the matching setter, returning the acknowledgement / error to
-    /// print (or [`Effect::Quit`]).
     fn meta(&mut self, rest: &str) -> Effect {
         let (cmd, arg) = match rest.split_once(char::is_whitespace) {
             Some((cmd, arg)) => (cmd, arg.trim()),
@@ -204,16 +145,11 @@ impl Repl {
         if arg.is_empty() {
             return Effect::Print(self.usage("lang", "en, ja, zh"));
         }
-        // Resolve through the same negotiation the `--lang` flag uses: an
-        // unknown tag settles on English (with no error), exactly as the flag.
         self.lang = i18n::resolve(Some(arg), None, None, None);
         let tag = self.lang.to_string();
         Effect::Print(self.line("repl-lang-set", "lang", &tag))
     }
 
-    /// `:load FILE` — read the file with the current decoder and evaluate its
-    /// whole contents through the current mode. A read/decode failure is
-    /// reported inline (the loop keeps running); it is never fatal.
     fn load(&self, arg: &str) -> Effect {
         if arg.is_empty() {
             return Effect::Print(self.usage("load", "FILE"));
@@ -221,7 +157,6 @@ impl Repl {
         let path = Path::new(arg);
         match read_source(path, self.encoding) {
             Ok(source) => {
-                // The `loaded <path>` header, then the file's evaluation.
                 let mut out = self.line("repl-loaded", "path", &path.display().to_string());
                 out.push('\n');
                 out.push_str(&eval(&source, self.mode, &self.lang));
@@ -231,15 +166,12 @@ impl Repl {
         }
     }
 
-    /// A localized single-`{$field}` line — a `:mode` / `:lang` / `:encoding`
-    /// acknowledgement (`mode → all`) or the `:load` header (`loaded FILE`).
     fn line(&self, key: &str, field: &str, value: &str) -> String {
         let mut args = FluentArgs::new();
         args.set(field, value.to_owned());
         i18n::tf(&self.lang, key, &args)
     }
 
-    /// The `usage: :cmd EXPECTED` line for a missing or invalid argument.
     fn usage(&self, cmd: &str, expected: &str) -> String {
         let mut args = FluentArgs::new();
         args.set("cmd", cmd.to_owned());
@@ -256,17 +188,11 @@ impl Repl {
     fn load_error(&self, path: &Path, err: &anyhow::Error) -> String {
         let mut args = FluentArgs::new();
         args.set("path", path.display().to_string());
-        // `{err:#}` flattens the anyhow context chain into one line; it is the
-        // English engine message (machine axis), woven into the localized frame.
         args.set("error", format!("{err:#}"));
         i18n::tf(&self.lang, "repl-load-error", &args)
     }
 }
 
-/// Evaluate one `source` fragment through `mode`: render the selected views
-/// plus the always-shown diagnostics into a single labelled block (no trailing
-/// newline). Pure — the same parse tree every other subcommand would produce,
-/// so the bytes match `inspect nodes` / `render` / `pandoc` exactly.
 fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
     let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
@@ -288,9 +214,6 @@ fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
         sections.push(section(&i18n::t(lang, "repl-label-pandoc"), &pandoc));
     }
 
-    // Diagnostics are always shown — the whole point of the loop. Reuse the
-    // engine's portable plain-text report (English machine axis); an empty
-    // report becomes the localized "no diagnostics" line.
     let report = aozora::diagnostics_text(source, tree.diagnostics());
     let diag = if report.trim().is_empty() {
         i18n::t(lang, "repl-diag-none")
@@ -302,14 +225,10 @@ fn eval(source: &str, mode: Mode, lang: &LanguageIdentifier) -> String {
     sections.join("\n\n")
 }
 
-/// A `label\n<body>` section, the body stripped of trailing newlines so the
-/// caller's `\n\n` join spaces sections uniformly.
 fn section(label: &str, body: &str) -> String {
     format!("{label}\n{}", body.trim_end_matches('\n'))
 }
 
-/// The canonical value-enum tag for `value`, e.g. `Mode::All` → `all` — the
-/// spelling shown in an acknowledgement and accepted back by `:mode` / `:encoding`.
 fn value_tag<T: ValueEnum>(value: &T) -> String {
     value
         .to_possible_value()
@@ -318,8 +237,6 @@ fn value_tag<T: ValueEnum>(value: &T) -> String {
         .to_owned()
 }
 
-/// The comma-separated list of every accepted tag for value-enum `T`, e.g.
-/// `nodes, html, pandoc, all` — woven into a `usage:` line.
 fn value_choices<T: ValueEnum>() -> String {
     T::value_variants()
         .iter()
@@ -329,22 +246,15 @@ fn value_choices<T: ValueEnum>() -> String {
         .join(", ")
 }
 
-/// The localized `:help` body listing the meta-commands.
 fn help(lang: &LanguageIdentifier) -> String {
     i18n::t(lang, "repl-help")
 }
 
-/// Read and decode a `:load` target through the shared formatter reader /
-/// decoder — the exact byte path `read_source` in `main` uses, so a loaded
-/// file parses identically to `aozora render FILE`.
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
     let raw = read_file(path).with_context(|| format!("failed to read {}", path.display()))?;
     decode(&raw, encoding)
 }
 
-/// Run the loop: print the banner, then read lines — with `rustyline` editing /
-/// history on a terminal, or a plain reader when stdin is piped — until `:quit`
-/// or EOF. Always exits 0; per-line errors are reported inline and never fatal.
 pub(crate) fn run(args: &ReplArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     let mut repl = Repl::new(args.mode, lang.clone(), args.encoding);
 
@@ -358,8 +268,6 @@ pub(crate) fn run(args: &ReplArgs, lang: &LanguageIdentifier) -> Result<ExitCode
     }
 }
 
-/// Emit one line's [`Effect`] to `out`, returning whether the loop continues.
-/// The single seam both the interactive and scripted readers drive.
 fn step(repl: &mut Repl, line: &str, out: &mut impl Write) -> io::Result<bool> {
     match repl.handle(line) {
         Effect::Print(text) => {
@@ -371,8 +279,6 @@ fn step(repl: &mut Repl, line: &str, out: &mut impl Write) -> io::Result<bool> {
     }
 }
 
-/// The terminal path: `rustyline` supplies line editing and in-session history.
-/// Ctrl-C abandons the current line and re-prompts; Ctrl-D (EOF) leaves.
 fn interactive(repl: &mut Repl) -> Result<ExitCode> {
     let mut editor = DefaultEditor::new().context("failed to initialise the line editor")?;
     loop {
@@ -387,19 +293,13 @@ fn interactive(repl: &mut Repl) -> Result<ExitCode> {
                     return Ok(ExitCode::SUCCESS);
                 }
             }
-            // Ctrl-C: discard the current line and prompt again.
             Err(ReadlineError::Interrupted) => {}
-            // Ctrl-D on an empty line: leave the loop.
             Err(ReadlineError::Eof) => return Ok(ExitCode::SUCCESS),
             Err(err) => return Err(err).context("line editor error"),
         }
     }
 }
 
-/// The piped-stdin path: read the (finite) input plainly — no editing or
-/// history, since there is no terminal — and evaluate it line by line, so
-/// `printf '…\n:quit\n' | aozora repl` works in scripts and tests. `:quit`
-/// stops early; otherwise it runs to EOF.
 fn scripted(repl: &mut Repl) -> Result<ExitCode> {
     let input = io::read_to_string(io::stdin()).context("failed to read stdin")?;
     let mut stdout = output::stdout();
@@ -423,15 +323,12 @@ mod tests {
         Repl::new(Mode::All, lang("en"), Encoding::Auto)
     }
 
-    /// The `Effect::Print` text, or a panic naming the wrong variant.
     fn printed(effect: Effect) -> String {
         match effect {
             Effect::Print(text) => text,
             other => panic!("expected Effect::Print, got {other:?}"),
         }
     }
-
-    // --- Mode::shows_*: the view-selection predicates ---
 
     #[test]
     fn mode_predicates_select_the_right_views() {
@@ -444,17 +341,13 @@ mod tests {
                 && !Mode::Pandoc.shows_html()
                 && Mode::Pandoc.shows_pandoc()
         );
-        // `All` shows every view.
         assert!(Mode::All.shows_nodes() && Mode::All.shows_html() && Mode::All.shows_pandoc());
     }
-
-    // --- eval: each view reuses the exact engine bytes ---
 
     #[test]
     fn eval_html_matches_the_render_engine() {
         let source = "｜青空《あおぞら》";
         let out = eval(source, Mode::Html, &lang("en"));
-        // The HTML view is byte-for-byte the `aozora render` output.
         let expected = aozora::parse(source)
             .expect("source fits parser span limit")
             .snapshot()
@@ -467,9 +360,7 @@ mod tests {
             out.contains(&expected),
             "html view carries render bytes: {out}"
         );
-        // The ruby base and reading both survive into the shown HTML.
         assert!(out.contains("青空") && out.contains("あおぞら"), "{out}");
-        // Only the HTML view (plus diagnostics) is shown — no nodes / pandoc.
         assert!(out.contains("html:"), "{out}");
         assert!(!out.contains("nodes:") && !out.contains("pandoc:"), "{out}");
     }
@@ -509,21 +400,16 @@ mod tests {
 
     #[test]
     fn eval_surfaces_a_diagnostic_from_the_engine() {
-        // A private-use sentinel reliably fires a diagnostic (the same fixture
-        // the engine's own diagnostics_text test uses).
         let out = eval("bad \u{E001} char", Mode::Html, &lang("en"));
         assert!(
             !out.contains("(no diagnostics)"),
             "diagnostic expected: {out}"
         );
-        // The engine's report carries the namespaced code; the REPL shows it verbatim.
         assert!(out.contains("aozora::"), "diagnostic code shown: {out}");
     }
 
     #[test]
     fn eval_diagnostics_stay_english_under_a_localized_chrome() {
-        // The chrome label localizes; the diagnostic report bytes (machine axis)
-        // do not — they are identical to the English run.
         let ja = eval("bad \u{E001} char", Mode::Html, &lang("ja"));
         let en = eval("bad \u{E001} char", Mode::Html, &lang("en"));
         let code = "aozora::";
@@ -531,8 +417,6 @@ mod tests {
         let en_code = &en[en.find(code).expect("en has the code")..];
         assert_eq!(ja_code, en_code, "diagnostic report is language-invariant");
     }
-
-    // --- handle: blank / source / meta routing ---
 
     #[test]
     fn handle_blank_line_is_silent() {
@@ -545,8 +429,6 @@ mod tests {
         let printed = printed(repl().handle("青空《あおぞら》"));
         assert!(printed.contains("青空"), "notation is evaluated: {printed}");
     }
-
-    // --- :quit / :help ---
 
     #[test]
     fn meta_quit_and_aliases_leave_the_loop() {
@@ -563,15 +445,12 @@ mod tests {
         }
     }
 
-    // --- :mode ---
-
     #[test]
     fn meta_mode_switches_the_view_and_acknowledges() {
         let mut r = repl();
         let ack = printed(r.handle(":mode html"));
         assert_eq!(r.mode, Mode::Html, "state updated");
         assert!(ack.contains("html"), "ack names the new mode: {ack}");
-        // The switch takes effect on the next evaluated line.
         let out = printed(r.handle("青空《あおぞら》"));
         assert!(
             out.contains("html:") && !out.contains("nodes:"),
@@ -590,8 +469,6 @@ mod tests {
         );
     }
 
-    // --- :encoding ---
-
     #[test]
     fn meta_encoding_switches_the_decoder() {
         let mut r = repl();
@@ -608,22 +485,18 @@ mod tests {
         assert!(msg.contains("usage"), "usage shown: {msg}");
     }
 
-    // --- :lang ---
-
     #[test]
     fn meta_lang_switches_the_chrome_language() {
         let mut r = repl();
         let ack = printed(r.handle(":lang ja"));
         assert_eq!(r.lang, lang("ja"), "language updated");
         assert!(ack.contains("ja"), "ack names the language: {ack}");
-        // Chrome now localizes: the "no diagnostics" line is Japanese, not English.
         let out = printed(r.handle("青空《あおぞら》"));
         assert!(!out.contains("(no diagnostics)"), "chrome localized: {out}");
     }
 
     #[test]
     fn meta_lang_unknown_tag_settles_on_english() {
-        // Mirrors `--lang`: an unknown tag negotiates to English, not an error.
         let mut r = repl();
         r.handle(":lang xx");
         assert_eq!(r.lang, lang("en"), "unknown tag → en");
@@ -634,8 +507,6 @@ mod tests {
         let msg = printed(repl().handle(":lang"));
         assert!(msg.contains("usage"), "missing arg → usage: {msg}");
     }
-
-    // --- :load ---
 
     #[test]
     fn meta_load_reads_a_file_and_evaluates_it() {
@@ -649,7 +520,6 @@ mod tests {
 
         let mut r = repl();
         let out = printed(r.handle(&format!(":load {}", file.path().display())));
-        // The header names the loaded path, and the file's content is evaluated.
         assert!(
             out.contains(&file.path().display().to_string()),
             "load header: {out}"
@@ -661,7 +531,6 @@ mod tests {
     fn meta_load_reports_a_missing_file_inline() {
         let mut r = repl();
         let out = printed(r.handle(":load /no/such/aozora-repl-4b1c9d.txt"));
-        // A read failure is a printed, non-fatal error — the loop keeps going.
         assert!(
             out.contains("/no/such/aozora-repl-4b1c9d.txt"),
             "names the path: {out}"
@@ -674,15 +543,11 @@ mod tests {
         assert!(msg.contains("usage") && msg.contains("FILE"), "{msg}");
     }
 
-    // --- unknown meta ---
-
     #[test]
     fn meta_unknown_command_is_reported() {
         let msg = printed(repl().handle(":frobnicate"));
         assert!(msg.contains("frobnicate"), "names the bad command: {msg}");
     }
-
-    // --- value helpers ---
 
     #[test]
     fn value_tag_round_trips_each_mode() {
@@ -696,8 +561,6 @@ mod tests {
     fn value_choices_lists_every_mode() {
         assert_eq!(value_choices::<Mode>(), "nodes, html, pandoc, all");
     }
-
-    // --- step: the shared read/emit seam ---
 
     #[test]
     fn step_prints_and_continues_for_a_source_line() {

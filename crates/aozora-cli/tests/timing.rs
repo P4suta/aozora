@@ -1,14 +1,4 @@
-//! Integration coverage for `--timing` (src/timing.rs).
-//!
-//! Timing is non-deterministic, so these pin *structure* — which phase
-//! labels appear, that stdout is unaffected, that the json envelope
-//! parses — never specific durations. Same `Command` + stdin pattern as
-//! `diagnostics_render.rs`.
-//!
-//! `--timing` is a plain bool: the report auto-selects `human` (TTY) vs
-//! `json` (piped) on the same rule as `check`'s diagnostics. Because these
-//! tests capture stderr (never a TTY), `--timing` alone yields the `json`
-//! envelope.
+//! Integration tests for timing reports.
 
 use std::io::Write;
 use std::process::Stdio;
@@ -17,7 +7,6 @@ use aozora::json::SCHEMA_VERSION;
 
 mod common;
 
-/// Run `aozora <args>` feeding `stdin`; return `(stdout, stderr)`.
 fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
     let mut child = common::hermetic_command()
         .args(args)
@@ -39,13 +28,10 @@ fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
     )
 }
 
-// A clean ruby — no diagnostics, so `render` exercises read/parse/render.
 const RUBY: &[u8] = "｜青《あ》\n".as_bytes();
 
 #[test]
 fn timing_auto_selects_json_when_stderr_is_piped() {
-    // No format flag: `--timing` alone auto-selects `json` because the
-    // captured stderr is not a terminal — the same auto rule as diagnostics.
     let (_, stderr) = run(&["render", "--timing"], RUBY);
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("auto → json envelope parses");
@@ -57,8 +43,6 @@ fn timing_auto_selects_json_when_stderr_is_piped() {
 
 #[test]
 fn timing_leaves_stdout_untouched() {
-    // The report goes to stderr only; render's HTML on stdout must be
-    // byte-identical with and without --timing.
     let (with, _) = run(&["render", "--timing"], RUBY);
     let (without, _) = run(&["render"], RUBY);
     assert_eq!(
@@ -75,7 +59,6 @@ fn timing_json_envelope_carries_phases_and_total_under_data() {
         value["schemaVersion"], SCHEMA_VERSION,
         "carries the wire schemaVersion: {stderr:?}"
     );
-    // Two-key envelope: the phases + total live UNDER `data`.
     let names: Vec<&str> = value["data"]["phases"]
         .as_array()
         .expect("data.phases is an array")
@@ -101,7 +84,6 @@ fn timing_json_does_not_pollute_stdout() {
 
 #[test]
 fn no_timing_flag_writes_nothing_to_stderr() {
-    // Without --timing, a clean render writes nothing to stderr.
     let (_, stderr) = run(&["render"], RUBY);
     assert!(stderr.is_empty(), "no --timing → silent stderr: {stderr:?}");
 }
