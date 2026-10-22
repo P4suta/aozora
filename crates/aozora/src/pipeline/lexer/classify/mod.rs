@@ -1639,7 +1639,7 @@ mod tests {
     #[test]
     fn empty_input_produces_empty_span_vector() {
         run!(out, "");
-        assert!(out.spans.is_empty());
+        assert_eq!(out.spans, Vec::<ClassifiedSpan>::new());
         assert!(out.diagnostics.is_empty());
     }
 

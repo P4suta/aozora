@@ -44,12 +44,12 @@ jobs:
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.97.0 just taplo github:crate-ci/typos cargo:cargo-nextest
+            rust@1.99.1 just taplo github:crate-ci/typos cargo:cargo-nextest
             cargo:cargo-llvm-cov tree-sitter npm:quicktype node go
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -64,11 +64,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just bun node cargo:wasm-pack npm:binaryen
+          install_args: rust@1.99.1 just bun node cargo:wasm-pack npm:binaryen
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-web
@@ -103,11 +103,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just node go npm:binaryen
+          install_args: rust@1.99.1 just node go npm:binaryen
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-bindings
@@ -121,12 +121,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.97.0 just actionlint shellcheck zizmor github:crate-ci/typos
+            rust@1.99.1 just actionlint shellcheck zizmor github:crate-ci/typos
             cargo:cargo-deny cargo:cargo-audit cargo:cargo-shear uv pipx:reuse
       - run: just ci-repo
 
@@ -148,11 +148,11 @@ jobs:
           path: .corpus
           fetch-depth: 1
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just cargo:cargo-nextest
+          install_args: rust@1.99.1 just cargo:cargo-nextest
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-corpus
@@ -169,11 +169,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev valgrind
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just
+          install_args: rust@1.99.1 just
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-performance
@@ -190,12 +190,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.97.0 just cargo:cargo-semver-checks cargo:wasm-pack
+            rust@1.99.1 just cargo:cargo-semver-checks cargo:wasm-pack
             node npm:binaryen
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -210,7 +210,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
@@ -235,11 +235,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just cargo:cargo-mutants cargo:cargo-nextest
+          install_args: rust@1.99.1 just cargo:cargo-mutants cargo:cargo-nextest
       - env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
@@ -259,11 +259,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just
+          install_args: rust@1.99.1 just
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-arm64
@@ -298,11 +298,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just
+          install_args: rust@1.99.1 just
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-wasm-test
@@ -314,11 +314,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 pandoc
+          install_args: rust@1.99.1 pandoc
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-pandoc
@@ -347,7 +347,7 @@ jobs:
       - id: toolchain
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: 1.97.0
+          toolchain: 1.99.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
@@ -366,7 +366,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true

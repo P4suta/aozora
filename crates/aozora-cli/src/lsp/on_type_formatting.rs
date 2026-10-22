@@ -120,8 +120,8 @@ mod tests {
 
     #[test]
     fn unknown_char_returns_empty() {
-        assert!(format_on_type("#", pos(0, 1), "#").is_empty());
-        assert!(format_on_type("a", pos(0, 1), "a").is_empty());
+        assert_eq!(format_on_type("#", pos(0, 1), "#"), Vec::<TextEdit>::new());
+        assert_eq!(format_on_type("a", pos(0, 1), "a"), Vec::<TextEdit>::new());
     }
 
     #[test]
@@ -143,17 +143,20 @@ mod tests {
         let src = "[]";
         let cursor_byte = src.len();
         let position = byte_offset_to_position(src, cursor_byte);
-        assert!(format_on_type(src, position, "[").is_empty());
+        assert_eq!(format_on_type(src, position, "["), Vec::<TextEdit>::new());
     }
 
     #[test]
     fn out_of_bounds_position_returns_empty() {
-        assert!(format_on_type("abc", pos(99, 99), "[").is_empty());
+        assert_eq!(
+            format_on_type("abc", pos(99, 99), "["),
+            Vec::<TextEdit>::new()
+        );
     }
 
     #[test]
     fn empty_source_returns_empty() {
-        assert!(format_on_type("", pos(0, 0), "[").is_empty());
+        assert_eq!(format_on_type("", pos(0, 0), "["), Vec::<TextEdit>::new());
     }
 
     #[test]

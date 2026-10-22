@@ -293,7 +293,8 @@ fn build_completion_item(
 /// snippet form `ここから${1:N}字下げ`. Plain text without `{...}`
 /// pass-through unchanged. `{path}` becomes `${1:path}`.
 pub(crate) fn canonical_to_snippet(canonical: &str) -> String {
-    let mut out = String::with_capacity(canonical.len() + 4);
+    const SNIPPET_CAPACITY_SLACK: usize = 4;
+    let mut out = String::with_capacity(canonical.len() + SNIPPET_CAPACITY_SLACK);
     let mut chars = canonical.char_indices().peekable();
     while let Some((i, ch)) = chars.next() {
         if ch == '{' {
@@ -540,7 +541,7 @@ mod tests {
         let src = "no annotation context";
 
         let pos = byte_offset_to_position(src, 4);
-        assert!(completion_at(src, pos).is_empty());
+        assert_eq!(completion_at(src, pos), Vec::<CompletionItem>::new());
     }
 
     #[test]
@@ -643,7 +644,7 @@ mod tests {
         let src = "前［＃改ページ］後";
 
         let pos = byte_offset_to_position(src, src.len());
-        assert!(completion_at(src, pos).is_empty());
+        assert_eq!(completion_at(src, pos), Vec::<CompletionItem>::new());
     }
 
     #[test]

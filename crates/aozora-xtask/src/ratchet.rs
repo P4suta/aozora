@@ -314,6 +314,6 @@ mod tests {
         let bumped = r#"{"properties":{"schemaVersion":{"const":2},"value":{"type":"number"}}}"#;
         errors.clear();
         compare_schema("schema.json", previous, bumped, &mut errors).unwrap();
-        assert!(errors.is_empty());
+        assert_eq!(errors, Vec::<String>::new());
     }
 }

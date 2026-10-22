@@ -119,7 +119,7 @@ fn handle_sentinel<S: WalkSink>(
     if let Some(node) = out.registry.node_at(NormalizedOffset::new(byte_pos)) {
         sink.on_node(kind, node)?;
     }
-    *cursor = cand + 3;
+    *cursor = cand + '\u{E001}'.len_utf8();
     Ok(())
 }
 
@@ -278,7 +278,7 @@ mod tests {
         let out = output_with(normalized, registry);
         let mut sink = CollectSink::default();
         walk(&out, &mut sink).expect("walk into a collector is infallible");
-        assert!(sink.text.is_empty());
+        assert_eq!(sink.text, "");
         assert_eq!(sink.nodes, 1);
     }
 

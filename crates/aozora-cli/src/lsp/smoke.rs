@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{DiagnosticSeverity, HoverContents, Position};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, HoverContents, Position, TextEdit};
 
 use super::diagnostics::diagnostics_for_source;
 use super::formatting::format_edits;
@@ -12,8 +12,8 @@ fn en() -> LanguageIdentifier {
 #[test]
 fn plain_text_yields_no_diagnostics_and_no_edits() {
     let src = "hello world";
-    assert!(diagnostics_for_source(src, &en()).is_empty());
-    assert!(format_edits(src).is_empty());
+    assert_eq!(diagnostics_for_source(src, &en()), Vec::<Diagnostic>::new());
+    assert_eq!(format_edits(src), Vec::<TextEdit>::new());
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn redundant_bar_ruby_reformats_to_bare() {
 #[test]
 fn canonical_ruby_reformats_to_itself() {
     let src = "日本《にほん》";
-    assert!(format_edits(src).is_empty());
+    assert_eq!(format_edits(src), Vec::<TextEdit>::new());
 }
 
 #[test]

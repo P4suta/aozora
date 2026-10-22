@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn schema_files_are_json_artifacts() {
-        assert!(!SCHEMA_FILES.is_empty());
+        assert_ne!(SCHEMA_FILES, []);
         for (rel, _) in SCHEMA_FILES {
             assert!(
                 Path::new(rel)

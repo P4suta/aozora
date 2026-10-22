@@ -2646,13 +2646,13 @@ mod tests {
         assert_eq!(snapshot.slice(literal[2].span()), Some("［"));
 
         let semantic = Document::new("語句［＃「語句」は太字］").snapshot();
-        assert!(semantic.literal_markup().is_empty());
+        assert_eq!(semantic.literal_markup(), []);
 
         let empty_pair = Document::new("《》").snapshot();
-        assert!(empty_pair.literal_markup().is_empty());
+        assert_eq!(empty_pair.literal_markup(), []);
 
         let ordinary_brackets = Document::new("［plain］").snapshot();
-        assert!(ordinary_brackets.literal_markup().is_empty());
+        assert_eq!(ordinary_brackets.literal_markup(), []);
     }
 
     #[test]
@@ -2900,7 +2900,7 @@ mod tests {
         // No matching `］`. Diagnostic fires; pairs stays empty.
         let d = Document::new("［＃orphan");
         let t = d.snapshot();
-        assert!(t.pairs().is_empty());
+        assert_eq!(t.pairs(), []);
         assert!(!t.diagnostics().is_empty());
     }
 
@@ -2909,7 +2909,7 @@ mod tests {
         // Stray close on an empty stack.
         let d = Document::new("orphan］");
         let t = d.snapshot();
-        assert!(t.pairs().is_empty());
+        assert_eq!(t.pairs(), []);
     }
 
     #[test]

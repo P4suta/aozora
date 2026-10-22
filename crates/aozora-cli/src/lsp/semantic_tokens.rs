@@ -341,13 +341,13 @@ mod tests {
     #[test]
     fn empty_doc_yields_no_tokens() {
         let tokens = tokens_for("");
-        assert!(tokens.is_empty());
+        assert_eq!(tokens, Vec::<SemanticToken>::new());
     }
 
     #[test]
     fn plain_text_yields_no_tokens() {
         let tokens = tokens_for("ただの文章\n二行目\n");
-        assert!(tokens.is_empty());
+        assert_eq!(tokens, Vec::<SemanticToken>::new());
     }
 
     #[test]

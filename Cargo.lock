@@ -316,6 +316,8 @@ dependencies = [
  "blake3",
  "cbindgen",
  "clap",
+ "memchr",
+ "num-traits",
  "rayon",
  "regex",
  "rustix",

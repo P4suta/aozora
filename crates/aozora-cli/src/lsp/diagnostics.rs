@@ -196,12 +196,18 @@ mod tests {
 
     #[test]
     fn plain_text_has_no_diagnostics() {
-        assert!(diagnostics_for_source("hello world").is_empty());
+        assert_eq!(
+            diagnostics_for_source("hello world"),
+            Vec::<Diagnostic>::new()
+        );
     }
 
     #[test]
     fn canonical_ruby_has_no_diagnostics() {
-        assert!(diagnostics_for_source("｜日本《にほん》").is_empty());
+        assert_eq!(
+            diagnostics_for_source("｜日本《にほん》"),
+            Vec::<Diagnostic>::new()
+        );
     }
 
     #[test]
@@ -270,7 +276,7 @@ mod tests {
     fn every_diagnostic_has_a_title_and_body() {
         let src = "本文［＃改ページ";
         let diags = diagnostics_for_source(src);
-        assert!(!diags.is_empty());
+        assert_ne!(diags, Vec::<Diagnostic>::new());
         for d in &diags {
             let (title, body) = d.message.split_once("\n\n").expect("title\\n\\nbody shape");
             assert!(!title.trim().is_empty(), "empty title: {}", d.message);

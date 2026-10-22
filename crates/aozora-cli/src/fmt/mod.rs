@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -80,7 +80,7 @@ fn err_exit_code(err: &anyhow::Error, program: &str) -> u8 {
     if is_broken_pipe(err) {
         0
     } else {
-        eprintln!("{program}: {err:#}");
+        let _drop = writeln!(io::stderr(), "{program}: {err:#}");
         2
     }
 }
@@ -156,7 +156,11 @@ fn stdin_check(report: &CheckReport, ctx: &Ctx, old: &str, new: &str) -> Result<
     match report {
         CheckReport::Plain => {
             if changed {
-                eprintln!("{}: <stdin> would be reformatted", ctx.program);
+                writeln!(
+                    io::stderr(),
+                    "{}: <stdin> would be reformatted",
+                    ctx.program
+                )?;
             }
         }
         CheckReport::Diff if changed => {
@@ -256,8 +260,13 @@ fn run_check(ctx: &Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) -
             let changed = fmt.changed();
             if changed {
                 printer.suspend(|| {
-                    eprintln!("{}: {} would be reformatted", ctx.program, path.display());
-                });
+                    writeln!(
+                        io::stderr(),
+                        "{}: {} would be reformatted",
+                        ctx.program,
+                        path.display()
+                    )
+                })?;
             }
             Ok(FileOutcome::new(
                 diagnostics.max(check_outcome(changed)),
@@ -323,7 +332,7 @@ where
                 }
                 Err(err) if is_broken_pipe(&err) => return Err(err),
                 Err(err) => {
-                    printer.suspend(|| eprintln!("{}: {err:#}", ctx.program));
+                    printer.suspend(|| writeln!(io::stderr(), "{}: {err:#}", ctx.program))?;
                     tally.record_error();
                     Outcome::Error
                 }
@@ -345,7 +354,7 @@ where
 fn discovery_base(ctx: &Ctx, resolved: &Resolved) -> Outcome {
     let mut outcome = Outcome::Ok;
     for err in &resolved.errors {
-        eprintln!("{}: {err}", ctx.program);
+        let _drop = writeln!(io::stderr(), "{}: {err}", ctx.program);
         outcome = Outcome::Error;
     }
     outcome

@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn lex_handles_empty_input() {
         let out = lex("");
-        assert!(out.normalized.is_empty());
+        assert_eq!(out.normalized, "");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
     }

@@ -900,7 +900,7 @@ mod tests {
                 .expect("render into String is infallible");
         }
         assert!(state.reopen_after_para.is_empty());
-        assert!(state.open_stack.is_empty());
+        assert_eq!(state.open_stack, Vec::<RegionFormat>::new());
 
         let suffix = out.len();
         state

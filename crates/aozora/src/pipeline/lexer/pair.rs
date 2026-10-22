@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn empty_input_yields_no_events() {
         let (events, diagnostics) = run("");
-        assert!(events.is_empty());
+        assert_eq!(events, Vec::<PairEvent>::new());
         assert!(diagnostics.is_empty());
     }
 

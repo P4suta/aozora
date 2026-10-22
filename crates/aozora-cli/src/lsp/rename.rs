@@ -211,7 +211,7 @@ mod tests {
         assert!(applied.contains("［＃ここから罫囲み］"));
         assert!(applied.contains("罫囲み終わり"));
         assert!(!applied.contains("字下げ"));
-        assert!(!changes(&edit).is_empty());
+        assert_ne!(changes(&edit).as_slice(), []);
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
         let edit = rename_at(CONTAINER_DOC, off, "［＃ここから4字下げ］")
             .expect("amount change is verifiable")
             .expect("edit emitted");
-        assert!(!changes(&edit).is_empty());
+        assert_ne!(changes(&edit).as_slice(), []);
         let applied = apply_text_edits(
             CONTAINER_DOC,
             &LineIndex::new(CONTAINER_DOC),
@@ -237,7 +237,7 @@ mod tests {
         let edit = rename_at(src, off, "［＃「海」に傍点］")
             .expect("target change is coupled")
             .expect("edit emitted");
-        assert!(!changes(&edit).is_empty());
+        assert_ne!(changes(&edit).as_slice(), []);
         let applied = apply_text_edits(src, &LineIndex::new(src), changes(&edit));
         assert_eq!(applied, "海がひろがる、その［＃「海」に傍点］");
     }
@@ -249,7 +249,7 @@ mod tests {
         let edit = rename_at(src, off, "［＃「青空」に傍線］")
             .expect("attribute-only change keeps the forward")
             .expect("edit emitted");
-        assert!(!changes(&edit).is_empty());
+        assert_ne!(changes(&edit).as_slice(), []);
         let applied = apply_text_edits(src, &LineIndex::new(src), changes(&edit));
         assert_eq!(applied, "青空がひろがる、その［＃「青空」に傍線］");
     }

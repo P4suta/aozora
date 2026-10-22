@@ -368,7 +368,7 @@ mod tests {
         });
         let mut violations = Vec::new();
         check_required_rules("release-tags.json", &required, &ruleset, &mut violations);
-        assert!(violations.is_empty());
+        assert_eq!(violations, Vec::<String>::new());
 
         for missing in required {
             let mut broken = ruleset.clone();
@@ -394,7 +394,7 @@ AOZORA_CORPUS_REPOSITORY=P4suta/aozorabunko_text\n\
 AOZORA_CORPUS_SHA=b1ec9a7fa46de8dd5acc33378428c899e86bfb32\n\
 AOZORA_SPEC_REPOSITORY=P4suta/aozora-notation-spec\n\
 AOZORA_SPEC_SHA=a5473069f219000f7306a012e79e3ea393406680\n";
-        assert!(release_input_violations(valid).is_empty());
+        assert_eq!(release_input_violations(valid), Vec::<String>::new());
 
         let duplicate = format!("{valid}AOZORA_SPEC_SHA={}", "0".repeat(40));
         assert!(

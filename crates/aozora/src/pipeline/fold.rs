@@ -40,6 +40,8 @@ use crate::spec::{Diagnostic, NormalizedOffset, Span};
 use crate::syntax::ast::{ContainerPair, LexOutput, Node, NodeRef, RegionOutput, SourceNode};
 use crate::syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
+const CONTAINER_CAPACITY_SPANS_PER_PAIR: usize = 40;
+
 /// Run the lex pipeline and materialise the result as an owned, lifetime-free
 /// [`LexOutput`] (`Send + Sync`).
 ///
@@ -142,8 +144,10 @@ impl<'src> Normalizer<'src> {
             out: String::with_capacity(source.len()),
             source,
             recorder: Recorder::with_capacity(span_capacity_hint),
-            open_stack: Vec::with_capacity(span_capacity_hint / 40),
-            container_pairs: Vec::with_capacity(span_capacity_hint / 40),
+            open_stack: Vec::with_capacity(span_capacity_hint / CONTAINER_CAPACITY_SPANS_PER_PAIR),
+            container_pairs: Vec::with_capacity(
+                span_capacity_hint / CONTAINER_CAPACITY_SPANS_PER_PAIR,
+            ),
             diagnostics: Vec::new(),
             pending_single_line: None,
             warichu_depth: 0,
@@ -440,7 +444,7 @@ mod tests {
     #[test]
     fn empty_source_round_trips() {
         let out = lex("");
-        assert!(out.normalized.is_empty());
+        assert_eq!(out.normalized, "");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
         assert!(out.sanitized.is_empty());

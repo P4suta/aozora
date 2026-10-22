@@ -131,6 +131,9 @@ fn parse_callgrind(text: &str) -> Result<u64, String> {
         .map_err(|err| format!("invalid Callgrind summary: {err}"))
 }
 
+const MULTIPLE_EDIT_SPEEDUP_NUMERATOR: u64 = 5;
+const MULTIPLE_EDIT_SPEEDUP_DENOMINATOR: u64 = 4;
+
 fn check_speedups(actual: &BTreeMap<&str, u64>, errors: &mut Vec<String>) -> Result<(), String> {
     let single = required_case(actual, "edit-single")?;
     let full_single = required_case(actual, "full-edit-source")?;
@@ -143,7 +146,9 @@ fn check_speedups(actual: &BTreeMap<&str, u64>, errors: &mut Vec<String>) -> Res
 
     let multiple = required_case(actual, "edit-multiple")?;
     let full_multiple = required_case(actual, "full-multiple-edit-source")?;
-    if multiple.saturating_mul(5) >= full_multiple.saturating_mul(4) {
+    if multiple.saturating_mul(MULTIPLE_EDIT_SPEEDUP_NUMERATOR)
+        >= full_multiple.saturating_mul(MULTIPLE_EDIT_SPEEDUP_DENOMINATOR)
+    {
         errors.push(
             "::error title=perf-gate::incremental multiple edit is less than 1.25x faster than full parse"
                 .to_owned(),
@@ -227,7 +232,7 @@ mod tests {
         ]);
         let mut errors = Vec::new();
         check_speedups(&actual, &mut errors).unwrap();
-        assert!(errors.is_empty());
+        assert_eq!(errors, Vec::<String>::new());
 
         let regressed = BTreeMap::from([
             ("edit-single", 50),

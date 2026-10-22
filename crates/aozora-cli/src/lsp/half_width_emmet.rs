@@ -181,7 +181,10 @@ mod tests {
 
     #[test]
     fn empty_source_yields_nothing() {
-        assert!(emmet_completions("", pos(0, 0)).is_empty());
+        assert_eq!(
+            emmet_completions("", pos(0, 0)),
+            Vec::<CompletionItem>::new()
+        );
     }
 
     #[test]
@@ -231,7 +234,10 @@ mod tests {
         let src = "前置きの本文 [#";
         let cursor = src.len();
         let position = byte_offset_to_position(src, cursor);
-        assert!(emmet_completions(src, position).is_empty());
+        assert_eq!(
+            emmet_completions(src, position),
+            Vec::<CompletionItem>::new()
+        );
     }
 
     #[test]

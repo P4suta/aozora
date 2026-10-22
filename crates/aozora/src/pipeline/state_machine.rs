@@ -1439,7 +1439,7 @@ mod tests {
 
         let decorated = merge_structured_content(&mut spans, source, &mut alloc);
 
-        assert!(decorated.is_empty());
+        assert_eq!(decorated, Vec::<Span>::new());
         assert_eq!(spans, original);
         assert_eq!(
             (
@@ -1484,7 +1484,7 @@ mod tests {
 
         let decorated = merge_structured_content(&mut spans, source, &mut alloc);
 
-        assert!(decorated.is_empty());
+        assert_eq!(decorated, Vec::<Span>::new());
         assert_eq!(spans[2].source_span, Span::new(0, source_end));
         assert_eq!(spans[2].kind, original_ruby);
         assert_eq!(
@@ -1775,7 +1775,7 @@ mod tests {
     #[test]
     fn intermediate_inspection_at_paired() {
         let p = Pipeline::new("a｜b《c》").sanitize().tokenize().pair();
-        assert!(!p.events().is_empty());
+        assert_ne!(p.events(), []);
         drop(p.build());
     }
 
@@ -1794,7 +1794,7 @@ mod tests {
     #[test]
     fn empty_source_round_trips() {
         let out = Pipeline::run_to_completion("");
-        assert!(out.normalized.is_empty());
+        assert_eq!(out.normalized, "");
         assert!(out.registry.is_empty());
         assert!(out.sanitized.is_empty());
     }
@@ -1998,7 +1998,7 @@ mod tests {
             },
         ];
         let decorated = decorate_ruby_bases(&mut out, "青あお", alloc.store());
-        assert!(decorated.is_empty());
+        assert_eq!(decorated, Vec::<Span>::new());
     }
 
     #[test]
@@ -2022,7 +2022,7 @@ mod tests {
             },
         ];
         let decorated = decorate_ruby_bases(&mut out, "山茶花", alloc.store());
-        assert!(decorated.is_empty());
+        assert_eq!(decorated, Vec::<Span>::new());
     }
 
     #[test]
@@ -2091,7 +2091,7 @@ mod tests {
             .sanitize()
             .tokenize()
             .pair();
-        assert!(!p.links().is_empty());
+        assert_ne!(p.links(), []);
         drop(p.build());
     }
 

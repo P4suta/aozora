@@ -65,19 +65,6 @@
 //! the bytes are valid UTF-8, otherwise Shift_JIS); pass
 //! `--encoding {utf8,sjis}` (or `-E …`) to force a specific decoder.
 
-#![allow(
-    missing_docs,
-    reason = "CLI binary — internal pub items are not a documented public API surface"
-)]
-#![allow(
-    clippy::doc_markdown,
-    reason = "--help text is human-facing prose; identifiers like to_source need not be code-spanned in command help"
-)]
-#![allow(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "the CLI owns the process output channels"
-)]
 #![forbid(unsafe_code)]
 
 mod atomic_write;
@@ -251,10 +238,12 @@ enum Command {
     /// authoring-hygiene view (`check` reports every diagnostic); `--fix`
     /// rewrites the flagged near-misses in place (the Tier1 autofix).
     Lint(LintArgs),
-    /// Format documents: round-trip parse ∘ to_source to the canonical
-    /// form. Reads stdin, one file, many files, or directories; `--check`
-    /// / `--diff` / `--list` verify without writing, `--write` rewrites in
-    /// place, `--fix` also canonicalises flagged directive near-misses.
+    #[command(
+        about = "Format documents: round-trip parse ∘ to_source to the canonical form. \
+        Reads stdin, one file, many files, or directories; `--check` / `--diff` / `--list` \
+        verify without writing, `--write` rewrites in place, `--fix` also canonicalises \
+        flagged directive near-misses"
+    )]
     Fmt(FmtCmd),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
@@ -425,11 +414,13 @@ enum DocumentOutcome {
 }
 
 impl DocumentOutcome {
+    const INTERNAL_EXIT_CODE: u8 = 3;
+
     fn exit_code(self) -> ExitCode {
         match self {
             Self::Success => ExitCode::SUCCESS,
             Self::Strict => ExitCode::from(1),
-            Self::Internal => ExitCode::from(3),
+            Self::Internal => ExitCode::from(Self::INTERNAL_EXIT_CODE),
         }
     }
 }
@@ -1217,8 +1208,11 @@ fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitC
         .stderr(Stdio::inherit())
         .spawn()
         .with_context(|| {
-            "failed to spawn `pandoc`; install it from https://pandoc.org or omit \
+            const PANDOC_INSTALL_URL: &str = "https://pandoc.org";
+            format!(
+                "failed to spawn `pandoc`; install it from {PANDOC_INSTALL_URL} or omit \
              --to to emit Pandoc JSON instead"
+            )
         })?;
     let mut child_stdout = child.stdout.take().context("piped stdout")?;
     let stdout_forwarder = match thread::Builder::new()
@@ -1387,7 +1381,7 @@ mod tests {
     fn watch_target_paths_drops_a_lone_stdin_marker() {
         let paths = vec![PathBuf::from("-")];
         // With `==` this would keep the single "-" entry.
-        assert!(watch_target_paths(&paths).is_empty());
+        assert_eq!(watch_target_paths(&paths), Vec::<&PathBuf>::new());
     }
 
     #[test]

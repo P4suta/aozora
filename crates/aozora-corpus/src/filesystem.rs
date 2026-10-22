@@ -57,7 +57,6 @@ impl FilesystemCorpus {
 
     /// Enumerate `.txt` paths under the root without reading their bytes.
     /// Paths follow filesystem order; sort them for deterministic output.
-    #[must_use]
     pub fn walk_paths(&self) -> Box<dyn Iterator<Item = Result<PathBuf, CorpusError>> + '_> {
         let walker = WalkDir::new(&self.root)
             .follow_links(false)

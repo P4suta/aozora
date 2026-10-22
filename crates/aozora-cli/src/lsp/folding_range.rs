@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn empty_source_yields_no_ranges() {
-        assert!(folding_ranges("").is_empty());
+        assert_eq!(folding_ranges(""), Vec::<FoldingRange>::new());
     }
 
     #[test]

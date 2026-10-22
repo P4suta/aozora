@@ -36,6 +36,8 @@ use std::borrow::Cow;
 
 use crate::syntax::format::AccentMark;
 
+const LIGATURE_BYTE_LEN: usize = 3;
+
 /// The full accent decomposition table in spec-page order.
 ///
 /// Public for downstream iteration (tests, doc-builders, corpus
@@ -236,7 +238,7 @@ const ACCENT_MARKER_MASK: u128 = {
 const fn assert_markers_ascii(bs: &[u8]) {
     let mut i = 0;
     while i < bs.len() {
-        assert!(bs[i] < 128, "ACCENT_MARKERS must stay ASCII-only");
+        assert!(bs[i].is_ascii(), "ACCENT_MARKERS must stay ASCII-only");
         i += 1;
     }
 }
@@ -253,7 +255,7 @@ pub(crate) const fn is_accent_marker(b: u8) -> bool {
     // `b as u32` to avoid `1u128 << 200` overflow if a non-ASCII byte
     // were ever passed; the AND with the high mask is 0 there anyway,
     // but the shift itself UB without the guard.
-    (b < 128) && ((ACCENT_MARKER_MASK >> b) & 1) != 0
+    b.is_ascii() && ((ACCENT_MARKER_MASK >> b) & 1) != 0
 }
 
 /// 3-byte ligatures (ASCII keys → Latin char). Only four entries, so a
@@ -263,7 +265,11 @@ pub(crate) const fn is_accent_marker(b: u8) -> bool {
 /// reaching out to a static array.
 #[inline]
 fn match_ligature(head: &[u8]) -> Option<char> {
-    debug_assert_eq!(head.len(), 3, "match_ligature requires exactly 3 bytes");
+    debug_assert_eq!(
+        head.len(),
+        LIGATURE_BYTE_LEN,
+        "match_ligature requires exactly 3 bytes"
+    );
     match head {
         b"ae&" => Some('æ'),
         b"AE&" => Some('Æ'),
@@ -480,10 +486,10 @@ pub(crate) fn decompose_fragment_edits(fragment: &str) -> Vec<(usize, usize, usi
 /// Returns `(consumed_bytes, replacement_char)` on match.
 #[inline]
 fn try_match(bytes: &[u8], i: usize) -> Option<(usize, char)> {
-    if i + 3 <= bytes.len()
-        && let Some(ch) = match_ligature(&bytes[i..i + 3])
+    if i + LIGATURE_BYTE_LEN <= bytes.len()
+        && let Some(ch) = match_ligature(&bytes[i..i + LIGATURE_BYTE_LEN])
     {
-        return Some((3, ch));
+        return Some((LIGATURE_BYTE_LEN, ch));
     }
     if i + 2 <= bytes.len()
         && let Some(&ch) = ACCENT_DIGRAPHS.get(&bytes[i..i + 2])
@@ -610,6 +616,7 @@ struct DotOp {
 /// Parse a leading decimal (ASCII `0-9` or fullwidth `０-９`) off `s`, returning
 /// the value and the remainder. `None` when `s` has no leading digit.
 fn parse_leading_number(s: &str) -> Option<(usize, &str)> {
+    const DECIMAL_RADIX: usize = 10;
     let mut n: usize = 0;
     let mut end = 0;
     for (i, ch) in s.char_indices() {
@@ -618,7 +625,7 @@ fn parse_leading_number(s: &str) -> Option<(usize, &str)> {
             '０'..='９' => ch as usize - '０' as usize,
             _ => break,
         };
-        n = n.checked_mul(10)?.checked_add(digit)?;
+        n = n.checked_mul(DECIMAL_RADIX)?.checked_add(digit)?;
         end = i + ch.len_utf8();
     }
     (end != 0).then(|| (n, &s[end..]))
@@ -1111,9 +1118,15 @@ mod tests {
         // `m'` (2 bytes) → ḿ (3 bytes): a +1 shift at offset 0.
         assert_eq!(decompose_fragment_edits("m'a"), vec![(0, 2, 3)]);
         // `s&` (2 bytes) → ß (2 bytes): length-preserving, so it is omitted.
-        assert!(decompose_fragment_edits("stras&e").is_empty());
+        assert_eq!(
+            decompose_fragment_edits("stras&e"),
+            Vec::<(usize, usize, usize)>::new()
+        );
         // No marker byte at all → no edits (and the borrow-only fast path).
-        assert!(decompose_fragment_edits("plain 日本語").is_empty());
+        assert_eq!(
+            decompose_fragment_edits("plain 日本語"),
+            Vec::<(usize, usize, usize)>::new()
+        );
         // Two length-changing digraphs report both, at their post-shift offsets
         // (offsets are relative to the *input* fragment).
         assert_eq!(
