@@ -3,60 +3,16 @@
     reason = "Sentinel discriminants are compile-time Unicode scalar constants"
 )]
 
-//! PUA sentinel codepoints reserved by the Aozora pipeline.
-//!
-//! The lexer rewrites every recognised Aozora construct into one of
-//! these single-character sentinels in the normalized text it hands to
-//! the downstream CommonMark parser. The placeholder registry maps each
-//! sentinel position back to the originating [`crate::spec::Span`] +
-//! `Node`, so `post_process` can splice the construct back into
-//! the AST after CommonMark parsing.
-//!
-//! All four sentinels live in the Unicode Private Use Area (`U+E000..U+F8FF`),
-//! which is guaranteed to be unassigned and therefore safe to use as
-//! application-internal markers. A pre-scan in the sanitize stage
-//! emits `Diagnostic::SourceContainsPua` if the source already
-//! contains any of these codepoints — a future enhancement can fall
-//! back to Unicode noncharacters (`U+FDD0..U+FDEF`) when collisions
-//! become recurring.
-//!
-//! # Source of truth
-//!
-//! [`Sentinel`] is the primary type: a `#[repr(u32)]` enum with one
-//! variant per sentinel kind. The four legacy `pub const` `char`
-//! values ([`INLINE_SENTINEL`] etc.) and the complete sentinel array
-//! are now thin shims derived from the enum via
-//! [`Sentinel::as_char`], so a new sentinel kind only needs adding to
-//! the enum.
-
-/// Sentinel kind tag.
-///
-/// Each variant matches a Private-Use-Area codepoint reserved by the
-/// lexer. The discriminant doubles as the codepoint, so the
-/// `as_char` / `from_char` projections compile to a noop / range
-/// check respectively.
-///
-/// `#[repr(u32)]` pins the in-memory layout to the codepoint scalar,
-/// matching Rust's `char` ABI for round-tripping cost. The variant
-/// values stay inside the PUA range (`0xE000..=0xF8FF`); pinning the
-/// 4-byte layout instead of `u8` lets the enum carry the codepoint
-/// directly without a lookup table.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Sentinel {
-    /// Inline Aozora span (ruby / bouten / annotation / gaiji / TCY / kaeriten).
     Inline = 0xE001,
-    /// Block-leaf Aozora line (page break, section break, leaf indent, sashie).
     BlockLeaf = 0xE002,
-    /// Paired-container open line (e.g. `［＃ここから字下げ］`).
     BlockOpen = 0xE003,
-    /// Paired-container close line (e.g. `［＃ここで字下げ終わり］`).
     BlockClose = 0xE004,
 }
 
 impl Sentinel {
-    /// All sentinel kinds in declaration order. Useful for collision
-    /// scans, exhaustive iteration, and round-trip property tests.
     #[cfg(test)]
     pub(crate) const ALL: [Self; 4] = [
         Self::Inline,
@@ -65,38 +21,14 @@ impl Sentinel {
         Self::BlockClose,
     ];
 
-    /// Codepoint for this sentinel kind. Compiles to a constant — the
-    /// `#[repr(u32)]` discriminant is the codepoint scalar, so the
-    /// transmute via `char::from_u32_unchecked` is a noop. We use the
-    /// safe `char::from_u32` path here and rely on the variant
-    /// discriminants being valid scalar values (they are: PUA is a
-    /// proper subset of the scalar range and all four sentinels lie
-    /// inside it).
-    ///
-    /// # Panics
-    ///
-    /// `panic!`s with a const-eval-friendly message if a future
-    /// variant ever lands an invalid Unicode scalar discriminant.
-    /// All current variants ([`Self::Inline`] / [`Self::BlockLeaf`] /
-    /// [`Self::BlockOpen`] / [`Self::BlockClose`]) lie in the
-    /// `U+E001..U+E004` PUA range and never trigger the panic; the
-    /// arm exists to keep `#[repr(u32)]` discriminants honest at
-    /// const-eval time.
     #[must_use]
     pub(crate) const fn as_char(self) -> char {
-        // SAFETY-equivalent reasoning: each discriminant is a valid
-        // scalar value (PUA codepoint), so `char::from_u32` returns
-        // `Some` for every variant. We unwrap with a const-friendly
-        // pattern that turns the panic into a const-eval error if a
-        // future variant ever lands an invalid scalar.
         match char::from_u32(self as u32) {
             Some(c) => c,
             None => panic!("Sentinel discriminant must be a valid Unicode scalar"),
         }
     }
 
-    /// Reverse of [`Sentinel::as_char`]. Returns `None` for any
-    /// codepoint outside the four reserved sentinels.
     #[must_use]
     #[cfg(test)]
     pub(crate) const fn from_char(c: char) -> Option<Self> {
@@ -110,34 +42,14 @@ impl Sentinel {
     }
 }
 
-/// Inline Aozora span (ruby / bouten / annotation / gaiji / TCY / kaeriten).
-///
-/// Convenience shim — equivalent to [`Sentinel::Inline`]'s
-/// [`as_char`](Sentinel::as_char).
 pub(crate) const INLINE_SENTINEL: char = Sentinel::Inline.as_char();
 
-/// Block-leaf Aozora line (page break, section break, leaf indent, sashie).
-///
-/// Convenience shim — equivalent to [`Sentinel::BlockLeaf`]'s
-/// [`as_char`](Sentinel::as_char).
 pub(crate) const BLOCK_LEAF_SENTINEL: char = Sentinel::BlockLeaf.as_char();
 
-/// Paired-container open line (e.g. `［＃ここから字下げ］`).
-///
-/// Convenience shim — equivalent to [`Sentinel::BlockOpen`]'s
-/// [`as_char`](Sentinel::as_char).
 pub(crate) const BLOCK_OPEN_SENTINEL: char = Sentinel::BlockOpen.as_char();
 
-/// Paired-container close line (e.g. `［＃ここで字下げ終わり］`).
-///
-/// Convenience shim — equivalent to [`Sentinel::BlockClose`]'s
-/// [`as_char`](Sentinel::as_char).
 pub(crate) const BLOCK_CLOSE_SENTINEL: char = Sentinel::BlockClose.as_char();
 
-/// All four sentinels in declaration order.
-///
-/// Convenience shim — equivalent to mapping [`Sentinel::ALL`] through
-/// [`Sentinel::as_char`].
 #[cfg(test)]
 pub(crate) const ALL_SENTINELS: [char; 4] = [
     Sentinel::Inline.as_char(),
@@ -172,8 +84,6 @@ mod tests {
 
     #[test]
     fn all_sentinels_constant_lists_every_named_constant() {
-        // Defensive: if a new sentinel is ever added we want this test
-        // to fail until ALL_SENTINELS is updated too.
         assert_eq!(ALL_SENTINELS.len(), 4);
         assert!(ALL_SENTINELS.contains(&INLINE_SENTINEL));
         assert!(ALL_SENTINELS.contains(&BLOCK_LEAF_SENTINEL));

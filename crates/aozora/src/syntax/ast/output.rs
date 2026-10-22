@@ -1,11 +1,3 @@
-//! The lexer's owned, no-lifetime output.
-//!
-//! [`SourceNode`] pairs a sanitized-source span with the node it
-//! classified there; [`LexOutput`] holds the lexer's output, with a
-//! shared [`NodeStore`] that backs the `StrId`/range payloads. The whole struct
-//! is `Send + Sync` (static assertion below) — the point of the owned
-//! representation for the #237 incremental cache / LSP consumer.
-
 use core::ops::Deref;
 use std::sync::Arc;
 
@@ -73,50 +65,24 @@ impl From<&str> for SanitizedText {
     }
 }
 
-/// Source-keyed registry entry.
-///
-/// Pairs a sanitized-source byte span with the classified node landed there.
-/// Derives `Debug, Clone, Copy`; deliberately no `PartialEq`/`Eq`. `Copy`
-/// requires [`NodeRef`] be `Copy`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SourceNode {
-    /// Half-open byte range, in sanitized-source coordinates, this node was
-    /// classified from. Entries are sorted by `start`. (`Span` reused.)
     pub source_span: Span,
     pub(crate) normalized_offset: NormalizedOffset,
-    /// The classified node landed at `source_span`, tagged with where it sits
-    /// in the normalized stream.
     pub node: NodeRef,
 }
 
-/// The lexer's complete owned, no-lifetime output.
-///
-/// Every field is owned (`String`, [`Registry`], `Vec<_>`), with a
-/// shared [`NodeStore`] that backs the `StrId`/range payloads referenced by the
-/// owned nodes. `Send + Sync` (see static assertion below). Not `Copy`.
-/// Derives `Debug` only.
 #[derive(Debug)]
 #[non_exhaustive]
 pub(crate) struct LexOutput {
-    /// Normalized text with PUA sentinels.
     pub(crate) normalized: String,
-    /// Verbatim post-sanitize source text (no sentinels, no padding) — the
-    /// coordinate space every `source_span` indexes.
     pub(crate) sanitized: SanitizedText,
     pub(crate) source_unchanged: bool,
-    /// Sentinel-position → node lookup table.
     pub(crate) registry: Registry,
-    /// Non-fatal observations from every stage.
     pub(crate) diagnostics: Vec<Diagnostic>,
-    /// Resolved (open, close) delimiter pairs in sanitized-source coordinates,
-    /// close order.
     pub(crate) pairs: Vec<PairLink>,
-    /// Source-keyed node side-table, sorted by `source_span.start`.
     pub(crate) source_nodes: Vec<SourceNode>,
-    /// Resolved container open/close pairs in normalized coordinates.
     pub(crate) container_pairs: Vec<ContainerPair>,
-    /// Owned backing store (string interner + flat content/segment `Vec`s) the
-    /// owned nodes' `StrId`/range payloads resolve against.
     pub(crate) store: Arc<NodeStore>,
 }
 
@@ -131,15 +97,6 @@ pub(crate) struct RegionOutput {
 }
 
 impl LexOutput {
-    /// Assemble an [`LexOutput`] from its already-owned field set.
-    ///
-    /// The only constructor for this `#[non_exhaustive]` struct reachable from
-    /// outside the syntax layer — the pipeline's native owned producer
-    /// (`crate::pipeline::lex` / `Pipeline::build`) builds the
-    /// [`Registry`], [`SourceNode`] table, and [`NodeStore`] (the
-    /// classify stage allocates owned nodes directly into the store via
-    /// `Allocator`), then hands the whole field set here. Every argument
-    /// maps to the identically-named field.
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
@@ -178,8 +135,6 @@ impl LexOutput {
         }
     }
 
-    /// Find the [`SourceNode`] whose `source_span` covers `src_off`
-    /// (a sanitized-source byte offset). O(log n) binary search.
     #[must_use]
     pub(crate) fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode> {
         let raw = src_off.get();
@@ -194,8 +149,6 @@ impl LexOutput {
     }
 }
 
-/// Required static assertion: the owned lex output crosses thread boundaries
-/// (the whole point of the owned representation for the #237 LSP consumer).
 const _: fn() = || {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<LexOutput>();
@@ -206,8 +159,6 @@ mod tests {
     use super::super::payload::Node;
     use super::*;
 
-    /// Build a `LexOutput` whose only populated field is the source-node
-    /// side-table, for exercising `node_at_source`.
     fn output_with(source_nodes: Vec<SourceNode>) -> LexOutput {
         LexOutput::new(
             String::new(),
@@ -224,11 +175,6 @@ mod tests {
 
     #[test]
     fn node_at_source_covers_ranges_and_gaps() {
-        // Two half-open spans with a gap between them: [2,5) → PageBreak and
-        // [10,20) → BodyEnd. The table below pins every branch of the binary
-        // search — the `idx == 0` (below all starts) guard, the `<= start`
-        // partition point, the `idx - 1` predecessor pick, and the half-open
-        // `raw < end` containment test (end-exclusive).
         let sn = vec![
             SourceNode {
                 source_span: Span::new(2, 5),
@@ -246,18 +192,18 @@ mod tests {
         let page = Some(NodeRef::Inline(Node::PageBreak));
         let body = Some(NodeRef::Inline(Node::BodyEnd));
         let cases: &[(u32, Option<NodeRef>)] = &[
-            (0, None),  // below every span start → idx 0
-            (1, None),  // still below the first start (2)
-            (2, page),  // first byte of span 0
-            (3, page),  // interior
-            (4, page),  // last byte inside [2,5)
-            (5, None),  // == end is outside (half-open)
-            (7, None),  // in the gap between spans
-            (10, body), // first byte of span 1
-            (15, body), // interior
-            (19, body), // last byte inside [10,20)
-            (20, None), // == end is outside
-            (25, None), // past every span
+            (0, None),
+            (1, None),
+            (2, page),
+            (3, page),
+            (4, page),
+            (5, None),
+            (7, None),
+            (10, body),
+            (15, body),
+            (19, body),
+            (20, None),
+            (25, None),
         ];
         for &(raw, expected) in cases {
             let got = out.node_at_source(SourceOffset::new(raw)).map(|s| s.node);

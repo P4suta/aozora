@@ -1,28 +1,12 @@
-//! Sorted array in Eytzinger (BFS-of-BST) layout.
-
 use core::cmp::Ordering;
 use std::vec::Vec;
 
-/// Sorted collection optimized for cache-friendly binary search.
-///
-/// Construction is O(n); lookup is O(log n) with a memory access
-/// pattern friendlier to the CPU prefetcher than `Vec::binary_search`.
-/// See the crate-level documentation for the layout rationale.
-///
-/// # Generic over `T: Ord`
-///
-/// Any totally-ordered type works. The intended primary use is
-/// `EytzingerArray<u32>` (byte-position lookup over a placeholder
-/// registry), but the algorithm makes no assumption beyond `Ord`.
 #[derive(Debug, Clone)]
 pub(super) struct EytzingerArray<T> {
-    /// Eytzinger-layout backing store. `data[0]` is the BST root,
-    /// `data[1]` and `data[2]` are its children, and so on.
     data: Vec<T>,
 }
 
 impl<T> EytzingerArray<T> {
-    /// Empty array.
     #[must_use]
     pub(super) const fn new() -> Self {
         Self { data: Vec::new() }
@@ -32,24 +16,18 @@ impl<T> EytzingerArray<T> {
         Self { data }
     }
 
-    /// Number of elements.
     #[cfg(test)]
     #[must_use]
     pub(super) fn len(&self) -> usize {
         self.data.len()
     }
 
-    /// True iff zero elements.
     #[cfg(test)]
     #[must_use]
     pub(super) fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Element at the given Eytzinger index, or `None` if out-of-range.
-    ///
-    /// The index is **the Eytzinger index** (i.e., the index returned
-    /// by [`EytzingerArray::search`]), not a sorted-order index.
     #[cfg(test)]
     #[must_use]
     pub(super) fn get(&self, eytz_index: usize) -> Option<&T> {
@@ -64,11 +42,6 @@ impl<T> Default for EytzingerArray<T> {
 }
 
 impl<T: Ord> EytzingerArray<T> {
-    /// Locate `target` in the array.
-    ///
-    /// Returns `Some(eytz_index)` if found, else `None`. The index is
-    /// in **Eytzinger order**, not sorted order. The map wrapper stores values
-    /// in the matching layout.
     #[must_use]
     pub(super) fn search(&self, target: &T) -> Option<usize> {
         let n = self.data.len();
@@ -98,13 +71,6 @@ impl<T: Ord> EytzingerArray<T> {
 }
 
 impl<T: Ord + Clone> EytzingerArray<T> {
-    /// Construct from a sorted-ascending slice.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug builds if `sorted` is not sorted ascending. In
-    /// release builds the search invariant is silently violated for
-    /// out-of-order input — verify the source upstream.
     #[must_use]
     #[cfg(test)]
     pub(super) fn from_sorted_slice(sorted: &[T]) -> Self {
@@ -116,10 +82,6 @@ impl<T: Ord + Clone> EytzingerArray<T> {
         if n == 0 {
             return Self::new();
         }
-        // The layout is a BFS of the implicit balanced BST. We build
-        // it by an in-order traversal of the implicit tree, placing
-        // sorted[i] at each node visited. This is O(n) work plus
-        // O(log n) recursion depth.
         let mut data: Vec<Option<T>> = (0..n).map(|_| None).collect();
         let mut sorted_idx = 0usize;
         eytzinger_build(&mut data, sorted, &mut sorted_idx, 0);
@@ -136,9 +98,6 @@ impl<T: Ord + Clone> EytzingerArray<T> {
     }
 }
 
-/// In-order traversal of the implicit Eytzinger tree, placing
-/// `sorted[*sorted_idx]` at each node. The recursive call depth is
-/// O(log n); the per-node work is O(1).
 #[cfg(test)]
 fn eytzinger_build<T: Clone>(
     data: &mut [Option<T>],
@@ -179,10 +138,8 @@ mod tests {
 
     #[test]
     fn seven_element_layout_matches_reference() {
-        // [10,20,30,40,50,60,70] → [40,20,60,10,30,50,70]
         let arr = EytzingerArray::from_sorted_slice(&[10u32, 20, 30, 40, 50, 60, 70]);
         assert_eq!(arr.len(), 7);
-        // Pin the actual layout via get() — root must be 40.
         assert_eq!(arr.get(0), Some(&40));
         assert_eq!(arr.get(1), Some(&20));
         assert_eq!(arr.get(2), Some(&60));
@@ -217,15 +174,12 @@ mod tests {
 
     #[test]
     fn search_works_at_powers_of_two_boundaries() {
-        // The Eytzinger layout's tree is "complete left-justified" —
-        // shape changes at n = 2^k - 1 vs n = 2^k. Cover both.
         for n in [1u32, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128] {
             let inputs: Vec<u32> = (0..n).collect();
             let arr = EytzingerArray::from_sorted_slice(&inputs);
             for &x in &inputs {
                 assert!(arr.search(&x).is_some(), "size {n}, missing {x}");
             }
-            // Probe one above max — must miss.
             assert_eq!(arr.search(&(n + 1000)), None, "size {n}");
         }
     }
@@ -234,18 +188,13 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "sorted ascending")]
     fn debug_panic_on_unsorted_input() {
-        // Body is the panic, not the return value — drop explicitly.
         drop(EytzingerArray::from_sorted_slice(&[5u32, 3, 7]));
     }
 
     #[test]
     fn search_handles_duplicates_by_returning_some_match() {
-        // Duplicates in the input are allowed (the sorted check uses
-        // `<=`); search may return any one of them, but at least one.
         let arr = EytzingerArray::from_sorted_slice(&[1u32, 2, 2, 2, 3]);
-        // Every duplicate target must be found at *some* index.
         let found = arr.search(&2).expect("at least one matching index");
-        // The matching slot's value must equal the target.
         assert_eq!(arr.get(found), Some(&2));
     }
 
@@ -263,7 +212,6 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Search must agree with linear scan for every input.
         #[test]
         fn search_matches_linear_scan(
             mut items in vec_strategy(0u32..1_000_000, 0..200),

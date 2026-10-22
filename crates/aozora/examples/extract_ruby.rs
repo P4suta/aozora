@@ -1,13 +1,4 @@
-//! Pull every ruby span out of a document as `(base, reading)` pairs.
-//!
-//! Plain base and reading text are present directly on the stable ruby
-//! projection. Nested notation is reported as `None`.
-//!
-//! Run with:
-//!
-//! ```text
-//! cargo run --example extract_ruby
-//! ```
+//! Extract plain ruby bases and readings from a document.
 
 fn main() {
     let source = "｜青梅《おうめ》街道を｜逢《お》う";

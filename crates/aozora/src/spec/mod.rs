@@ -1,20 +1,3 @@
-//! Aozora Bunko notation — canonical specification vocabulary.
-//!
-//! The **single source of truth** for facts every other module in the crate
-//! needs to agree on:
-//!
-//! - **PUA sentinel codepoints** — the four `U+E001..U+E004` markers the
-//!   lexer injects into normalized text (see [`sentinels`]).
-//! - **[`Span`]** — `(u32, u32)` byte-range over a UTF-8 source.
-//! - **[`TriggerKind`]** — the set of Aozora notation marker characters
-//!   (`｜《》［］＃※〔〕「」`) plus [`classify_trigger_bytes`], the
-//!   `match` that maps a UTF-8 trigger byte sequence to its kind.
-//! - **[`PairKind`]** — categories of balanced open/close delimiters.
-//! - **[`Diagnostic`]** — every non-fatal observation any pipeline stage can emit.
-//!
-//! These types are shared by the `syntax`, `scan`, `pipeline`, and `render`
-//! modules; the canonical set is re-exported at the crate root.
-
 #![forbid(unsafe_code)]
 
 pub(crate) mod diagnostic;

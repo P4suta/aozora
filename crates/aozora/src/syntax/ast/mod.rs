@@ -1,25 +1,4 @@
-//! Owned, no-lifetime semantic AST — the parser's sole AST.
-//!
-//! Every payload is `Copy`, and variable-length pieces use opaque handles
-//! rather than source borrows. A [`crate::Snapshot`] owns their backing data
-//! and resolves them through its semantic accessors.
-//!
-//! One variant per node. Three payload kinds use `u32` handles instead of
-//! inline variable-length data:
-//!
-//! - interned text → [`StrId`];
-//! - non-empty content runs → [`ContentRange`];
-//! - segment runs → [`SegRange`].
-//!
-//! Lifetime-free `Copy` payloads (`LineFormat`, `RegionFormat`, `Container`,
-//! the scalar enums, `Span`, `Diagnostic`, …) are used directly, without an
-//! owned wrapper.
-//!
-//! # Status
-//!
-//! This is the **sole** AST representation: the lex pipeline's classify stage
-//! builds it directly via an internal allocator
-//! and stores it in the immutable [`crate::Snapshot`] exposed to consumers.
+// Lifetime-free AST handles let cached parses outlive their Document and cross threads (ADR-0036).
 
 mod graft;
 mod intern;
@@ -50,7 +29,6 @@ mod tests {
     use crate::spec::{NormalizedOffset, Span};
     use crate::syntax::RubySide;
 
-    // UNIT TEST 1: the Send + Sync property holds for the owned output.
     #[test]
     fn lex_output_is_send_and_sync() {
         const fn assert_send_sync<T: Send + Sync>() {}
@@ -59,15 +37,10 @@ mod tests {
         assert_send_sync::<Registry>();
     }
 
-    // UNIT TEST 3: build a tiny LexOutput by hand for a ruby node
-    // (base "日本" reading "にほん") via the store API, then resolve the
-    // StrIds / ranges back and assert the structure.
     #[test]
     fn hand_built_ruby_output_resolves_back() {
         let mut store = NodeStore::new();
 
-        // Intern the base + reading and lay them down as single-element
-        // content runs (a plain ruby base / reading is one `Plain` content).
         let base_id = store.intern("日本");
         let reading_id = store.intern("にほん");
         let base = store.push_contents(&[Content::Plain(base_id)]);
@@ -81,7 +54,6 @@ mod tests {
         };
         let node = Node::Ruby(ruby);
 
-        // One inline registry entry at normalized position 0.
         let registry = Registry::from_sorted_slice(&[(0u32, NodeRef::Inline(node))]);
         let source_nodes = vec![SourceNode {
             source_span: Span::new(0, 12),
@@ -101,7 +73,6 @@ mod tests {
             store: store.into(),
         };
 
-        // Recover the node from the registry and resolve its payloads.
         let hit = out
             .registry
             .node_at(NormalizedOffset::new(0))
@@ -110,7 +81,6 @@ mod tests {
             panic!("expected an inline ruby node, got {hit:?}");
         };
 
-        // Resolve the base run → single Plain → "日本".
         let base_run = out.store.resolve_content_range(got.base);
         assert_eq!(base_run.len(), 1, "ruby base is one content entry");
         let Content::Plain(got_base_id) = base_run[0] else {
@@ -118,7 +88,6 @@ mod tests {
         };
         assert_eq!(out.store.resolve_str(got_base_id), "日本", "base text");
 
-        // Resolve the reading run → single Plain → "にほん".
         let reading_run = out.store.resolve_content_range(got.reading);
         assert_eq!(reading_run.len(), 1, "ruby reading is one content entry");
         let Content::Plain(got_reading_id) = reading_run[0] else {

@@ -3,62 +3,44 @@
     reason = "Span construction maintains source bounds and UTF-8 boundaries"
 )]
 
-//! Byte-range span over a UTF-8 source buffer.
-//!
-//! `u32` (rather than `usize`) caps the addressable source at 4 GiB,
-//! which is roughly 4 000× the largest plausible Aozora Bunko work — and
-//! halves span size on 64-bit targets, which compounds across the
-//! thousands of nodes a long novel produces.
-
-/// Byte-range span. Both endpoints are guaranteed to fall on UTF-8
-/// character boundaries when produced by the parser; callers can
-/// safely slice the source with them.
+/// Byte-range span whose parser-produced endpoints lie on UTF-8 boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 pub struct Span {
     /// Inclusive start byte offset into the source buffer.
     pub start: u32,
-    /// Exclusive end byte offset. Always `>= start` for parser-produced
-    /// spans, so [`len`](Self::len) does not underflow.
+    /// Exclusive end byte offset.
     pub end: u32,
 }
 
 impl Span {
-    /// Construct a span from its `start` (inclusive) and `end`
-    /// (exclusive) byte offsets. Callers are responsible for passing
-    /// `end >= start`; the parser always does.
+    /// Construct a half-open span from byte offsets.
     #[must_use]
     pub const fn new(start: u32, end: u32) -> Self {
         Self { start, end }
     }
 
-    /// Length of the span in bytes (`end - start`).
+    /// Span length in bytes.
     ///
     /// # Panics
     ///
-    /// Underflows (panicking in debug, wrapping in release) if
-    /// `end < start`. Parser-produced spans never violate this.
+    /// Panics in debug builds if `end < start`; release builds wrap.
     #[must_use]
     pub const fn len(self) -> u32 {
         self.end - self.start
     }
 
-    /// Whether the span covers zero bytes (`start == end`). An empty
-    /// span still carries a position — e.g. a marker inserted between
-    /// two characters.
+    /// Whether the span covers zero bytes.
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.start == self.end
     }
 
-    /// Slice the source buffer by this span. Assumes `self` was produced
-    /// by the parser and therefore sits on UTF-8 boundaries.
+    /// Slice the source buffer by this span.
     ///
     /// # Panics
     ///
-    /// Panics if `self` does not align to UTF-8 char boundaries in
-    /// `source`. Parser-produced spans always do; a panic here signals
-    /// a bug upstream.
+    /// Panics if the span is out of bounds or its endpoints are not UTF-8 boundaries.
     #[must_use]
     pub fn slice(self, source: &str) -> &str {
         let start = self.start as usize;
@@ -68,17 +50,7 @@ impl Span {
             .expect("span must align to UTF-8 char boundaries in source")
     }
 
-    /// Translate both endpoints by `by` bytes, saturating at the `u32`
-    /// range. A uniform shift preserves `end >= start`, so [`len`](Self::len)
-    /// stays well-defined.
-    ///
-    /// Used by the incremental re-parse engine ([`aozora`'s segment
-    /// cache](https://p4suta.github.io/aozora/), #237) to rebase a span
-    /// produced by lexing a document *segment* (segment-local coordinates)
-    /// back into whole-document coordinates by adding the segment's start
-    /// offset. `by` is `i64` because a rebase can move a span either way;
-    /// the clamp keeps a negative shift from underflowing the `u32`
-    /// endpoints.
+    /// Shift both endpoints by `by` bytes, saturating at the `u32` bounds.
     #[must_use]
     pub fn shifted(self, by: i64) -> Self {
         Self {
@@ -88,7 +60,6 @@ impl Span {
     }
 }
 
-/// Add `by` to `endpoint`, saturating into the `u32` range.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -132,16 +103,13 @@ mod tests {
     #[test]
     fn slice_works_at_utf8_boundary() {
         let src = "青空文庫";
-        // Each kanji is 3 bytes UTF-8.
         assert_eq!(Span::new(3, 6).slice(src), "空");
     }
 
     #[test]
     #[should_panic(expected = "span must align to UTF-8 char boundaries")]
     fn slice_panics_on_misaligned_boundary() {
-        let src = "青空"; // 6 bytes total, 0..3 = 青, 3..6 = 空
-        // The slice is `#[must_use]` but the body is the panic, not
-        // the return value — assign to a typed binding to consume it.
+        let src = "青空";
         let _slice: &str = Span::new(1, 4).slice(src);
     }
 
@@ -149,14 +117,11 @@ mod tests {
     fn shifted_translates_both_endpoints() {
         assert_eq!(Span::new(3, 7).shifted(10), Span::new(13, 17));
         assert_eq!(Span::new(13, 17).shifted(-10), Span::new(3, 7));
-        // length is preserved under a uniform shift
         assert_eq!(Span::new(3, 7).shifted(100).len(), 4);
     }
 
     #[test]
     fn shifted_clamps_at_zero_on_underflow() {
-        // A negative shift larger than `start` clamps both endpoints at 0
-        // rather than wrapping the `u32`.
         assert_eq!(Span::new(2, 5).shifted(-100), Span::new(0, 0));
         assert_eq!(shift_clamp(7, -7), 0);
         assert_eq!(shift_clamp(7, -8), 0);
@@ -165,9 +130,6 @@ mod tests {
 
     #[test]
     fn shifted_clamps_at_u32_max_on_overflow() {
-        // A positive shift that pushes an endpoint past `u32::MAX`
-        // saturates at the top of the range rather than truncating the
-        // `i64` sum back into `u32` (which would wrap to a small value).
         assert_eq!(
             Span::new(u32::MAX - 1, u32::MAX).shifted(100),
             Span::new(u32::MAX, u32::MAX)
@@ -179,8 +141,6 @@ mod tests {
 
     #[test]
     fn span_is_8_bytes_on_64_bit_target() {
-        // The whole point of u32 endpoints (vs usize) is the size win
-        // on 64-bit targets; pin it so a future change has to think.
         use core::mem::size_of;
         assert_eq!(size_of::<Span>(), 8);
     }

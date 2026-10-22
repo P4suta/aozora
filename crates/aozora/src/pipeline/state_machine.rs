@@ -4,47 +4,6 @@
     reason = "parser state and sanitized source bounds are internal invariants"
 )]
 
-//! Type-state lex pipeline.
-//!
-//! `Pipeline<'src, S>` makes the lex stage order enforceable at compile time.
-//! The state markers [`Source`], [`Sanitized`], [`Tokenized`], [`Paired`] track
-//! which stages have run; methods consume `self` and return the next state.
-//! Calling `.pair()` on a `Source` is a type error; calling `.tokenize()` twice
-//! is a type error; etc.
-//!
-//! # Two entry shapes
-//!
-//! - [`Pipeline::run_to_completion`] — one-shot, equivalent to [`crate::pipeline::lex`].
-//!   Used by `Document::snapshot` and the FFI / WASM / Python drivers.
-//! - [`Pipeline::new`] → `.sanitize()` → `.tokenize()` → `.pair()` →
-//!   `.build()` — explicit chain. Use for inspection / instrumentation: each
-//!   intermediate state exposes accessors (`.sanitized_text()`, `.tokens()`,
-//!   `.events()`, `.diagnostics()`) so callers can probe the partial output
-//!   without re-running the pipeline.
-//!
-//! # State carries its own payload
-//!
-//! Each state marker is a field-bound struct holding exactly the stage outputs
-//! it has produced (`Sanitized` carries the sanitized `String`; `Tokenized`
-//! adds the token `Vec`; …). Reading `.sanitized_text()` from
-//! `Pipeline<'_, Sanitized>` is a field projection on the state struct — no
-//! `Option::expect` lives in production code.
-//!
-//! # Owned, arena-free
-//!
-//! Every stage operates on owned data: the sanitized text is an owned `String`,
-//! the token / event lists are `Vec`s, and the classify stage builds the owned
-//! AST directly into an
-//! [`Allocator`]'s
-//! [`NodeStore`], which threads straight into
-//! the returned [`LexOutput`]. There is no bumpalo arena.
-//!
-//! # Why `build` is the terminal transition
-//!
-//! The classify stage requires `&mut Allocator`. We collapse the classify
-//! stage + the normalize fold into a single terminal `.build()` call —
-//! inspection up through `Paired` works freely; the final pass is atomic.
-
 use core::ops::Range;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -89,23 +48,15 @@ struct StructuredRubyCandidate {
     ruby: Ruby,
 }
 
-// =====================================================================
-// State markers (field-bound — each state carries the stage output it is
-// responsible for).
-// =====================================================================
-
-/// Initial state — no stage has run yet.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Source;
 
-/// The sanitize stage has run; the sanitized text is owned.
 #[derive(Debug, Clone)]
 pub(crate) struct Sanitized {
     sanitized_text: SanitizedText,
     source_unchanged: bool,
 }
 
-/// The tokenize stage has run; the token list is materialised.
 #[derive(Debug)]
 pub(crate) struct Tokenized {
     sanitized_text: SanitizedText,
@@ -113,8 +64,6 @@ pub(crate) struct Tokenized {
     tokens: Vec<Token>,
 }
 
-/// The pair stage has run; the event list and the resolved (open, close) link
-/// side-table are materialised.
 #[derive(Debug)]
 pub(crate) struct Paired {
     sanitized_text: SanitizedText,
@@ -123,13 +72,6 @@ pub(crate) struct Paired {
     links: Vec<PairLink>,
 }
 
-// =====================================================================
-// Pipeline
-// =====================================================================
-
-/// Type-state lex pipeline. Each state's transition method consumes `self`,
-/// materialises its stage output into the next state struct, and returns a new
-/// pipeline in the next state.
 #[derive(Debug)]
 pub(crate) struct Pipeline<S> {
     source: Arc<str>,
@@ -137,13 +79,7 @@ pub(crate) struct Pipeline<S> {
     state: S,
 }
 
-// ---------------------------------------------------------------------
-// Source
-// ---------------------------------------------------------------------
-
 impl Pipeline<Source> {
-    /// Wrap a source string for type-state-driven lex. The sanitize stage has
-    /// not yet run; only `source` is set.
     #[must_use]
     pub(crate) fn new(source: impl Into<Arc<str>>) -> Self {
         Self {
@@ -153,8 +89,6 @@ impl Pipeline<Source> {
         }
     }
 
-    /// One-shot driver: run every stage and return the final [`LexOutput`].
-    /// Equivalent to [`crate::pipeline::lex`].
     #[must_use]
     pub(crate) fn run_to_completion(source: impl Into<Arc<str>>) -> LexOutput {
         Self::new(source).sanitize().tokenize().pair().build()
@@ -177,15 +111,12 @@ impl Pipeline<Source> {
             .map(BuildOutput::into_region)
     }
 
-    /// Borrow the original source text.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn source(&self) -> &str {
         &self.source
     }
 
-    /// Run the sanitize stage, materialising the sanitized text as an owned
-    /// `String`.
     #[must_use]
     pub(crate) fn sanitize(mut self) -> Pipeline<Sanitized> {
         let out = sanitize(&self.source);
@@ -207,26 +138,19 @@ impl Pipeline<Source> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Sanitized
-// ---------------------------------------------------------------------
-
 impl Pipeline<Sanitized> {
-    /// Sanitized text.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn sanitized_text(&self) -> &str {
         &self.state.sanitized_text
     }
 
-    /// Diagnostics accumulated through the sanitize stage.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
-    /// Run the tokenize stage, materialising the token list.
     #[must_use]
     pub(crate) fn tokenize(self) -> Pipeline<Tokenized> {
         let tokens: Vec<Token> = tokenize(&self.state.sanitized_text).collect();
@@ -242,21 +166,13 @@ impl Pipeline<Sanitized> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Tokenized
-// ---------------------------------------------------------------------
-
 impl Pipeline<Tokenized> {
-    /// Borrow the materialised token list. Useful for instrumentation.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn tokens(&self) -> &[Token] {
         &self.state.tokens
     }
 
-    /// Run the pair stage, materialising a paired-event stream and the resolved
-    /// link side-table. The pair stage's diagnostics are drained into the
-    /// pipeline's diagnostic accumulator immediately.
     #[must_use]
     pub(crate) fn pair(mut self) -> Pipeline<Paired> {
         let Tokenized {
@@ -281,35 +197,19 @@ impl Pipeline<Tokenized> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Paired (terminal)
-// ---------------------------------------------------------------------
-
 impl Pipeline<Paired> {
-    /// Borrow the materialised pair-event list. Useful for inspection before
-    /// `.build()`.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn events(&self) -> &[PairEvent] {
         &self.state.events
     }
 
-    /// Borrow the resolved (open, close) pair side-table.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn links(&self) -> &[PairLink] {
         &self.state.links
     }
 
-    /// Drive the classify stage + the owned normalizer fold and return the final
-    /// [`LexOutput`]. Terminal transition.
-    ///
-    /// Diagnostics are returned in source-span order.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the sanitized source exceeds `u32::MAX` bytes (the lexer's
-    /// `Span` width contract). In practice unreachable.
     #[must_use]
     pub(crate) fn build(self) -> LexOutput {
         let Paired {
@@ -498,28 +398,11 @@ fn build_region_output(
     Some(build)
 }
 
-/// NORMALIZE (lowering) pass over the materialized classified-span list.
-///
-/// This is the seam the normalization waist is built on. It performs the
-/// source-byte **drop-superset** the streaming window did: when a later span's
-/// source span is a proper superset of an earlier one — a backward pull-back,
-/// e.g. a promoted 大/中/小 heading reclaiming its referent line `序章\n`, or a
-/// forward node reclaiming its predecessor literal — the subsumed earlier span
-/// is dropped, so the normalizer (which appends in source order) does not emit
-/// the reclaimed text twice. This overlap-truncate cured the #180 round-trip
-/// pathology; the surviving [`ForwardOrigin`] on each forward leaf is necessary
-/// provenance (#202).
-///
-/// Returns the lowered spans and the set of forward-directive spans decorated
-/// during lowering, so the builder can suppress their stale
-/// `forward_referent_not_stylable` warnings.
 fn lower_spans(
     spans: Vec<ClassifiedSpan>,
     source: &str,
     alloc: &mut Allocator,
 ) -> (Vec<ClassifiedSpan>, Vec<Span>) {
-    // Phase 0: resolve forward heading hints whose referent is the bare line
-    // directly above the directive into promoted `Heading` nodes.
     let mut spans = promote_headings(spans, source, alloc);
     let mut decorated = merge_structured_content(&mut spans, source, alloc);
     let mut out_len = 0;
@@ -545,10 +428,7 @@ fn lower_spans(
         out_len += 1;
     }
     spans.truncate(out_len);
-    // Second phase: fold S4-foldable inline-range emphasis into forward leaves.
     let mut out = fold_inline_emphasis(spans, source, alloc);
-    // Third phase: apply a declined forward emphasis onto a preceding ruby base
-    // it uniquely names (#384).
     decorated.extend(decorate_ruby_bases(&mut out, source, alloc.store()));
     (out, decorated)
 }
@@ -985,13 +865,6 @@ fn trailing_class_start(text: &str, class: RubyBaseClass) -> usize {
     start
 }
 
-/// Whether a forward attribute decorates a whole run as a single emphasis
-/// wrapper, so it can style a ruby base (#384). Excludes the sub-character /
-/// target-splitting attributes — [`ForwardAttr::AccentDot`] (addresses letters
-/// via an interned directive body the ruby cannot carry),
-/// [`ForwardAttr::Accent`] (composes a single Latin letter), and
-/// [`ForwardAttr::Fraction`] (splits the target on a slash) — which are never
-/// meaningful over a kanji base and stay declined.
 const fn attr_decorates_ruby_base(attr: ForwardAttr) -> bool {
     !matches!(
         attr,
@@ -999,38 +872,18 @@ const fn attr_decorates_ruby_base(attr: ForwardAttr) -> bool {
     )
 }
 
-/// Apply a declined forward emphasis directive (`［＃「X」に傍点/罫囲み/…］`, a
-/// [`ForwardOrigin::Referenced`] leaf) onto a preceding ruby whose base is the
-/// *unique* referent named `X` (#384). The classifier declines these because a
-/// ruby base cannot be pulled into a plain forward leaf (bouten-over-ruby is not
-/// representable); instead we set that ruby's `base_emphasis` so the renderer
-/// wraps the base in the attribute's emphasis element. The directive leaf stays
-/// `Referenced` (serializes the bracket verbatim, renders nothing), so serialize
-/// stays byte-identical.
-///
-/// Uniqueness is load-bearing, not "nearest ruby wins": the target must match
-/// **exactly one** preceding ruby base and **no** preceding plain-text run
-/// anywhere in the look-back — a plain copy that precedes the ruby (cross-line
-/// or same-line, out of the classifier's reset window) is a competing referent,
-/// so we decline and keep the honest `forward_referent_not_stylable` warning.
-/// Returns the directive spans decorated, so the builder can suppress exactly
-/// those warnings.
 fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeStore) -> Vec<Span> {
     let mut decorated: Vec<Span> = Vec::new();
     for idx in 0..out.len() {
-        // Fire only on a declined (Referenced) forward directive with a
-        // whole-run-decoratable attribute.
         let SpanKind::Aozora(Node::Format(f)) = out[idx].kind else {
             continue;
         };
         if !matches!(f.origin, ForwardOrigin::Referenced) || !attr_decorates_ruby_base(f.attr) {
             continue;
         }
-        // A ruby base is a single `Plain` run; a structured target never matches.
         let Some(target) = store.content_range_as_plain(f.target) else {
             continue;
         };
-        // Scan the whole look-back for the unique referent.
         let mut ruby_match: Option<usize> = None;
         let mut ambiguous = false;
         for j in 0..idx {
@@ -1044,9 +897,6 @@ fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeSto
                         ruby_match = Some(j);
                     }
                 }
-                // Any preceding plain run that carries the target text — before
-                // the ruby, so invisible to the classifier's reset window — is a
-                // competing referent that forces a decline.
                 SpanKind::Plain => {
                     let s =
                         &source[out[j].source_span.start as usize..out[j].source_span.end as usize];
@@ -1074,9 +924,6 @@ fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeSto
     decorated
 }
 
-/// Byte position where `target` begins, **only if** it is the bare line
-/// immediately preceding the `［` at `bracket_start`. `None` → the hint stays
-/// inline.
 fn find_heading_predecessor_position_at(
     source: &str,
     bracket_start: u32,
@@ -1102,9 +949,6 @@ fn find_heading_predecessor_position_at(
     u32::try_from(candidate_start).ok()
 }
 
-/// Promote each forward heading hint whose target is the bare line directly
-/// above it into a `Heading`, reaching the span back over `target\n` so the
-/// superset-drop pass reclaims the referent line.
 fn promote_headings(
     mut spans: Vec<ClassifiedSpan>,
     source: &str,
@@ -1114,8 +958,6 @@ fn promote_headings(
         let SpanKind::Aozora(Node::HeadingHint(hint)) = span.kind else {
             continue;
         };
-        // Resolve the interned target to an owned string so the `&store` borrow
-        // does not overlap the `&mut alloc` builder calls below.
         let target = alloc.store().resolve_str(hint.target).to_owned();
         let Some(referent_start) =
             find_heading_predecessor_position_at(source, span.source_span.start, &target)
@@ -1129,7 +971,6 @@ fn promote_headings(
     spans
 }
 
-/// The forward-scope attribute an inline-range region folds to.
 const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     match region {
         RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
@@ -1142,17 +983,12 @@ const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     }
 }
 
-/// An open inline-range marker awaiting its close, with the spans seen since.
 struct OpenFrame {
-    /// The `BlockOpen` span itself (re-emitted verbatim if the pair does not fold).
     open: ClassifiedSpan,
-    /// The open marker's region (drives foldability and the close-match check).
     region: RegionFormat,
-    /// Spans between this open and its eventual close, in source order.
     collected: Vec<ClassifiedSpan>,
 }
 
-/// Push a finished span onto the innermost open frame, or to `output` at top level.
 fn emit_to(stack: &mut [OpenFrame], output: &mut Vec<ClassifiedSpan>, span: ClassifiedSpan) {
     if let Some(top) = stack.last_mut() {
         top.collected.push(span);
@@ -1161,8 +997,6 @@ fn emit_to(stack: &mut [OpenFrame], output: &mut Vec<ClassifiedSpan>, span: Clas
     }
 }
 
-/// Fold a matched inline-range pair into a forward leaf, or `None` to keep it as
-/// a container.
 fn try_fold_inline(
     frame: &OpenFrame,
     close: &ClassifiedSpan,
@@ -1192,8 +1026,6 @@ fn try_fold_inline(
         return None;
     }
     let content = alloc.content_plain(&text);
-    // An inline-range fold is adjacent by construction: the opener sits right
-    // before the enclosed run, so the leaf reclaims its literal.
     let node = alloc.forward_format(attr, content, ForwardOrigin::Reclaimed);
     Some(ClassifiedSpan {
         kind: SpanKind::Aozora(node),
@@ -1201,7 +1033,6 @@ fn try_fold_inline(
     })
 }
 
-/// Fold S4-foldable inline-range emphasis pairs into forward leaves.
 fn fold_inline_emphasis(
     spans: Vec<ClassifiedSpan>,
     source: &str,
@@ -1236,7 +1067,6 @@ fn fold_inline_emphasis(
             _ => emit_to(&mut stack, &mut output, span),
         }
     }
-    // Flush any unclosed opens (bottom-to-top reconstructs source order).
     for frame in stack {
         output.push(frame.open);
         output.extend(frame.collected);
@@ -1976,12 +1806,6 @@ mod tests {
         assert_eq!(p.source(), s);
     }
 
-    // -----------------------------------------------------------------
-    // Mutation-hardening unit tests (#488). Each pins an exact decision /
-    // offset / classification a recogniser makes, hitting both sides of
-    // every boundary so no branch/return/comparison mutant survives.
-    // -----------------------------------------------------------------
-
     fn plain(start: u32, end: u32) -> ClassifiedSpan {
         ClassifiedSpan {
             kind: SpanKind::Plain,
@@ -1996,14 +1820,8 @@ mod tests {
         }
     }
 
-    // find_heading_predecessor_position_at — every comparison / offset /
-    // return boundary. The positive case returns `Some(3)` (≥ 2 so it
-    // separates the whole-fn `Some(0)`/`Some(1)`/`None` stubs), and the
-    // `\n`-adjacency / length / match boundaries each get a `None` twin.
     #[test]
     fn heading_predecessor_recognises_bare_line_above_bracket() {
-        // "zz\nABC\nQ": the bare line `ABC` (bytes 3..6) sits directly above
-        // the bracket at byte 7, and is itself preceded by a `\n` at byte 2.
         assert_eq!(
             find_heading_predecessor_position_at("zz\nABC\nQ", 7, "ABC"),
             Some(3)
@@ -2012,9 +1830,6 @@ mod tests {
 
     #[test]
     fn heading_predecessor_at_source_start_returns_start() {
-        // "AB\nQ": target `AB` at bytes 0..2, bracket at 3. candidate_start is
-        // 0 (start-of-source counts as a line boundary) — pins the `< len`
-        // equal case and the `candidate_start == 0` short-circuit.
         assert_eq!(
             find_heading_predecessor_position_at("AB\nQ", 3, "AB"),
             Some(0)
@@ -2023,25 +1838,18 @@ mod tests {
 
     #[test]
     fn heading_predecessor_rejects_non_boundaries() {
-        // bracket at byte 0 → no predecessor (cutoff == 0 short-circuit).
         assert_eq!(
             find_heading_predecessor_position_at("whatever", 0, "AB"),
             None
         );
-        // target longer than the available text before the `\n`.
         assert_eq!(find_heading_predecessor_position_at("\nQ", 1, "ABC"), None);
-        // the char before the byte offset is not `\n`, so no bare line.
         assert_eq!(find_heading_predecessor_position_at("ABxQ", 4, "AB"), None);
-        // target matches but is not itself preceded by a line break
-        // (`x` sits before `AB`): candidate_start != 0 && byte != '\n'.
         assert_eq!(
             find_heading_predecessor_position_at("xAB\nQ", 4, "AB"),
             None
         );
     }
 
-    // foldable_inline_attr — each foldable arm maps to its own attribute,
-    // and the non-inline / block variants fall through to `None`.
     #[test]
     fn foldable_inline_attr_maps_each_arm() {
         let k = BoutenKind::Goma;
@@ -2076,7 +1884,6 @@ mod tests {
             foldable_inline_attr(RegionFormat::SmallScript(p)),
             Some(ForwardAttr::SmallScript(p))
         );
-        // Block-level (padded) and non-foldable variants decline.
         assert_eq!(
             foldable_inline_attr(RegionFormat::Bold { padded: true }),
             None
@@ -2084,8 +1891,6 @@ mod tests {
         assert_eq!(foldable_inline_attr(RegionFormat::Table), None);
     }
 
-    // attr_decorates_ruby_base — a decoratable attribute returns true, a
-    // sub-character / target-splitting one returns false.
     #[test]
     fn attr_decorates_ruby_base_both_sides() {
         assert!(attr_decorates_ruby_base(ForwardAttr::Bold));
@@ -2094,12 +1899,9 @@ mod tests {
         assert!(!attr_decorates_ruby_base(ForwardAttr::Fraction));
     }
 
-    // lower_spans full-superset drop: when an incoming span is a *proper*
-    // superset of the committed `back`, `back` is dropped.
     #[test]
     fn lower_spans_superset_drop() {
         let src = "x".repeat(40);
-        // Proper superset by left extension → back popped.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(5, 20)],
             &src,
@@ -2107,7 +1909,6 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source_span, Span::new(5, 20));
-        // Proper superset by right extension → back popped.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(10, 25)],
             &src,
@@ -2115,7 +1916,6 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source_span, Span::new(10, 25));
-        // Equal spans are NOT a proper superset → both retained.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(10, 20)],
             &src,
@@ -2124,34 +1924,27 @@ mod tests {
         assert_eq!(out.len(), 2);
     }
 
-    // lower_spans partial-overlap truncation: a span pulling back into the
-    // tail of a committed *plain* run truncates that run's end to the pull
-    // point; every other geometry leaves the run untouched.
     #[test]
     fn lower_spans_partial_overlap_truncates_plain_tail() {
         let src = "x".repeat(40);
-        // Tail overlap (bs < ss < be), back is plain → truncate end to ss.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(15, 30)],
             &src,
             &mut Allocator::new(),
         );
         assert_eq!(out[0].source_span.end, 15);
-        // back is NOT plain (Newline) → no truncation.
         let (out, _) = lower_spans(
             vec![newline(10, 20), plain(15, 30)],
             &src,
             &mut Allocator::new(),
         );
         assert_eq!(out[0].source_span.end, 20);
-        // no overlap (ss >= be) → no truncation.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(25, 30)],
             &src,
             &mut Allocator::new(),
         );
         assert_eq!(out[0].source_span.end, 20);
-        // bs == ss (not strictly inside) → no truncation.
         let (out, _) = lower_spans(
             vec![plain(10, 20), plain(10, 15)],
             &src,
@@ -2160,9 +1953,6 @@ mod tests {
         assert_eq!(out[0].source_span.end, 20);
     }
 
-    // decorate_ruby_bases — a Referenced forward directive with a
-    // decoratable attribute whose target is a *unique* preceding ruby base
-    // sets that ruby's `base_emphasis` and reports the directive span.
     #[test]
     fn decorate_ruby_bases_unique_referent() {
         let mut alloc = Allocator::new();
@@ -2189,8 +1979,6 @@ mod tests {
         assert_eq!(r.base_emphasis, Some(ForwardAttr::Bold));
     }
 
-    // A Referenced directive with a non-decoratable attribute never fires,
-    // even when its target uniquely names a preceding ruby base.
     #[test]
     fn decorate_ruby_bases_declines_non_decoratable_attr() {
         let mut alloc = Allocator::new();
@@ -2213,8 +2001,6 @@ mod tests {
         assert!(decorated.is_empty());
     }
 
-    // A preceding *plain* run carrying the target text is a competing
-    // referent that forces a decline (ambiguity).
     #[test]
     fn decorate_ruby_bases_declines_on_competing_plain() {
         let mut alloc = Allocator::new();
@@ -2223,9 +2009,9 @@ mod tests {
         let ruby = alloc.ruby(base, reading);
         let tgt = alloc.content_plain("山茶花");
         let fmt = alloc.forward_format(ForwardAttr::Bold, tgt, ForwardOrigin::Referenced);
-        let n = u32::try_from("山茶花".len()).unwrap(); // 9 bytes
+        let n = u32::try_from("山茶花".len()).unwrap();
         let mut out = vec![
-            plain(0, n), // a plain copy of the target, before the ruby
+            plain(0, n),
             ClassifiedSpan {
                 kind: SpanKind::Aozora(ruby),
                 source_span: Span::new(n, n + n),
@@ -2239,8 +2025,6 @@ mod tests {
         assert!(decorated.is_empty());
     }
 
-    // try_fold_inline — a matched foldable pair over an all-plain body folds
-    // into a single forward-format leaf spanning open..close.
     #[test]
     fn try_fold_inline_folds_all_plain_body() {
         let mut alloc = Allocator::new();
@@ -2262,7 +2046,6 @@ mod tests {
         assert_eq!(folded.source_span, Span::new(0, 5));
     }
 
-    // A body that is not entirely plain is not foldable → `None`.
     #[test]
     fn try_fold_inline_rejects_non_plain_body() {
         let mut alloc = Allocator::new();
@@ -2282,8 +2065,6 @@ mod tests {
         assert!(try_fold_inline(&frame, &close, source, &mut alloc).is_none());
     }
 
-    // fold_inline_emphasis — a BlockOpen opens a frame whose matched close
-    // folds the enclosed plain run into one Aozora leaf.
     #[test]
     fn fold_inline_emphasis_collapses_matched_pair() {
         let mut alloc = Allocator::new();
@@ -2304,8 +2085,6 @@ mod tests {
         assert!(matches!(out[0].kind, SpanKind::Aozora(Node::Format(_))));
     }
 
-    // The Paired state's link side-table is materialised, not empty: a ruby
-    // reading `《…》` resolves to a `PairLink`.
     #[test]
     fn paired_links_side_table_is_populated() {
         let p = Pipeline::new("｜青梅《おうめ》")
@@ -2316,9 +2095,6 @@ mod tests {
         drop(p.build());
     }
 
-    // build() suppresses the `forward_referent_not_stylable` warning for a
-    // directive the lowering pass decorated onto a unique ruby base (#384):
-    // `山茶花《さざんか》…［＃「山茶花」は罫囲み］` decorates and drops the warning.
     #[test]
     fn build_suppresses_decorated_ruby_base_warning() {
         let out = Pipeline::run_to_completion("笠の山茶花《さざんか》［＃「山茶花」は罫囲み］");
@@ -2333,9 +2109,6 @@ mod tests {
         );
     }
 
-    // build() keeps the warning for a directive that did NOT decorate (an
-    // ambiguous target). With a decoration also present in the document the
-    // retain closure must key on the exact span, not on any/every warning.
     #[test]
     fn build_keeps_undecorated_forward_warning() {
         let out = Pipeline::run_to_completion(

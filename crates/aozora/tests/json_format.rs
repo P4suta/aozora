@@ -1,7 +1,4 @@
-//! Pin the cross-driver JSON format. Every driver (`aozora-ffi`,
-//! `aozora-wasm`, `aozora-py`) calls into [`aozora::json`] for JSON
-//! projection; these tests fix that projection's byte-shape so future
-//! drift is caught before drivers diverge.
+//! Verify the JSON projections shared by the language bindings.
 
 #![cfg(feature = "json")]
 
@@ -15,8 +12,6 @@ fn data_prefix() -> String {
     format!(r#"{{"schemaVersion":{},"data":["#, json::SCHEMA_VERSION)
 }
 
-/// The empty parse must serialise as the canonical empty envelope —
-/// regardless of which projection function is called.
 #[test]
 fn empty_parse_serialises_to_canonical_envelope() {
     let doc = aozora::parse("plain").expect("source fits parser span limit");
@@ -27,25 +22,20 @@ fn empty_parse_serialises_to_canonical_envelope() {
     assert_eq!(json::pairs(&tree), canonical);
 }
 
-/// PUA collision diagnostic shape, byte-pinned.
 #[test]
 fn pua_collision_diagnostic_byte_shape() {
     let doc = aozora::parse("a\u{E001}b").expect("source fits parser span limit");
     let tree = doc.snapshot();
     let json = json::diagnostics(tree.diagnostics());
-    // Envelope present.
     assert!(json.starts_with(&data_prefix()));
     assert!(json.ends_with("]}"));
-    // Variant tag + severity / source axis + span shape.
     assert!(json.contains(r#""kind":"source_contains_pua""#));
     assert!(json.contains(r#""severity":"warning""#));
     assert!(json.contains(r#""source":"source""#));
     assert!(json.contains(r#""span":{"start":1,"end":4}"#));
-    // codepoint field is present (escaped JSON form).
     assert!(json.contains(r#""codepoint":"#));
 }
 
-/// Severity / source axes are present and correctly classified.
 #[test]
 fn diagnostic_json_has_severity_and_source_axes() {
     let doc = aozora::parse("a\u{E001}b").expect("source fits parser span limit");
@@ -69,7 +59,6 @@ fn diagnostic_json_has_severity_and_source_axes() {
     );
 }
 
-/// Ruby span shape (nodes channel), byte-pinned.
 #[test]
 fn ruby_node_byte_shape() {
     let doc = aozora::parse("｜青梅《おうめ》").expect("source fits parser span limit");
@@ -80,7 +69,6 @@ fn ruby_node_byte_shape() {
     assert!(json.contains(r#""span":{"start":"#));
 }
 
-/// Ruby pair shape (pairs channel), byte-pinned.
 #[test]
 fn ruby_pair_byte_shape() {
     let doc = aozora::parse("｜青梅《おうめ》").expect("source fits parser span limit");
@@ -92,7 +80,6 @@ fn ruby_pair_byte_shape() {
     assert!(json.contains(r#""close":{"start":"#));
 }
 
-/// JSON parses round-trip through `serde_json` — proves valid output.
 #[test]
 fn all_three_channels_emit_valid_json() {
     let doc =

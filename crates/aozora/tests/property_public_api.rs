@@ -1,23 +1,4 @@
-//! Public-API totality + idempotence for [`Document::snapshot`].
-//!
-//! Two complementary properties on the top-facade entry point:
-//!
-//! 1. **Totality**: [`Document::snapshot`] must not panic on any input.
-//!    The lex pipeline emits diagnostics rather than failing, and the
-//!    facade is the sole entry point for FFI / WASM / Python drivers
-//!    that hand user input straight to the parser. A panic here is a
-//!    denial-of-service surface for every downstream binding.
-//!
-//! 2. **Parse → serialise → parse converges**: the second
-//!    `Document::snapshot` over the serialised output of the first
-//!    yields a tree whose own `serialize()` matches. Equivalent to
-//!    "the renderer's `serialize` is a parser fixed point" — a
-//!    quieter way to surface bugs that mutate documents on round-trip
-//!    (whitespace drift, character substitutions). Functionally
-//!    overlaps the `aozora-render` `property_serialize_idempotent`
-//!    test, but exercised here through the **public API only** to
-//!    catch facade regressions (e.g. a `Document` that builds an
-//!    inconsistent arena).
+//! Verify public parsing and serialization converge over generated inputs.
 
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
@@ -142,10 +123,6 @@ fn assert_snapshots_equivalent(actual: &aozora::Snapshot, expected: &aozora::Sna
     );
 }
 
-// ----------------------------------------------------------------------
-// Hand-curated regression anchors.
-// ----------------------------------------------------------------------
-
 #[test]
 fn empty_input_round_trips() {
     assert_facade_round_trip_converges("");
@@ -215,34 +192,23 @@ fn incremental_rule_paragraph_edits_match_a_fresh_parse() {
 proptest! {
     #![proptest_config(default_config())]
 
-    /// `Document::snapshot` is total over the workhorse Aozora fragment
-    /// distribution. A panic here is a DoS surface for every public
-    /// caller — proptest is the decisive way to catch one.
     #[test]
     fn aozora_fragment_parse_is_total(s in aozora_fragment(120)) {
         let doc = aozora::parse(s).expect("source fits parser span limit");
         let _tree = doc.snapshot();
     }
 
-    /// Parse → serialise → parse converges on the second pass. The
-    /// serialiser must produce a parser fixed point.
     #[test]
     fn aozora_fragment_round_trip_converges(s in aozora_fragment(120)) {
         assert_facade_round_trip_converges(&s);
     }
 
-    /// Pathological / unbalanced inputs — public parse must stay
-    /// total even when diagnostics fire.
     #[test]
     fn pathological_input_parse_is_total(s in pathological_aozora(120)) {
         let doc = aozora::parse(s).expect("source fits parser span limit");
         let _tree = doc.snapshot();
     }
 
-    /// Unicode adversarial — combining marks, RTL overrides, PUA
-    /// bytes that the lexer reserves for sentinel use. Public parse
-    /// must stay total and emit `SourceContainsPua` diagnostics
-    /// rather than panicking.
     #[test]
     fn unicode_adversarial_parse_is_total(s in unicode_adversarial()) {
         let doc = aozora::parse(s).expect("source fits parser span limit");

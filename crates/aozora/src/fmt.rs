@@ -1,24 +1,9 @@
-//! Source-canonicalising formatter algorithm.
-//!
-//! [`format_source`](crate::fmt::format_source) runs the `parse ∘ to_source` round-trip that produces an
-//! idempotent, canonicalised aozora document: every consumer — the `aozora`
-//! CLI's `fmt` subcommand and the CI/test gates that cross-check against it —
-//! reaches the same canonical form, and the round-trip is a fixed point on the
-//! second pass.
-//!
-//! This module is the pure algorithm only. Its output byte-identity is
-//! inherited from [`Document::snapshot`](crate::Document::snapshot) +
-//! [`Snapshot::to_source_with`](crate::Snapshot::to_source_with); it adds no new
-//! dependency. The batch-driver CLI plumbing (file discovery, diff/check
-//! reporting, progress UI, encoding selection) lives in `aozora-cli`.
+//! Canonical Aozora source formatting.
 
 use crate::render::SerializeOptions;
 use crate::{Document, Severity};
 
-/// Canonicalise an aozora source string.
-///
-/// Runs the aozora lex pipeline and then the inverse serializer. The returned
-/// `String` is byte-identical on the second pass.
+/// Canonicalise Aozora source to a serialization fixed point.
 ///
 /// ```
 /// let canonical = aozora::fmt::format_source("｜日本《にほん》\n");
@@ -30,13 +15,9 @@ pub fn format_source(source: &str) -> String {
     format_source_with(source, SerializeOptions::default())
 }
 
-/// Canonicalise an aozora source string under explicit [`SerializeOptions`].
+/// Canonicalise Aozora source with the given serialization options.
 ///
-/// With the default options this equals [`format_source`]. With
-/// `DirectiveNormalization::Canonical` it additionally rewrites non-canonical
-/// directive near-misses to their canonical spelling — the `--fix` autofix —
-/// which stays a second-pass fixed point (the canonical form parses to a
-/// recognized node and is not rewritten again).
+/// Canonical directive normalization also corrects verified spelling variants.
 #[must_use]
 pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
     let snapshot = Document::new(source).snapshot();
@@ -103,18 +84,15 @@ mod tests {
             directives: DirectiveNormalization::Canonical,
         };
         let near_miss = "あ［＃字下げ終わり］";
-        // Default fmt keeps the flagged near-miss verbatim.
         assert!(
             format_source(near_miss).contains("［＃字下げ終わり］"),
             "default fmt must not rewrite notation"
         );
-        // Opt-in rewrites it to the canonical spelling.
         let fixed = format_source_with(near_miss, fix);
         assert!(
             fixed.contains("［＃ここで字下げ終わり］"),
             "fix should canonicalise the directive; got {fixed:?}"
         );
-        // A genuine editorial Unknown is left untouched even with the flag.
         let editorial = "あ［＃底本では「蒼空」］";
         assert!(
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
