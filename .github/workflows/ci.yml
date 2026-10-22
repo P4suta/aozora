@@ -277,20 +277,19 @@ jobs:
           persist-credentials: false
       - id: msrv
         run: echo "version=$(awk -F'\"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - id: toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: ${{ steps.msrv.outputs.version }}
+      - env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: rustup toolchain install "$MSRV" --profile minimal
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
           key: ci-msrv
       - env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
       - env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         run: cargo check --locked -p aozora-extism --all-targets
 
   wasm-test:
