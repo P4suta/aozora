@@ -57,14 +57,11 @@ mutants = { workspace = true }
 # features (and their `ureq` → `webpki-roots` chain, whose
 # CDLA-Permissive-2.0 license is outside the deny.toml allow-list): the
 # test loads the plugin from in-memory bytes (`Wasm::data`), never a URL,
-# so the HTTP fetcher is dead weight. `wasmtime-default-features` keeps
-# the runtime (cranelift) needed to actually execute the wasm.
-# Extism 1.30 is pinned to vulnerable Wasmtime 43, so use the exact upstream security commit that moves the runtime to Wasmtime 48 LTS until its crates.io release.
+# so the HTTP fetcher is dead weight.
+# The SDK enables Cranelift without Wasmtime's default features.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 anyhow = { workspace = true }
-extism = { git = "https://github.com/extism/extism", rev = "d5da29759bba88645f886d9e12d3f4e4376df7b3", optional = true, default-features = false, features = [
-  "wasmtime-default-features",
-] }
+extism = { version = "1.41.0", optional = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

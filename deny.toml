@@ -53,5 +53,3 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# The only Git source is the exact Extism security commit declared by aozora-extism.
-allow-git = ["https://github.com/extism/extism"]

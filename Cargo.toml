@@ -198,11 +198,11 @@ flate2 = "1.1"
 # DWARF symbolication for samply trace analysis (aozora-trace).
 # `loader` feature pulls in `object` + `memmap2` for in-process ELF
 # parsing — no shell-out to `addr2line(1)`.
-addr2line = { version = "0.27", default-features = false }
+addr2line = { version = "0.27.1", default-features = false }
 # ELF / Mach-O / PE parsing — for build-id verification in the
 # symbolicator. addr2line uses object internally; we add it
 # explicitly so we can read .note.gnu.build-id.
-object = { version = "0.39", default-features = false, features = ["read"] }
+object = { version = "0.40", default-features = false, features = ["read"] }
 
 # Encoding
 encoding_rs = "0.8.35"
