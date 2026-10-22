@@ -3,32 +3,7 @@
     reason = "release ruleset patterns and workflow fixtures are validated constants"
 )]
 
-//! `xtask release check` — offline source-integrity for the release path.
-//!
-//! Facts that live only in server-side / tag-time state are checked
-//! against the committed source so a drift fails at PR time (in `drift-gate`)
-//! instead of silently, or only at the real tag push:
-//!
-//! * **Tag ruleset integrity.** `.github/rulesets/*.json` still encode their
-//!   rules. An emptied `"rules": []` parses fine and protects nothing — the
-//!   canonical silent gate. The tag ruleset must keep its immutability rules,
-//!   and the main-branch ruleset must keep `release-ready` + `ci-success`
-//!   required, or a release could merge / a tag could move unchecked.
-//! * **Pinned release inputs.** Corpus and specification repositories must use
-//!   owner/name identifiers and full commit SHAs, with no duplicate authority.
-//! * **Native-SBOM path mirror.** `release.yml` (tag time) and
-//!   `release-ready.yml` (PR time) each hard-code the per-target SBOM
-//!   filenames. They must agree, or the PR-time assertion stops mirroring the
-//!   tag-time expectation — exactly the B1 layout drift that would hard-fail
-//!   only at tag push.
-//! * **`release_always` enabled.** `release-plz.toml` must keep
-//!   `release_always = true`, or the `workflow_dispatch` recovery silently skips
-//!   publishing a re-qualified commit ("current commit is not from a release
-//!   PR") — the DEV-106 failure that ran green while publishing nothing.
-//! * **Detached-HEAD attach.** `release-plz-release` checks out a SHA (a
-//!   detached HEAD); the attach-branch step (`git update-ref
-//!   refs/remotes/origin/main …`) must survive, or `release-plz release` aborts
-//!   at `git … @{upstream}` before publishing — DEV-104.
+//! Offline source integrity for the release path.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -117,8 +92,6 @@ fn check_required_rules(
 }
 
 fn ruleset_integrity(root: &Path, violations: &mut Vec<String>) {
-    // Each ruleset must keep a non-empty `rules` array (fail-on-zero — an
-    // emptied one still parses), plus the specific rules it exists to enforce.
     let required_rules: &[(&str, &[&str])] = &[
         (
             "release-tags.json",
@@ -126,33 +99,34 @@ fn ruleset_integrity(root: &Path, violations: &mut Vec<String>) {
         ),
         (
             "main-branch.json",
-            &["pull_request", "required_status_checks"],
+            &[
+                "deletion",
+                "non_fast_forward",
+                "required_linear_history",
+                "required_signatures",
+                "pull_request",
+                "required_status_checks",
+            ],
         ),
-        ("require-signed-commits.json", &[]),
     ];
     for (file, required) in required_rules {
         let path = root.join(".github/rulesets").join(file);
         match load_ruleset(&path) {
             Err(err) => violations.push(err),
-            Ok(ruleset) => check_required_rules(file, required, &ruleset, violations),
-        }
-    }
-
-    // These external checks are not represented by a local job fan-in.
-    if let Ok(ruleset) = load_ruleset(&root.join(".github/rulesets/main-branch.json")) {
-        let contexts = status_check_contexts(&ruleset);
-        for required in [
-            "release-ready",
-            "ci-success",
-            "codeql (actions)",
-            "dependency review",
-        ] {
-            if !contexts.contains(required) {
-                violations.push(format!(
-                    "main-branch.json: `{required}` is not a required status check"
-                ));
+            Ok(ruleset) => {
+                check_required_rules(file, required, &ruleset, violations);
+                if *file == "main-branch.json" {
+                    check_main_status_checks(&ruleset, violations);
+                }
             }
         }
+    }
+}
+
+fn check_main_status_checks(ruleset: &Value, violations: &mut Vec<String>) {
+    if status_check_contexts(ruleset) != BTreeSet::from(["required".to_owned()]) {
+        violations
+            .push("main-branch.json: required status checks must be exactly `required`".to_owned());
     }
 }
 
@@ -349,13 +323,68 @@ mod tests {
             "rules": [{
                 "type": "required_status_checks",
                 "parameters": { "required_status_checks": [
-                    { "context": "ci-success" },
-                    { "context": "release-ready" }
+                    { "context": "required" }
                 ]}
             }]
         });
         let contexts = status_check_contexts(&ruleset);
-        assert!(contexts.contains("ci-success") && contexts.contains("release-ready"));
+        assert_eq!(contexts, BTreeSet::from(["required".to_owned()]));
+    }
+
+    #[test]
+    fn main_status_checks_reject_missing_or_stale_contexts() {
+        for checks in [
+            serde_json::json!([]),
+            serde_json::json!([
+                { "context": "release-ready" },
+                { "context": "ci-success" },
+                { "context": "codeql (actions)" },
+                { "context": "dependency review" }
+            ]),
+            serde_json::json!([{ "context": "required" }, { "context": "ci-success" }]),
+            serde_json::json!([{ "context": "required" }]),
+        ] {
+            let ruleset = serde_json::json!({
+                "rules": [{
+                    "type": "required_status_checks",
+                    "parameters": { "required_status_checks": checks }
+                }]
+            });
+            let mut violations = Vec::new();
+            check_main_status_checks(&ruleset, &mut violations);
+            assert_eq!(
+                violations.is_empty(),
+                checks == serde_json::json!([{ "context": "required" }]),
+                "unexpected result for {checks}: {violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tag_immutability_requires_every_rule() {
+        let required = ["deletion", "non_fast_forward", "update"];
+        let ruleset = serde_json::json!({
+            "rules": required.map(|kind| serde_json::json!({ "type": kind }))
+        });
+        let mut violations = Vec::new();
+        check_required_rules("release-tags.json", &required, &ruleset, &mut violations);
+        assert!(violations.is_empty());
+
+        for missing in required {
+            let mut broken = ruleset.clone();
+            broken["rules"]
+                .as_array_mut()
+                .expect("rules array")
+                .retain(|rule| rule["type"] != missing);
+            let mut violations = Vec::new();
+            check_required_rules("release-tags.json", &required, &broken, &mut violations);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(missing)),
+                "missing {missing} must be rejected: {violations:?}"
+            );
+        }
     }
 
     #[test]

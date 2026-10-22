@@ -93,7 +93,7 @@ fn automaton() -> &'static aho_corasick::AhoCorasick {
 // there is nothing an assertion can pin.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn prewarm() {
-    let _ = automaton();
+    automaton();
 }
 
 /// Push every trigger offset in `source` into `sink`, in ascending

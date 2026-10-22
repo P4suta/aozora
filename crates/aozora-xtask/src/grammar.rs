@@ -1,9 +1,8 @@
 //! tree-sitter grammar regeneration drift gate.
 //!
 //! `crates/tree-sitter-aozora/grammar.js` is the source of truth for the
-//! reference grammar. `tree-sitter generate` compiles it into the committed
-//! `src/parser.c` (+ `src/grammar.json` / `src/node-types.json`), which
-//! `build.rs` turns into the static parser that `aozora-lsp` links against.
+//! reference grammar.
+//! `tree-sitter generate` compiles it into the committed `src/parser.c` (+ `src/grammar.json` / `src/node-types.json`), which `build.rs` turns into the static parser used by the conformance harness.
 //! Those generated files are checked in so downstream consumers need only a C
 //! toolchain — but that also means an edit to `grammar.js` without a matching
 //! `tree-sitter generate` leaves the committed parser stale and silently
@@ -23,6 +22,7 @@
 
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
@@ -53,10 +53,6 @@ fn workspace_root() -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-/// A temp directory that removes itself on drop. Regenerating into a scratch
-/// tree (rather than in place) keeps `--check` from ever touching the working
-/// copy, and the [`Drop`] cleanup fires on every early `?` return too, so no
-/// path leaves a scratch tree behind.
 #[derive(Debug)]
 struct ScratchDir {
     path: PathBuf,
@@ -65,8 +61,15 @@ struct ScratchDir {
 impl ScratchDir {
     fn create() -> Result<Self, String> {
         let path = env::temp_dir().join(format!("aozora-grammar-regen-{}", process::id()));
-        // Clear any stale directory a crashed prior run may have left.
-        fs::remove_dir_all(&path).ok();
+        Self::create_at(path)
+    }
+
+    fn create_at(path: PathBuf) -> Result<Self, String> {
+        if let Err(err) = fs::remove_dir_all(&path)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            return Err(format!("clear stale {}: {err}", path.display()));
+        }
         fs::create_dir_all(&path).map_err(|err| format!("create {}: {err}", path.display()))?;
         Ok(Self { path })
     }
@@ -74,7 +77,9 @@ impl ScratchDir {
 
 impl Drop for ScratchDir {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.path).ok();
+        if let Err(err) = fs::remove_dir_all(&self.path) {
+            eprintln!("remove scratch directory {}: {err}", self.path.display());
+        }
     }
 }
 
@@ -160,6 +165,56 @@ fn regenerate() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scratch_recreates_stale_directory() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let path = root.path().join("scratch");
+        fs::create_dir_all(path.join("stale")).expect("stale directory");
+        fs::write(path.join("stale/grammar.js"), "stale grammar").expect("stale file");
+
+        let scratch = ScratchDir::create_at(path.clone()).expect("recreated scratch directory");
+
+        assert_eq!(scratch.path, path);
+        assert!(path.is_dir());
+        assert!(
+            fs::read_dir(&path)
+                .expect("scratch contents")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn scratch_creates_absent_directory() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let path = root.path().join("scratch");
+
+        let scratch = ScratchDir::create_at(path.clone()).expect("new scratch directory");
+
+        assert_eq!(scratch.path, path);
+        assert!(path.is_dir());
+        drop(scratch);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn scratch_reports_stale_clear_error_for_regular_file() {
+        let root = tempfile::tempdir().expect("temporary root");
+        let path = root.path().join("scratch");
+        fs::write(&path, "existing file").expect("regular file");
+
+        let error = ScratchDir::create_at(path.clone()).expect_err("regular file must fail");
+
+        assert!(
+            error.starts_with(&format!("clear stale {}:", path.display())),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(path).expect("preserved file"),
+            "existing file"
+        );
+    }
 
     #[test]
     fn artefacts_are_the_parser_and_two_manifests() {

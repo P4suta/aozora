@@ -89,12 +89,15 @@ gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the Client ID (Iv2
 gh secret set RELEASE_PLZ_APP_PRIVATE_KEY --env release-plz # the .pem contents
 ```
 
-The two ruleset changes — signature bypass on `release-plz-*`, and the
-`v*` tag-creation lock — key on the numeric **App ID**, not the Client ID.
-Apply them per `.github/rulesets/README.md`. **Apply the tag lock last:** it
-restricts `v*` creation to the App, so apply it only once you have watched
-release-plz cut a `v*` tag. Lock first and a misconfigured App leaves the tag
-uncuttable by anyone.
+The active `main` ruleset requires signed commits on the default branch and has no bypass actors.
+Release PRs are squash-merged into GitHub web-flow-signed commits.
+The `required` check gates merges; `release-ready` qualifies the exact commit for publication.
+The active `release tags` ruleset makes existing `v*` tags immutable and has no bypass actors.
+See [Repository rulesets](../../.github/rulesets/README.md) to compare or re-apply the committed definitions.
+
+An optional tag-creation restriction can limit `v*` creation to the release-plz App by its numeric **App ID**, rather than its Client ID.
+Apply that separate rule only after watching release-plz cut a `v*` tag successfully.
+Applying it earlier can leave a misconfigured App unable to create a tag.
 
 ### 3. crates.io
 

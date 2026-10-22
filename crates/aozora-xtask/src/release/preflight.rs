@@ -17,6 +17,15 @@ use std::process::Command;
 
 use serde_json::Value;
 
+const COMMIT_SHA_HEX_LEN: usize = 40;
+const TREE_SITTER_CRATE_URL: &str = "https://crates.io/api/v1/crates/tree-sitter-aozora";
+const PYPI_PROJECT_URL: &str = "https://pypi.org/pypi/aozora/json";
+const NPM_PACKAGE_URL: &str = "https://registry.npmjs.org/aozora-wasm";
+const REGISTRY_USER_AGENT: &str =
+    "aozora-xtask release-preflight (+https://github.com/P4suta/aozora)";
+const CURL_OUTPUT_SINK: &str = "/dev/null";
+const REGISTRY_TIMEOUT_SECONDS: &str = "30";
+
 /// What to verify. Grouped into a struct rather than passed as loose flags so
 /// the online/offline split and the first-publish acknowledgment stay named.
 pub(super) struct Request<'a> {
@@ -130,7 +139,7 @@ fn resolve_commit(request: &Request<'_>, root: &Path) -> Result<String, String> 
         Some(commit) => commit.to_owned(),
         None => git(root, &["rev-parse", "HEAD"])?,
     };
-    if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if commit.len() != COMMIT_SHA_HEX_LEN || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!("commit {commit:?} is not a 40-hex sha"));
     }
     Ok(commit)
@@ -330,17 +339,50 @@ fn check_tag_ruleset(repo: &str, violations: &mut Vec<String>) {
             return;
         }
     };
-    match serde_json::from_str::<Value>(&body) {
+    let rulesets = serde_json::from_str::<Value>(&body)
+        .map_err(|err| format!("parse rulesets: {err}"))
+        .and_then(|listing| {
+            tag_ruleset_details(&listing, |id| {
+                let path = format!("repos/{repo}/rulesets/{id}");
+                match gh_api(&[&path])? {
+                    GhApi::Found(body) => serde_json::from_str(&body)
+                        .map_err(|err| format!("parse ruleset {id}: {err}")),
+                    GhApi::Missing => Err(format!("ruleset {id} disappeared from {repo}")),
+                }
+            })
+        });
+    match rulesets {
         Ok(value) => audit_tag_ruleset(&value, violations),
-        Err(err) => violations.push(format!("parse rulesets: {err}")),
+        Err(err) => violations.push(err),
     }
+}
+
+fn tag_ruleset_details(
+    listing: &Value,
+    mut read: impl FnMut(u64) -> Result<Value, String>,
+) -> Result<Value, String> {
+    let list = listing
+        .as_array()
+        .ok_or_else(|| "rulesets: expected a JSON array".to_owned())?;
+    list.iter()
+        .map(|ruleset| {
+            if ruleset.get("target").and_then(Value::as_str) != Some("tag") {
+                return Ok(ruleset.clone());
+            }
+            let id = ruleset
+                .get("id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "tag ruleset has no numeric id".to_owned())?;
+            read(id)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 
 /// Whether the immutable-tag ruleset is present and active server-side.
 enum TagRuleset {
     /// The rulesets listing is empty — fail-on-zero: nothing to verify.
     NoRulesets,
-    /// No ruleset named like `release-tags-immutable` is applied.
     Missing,
     /// Present, but its enforcement is not `active`.
     Inactive,
@@ -357,18 +399,16 @@ fn audit_tag_ruleset(rulesets: &Value, violations: &mut Vec<String>) {
                 .to_owned(),
         ),
         TagRuleset::Missing => violations.push(
-            "no release-tags-immutable ruleset is applied server-side (releasing-secrets.md §2)"
-                .to_owned(),
+            "no tag ruleset includes refs/tags/v* server-side (releasing-secrets.md §2)".to_owned(),
         ),
         TagRuleset::Inactive => violations.push(
-            "the release-tags-immutable ruleset exists but is not active \
+            "the ruleset for refs/tags/v* exists but is not active \
              (releasing-secrets.md §2)"
                 .to_owned(),
         ),
     }
 }
 
-/// Classify the tag ruleset from a `GET /repos/{repo}/rulesets` listing.
 fn tag_ruleset_state(rulesets: &Value) -> TagRuleset {
     let Some(list) = rulesets.as_array() else {
         return TagRuleset::NoRulesets;
@@ -377,10 +417,11 @@ fn tag_ruleset_state(rulesets: &Value) -> TagRuleset {
         return TagRuleset::NoRulesets;
     }
     let found = list.iter().find(|ruleset| {
-        ruleset
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| name.contains("release-tags"))
+        ruleset.get("target").and_then(Value::as_str) == Some("tag")
+            && ruleset
+                .pointer("/conditions/ref_name/include")
+                .and_then(Value::as_array)
+                .is_some_and(|includes| includes.iter().any(|include| include == "refs/tags/v*"))
     });
     match found {
         None => TagRuleset::Missing,
@@ -466,20 +507,20 @@ fn check_registries(first_publish: bool, violations: &mut Vec<String>) {
     let registries = [
         Registry {
             label: "crates.io crate tree-sitter-aozora",
-            url: "https://crates.io/api/v1/crates/tree-sitter-aozora",
+            url: TREE_SITTER_CRATE_URL,
             presence: Presence::New,
             fix: "a new crate needs the CARGO_REGISTRY_TOKEN bootstrap before it can publish, \
                   so it can never silently proceed (releasing-secrets.md §3)",
         },
         Registry {
             label: "PyPI project aozora",
-            url: "https://pypi.org/pypi/aozora/json",
+            url: PYPI_PROJECT_URL,
             presence: Presence::New,
             fix: "the pending publisher creates it on first OIDC upload (releasing-secrets.md §4)",
         },
         Registry {
             label: "npm package aozora-wasm",
-            url: "https://registry.npmjs.org/aozora-wasm",
+            url: NPM_PACKAGE_URL,
             presence: Presence::Existing,
             fix: "the package is expected to already exist (releasing-secrets.md §5)",
         },
@@ -532,13 +573,13 @@ fn http_status(url: &str) -> Result<RegistryState, String> {
         .args([
             "-sS",
             "-A",
-            "aozora-xtask release-preflight (+https://github.com/P4suta/aozora)",
+            REGISTRY_USER_AGENT,
             "-o",
-            "/dev/null",
+            CURL_OUTPUT_SINK,
             "-w",
             "%{http_code}",
             "--max-time",
-            "30",
+            REGISTRY_TIMEOUT_SECONDS,
             url,
         ])
         .output()
@@ -747,17 +788,84 @@ mod tests {
     }
 
     #[test]
+    fn tag_ruleset_details_fetches_conditions_missing_from_the_listing() {
+        const MAIN_ID: u64 = 24_049_042;
+        const TAG_ID: u64 = 24_049_043;
+        let listing = serde_json::json!([
+            { "id": MAIN_ID, "name": "main", "target": "branch", "enforcement": "active" },
+            { "id": TAG_ID, "name": "release tags", "target": "tag", "enforcement": "active" }
+        ]);
+        let mut requested = Vec::new();
+        let details = tag_ruleset_details(&listing, |id| {
+            requested.push(id);
+            serde_json::from_str(include_str!(
+                "../../../../.github/rulesets/release-tags.json"
+            ))
+            .map_err(|err| err.to_string())
+        })
+        .expect("tag details load");
+        assert_eq!(requested, [TAG_ID]);
+        assert!(matches!(tag_ruleset_state(&details), TagRuleset::Active));
+    }
+
+    #[test]
+    fn tag_ruleset_details_propagates_failures_and_rejects_invalid_listings() {
+        const TAG_ID: u64 = 24_049_043;
+        let listing = serde_json::json!([{ "id": TAG_ID, "target": "tag" }]);
+        let error = tag_ruleset_details(&listing, |_| Err("detail unavailable".to_owned()))
+            .expect_err("a failed detail fetch must fail closed");
+        assert_eq!(error, "detail unavailable");
+
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!([{ "target": "tag" }]),
+            serde_json::json!([{ "target": "tag", "id": "not numeric" }]),
+        ] {
+            tag_ruleset_details(&invalid, |_| Ok(Value::Null))
+                .expect_err("invalid input must fail closed");
+        }
+    }
+
+    #[test]
     fn tag_ruleset_state_classifies_presence_and_enforcement() {
-        let active =
-            serde_json::json!([{ "name": "release-tags-immutable", "enforcement": "active" }]);
+        let active = serde_json::json!([{
+            "name": "release tags",
+            "target": "tag",
+            "enforcement": "active",
+            "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } }
+        }]);
         assert!(matches!(tag_ruleset_state(&active), TagRuleset::Active));
 
-        let disabled =
-            serde_json::json!([{ "name": "release-tags-immutable", "enforcement": "disabled" }]);
+        let mut renamed = active.clone();
+        renamed[0]["name"] = serde_json::json!("immutable versions");
+        renamed[0]["conditions"]["ref_name"]["include"] =
+            serde_json::json!(["refs/tags/preview-*", "refs/tags/v*"]);
+        assert!(matches!(tag_ruleset_state(&renamed), TagRuleset::Active));
+
+        let mut disabled = active.clone();
+        disabled[0]["enforcement"] = serde_json::json!("disabled");
         assert!(matches!(tag_ruleset_state(&disabled), TagRuleset::Inactive));
 
-        let other = serde_json::json!([{ "name": "main-branch", "enforcement": "active" }]);
-        assert!(matches!(tag_ruleset_state(&other), TagRuleset::Missing));
+        let mut branch = active.clone();
+        branch[0]["name"] = serde_json::json!("release-tags-immutable");
+        branch[0]["target"] = serde_json::json!("branch");
+        assert!(matches!(tag_ruleset_state(&branch), TagRuleset::Missing));
+
+        let mut other_tags = active.clone();
+        other_tags[0]["name"] = serde_json::json!("release-tags-immutable");
+        other_tags[0]["conditions"]["ref_name"]["include"] =
+            serde_json::json!(["refs/tags/test-*"]);
+        assert!(matches!(
+            tag_ruleset_state(&other_tags),
+            TagRuleset::Missing
+        ));
+
+        let mut no_conditions = active;
+        no_conditions[0]["conditions"] = Value::Null;
+        assert!(matches!(
+            tag_ruleset_state(&no_conditions),
+            TagRuleset::Missing
+        ));
 
         assert!(matches!(
             tag_ruleset_state(&serde_json::json!([])),
