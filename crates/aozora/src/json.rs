@@ -284,7 +284,7 @@ impl From<crate::Span> for Span {
     }
 }
 
-/// A diagnostic entry with `kind`, `severity`, `source`, `span`, and optional `codepoint` fields.
+/// One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Diagnostic {
@@ -328,7 +328,7 @@ const fn source_str(s: DiagnosticSource) -> &'static str {
     }
 }
 
-/// A node entry with `kind` and an original-source byte `span`.
+/// One `nodes` envelope entry — a classified node span in source coords.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Node {
@@ -336,7 +336,7 @@ pub struct Node {
     span: Span,
 }
 
-/// A delimiter pair with `kind`, `open`, and `close` source byte spans.
+/// One `pairs` envelope entry — a matched bracket pair.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Pair {
@@ -345,7 +345,7 @@ pub struct Pair {
     close: Span,
 }
 
-/// A container pair with `kind`, `open`, and `close` source byte spans.
+/// One `container_pairs` envelope entry.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContainerPair {
@@ -354,9 +354,7 @@ pub struct ContainerPair {
     close: Span,
 }
 
-/// A catalogue entry with `canonical`, `family`, `accepts_param`, `doc`, and `partner` fields.
-///
-/// `family` uses `camelCase`, and `partner` is `null` for unpaired entries.
+/// One `slugs` envelope entry — a row of the annotation slug catalogue.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Slug {
@@ -368,10 +366,7 @@ pub struct Slug {
     partner: Option<&'static str>,
 }
 
-/// A gaiji entry with `span`, `description`, `mencode`, `codepoint`, and `resolved` fields.
-///
-/// The span uses original-source byte offsets.
-/// Optional fields use `null` for absent values.
+/// One `gaiji` envelope entry — a resolved `※［＃…］` reference.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GaijiResolution {

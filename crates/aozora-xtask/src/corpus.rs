@@ -737,6 +737,10 @@ fn bar(count: usize, total: usize, width: usize) -> String {
 }
 
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn uncache(path: &Path) -> Result<(), String> {
     let total_start = Instant::now();
     let metadata =

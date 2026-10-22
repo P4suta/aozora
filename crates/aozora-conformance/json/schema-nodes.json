@@ -31,7 +31,7 @@
           "kind",
           "span"
         ],
-        "description": "A node entry with `kind` and an original-source byte `span`.",
+        "description": "One `nodes` envelope entry — a classified node span in source coords.",
         "title": "Node"
       }
     }

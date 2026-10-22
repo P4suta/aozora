@@ -19,7 +19,7 @@ type AozoraContainerPairsEnvelope struct {
 	SchemaVersion int64           `json:"schemaVersion"`
 }
 
-// A container pair with `kind`, `open`, and `close` source byte spans.
+// One `container_pairs` envelope entry.
 type ContainerPair struct {
 	Close Span   `json:"close"`
 	Kind  string `json:"kind"`
@@ -37,8 +37,7 @@ type AozoraDiagnosticsEnvelope struct {
 	SchemaVersion int64        `json:"schemaVersion"`
 }
 
-// A diagnostic entry with `kind`, `severity`, `source`, `span`, and optional `codepoint`
-// fields.
+// One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].
 type Diagnostic struct {
 	Codepoint *int64 `json:"codepoint"`
 	Kind      string `json:"kind"`
@@ -52,10 +51,7 @@ type AozoraGaijiEnvelope struct {
 	SchemaVersion int64             `json:"schemaVersion"`
 }
 
-// A gaiji entry with `span`, `description`, `mencode`, `codepoint`, and `resolved` fields.
-//
-// The span uses original-source byte offsets.
-// Optional fields use `null` for absent values.
+// One `gaiji` envelope entry — a resolved `※［＃…］` reference.
 type GaijiResolution struct {
 	Codepoint   *int64  `json:"codepoint"`
 	Description string  `json:"description"`
@@ -69,7 +65,7 @@ type AozoraNodesEnvelope struct {
 	SchemaVersion int64  `json:"schemaVersion"`
 }
 
-// A node entry with `kind` and an original-source byte `span`.
+// One `nodes` envelope entry — a classified node span in source coords.
 type Node struct {
 	Kind string `json:"kind"`
 	Span Span   `json:"span"`
@@ -80,7 +76,7 @@ type AozoraPairsEnvelope struct {
 	SchemaVersion int64  `json:"schemaVersion"`
 }
 
-// A delimiter pair with `kind`, `open`, and `close` source byte spans.
+// One `pairs` envelope entry — a matched bracket pair.
 type Pair struct {
 	Close Span   `json:"close"`
 	Kind  string `json:"kind"`
@@ -92,10 +88,7 @@ type AozoraSlugsEnvelope struct {
 	SchemaVersion int64  `json:"schemaVersion"`
 }
 
-// A catalogue entry with `canonical`, `family`, `accepts_param`, `doc`, and `partner`
-// fields.
-//
-// `family` uses `camelCase`, and `partner` is `null` for unpaired entries.
+// One `slugs` envelope entry — a row of the annotation slug catalogue.
 type Slug struct {
 	AcceptsParam bool    `json:"accepts_param"`
 	Canonical    string  `json:"canonical"`

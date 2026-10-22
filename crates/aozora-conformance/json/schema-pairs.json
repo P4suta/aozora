@@ -35,7 +35,7 @@
           "open",
           "close"
         ],
-        "description": "A delimiter pair with `kind`, `open`, and `close` source byte spans.",
+        "description": "One `pairs` envelope entry — a matched bracket pair.",
         "title": "Pair"
       }
     }
