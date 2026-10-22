@@ -35,6 +35,9 @@ import { registerPreviewCommand } from "./preview";
 import { registerSnippetTriggers } from "./snippetTrigger";
 import { registerWrapCommands } from "./wrap";
 
+const NOTATION_GUIDE_URL = "https://www.aozora.gr.jp/annotation/";
+const AUTO_DETECT_SNIFF_LENGTH = 4096;
+
 let client: LanguageClient | undefined;
 
 export async function activate(context: ExtensionContext): Promise<void> {
@@ -137,7 +140,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // palette and the editor context menu.
   context.subscriptions.push(
     commands.registerCommand("aozora.openNotationGuide", async () => {
-      await env.openExternal(Uri.parse("https://www.aozora.gr.jp/annotation/"));
+      await env.openExternal(Uri.parse(NOTATION_GUIDE_URL));
     }),
   );
 
@@ -237,9 +240,11 @@ function resolveDefaultBinary(context: ExtensionContext): string {
         if ((mode & wantBits) !== wantBits) {
           chmodSync(bundled, mode | wantBits);
         }
-      } catch {
-        // Non-fatal: if chmod fails the launch will surface its own
-        // error and the user can fix permissions manually.
+      } catch (err) {
+        console.error(
+          `Failed to set executable permissions for bundled aozora server ${bundled}`,
+          err,
+        );
       }
     }
     return bundled;
@@ -337,7 +342,9 @@ async function maybeSwitchToAozora(document: TextDocument): Promise<void> {
   if (!enabled) {
     return;
   }
-  const head = document.getText(new Range(new Position(0, 0), document.positionAt(4096)));
+  const head = document.getText(
+    new Range(new Position(0, 0), document.positionAt(AUTO_DETECT_SNIFF_LENGTH)),
+  );
   if (!looksLikeAozora(head)) {
     return;
   }

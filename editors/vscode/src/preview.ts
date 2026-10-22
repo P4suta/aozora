@@ -34,6 +34,7 @@ interface PreviewState {
   uri: vscode.Uri;
   mode: WritingMode;
   generation: AsyncGeneration;
+  disposed: boolean;
   debounce?: NodeJS.Timeout;
 }
 
@@ -178,12 +179,14 @@ async function openPreview(
     uri: document.uri,
     mode: configuredWritingMode(),
     generation: new AsyncGeneration(),
+    disposed: false,
   };
   panelsByUri.set(key, state);
 
   panel.onDidDispose(
     () => {
       const live = panelsByUri.get(key);
+      state.disposed = true;
       state.generation.dispose();
       if (state.debounce) {
         clearTimeout(state.debounce);
@@ -200,6 +203,9 @@ async function openPreview(
 }
 
 async function renderInto(state: PreviewState, client: LanguageClient): Promise<void> {
+  if (state.disposed) {
+    return;
+  }
   const generation = state.generation.begin();
   try {
     const response = await client.sendRequest<unknown>("aozora/renderHtml", {
@@ -220,7 +226,15 @@ async function renderInto(state: PreviewState, client: LanguageClient): Promise<
         `<pre>aozora/renderHtml failed: ${escapeHtml(message)}</pre>`,
         state.mode,
       );
-    } catch {}
+    } catch (writeError) {
+      if (state.disposed) {
+        return;
+      }
+      console.error(
+        `Failed to write Aozora preview error page for ${state.uri.toString()}`,
+        writeError,
+      );
+    }
   }
 }
 
