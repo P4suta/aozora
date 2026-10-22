@@ -1,18 +1,4 @@
-# A Release PR must be merged by a deliberate manual SQUASH-merge. Squash (not
-# rebase) so GitHub web-flow authors and GPG-signs a single merge commit on
-# main: release-plz pushes the version bump UNSIGNED to the release-plz-* branch
-# (require-signed-commits exempts only the release-plz App there), and a
-# rebase-merge would replay those unsigned commits onto main and be rejected.
-#
-# Auto-merge is a repo-wide feature we rely on for normal PRs, so GitHub's
-# "Enable auto-merge" button can't be hidden per-PR — instead, if anyone arms
-# auto-merge on a release-plz PR, turn it straight back off. Without this,
-# pre-arming auto-merge and later adding `release: approved` would collapse the
-# deliberate-merge gate into a single action.
-#
-# pull_request_target so this runs from main's definition with a write token; it
-# only calls the API to disable auto-merge (never checks out PR code), and the
-# guard is scoped to release-plz's own branch, so it never touches normal PRs.
+# Auto-merge would let the approval label bypass the deliberate manual release merge.
 name: no-automerge-on-release-pr
 
 on:

@@ -1,27 +1,11 @@
-# OpenSSF Scorecard — continuous, standards-based self-assessment of the
-# repository's supply-chain security posture.
-#
-# This is the OpenSSF-published reference workflow, adapted only to pin
-# every action to a full commit SHA (per our action-pinning policy).
-# Scorecard scores objective, well-documented checks (Token-Permissions,
-# Pinned-Dependencies, Dangerous-Workflow, Branch-Protection, …) and
-# uploads the results to GitHub code scanning, so any regression in the
-# hardening posture surfaces as a security alert. `publish_results: true`
-# feeds the public Scorecard badge.
-#
-# Refs:
-#   https://github.com/ossf/scorecard-action
-#   https://github.com/ossf/scorecard/blob/main/docs/checks.md
-
 name: Scorecard supply-chain security
 
 on:
   schedule:
-    - cron: "23 5 * * 1" # weekly, Monday 05:23 UTC
+    - cron: "23 5 * * 1"
   push:
     branches: ["main"]
 
-# Read-only by default; the analysis job escalates only what it needs.
 permissions: read-all
 
 jobs:
@@ -29,8 +13,8 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      security-events: write # upload SARIF to code scanning
-      id-token: write # publish results to the OpenSSF Scorecard API
+      security-events: write # Upload SARIF to code scanning.
+      id-token: write # Publish results to the OpenSSF Scorecard API.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,11 +26,9 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # Publish results to the OpenSSF REST API for the public badge
-          # (allowed for public repositories).
+          # The public Scorecard badge needs published results.
           publish_results: true
 
-      # Retain the SARIF for 5 days so it can be inspected / re-uploaded.
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -54,7 +36,6 @@ jobs:
           path: results.sarif
           retention-days: 5
 
-      # Surface results in the repository's code scanning dashboard.
       - name: Upload to code scanning
         uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:

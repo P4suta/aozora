@@ -14,12 +14,6 @@ concurrency:
 permissions:
   contents: read
 
-# The pinned corpus/spec repository + revision are NOT duplicated here. Each
-# job that needs them runs the `load-release-inputs` composite action, which
-# exports them from the single source of truth (.github/release-inputs.env)
-# into `$GITHUB_ENV`. One source, so there is no copy to drift and no
-# cross-file coherence check to keep honest.
-
 jobs:
   qualify:
     runs-on: ubuntu-latest
@@ -36,9 +30,6 @@ jobs:
         with:
           head-ref: ${{ github.event.pull_request.head.ref }}
           same-repo: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-      # Fail fast if the pinned-inputs source of truth is missing or malformed,
-      # before committing to the heavy graph. The heavy jobs load it again at
-      # their point of use.
       - uses: ./.github/actions/load-release-inputs
       - id: scope
         env:
@@ -56,22 +47,7 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-  # DEV-91 — reuse the heavy CODE gates across a Release PR and its merge commit.
-  # A release-plz Release PR changes only the version line + CHANGELOG, so its
-  # code is byte-identical to the merge that follows; running mutation / fuzz /
-  # sanitizers / the quality graph twice on the same code is the main runner
-  # cost. This job proves the merge commit's code identity (version footprint
-  # neutralised) equals an already-green Release-PR release-ready run, and emits
-  # `reuse=true` so the code gates skip. It is deliberately paranoid:
-  #   * It trusts only GitHub-attested run metadata + immutable git objects, and
-  #     recomputes the code hash itself from git blobs — a fork rewriting this
-  #     workflow cannot forge a hash or a "success".
-  #   * It only honours a same-repository `release-plz-*` PR (never a fork).
-  #   * A DATA doubt — PR not unique, run not completed-success, hash mismatch —
-  #     leaves `reuse=false`, so the gates run in FULL (fail-open to a full run).
-  #     An OPERATIONAL error instead — a gh/git call or the hash script failing
-  #     under `set -euo pipefail` — fails the job, which the fan-in treats as a
-  #     hard stop (fail-closed; never publishes on an unknown basis).
+  # Identical release code needs only one expensive verification run (ADR-0052).
   code-proof:
     needs: qualify
     if: needs.qualify.outputs.run == 'true'
@@ -89,23 +65,18 @@ jobs:
         run: |
           set -euo pipefail
           reuse=false
-          # Producer: a Release PR (or a manual dispatch) IS the authority whose
-          # green result the merge later reuses — it must run the gates in full.
-          # Only a version-bumping push to main (the merge commit) is a consumer.
           if [[ "$GITHUB_EVENT_NAME" != push || "$VERSION_CHANGED" != true ]]; then
             echo "reuse=false" >> "$GITHUB_OUTPUT"
             echo "producer run (event=$GITHUB_EVENT_NAME version-changed=$VERSION_CHANGED): full code gates"
             exit 0
           fi
           merge="$GITHUB_SHA"
-          # The same-repo release-plz-* PR this commit merged (fork heads excluded).
           pr="$(gh api "repos/$GITHUB_REPOSITORY/commits/$merge/pulls" \
                 --jq '[.[] | select(.head.ref | startswith("release-plz-"))
                            | select(.head.repo.full_name == "'"$GITHUB_REPOSITORY"'")]')"
           if [[ "$(jq 'length' <<<"$pr")" == 1 ]]; then
             head="$(jq -er '.[0].head.sha' <<<"$pr")"
             number="$(jq -er '.[0].number' <<<"$pr")"
-            # That PR head must have a completed-success release-ready run.
             ok="$(gh run list --workflow release-ready.yml --commit "$head" \
                   --json event,headBranch,status,conclusion \
                   --jq '[.[] | select(.event == "pull_request"
@@ -115,9 +86,6 @@ jobs:
             if [[ "${ok:-0}" -ge 1 ]]; then
               # refs/pull/<n>/head persists after the branch is deleted at merge.
               git fetch --no-tags --quiet origin "refs/pull/$number/head"
-              # Bind the hashed commit to the one the green run was for: the PR's
-              # two pointers (.head.sha and refs/pull/<n>/head) must name the same
-              # commit, else the two proofs describe different commits — fail closed.
               test "$(git rev-parse FETCH_HEAD)" = "$head"
               pr_hash="$(bash scripts/code-identity-hash.sh FETCH_HEAD)"
               merge_hash="$(bash scripts/code-identity-hash.sh "$merge")"
@@ -545,11 +513,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          # Emit the SBOMs at the RUNNER_TEMP root so they share the
-          # archive+checksum least-common-ancestor; actions/upload-artifact then
-          # stores all four at the artifact root, where release.yml locates the
-          # per-target *-cli/*-ffi.cdx.json via `find -maxdepth 1`. A subdir here
-          # would nest the SBOMs under it and fail release.yml's root diff.
+          # A shared upload root keeps SBOMs beside archives for the publisher's layout check.
           destination="${RUNNER_TEMP}"
           cargo cyclonedx \
             --manifest-path crates/aozora-cli/Cargo.toml \
@@ -1213,9 +1177,7 @@ jobs:
   real-work:
     needs: [qualify, real-work-candidate, real-work-inputs]
     if: needs.qualify.outputs.run == 'true'
-    # The called workflow downloads artifacts from this run. Permissions can
-    # only be reduced across a reusable-workflow boundary, so grant that read
-    # capability explicitly instead of relying on repository defaults.
+    # Reusable workflows cannot elevate the caller's permissions when downloading artifacts.
     permissions:
       actions: read
       contents: read
@@ -1255,12 +1217,7 @@ jobs:
           if [[ "$RUN" != true ]]; then
             exit 0
           fi
-          # code-proof must have run and decided. An errored code-proof stops the
-          # release (fail-closed) rather than silently defaulting to anything.
           test "$CODE_PROOF" = success
-          # Code gates: success, or SKIPPED because code-proof reused an already-
-          # green Release-PR run for byte-identical code. The artifact gates are
-          # commit-stamped, so they must always have run and succeeded.
           for result in "$QUALITY" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS"; do
             if [[ "$REUSE" == true ]]; then
               [[ "$result" == success || "$result" == skipped ]]
@@ -1308,9 +1265,6 @@ jobs:
             \( -name 'aozora-v*.tar.gz' -o -name 'aozora-v*.zip' \) | sort)
           test "$native_count" -eq 3
 
-          # The per-target CLI/FFI SBOMs must sit at the artifact root (release.yml
-          # locates them there via `find -maxdepth 1`). Assert their exact paths so
-          # an upload-layout regression fails here at PR time, not at tag push.
           native_sboms=(
             "aozora-v${version}-x86_64-unknown-linux-gnu-cli.cdx.json"
             "aozora-v${version}-x86_64-unknown-linux-gnu-ffi.cdx.json"
