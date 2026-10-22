@@ -6,19 +6,16 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion. Concrete motivation — a real Aozora
-        Bunko text that needs the notation, a CommonMark construction
-        that would benefit, a corpus-sweep hit — makes triage far
-        faster than an abstract wishlist.
+        Thanks for the suggestion.
+        Concrete motivation — a real Aozora Bunko text that needs the notation or a corpus-sweep hit — makes triage far faster than an abstract wishlist.
 
   - type: textarea
     id: motivation
     attributes:
       label: Motivation
       description: |
-        What problem does this solve? If possible, link a real Aozora
-        Bunko card that uses the notation or a CommonMark document
-        that needs the extension.
+        What problem does this solve?
+        If possible, link a real Aozora Bunko card that uses the notation.
     validations:
       required: true
 
@@ -52,5 +49,5 @@ body:
     attributes:
       label: Confirmations
       options:
-        - label: I searched existing issues and discussions for a similar request.
+        - label: I searched existing issues for a similar request.
           required: true

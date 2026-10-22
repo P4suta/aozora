@@ -60,4 +60,4 @@ it is width- and colour-dependent, the one non-deterministic surface.
 `docs/adr/` — read the ADR governing an area before changing it. Once
 accepted, an ADR is never edited; a later one supersedes it.
 
-`docs/contrib/` — development loop, testing strategy, release runbooks.
+`docs/contrib/` — MSRV policy and release runbooks.

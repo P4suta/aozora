@@ -25,7 +25,7 @@ command = [
   "always",
 ]
 need_stdout = false
-watch = ["crates", "spec", "grammars"]
+watch = ["crates", "spec"]
 on_change_strategy = "kill_then_restart"
 
 # Matches `just clippy` — the `--lib --bins --tests` surface (example /
