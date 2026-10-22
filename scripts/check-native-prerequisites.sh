@@ -6,8 +6,9 @@ failures=()
 if ! command -v clang >/dev/null 2>&1; then
   failures+=("clang is not available")
 else
-  resource_dir=$(clang -print-resource-dir 2>/dev/null || true)
-  if [[ -z "$resource_dir" || ! -r "$resource_dir/include/stdbool.h" ]]; then
+  if ! resource_dir=$(clang -print-resource-dir 2>/dev/null); then
+    failures+=("clang cannot report its resource directory")
+  elif [[ -z "$resource_dir" || ! -r "$resource_dir/include/stdbool.h" ]]; then
     failures+=("clang resource headers are incomplete")
   elif ! printf '#include <stdbool.h>\n_Bool aozora_bindgen_probe;\n' \
     | clang -fsyntax-only -x c - >/dev/null 2>&1; then

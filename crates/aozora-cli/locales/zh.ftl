@@ -38,8 +38,8 @@ explain-hint-header = 提示: 运行 `aozora explain <code>` 查看详情，例�
 # 当存在的不同代码多于脚注所列时的结尾；$count 是剩余数量。
 explain-hint-more = … 还有 {$count} 项
 
-# `aozora explain <code>` 输出中的小节标签。复现／修正示例本身是 aozora-spec
-# 拥有的、与语言无关的青空记法；而本地化的标题／正文文字见下方，以诊断代码为键。
+# `aozora explain <code>` 输出中的小节标签。
+# 复现／修正示例本身是 aozora crate 内部 `spec` 模块拥有的、与语言无关的青空记法；而本地化的标题／正文文字见下方，以诊断代码为键。
 explain-repro-label = 复现示例:
 explain-fixed-label = 修正后:
 explain-see-label = 参见:
@@ -111,15 +111,14 @@ concept-tcy-body =
 ## 每个诊断代码有一组 `diag-<slug>-title`（标题）与 `diag-<slug>-body`（详情）；
 ## <slug> 为代码末尾 `::` 段中把 `_` 换成 `-` 后的形式（例如
 ## `aozora::lex::unclosed_bracket` → `unclosed-bracket`）。body 中的 `{$…}`
-## 占位符由使用方（CLI 的 explain、LSP 悬浮提示）从实际诊断填入。这些文字已从
-## aozora-spec 剥离，以使目录 crate 保持为纯机器契约；代码、严重级别、
-## `#[error]` Display 以及 JSON 从不本地化。
+## 占位符由使用方（CLI 的 explain、LSP 悬浮提示）从实际诊断填入。
+## 这些文字放在 aozora crate 内部 `spec` 模块之外，以使目录保持为纯机器契约；代码、严重级别、`#[error]` Display 以及 JSON 从不本地化。
 
 diag-source-contains-pua-title = 源文本中混入了私用区字符
 diag-source-contains-pua-body =
     源文本中混入了私用区字符 `U+{$codepoint}`。
 
-    该字符 (`{$char}`) 是保留码位，通常不会出现在青空文库文本中，会与 aozora-lex 的内部标记 (U+E001..U+E004) 冲突。
+    该字符 (`{$char}`) 是保留码位，通常不会出现在青空文库文本中，会与 aozora crate 的词法分析器内部标记 (U+E001..U+E004) 冲突。
     它通常源自编辑器的不可见字符设置，或从别处粘贴时带入的隐藏字符。
 
     修正方法: 删除该字符。
@@ -268,19 +267,19 @@ diag-unregistered-sentinel-title = 未登记的内部 sentinel（流水线内部
 diag-unregistered-sentinel-body =
     检测到未登记的私用区 sentinel（流水线内部一致性错误）。
 
-    这很可能是 aozora-pipeline 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
+    这很可能是 aozora crate 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
 
 diag-registry-out-of-order-title = 占位符注册表顺序破坏（流水线内部错误）
 diag-registry-out-of-order-body =
     占位符注册表的顺序已被破坏（流水线内部一致性错误）。
 
-    这可能是 aozora-pipeline 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
+    这可能是 aozora crate 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
 
 diag-registry-position-mismatch-title = 占位符注册表位置不一致（流水线内部错误）
 diag-registry-position-mismatch-body =
     占位符注册表条目的位置信息与预期不符（流水线内部一致性错误）。
 
-    这可能是 aozora-pipeline 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
+    这可能是 aozora crate 的缺陷。请附上复现步骤提交 issue: https://github.com/P4suta/aozora/issues
 
 ## doctor
 ##

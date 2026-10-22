@@ -9,3 +9,5 @@ spec/aozora/fixtures/**/*.zip  binary
 # License / notice text files must stay LF even on Windows checkouts.
 LICENSE-*                      text eol=lf
 NOTICE                         text eol=lf
+
+crates/aozora-cli/locales/zh.ftl dotguard-lang=off
