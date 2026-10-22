@@ -13,6 +13,8 @@ Scaffold a new one with `just new-adr "Short imperative title"`; it lands
 
 ## Numbering
 
+New records use decision-based names (`docs/adr/<decision>.md`) with `date:` front matter and no number; numbered records keep their existing names.
+
 The sequence has gaps — `0002` and `0032` are absent. `aozora` was split out
 of [`P4suta/afm`](https://github.com/P4suta/aozora-flavored-markdown), and
 the parser-layer decisions that originated there were renumbered into this

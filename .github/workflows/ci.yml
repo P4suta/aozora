@@ -277,20 +277,19 @@ jobs:
           persist-credentials: false
       - id: msrv
         run: echo "version=$(awk -F'\"' '/^rust-version/ { print $2; exit }' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - id: toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: ${{ steps.msrv.outputs.version }}
+      - env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: rustup toolchain install "$MSRV" --profile minimal
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
           key: ci-msrv
       - env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         run: cargo check --locked --workspace --all-targets --all-features --exclude aozora-extism
       - env:
-          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         run: cargo check --locked -p aozora-extism --all-targets
 
   wasm-test:
@@ -398,6 +397,73 @@ jobs:
             }
           fi
 
+  codeql:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          # Match cargo-deny's advisory threshold.
+          fail-on-severity: moderate
+
+          # Mirror deny.toml's license allow-list.
+          # MIT-0 permits attribution-free use compatible with the workspace license.
+          # BSL-1.0 covers rustyline's Windows-only clipboard dependencies.
+          allow-licenses: >-
+            Apache-2.0,
+            Apache-2.0 WITH LLVM-exception,
+            MIT,
+            MIT-0,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            ISC,
+            Unicode-3.0,
+            Unicode-DFS-2016,
+            CC0-1.0,
+            MPL-2.0,
+            Zlib,
+            BSL-1.0
+
+          # rust-cache runs only in CI and is not distributed with the crates.
+          # protobuf's permissive Go patent grant is not recognized as an SPDX license.
+          # const-siphasher uses legacy MIT/Apache-2.0 metadata accepted by cargo-deny.
+          # filetime uses legacy MIT/Apache-2.0 metadata accepted by cargo-deny.
+          allow-dependencies-licenses: >-
+            pkg:githubactions/Swatinem/rust-cache,
+            pkg:golang/google.golang.org/protobuf,
+            pkg:cargo/const-siphasher,
+            pkg:cargo/filetime
+
+          comment-summary-in-pr: on-failure
+
   ci-success:
     name: ci-success
     if: always()
@@ -419,6 +485,8 @@ jobs:
       - python
       - commitlint
       - release-gate
+      - codeql
+      - dependency-review
     runs-on: ubuntu-latest
     steps:
       - if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
