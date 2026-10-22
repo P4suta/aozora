@@ -1,18 +1,3 @@
-//! [`FilesystemCorpus`] — yield every `.txt` file found under a root.
-//!
-//! Accepts any directory layout. Canonical usage is to point it at a
-//! locally-extracted `aozorabunko_text` clone (or any other directory
-//! of aozora-format text), letting sweep tests run invariants against
-//! every candidate file. The directory structure is not inspected:
-//! labels are paths relative to the root, and paths are yielded in
-//! [`walkdir`]'s directory-entry (`readdir(2)`) order, which is OS- and
-//! filesystem-dependent and NOT lexicographic; callers needing
-//! determinism must sort.
-//!
-//! Files with extensions other than `.txt` are skipped silently.
-//! Symbolic links are not followed (walkdir's default `follow_links =
-//! false`) to prevent cycles.
-
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -23,10 +8,8 @@ use crate::{CorpusError, CorpusItem, CorpusSource};
 
 /// Filesystem-backed corpus source.
 ///
-/// Construction validates that `root` is a directory; iteration reads
-/// files lazily. I/O failures on individual files are yielded inline
-/// as [`CorpusError::Io`], so an unreadable file does not abort the
-/// sweep — the caller can skip it and continue.
+/// Iteration reads `.txt` files lazily in filesystem order without following symbolic links.
+/// Per-file I/O failures are yielded inline as [`CorpusError::Io`].
 #[derive(Debug, Clone)]
 pub struct FilesystemCorpus {
     root: PathBuf,
@@ -35,15 +18,11 @@ pub struct FilesystemCorpus {
 }
 
 impl FilesystemCorpus {
-    /// Construct from a directory root. Rejects non-directory paths
-    /// eagerly so misconfiguration surfaces at callsite rather than
-    /// deep inside iteration.
+    /// Construct from a directory root.
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not
-    /// exist or is not a directory, or [`CorpusError::Io`] if its
-    /// canonical path cannot be resolved.
+    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not exist or is not a directory, or [`CorpusError::Io`] if its canonical path cannot be resolved.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
         let metadata = match fs::metadata(&root) {
@@ -76,20 +55,8 @@ impl FilesystemCorpus {
         &self.root
     }
 
-    /// Enumerate every `.txt` file under the root WITHOUT reading its
-    /// bytes. Useful for splitting walkdir cost from read cost in
-    /// per-phase load benchmarks and for fanning the read step
-    /// across rayon workers. The returned iterator yields absolute
-    /// paths in walkdir's directory-entry (`readdir(2)`) order, which
-    /// is OS- and filesystem-dependent and NOT lexicographic; callers
-    /// needing determinism must sort.
-    ///
-    /// Uses `DirEntry::file_type()` for the file-vs-directory check —
-    /// walkdir caches that from the underlying `readdir(2)` so no
-    /// extra `stat(2)` is needed per entry. The naive
-    /// `path.is_file()` shape would double the directory-walk cost on
-    /// cold filesystem caches by issuing a fresh `stat` for every
-    /// entry walkdir already inspected.
+    /// Enumerate `.txt` paths under the root without reading their bytes.
+    /// Paths follow filesystem order; sort them for deterministic output.
     #[must_use]
     pub fn walk_paths(&self) -> Box<dyn Iterator<Item = Result<PathBuf, CorpusError>> + '_> {
         let walker = WalkDir::new(&self.root)
@@ -111,15 +78,11 @@ impl FilesystemCorpus {
         Box::new(walker)
     }
 
-    /// Read a single file's bytes into a fresh `CorpusItem`. Public
-    /// helper used by the parallel-load path so each rayon worker
-    /// can call this on a path it dequeued from the shared work queue
-    /// without re-running walkdir.
+    /// Read a single file's bytes into a fresh `CorpusItem`.
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::Io`] if `path` is outside the corpus
-    /// root, cannot be resolved, or cannot be read.
+    /// Returns [`CorpusError::Io`] if `path` is outside the corpus root, cannot be resolved, or cannot be read.
     pub fn read_path(&self, path: &Path) -> Result<CorpusItem, CorpusError> {
         read_item(&self.root, &self.canonical_root, path)
     }
@@ -137,21 +100,13 @@ impl CorpusSource for FilesystemCorpus {
                     Some(read_item(&root, &canonical_root, entry.path()))
                 }
                 Ok(_) => None,
-                // walkdir's errors are io-level (permission denied walking
-                // into a subdir, broken symlink). We surface them so the
-                // caller decides skip vs fail, attaching the path walkdir
-                // was inspecting.
                 Err(err) => {
                     let path = err.path().map(Path::to_path_buf).unwrap_or_default();
                     Some(Err(CorpusError::Io {
                         path,
-                        source: err.into_io_error().unwrap_or_else(|| {
-                            // walkdir errors without an io::Error cause are
-                            // cycle-detection reports; map to a generic
-                            // io::Error of kind Other so downstream matches
-                            // on `io::ErrorKind` remain meaningful.
-                            io::Error::other("walkdir cycle or loop detected")
-                        }),
+                        source: err
+                            .into_io_error()
+                            .unwrap_or_else(|| io::Error::other("walkdir cycle or loop detected")),
                     }))
                 }
             });
@@ -163,16 +118,7 @@ impl CorpusSource for FilesystemCorpus {
     }
 }
 
-/// `walkdir::DirEntry`-aware "is this a `.txt` file" check that uses
-/// the cached `file_type` from `readdir(2)` instead of issuing a
-/// fresh `stat(2)`. Saves one syscall per entry — on a 17 k-file
-/// corpus with cold inode cache this shrinks the walkdir phase from
-/// ~4.5 s to ~0.3 s.
-///
-/// Excludes directories and symlinks (matching the original
-/// `path.is_file()` semantics walkdir already returns); device /
-/// fifo / socket types fall through too — Aozora corpus content is
-/// always regular `.txt` files.
+// Corpus traversal with a cold inode cache measured about 4.5 s with per-path stat calls and 0.3 s with cached directory-entry types.
 fn is_text_dir_entry(entry: &walkdir::DirEntry) -> bool {
     let ft = entry.file_type();
     !ft.is_dir() && !ft.is_symlink() && entry.path().extension().is_some_and(|ext| ext == "txt")
@@ -217,13 +163,6 @@ fn read_item(root: &Path, canonical_root: &Path, path: &Path) -> Result<CorpusIt
         path: path.to_path_buf(),
         source,
     })?;
-    // Labels are portable, POSIX-style identifiers: join the components
-    // with '/' rather than `Path::display`, which emits the platform
-    // separator ('\' on Windows). Without this, the same corpus would
-    // produce `nested\b.txt` on Windows and `nested/b.txt` elsewhere,
-    // making corpus digests and audit output platform-dependent. Joining
-    // components (not a `\`->`/` string replace) is separator-correct: a
-    // Unix filename may itself contain a literal backslash.
     let label = relative
         .components()
         .map(|c| c.as_os_str().to_string_lossy())
@@ -408,18 +347,9 @@ mod tests {
         assert!(provenance.contains(&dir.path().display().to_string()));
     }
 
-    // Unix-only: the unreadable file is approximated with a `chmod 000`
-    // (`PermissionsExt::set_mode`), which exists only on Unix. Windows
-    // gates readability through ACLs / the read-only bit rather than mode
-    // bits, so this construction doesn't translate — the walk's
-    // inline-error contract is exercised on the Unix runners (macOS +
-    // Linux) and left uncompiled on the Windows cross-os lane.
     #[cfg(unix)]
     #[test]
     fn io_error_on_unreadable_file_is_yielded_inline() {
-        // Approximate an unreadable file via a chmod 000. If the
-        // permission change isn't available (e.g. running as root), the
-        // test still validates the walk completes without panicking.
         use std::os::unix::fs::PermissionsExt;
 
         let dir = fresh_root();
@@ -434,7 +364,6 @@ mod tests {
         let corpus = FilesystemCorpus::new(dir.path()).expect("valid root");
         let results: Vec<_> = corpus.iter().collect();
 
-        // Always yields the readable file.
         assert!(
             results
                 .iter()
@@ -449,10 +378,6 @@ mod tests {
                 .any(|r| matches!(r, Err(CorpusError::Io { .. })));
             assert!(has_err, "locked file should yield an Io error");
 
-            // Restore perms so TempDir's drop can clean up. The outcome
-            // of the restore itself is diagnostic noise — we just want
-            // the file's permissions back to "cleanable" before TempDir
-            // drops. `drop` makes the intent explicit (discard Result).
             let mut back = fs::metadata(&locked).expect("re-stat").permissions();
             back.set_mode(0o644);
             drop(fs::set_permissions(&locked, back));

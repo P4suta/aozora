@@ -1,15 +1,3 @@
-//! [`VendoredCorpus`] — read in-tree golden fixtures.
-//!
-//! Exposes `spec/aozora/fixtures/<card-id>/input.sjis.txt` files as a
-//! [`CorpusSource`] without picking up the sibling `input.utf8.txt` /
-//! `golden.html` that would otherwise show up in a plain
-//! [`crate::FilesystemCorpus`] walk of the same directory.
-//!
-//! Dedicated to the "sweep the goldens themselves" use case — applying
-//! sweep invariants to Tier A fixtures to catch regressions without
-//! running the full golden diff test, and to provide a non-empty
-//! corpus when no external `AOZORA_CORPUS_ROOT` is available.
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -17,18 +5,11 @@ use std::vec::IntoIter;
 
 use crate::{CorpusError, CorpusItem, CorpusSource};
 
-/// Name of the expected SJIS-encoded input file inside each fixture
-/// subdirectory. Matches the layout seen under
-/// `spec/aozora/fixtures/<card-id>/` in this repository.
 const FIXTURE_INPUT_FILENAME: &str = "input.sjis.txt";
 
-/// Corpus source backed by the in-tree `spec/aozora/fixtures/` layout.
+/// Corpus source reading `input.sjis.txt` from immediate subdirectories.
 ///
-/// Each immediate subdirectory of `root` is treated as one fixture.
-/// A fixture contributes an item iff it contains a file named
-/// `FIXTURE_INPUT_FILENAME`; missing the file means the fixture is
-/// skipped silently (it may be a Tier-A-candidate that hasn't been
-/// vendored yet, or a scratch dir).
+/// Subdirectories without the input file are skipped.
 #[derive(Debug, Clone)]
 pub struct VendoredCorpus {
     root: PathBuf,
@@ -36,14 +17,11 @@ pub struct VendoredCorpus {
 }
 
 impl VendoredCorpus {
-    /// Construct from a fixtures directory root (e.g.
-    /// `spec/aozora/fixtures`). Rejects non-directory paths eagerly.
+    /// Construct from a fixtures directory root.
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not
-    /// exist or is not a directory, or [`CorpusError::Io`] if the
-    /// root metadata cannot be read.
+    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not exist or is not a directory, or [`CorpusError::Io`] if the root metadata cannot be read.
     pub fn load(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
         let metadata = match fs::metadata(&root) {
@@ -73,12 +51,6 @@ impl CorpusSource for VendoredCorpus {
     }
 }
 
-/// Owning iterator over subdirectories of the fixtures root.
-///
-/// Kept as a concrete struct (rather than a chain of closures) so the
-/// `Iterator::next` implementation can cleanly surface directory-read
-/// failures as `Err` items and continue past sub-fixtures that lack
-/// the expected input file.
 struct FixtureIter {
     entries: Option<IntoIter<Result<PathBuf, CorpusError>>>,
     error_once: Option<CorpusError>,
@@ -256,8 +228,6 @@ mod tests {
         let dir = fresh_root();
         seed_fixture(dir.path(), "56656", b"real fixture");
 
-        // A sibling directory that does not contain the expected filename:
-        // mimics a scratch dir that should not be exposed.
         let scratch = dir.path().join("scratch");
         fs::create_dir_all(&scratch).expect("create scratch dir");
         fs::write(scratch.join("golden.html"), b"<html>").expect("write golden");
@@ -285,8 +255,6 @@ mod tests {
     #[test]
     fn iteration_is_deterministic() {
         let dir = fresh_root();
-        // Create in a deliberately out-of-order sequence; the iterator
-        // must sort so that tests don't flake across filesystems.
         seed_fixture(dir.path(), "bb", b"b");
         seed_fixture(dir.path(), "aa", b"a");
         seed_fixture(dir.path(), "cc", b"c");

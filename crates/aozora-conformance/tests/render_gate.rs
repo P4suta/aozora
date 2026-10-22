@@ -1,19 +1,4 @@
-//! Byte-identical six-axis render gate.
-//!
-//! Loads every fixture under `fixtures/render/`, parses the source
-//! through `aozora::Document`, and asserts the rendered output
-//! matches the golden file byte-for-byte across all six axes:
-//!
-//! 1. `tree.to_html()` — human-readable HTML5 surface
-//! 2. `aozora::fmt::format_source(...)` — canonical 青空文庫 source
-//! 3. `aozora::json::diagnostics(...)` — diagnostic envelope
-//! 4. `aozora::json::nodes(...)` — source-coordinate node table
-//! 5. `aozora::json::pairs(...)` — matched delimiter pairs
-//! 6. `aozora::json::container_pairs(...)` — container open/close offsets
-//!
-//! A single commit can break this gate by intentionally changing
-//! any of the six surfaces; in that case run with `UPDATE_GOLDEN=1`
-//! to refresh the relevant golden, review the diff, and commit.
+//! Golden-output checks for conformance fixtures.
 
 use aozora::fmt::format_source;
 use aozora::json::{container_pairs, diagnostics, nodes, pairs};

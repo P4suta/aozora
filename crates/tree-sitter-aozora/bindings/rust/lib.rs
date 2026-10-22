@@ -1,7 +1,4 @@
 //! Tree-sitter binding for Aozora Bunko notation.
-//!
-//! [`LANGUAGE`] provides a lossless editing projection of the source language.
-//! The `aozora` crate remains the semantic authority.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -11,9 +8,7 @@ unsafe extern "C" {
     fn tree_sitter_aozora() -> *const ();
 }
 
-/// The tree-sitter language for aozora-flavored markdown. Hand the
-/// returned [`LanguageFn`] to `tree_sitter::Parser::set_language`
-/// (in a downstream crate that depends on `tree_sitter`).
+/// Tree-sitter language for Aozora Bunko notation.
 ///
 /// # Example
 ///
@@ -27,9 +22,7 @@ unsafe extern "C" {
 /// ```
 pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_aozora) };
 
-/// Node-kind names exposed by the grammar. Centralised here so
-/// consumers (queries, walkers) reference them by symbol instead of
-/// string-literal-everywhere.
+/// Node-kind names exposed by the grammar.
 pub mod kind {
     pub const DOCUMENT: &str = "document";
     pub const GAIJI: &str = "gaiji";
@@ -66,7 +59,6 @@ mod tests {
         let tree = parse("hello, 世界");
         let root = tree.root_node();
         assert_eq!(root.kind(), super::kind::DOCUMENT);
-        // Should contain text node(s); no markup detected.
         let mut cursor = root.walk();
         for child in root.named_children(&mut cursor) {
             assert!(
@@ -131,9 +123,6 @@ mod tests {
 
     #[test]
     fn incremental_edit_reuses_subtree() {
-        // Stage-1 acceptance test: the whole point of switching to TS
-        // is incremental reparses. Edit a tiny section and verify the
-        // edited tree carries fresh text without re-walking the rest.
         let initial = "前文\n｜青空《あおぞら》\n後文";
         let mut parser = Parser::new();
         parser
@@ -141,7 +130,6 @@ mod tests {
             .expect("language compiled in");
         let mut tree = parser.parse(initial, None).expect("parse");
 
-        // Replace 「あおぞら」 with 「そら」.
         let new_src = "前文\n｜青空《そら》\n後文";
         let edit = tree_sitter::InputEdit {
             start_byte: initial.find("あおぞら").unwrap(),

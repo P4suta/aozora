@@ -1,20 +1,3 @@
-//! Samply gecko-profile JSON loader.
-//!
-//! The gecko format is column-oriented: each table (`frameTable`,
-//! `funcTable`, `stackTable`, …) is a struct of parallel arrays
-//! indexed by row id. We translate to row-oriented Rust structs
-//! at load time so callers can iterate idiomatically without
-//! cross-referencing column lengths on every access.
-//!
-//! ## Why not `#[derive(Deserialize)]` the whole schema
-//!
-//! The full gecko schema has dozens of fields we ignore (markers,
-//! profilerOverhead, counters, pages, page state, etc.) and several
-//! version-skewed shapes (samples-as-table vs samples-as-array). A
-//! field-by-field manual extraction over `serde_json::Value` is
-//! both shorter and more forgiving of schema drift than maintaining
-//! a complete strongly-typed mirror.
-
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -27,10 +10,8 @@ use crate::trace::{FrameRow, FuncRow, Library, ResourceRow, Sample, StackEntry, 
 /// Load failures.
 #[derive(Debug, thiserror::Error)]
 pub enum TraceLoadError {
-    /// Opening the trace file failed. Read/decode failures that
-    /// happen *while* streaming (including corrupt `.gz` data, which
-    /// `serde_json::from_reader` reports as an i/o-category error)
-    /// surface as [`TraceLoadError::Json`] instead.
+    /// Opening the trace file failed.
+    /// Streaming read or decode failures surface as [`TraceLoadError::Json`] instead.
     #[error("io error reading {path}: {source}")]
     Io {
         /// The trace path that failed to read.
@@ -48,25 +29,23 @@ pub enum TraceLoadError {
         #[source]
         source: serde_json::Error,
     },
-    /// The JSON parsed but a required gecko table/column was missing
-    /// or had the wrong shape (e.g. mismatched column lengths).
+    /// The JSON parsed but a required gecko table/column was missing or had the wrong shape (e.g. mismatched column lengths).
     #[error("gecko schema: missing or malformed `{field}`")]
     BadSchema {
-        /// Name of the missing/malformed field, or a short phrase
-        /// describing the structural problem.
+        /// Name of the missing/malformed field, or a short phrase describing the structural problem.
         field: &'static str,
     },
 }
 
 impl Trace {
-    /// Load a samply trace. Accepts either `.json.gz` (the default
-    /// samply output) or plain `.json`.
+    /// Load a samply trace.
+    /// Accepts either `.json.gz` (the default samply output) or plain `.json`.
     pub fn load(path: &Path) -> Result<Self, TraceLoadError> {
         let json = read_json(path)?;
         Self::from_json(&json, path.to_path_buf())
     }
 
-    /// Parse an in-memory JSON value (useful in tests).
+    /// Parse an in-memory JSON value.
     pub fn from_json(json: &Value, source_path: PathBuf) -> Result<Self, TraceLoadError> {
         let libs = libs_from(json)?;
         let threads = threads_from(json)?;
@@ -376,19 +355,6 @@ fn samples_from(v: &Value) -> Result<Vec<Sample>, TraceLoadError> {
         .collect())
 }
 
-/// Resolve per-sample timestamps across the two version-skewed shapes
-/// samply emits:
-///
-/// - older builds carry `time` — absolute milliseconds per sample;
-/// - newer builds carry `timeDeltas` — per-sample deltas whose running
-///   prefix-sum reconstructs the absolute timeline.
-///
-/// `time` wins when both are present. When neither is (e.g. the empty
-/// `samply` control thread), every sample gets `0.0`: timestamps are
-/// not load-bearing for the sample-counting analyses (hot / inclusive /
-/// rollup / libs / stacks / flame all weight by sample, never by time),
-/// so a missing timeline is a degraded-but-usable trace, not a load
-/// failure.
 fn sample_times(s: &Value, n: usize) -> Result<Vec<f64>, TraceLoadError> {
     if s.get("time").is_some() {
         let times = column_f64_opt(s, "time")?;
@@ -407,8 +373,6 @@ fn sample_times(s: &Value, n: usize) -> Result<Vec<f64>, TraceLoadError> {
     }
     Ok(vec![0.0; n])
 }
-
-// ---- column helpers -------------------------------------------------
 
 fn required_string_at(v: &Value, key: &str, field: &'static str) -> Result<String, TraceLoadError> {
     v.get(key)
@@ -613,7 +577,6 @@ mod tests {
 
     #[test]
     fn loads_legacy_absolute_time_column() {
-        // Older samply: `time` holds absolute milliseconds per sample.
         let t = trace_with_samples(&json!({
             "stack": [0, 0, 0],
             "time": [0.0, 1.5, 3.0],
@@ -625,8 +588,6 @@ mod tests {
 
     #[test]
     fn loads_timedeltas_via_prefix_sum() {
-        // Current samply emits per-sample deltas, not absolute `time`;
-        // the running prefix-sum reconstructs the absolute timeline.
         let t = trace_with_samples(&json!({
             "stack": [0, 0, 0],
             "timeDeltas": [1.0, 2.0, 0.5],
@@ -640,10 +601,6 @@ mod tests {
 
     #[test]
     fn loads_when_no_timestamp_column_present() {
-        // The empty `samply` control thread carries neither `time` nor
-        // `timeDeltas`. A missing timeline degrades to zeros — timestamps
-        // are not load-bearing for the sample-counting analyses — rather
-        // than failing the whole trace load.
         let t = trace_with_samples(&json!({
             "stack": [0, 0],
         }));

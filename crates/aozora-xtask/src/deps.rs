@@ -1,36 +1,3 @@
-//! `xtask deps ...` — local-only dependency-follow-up tooling.
-//!
-//! Complements repository update automation with a host-side systemd user
-//! timer that runs `just deps-check` weekly. Why pure Rust and not a shell
-//! script:
-//!
-//! - the rest of the project is Rust 2024 — keeping tooling in the
-//!   same language means one toolchain, one set of types, one set of
-//!   error messages
-//! - shell scripts add a parallel quoting / `set -euo pipefail`
-//!   surface that is fundamentally harder to reason about
-//! - portability: bash idioms break on Windows / non-bash shells; an
-//!   `xtask` binary works wherever `cargo run` does
-//!
-//! Same precedent as the `samply` subcommand (see [`crate`] docs).
-//!
-//! `systemctl --user` talks to the host's systemd user instance.
-//! The timer is therefore available only on systems using systemd.
-//!
-//! ## Layout
-//!
-//! The installed units live in `$XDG_CONFIG_HOME/systemd/user/`:
-//!
-//! | File | Role |
-//! |---|---|
-//! | `aozora-deps-check.service` | one-shot unit that `cd`s into the repo and runs `just deps-check`, tee-ing output to `$XDG_STATE_HOME/aozora/deps-check.log` |
-//! | `aozora-deps-check.timer`   | weekly trigger (Sun 03:30 local + 30 min jitter, `Persistent=true` so a missed run fires on next boot) |
-//!
-//! The unit is bound to the **specific repo checkout** that ran the
-//! install (it bakes in `WorkingDirectory=…`). Re-running this
-//! command from a different checkout simply overwrites the unit
-//! files — they're keyed by name, not path.
-
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -50,15 +17,13 @@ pub(crate) struct DepsArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum DepsCmd {
-    /// Install (or refresh) the systemd user timer that runs
-    /// `just deps-check` weekly. Idempotent.
+    /// Install (or refresh) the systemd user timer that runs `just deps-check` weekly.
+    /// Idempotent.
     InstallTimer,
-    /// Remove the systemd user timer + service unit. The rolling
-    /// log at `$XDG_STATE_HOME/aozora/deps-check.log` is preserved
-    /// (delete manually if desired).
+    /// Remove the systemd user timer + service unit.
+    /// The rolling log at `$XDG_STATE_HOME/aozora/deps-check.log` is preserved (delete manually if desired).
     UninstallTimer,
-    /// Show the timer's current status, the next scheduled run,
-    /// and the most recent journal entries.
+    /// Show the timer's current status, the next scheduled run, and the most recent journal entries.
     Status,
 }
 
@@ -69,8 +34,6 @@ pub(crate) fn dispatch(args: &DepsArgs) -> Result<(), String> {
         DepsCmd::Status => status(),
     }
 }
-
-// ---- subcommand implementations ------------------------------------
 
 fn install_timer() -> Result<(), String> {
     let repo_root = locate_repo_root()?;
@@ -111,10 +74,6 @@ fn install_timer() -> Result<(), String> {
 }
 
 fn uninstall_timer() -> Result<(), String> {
-    // `disable --now` is idempotent on systemd ≥ 220 — succeeds
-    // whether the unit is enabled or not. We still suppress errors
-    // so a partial install (e.g. unit files present, never enabled)
-    // can be cleaned up.
     drop(systemctl([
         "disable",
         "--now",
@@ -151,9 +110,6 @@ fn status() -> Result<(), String> {
             "Timer not installed. Run: cargo run -p aozora-xtask -- deps install-timer".to_owned(),
         );
     }
-    // `status` exits non-zero whenever a unit is inactive (which is
-    // normal for a oneshot service between firings) — capture
-    // stdout regardless and print it.
     print_systemctl(["status", &format!("{SERVICE_NAME}.timer"), "--no-pager"]);
     println!();
     println!("Recent runs:");
@@ -164,12 +120,7 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
-// ---- helpers -------------------------------------------------------
-
 fn locate_repo_root() -> Result<PathBuf, String> {
-    // Walk up from CWD until we find a Cargo.toml that contains
-    // `[workspace]`. Mirrors how `cargo` discovers the workspace
-    // root and avoids hard-coding the path / requiring an env var.
     let cwd = env::current_dir().map_err(|e| format!("cwd: {e}"))?;
     let mut here: &Path = &cwd;
     loop {
@@ -295,7 +246,6 @@ where
     for a in args {
         cmd.arg(a);
     }
-    // Inherit stdio so the user sees the systemd output verbatim.
     drop(cmd.status());
 }
 

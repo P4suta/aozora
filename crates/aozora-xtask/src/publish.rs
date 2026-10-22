@@ -3,34 +3,6 @@
     reason = "publish checks operate on validated workspace manifest structures"
 )]
 
-//! crates.io publish-path ledger drift gate.
-//!
-//! Cross-checks the workspace's publishable members against
-//! `release-plz.toml`'s `changelog_include`, and enforces the manifest
-//! hygiene rules the root `Cargo.toml` already states in prose:
-//! path-only internal dev-deps, and no registry `version` on an entry
-//! that points at a `publish = false` member.
-//!
-//! It also checks each publishable crate's README for the crates.io /
-//! docs.rs page: the file exists (else the page is blank), and its links
-//! are absolute — those pages serve the README standalone, so a
-//! repo-relative target 404s. This subsumes the former bash `readme-gate`,
-//! which only caught `./`/`../` prefixes and missed a bare `CONTRIBUTING.md`.
-//!
-//! **Offline.** It reads manifests and never contacts a registry —
-//! whether a crate actually exists on crates.io is a registry fact, and
-//! wiring that into a blocking gate would make the build depend on a
-//! third party's uptime (the same call `lychee.toml` documents for
-//! external links). The release runbook derives that fact on demand.
-//!
-//! ## Why this exists
-//!
-//! `aozora-i18n` joined the workspace publishable by default, but
-//! `release-plz.toml`'s `changelog_include` was never updated — so its
-//! commits would have silently vanished from the aggregated CHANGELOG.
-//! The release runbook drifted the same way, twice. A ledger that three
-//! files have to agree on is a ledger a machine should check.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,8 +14,6 @@ use serde::de::DeserializeOwned;
 use crate::PublishArgs;
 use crate::PublishOp;
 
-/// Root manifest — the workspace member list and the shared dependency
-/// table that `workspace = true` entries inherit from.
 #[derive(Deserialize)]
 struct RootManifest {
     workspace: WorkspaceTable,
@@ -56,8 +26,6 @@ struct WorkspaceTable {
     dependencies: BTreeMap<String, toml::Value>,
 }
 
-/// A member manifest. Only the fields the ledger reasons about; serde
-/// ignores the rest.
 #[derive(Deserialize)]
 struct CrateManifest {
     package: PackageTable,
@@ -68,8 +36,6 @@ struct CrateManifest {
 #[derive(Deserialize)]
 struct PackageTable {
     name: String,
-    /// `publish = false`, or `publish = ["registry", …]`. Absent means
-    /// "publishable to any registry".
     #[serde(default)]
     publish: Option<toml::Value>,
 }
@@ -79,8 +45,6 @@ struct JsonPackage {
     version: String,
 }
 
-/// `release-plz.toml`. `[[package]]` overrides plus whatever else the
-/// file carries (`[workspace]`, `[changelog]`) — serde ignores those.
 #[derive(Deserialize)]
 struct ReleasePlzManifest {
     #[serde(default)]
@@ -98,33 +62,15 @@ struct ReleasePlzPackage {
     changelog_include: Option<Vec<String>>,
 }
 
-/// The facts the invariants are checked against. Built by [`load`]
-/// (all the I/O) and consumed by [`verify`] (pure, unit-tested).
 struct Ledger {
-    /// Member package names with `publish != false`, in member order.
     publishable: Vec<String>,
-    /// Member package names with `publish = false`.
     unpublishable: Vec<String>,
-    /// `release-plz.toml` packages that claim the release identity —
-    /// `changelog_update` *and* `git_tag_enable` both on. Exactly one is
-    /// legal; the vector exists so a violation can name the offenders.
     release_identities: Vec<String>,
-    /// The identity crate's `changelog_include`, verbatim (order and
-    /// duplicates preserved — I5 inspects both).
     changelog_include: Vec<String>,
-    /// `(crate, dev-dep)` where a publishable crate's internal dev-dep
-    /// resolves to a registry `version`.
     versioned_internal_dev_deps: Vec<(String, String)>,
-    /// `[workspace.dependencies]` entries that carry a `version` while
-    /// pointing at a `publish = false` member.
     versioned_unpublishable_workspace_deps: Vec<String>,
     non_placeholder_package_versions: Vec<(String, String)>,
-    /// Publishable members whose crate directory has no README.md — the
-    /// crates.io page would render blank.
     readme_missing: Vec<String>,
-    /// `(crate, offending line)` for repo-relative links in a publishable
-    /// crate's README. crates.io / docs.rs serve the README standalone, so a
-    /// link that resolves against the repo tree 404s there.
     readme_relative_links: Vec<(String, String)>,
 }
 
@@ -135,9 +81,6 @@ pub(crate) fn dispatch(args: &PublishArgs) -> Result<(), String> {
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
-    // The xtask binary lives under <workspace>/crates/aozora-xtask;
-    // resolve the workspace root by stripping two directory levels
-    // from CARGO_MANIFEST_DIR so this works from any cwd.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let root = Path::new(manifest_dir)
         .parent()
@@ -158,8 +101,6 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
     serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
 }
 
-/// Whether a `publish` value means "do not publish". `false` and an
-/// empty registry list both do; anything else is publishable.
 fn publish_is_disabled(value: Option<&toml::Value>) -> bool {
     match value {
         Some(toml::Value::Boolean(flag)) => !flag,
@@ -168,23 +109,14 @@ fn publish_is_disabled(value: Option<&toml::Value>) -> bool {
     }
 }
 
-/// Whether a dependency entry states a registry `version` on its own,
-/// without following `workspace = true`.
 fn entry_states_version(entry: &toml::Value) -> bool {
     match entry {
-        // `foo = "1.0"` — the bare-version shorthand.
         toml::Value::String(_) => true,
         toml::Value::Table(table) => table.contains_key("version"),
         _ => false,
     }
 }
 
-/// Whether a dependency resolves to a registry `version` — i.e. whether
-/// cargo would keep it in the published manifest. `workspace = true`
-/// inherits, so the shared entry decides: `aozora-corpus` is declared
-/// path-only at the workspace level, which makes
-/// `aozora-corpus = { workspace = true }` version-free and therefore
-/// legal as a dev-dep.
 fn resolves_to_version(
     name: &str,
     entry: &toml::Value,
@@ -202,18 +134,11 @@ fn resolves_to_version(
     }
 }
 
-/// Whether a link target resolves against the repository tree rather than
-/// naming an external resource — so it 404s when the README is served
-/// standalone on crates.io / docs.rs. Not repo-relative: an in-page
-/// `#anchor`, a protocol-relative `//host/…`, and any target carrying a URL
-/// scheme (`https:`, `http:`, `mailto:`, `tel:`, `data:`, …).
 fn is_repo_relative_target(target: &str) -> bool {
     let t = target.trim();
     if t.is_empty() || t.starts_with('#') || t.starts_with("//") {
         return false;
     }
-    // A scheme is an ASCII letter followed by letters/digits/`+`/`-`/`.` up
-    // to the first colon (RFC 3986). If the target has one, it is absolute.
     if let Some(colon) = t.find(':') {
         let scheme = &t[..colon];
         let is_scheme = scheme
@@ -230,14 +155,6 @@ fn is_repo_relative_target(target: &str) -> bool {
     true
 }
 
-/// The README source lines carrying a repo-relative link — the ones that
-/// would 404 on crates.io / docs.rs. Broader than a `./`/`../` prefix scan:
-/// a bare `CONTRIBUTING.md` or a site-absolute `/x` 404s just the same.
-///
-/// Covers the three ways a README names a link: inline `](target)` (and the
-/// `![alt](target)` image form), an HTML `href`/`src` attribute, and a
-/// reference-style definition `[label]: target`. Lines are returned trimmed,
-/// in file order.
 fn repo_relative_link_lines(readme: &str) -> Vec<String> {
     let inline = Regex::new(r"\]\(\s*<?([^)\s>]+)").expect("static inline-link regex");
     let html =
@@ -258,10 +175,6 @@ fn repo_relative_link_lines(readme: &str) -> Vec<String> {
     hits
 }
 
-/// Scan each publishable member's README for the crates.io / docs.rs page:
-/// missing files, and repo-relative links that 404 when the README is served
-/// standalone. Offline — reads the committed file, never the registry.
-/// Returns `(missing, (crate, offending line)…)`.
 fn readme_hygiene(
     root: &Path,
     members: &[(CrateManifest, String)],
@@ -284,8 +197,6 @@ fn readme_hygiene(
     (missing, relative)
 }
 
-/// Source `package.json` versions that are not the release-injected `0.0.0`
-/// placeholder — a hand-written version here ships in the wrong artifact.
 fn distribution_versions(root: &Path) -> Result<Vec<(String, String)>, String> {
     const PACKAGE_PATHS: [&str; 3] = [
         "crates/tree-sitter-aozora/package.json",
@@ -310,9 +221,6 @@ fn load(root: &Path) -> Result<Ledger, String> {
     let manifest: RootManifest = read_toml(&root.join("Cargo.toml"))?;
     let workspace_deps = &manifest.workspace.dependencies;
 
-    // Pass 1: read every member manifest. Member *paths* are not member
-    // *names* (`crates/tree-sitter-aozora` → `tree-sitter-aozora`), so
-    // the name has to come out of each manifest.
     let members: Vec<(CrateManifest, String)> = manifest
         .workspace
         .members
@@ -333,10 +241,8 @@ fn load(root: &Path) -> Result<Ledger, String> {
         }
     }
 
-    // README hygiene for the crates.io / docs.rs page (offline).
     let (readme_missing, readme_relative_links) = readme_hygiene(root, &members);
 
-    // An "internal" dependency is one whose name is a workspace member.
     let internal: Vec<&str> = members
         .iter()
         .map(|(m, _)| m.package.name.as_str())
@@ -345,8 +251,6 @@ fn load(root: &Path) -> Result<Ledger, String> {
     let mut versioned_internal_dev_deps = Vec::new();
     for (member, _) in &members {
         if publish_is_disabled(member.package.publish.as_ref()) {
-            // A `publish = false` crate has no published manifest, so
-            // cargo never checks its dev-deps against the registry.
             continue;
         }
         for (dep_name, entry) in &member.dev_dependencies {
@@ -393,15 +297,9 @@ fn load(root: &Path) -> Result<Ledger, String> {
     })
 }
 
-/// Check every invariant, collecting all violations rather than
-/// stopping at the first — one run should tell you everything that is
-/// wrong.
 fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
     let mut violations = Vec::new();
     check_public_packages(ledger, &mut violations);
-    // The identity is resolved first because `changelog_include` hangs
-    // off it: without knowing which crate is the umbrella, "everyone
-    // else must be folded in" has no subject.
     let identity = release_identity(ledger, &mut violations);
     check_changelog_include(ledger, identity, &mut violations);
     check_manifest_hygiene(ledger, &mut violations);
@@ -415,10 +313,6 @@ fn verify(ledger: &Ledger) -> Result<(), Vec<String>> {
     }
 }
 
-/// A published crate needs a README — crates.io renders a blank page without
-/// one — whose links are absolute. The bash `readme-gate` this replaces only
-/// caught `./`/`../` prefixes, so a bare `CONTRIBUTING.md` slipped through
-/// and 404'd on the published page.
 fn check_readme_hygiene(ledger: &Ledger, violations: &mut Vec<String>) {
     if !ledger.readme_missing.is_empty() {
         violations.push(format!(
@@ -473,9 +367,6 @@ fn check_public_packages(ledger: &Ledger, violations: &mut Vec<String>) {
     }
 }
 
-/// I4 — exactly one release identity. Zero means no `vX.Y.Z` tag is
-/// ever cut (and the whole downstream chain stays silent); two means two
-/// tags race for the same version.
 fn release_identity<'a>(ledger: &'a Ledger, violations: &mut Vec<String>) -> Option<&'a str> {
     match ledger.release_identities.as_slice() {
         [one] => {
@@ -508,11 +399,8 @@ fn release_identity<'a>(ledger: &'a Ledger, violations: &mut Vec<String>) -> Opt
     }
 }
 
-/// I1 / I2 / I3 / I5 — the aggregated changelog's crate list.
 fn check_changelog_include(ledger: &Ledger, identity: Option<&str>, violations: &mut Vec<String>) {
     if let Some(identity) = identity {
-        // I1 — every publishable crate but the identity folds its
-        // commits into the one aggregated changelog.
         let missing: Vec<&str> = ledger
             .publishable
             .iter()
@@ -529,7 +417,6 @@ fn check_changelog_include(ledger: &Ledger, identity: Option<&str>, violations: 
             ));
         }
 
-        // I3 — the identity must not fold itself in.
         if ledger.changelog_include.iter().any(|inc| inc == identity) {
             violations.push(format!(
                 "release-plz.toml `changelog_include` contains the release identity \
@@ -538,8 +425,6 @@ fn check_changelog_include(ledger: &Ledger, identity: Option<&str>, violations: 
         }
     }
 
-    // I2 — nothing in the list may be stale (renamed, deleted, or
-    // turned `publish = false`).
     let stray: Vec<&str> = ledger
         .changelog_include
         .iter()
@@ -557,8 +442,6 @@ fn check_changelog_include(ledger: &Ledger, identity: Option<&str>, violations: 
         ));
     }
 
-    // I5 — sorted + unique. Not cosmetic: an unsorted list is one a
-    // human appends to blindly, which is how a duplicate gets in.
     let mut canonical = ledger.changelog_include.clone();
     canonical.sort_unstable();
     canonical.dedup();
@@ -570,12 +453,7 @@ fn check_changelog_include(ledger: &Ledger, identity: Option<&str>, violations: 
     }
 }
 
-/// I6 / I7 — the publish-path rules the root `Cargo.toml` states in
-/// prose, made executable.
 fn check_manifest_hygiene(ledger: &Ledger, violations: &mut Vec<String>) {
-    // I6 — a versioned internal dev-dep must already exist on crates.io
-    // at publish time, which blocks a first publish and creates
-    // unpublishable dev-dep cycles.
     if !ledger.versioned_internal_dev_deps.is_empty() {
         let listed: Vec<String> = ledger
             .versioned_internal_dev_deps
@@ -592,9 +470,6 @@ fn check_manifest_hygiene(ledger: &Ledger, violations: &mut Vec<String>) {
         ));
     }
 
-    // I7 — a `publish = false` member has no registry version, so a
-    // version pin here goes stale on the lockstep bump and breaks
-    // `cargo update`.
     if !ledger.versioned_unpublishable_workspace_deps.is_empty() {
         violations.push(format!(
             "{} [workspace.dependencies] entr(y/ies) pin a `version` on a `publish = false` \
@@ -612,9 +487,6 @@ fn check() -> Result<(), String> {
     let ledger = load(&root)?;
     match verify(&ledger) {
         Ok(()) => {
-            // Counts are derived, never written down — a hard-coded
-            // total is exactly the kind of fact this gate exists to
-            // stop anyone from maintaining by hand.
             let folded = ledger.changelog_include.len();
             let expected = ledger.publishable.len().saturating_sub(1);
             eprintln!(
@@ -640,7 +512,6 @@ mod tests {
         toml::from_str::<toml::Value>(src).expect("test fixture must be valid TOML")
     }
 
-    /// A ledger that satisfies every invariant, for tests to perturb.
     fn healthy() -> Ledger {
         Ledger {
             publishable: vec![
@@ -759,7 +630,6 @@ mod tests {
 
     #[test]
     fn verify_flags_a_versioned_internal_dev_dep() {
-        // The `aozora-lsp` → `aozora-fmt` first-publish block.
         let mut ledger = healthy();
         ledger
             .versioned_internal_dev_deps
@@ -855,8 +725,6 @@ mod tests {
             "aozora-fmt".to_owned(),
             table(r#"d = { version = "1.2.3", path = "crates/aozora-fmt" }"#)["d"].clone(),
         );
-        // `aozora-corpus` is publish=false and therefore path-only at
-        // the workspace level — inheriting it is legal.
         workspace_deps.insert(
             "aozora-corpus".to_owned(),
             table(r#"d = { path = "crates/aozora-corpus" }"#)["d"].clone(),
@@ -890,11 +758,11 @@ mod tests {
             );
         }
         for relative in [
-            "CONTRIBUTING.md", // the exact bare-relative case the bash gate missed
+            "CONTRIBUTING.md",
             "./docs/x.md",
             "../sibling/y.md",
             "docs/guide.md",
-            "/site-absolute/z", // 404s on crates.io just like a bare path
+            "/site-absolute/z",
             "LICENSE",
         ] {
             assert!(
@@ -964,9 +832,6 @@ mod tests {
 
     #[test]
     fn the_live_ledger_loads_and_passes() {
-        // The integration test: parse the real manifests, not fixtures.
-        // This is what fails in CI when someone adds a crate and forgets
-        // release-plz.toml.
         let root = workspace_root().expect("workspace root");
         let ledger = load(&root).expect("the live manifests must parse");
         assert!(

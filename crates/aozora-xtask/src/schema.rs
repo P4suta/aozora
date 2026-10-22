@@ -3,20 +3,6 @@
     reason = "generated schemas are JSON object values by construction"
 )]
 
-//! JSON Schema artefact dump / drift gate.
-//!
-//! Bridges `aozora::json::schema_*` →
-//! `crates/aozora-conformance/json/schema-*.json`. `xtask schema dump`
-//! regenerates the schema files; `xtask schema check` exits
-//! non-zero when the on-disk artefact has drifted from the live wire
-//! types.
-//!
-//! The artefact sits beside the conformance suite because that is what
-//! consumes it. It used to live in the handbook source tree so GitHub
-//! Pages would publish it at a stable URL — but nothing ever referenced
-//! that URL, and `aozora spec schema <name>` prints the same bytes from
-//! the binary, offline.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,13 +13,6 @@ use crate::SchemaOp;
 
 pub(crate) type SchemaGen = fn() -> serde_json::Value;
 
-/// Schema file relative paths under workspace root, paired with the
-/// generator function that produces the live schema. Order matches
-/// the wire endpoints (`diagnostics` →
-/// `container_pairs`).
-///
-/// `pub(crate)` so the `types` module can read the same committed schema
-/// artefacts as the single source of truth for `quicktype` codegen.
 pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
         "crates/aozora-conformance/json/schema-diagnostics.json",
@@ -69,9 +48,6 @@ pub(crate) fn dispatch(args: &SchemaArgs) -> Result<(), String> {
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
-    // The xtask binary lives under <workspace>/crates/aozora-xtask;
-    // resolve the workspace root by stripping two directory levels
-    // from CARGO_MANIFEST_DIR so this works from any cwd.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let root = Path::new(manifest_dir)
         .parent()
@@ -83,9 +59,6 @@ fn workspace_root() -> Result<PathBuf, String> {
 }
 
 fn render(value: &serde_json::Value) -> String {
-    // Pretty-print with trailing newline so the on-disk file follows
-    // the standard text-file convention. `to_string_pretty` uses
-    // 2-space indent.
     let mut s = serde_json::to_string_pretty(value).expect("serde_json pretty print");
     s.push('\n');
     s
@@ -143,7 +116,6 @@ mod tests {
     fn render_pretty_prints_with_two_space_indent() {
         let value = serde_json::json!({ "a": 1, "b": [2, 3] });
         let out = render(&value);
-        // 2-space indent for nested keys.
         assert!(out.contains("  \"a\": 1"), "2-space indent: {out}");
         assert!(
             out.contains("  \"b\": ["),
@@ -189,8 +161,6 @@ mod tests {
 
     #[test]
     fn schema_generators_produce_object_schemas() {
-        // Each generator must yield a JSON object with a `title`; this is
-        // pure (no I/O) and exercises the live wire schema codegen.
         for (rel, make_schema) in SCHEMA_FILES {
             let schema = make_schema();
             let obj = schema

@@ -1,12 +1,6 @@
-//! Shared scope for the source-hygiene gates: the workspace root and the
-//! git-tracked `.rs` file set. One definition so `lint`, `docs` and `coords`
-//! cannot drift apart on what "the tree" means.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Walk up from this crate's manifest dir to the workspace root (the dir
-/// holding `Cargo.lock`).
 pub(crate) fn workspace_root() -> Result<PathBuf, String> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.ancestors()
@@ -15,9 +9,6 @@ pub(crate) fn workspace_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "workspace root not found".to_owned())
 }
 
-/// Every git-tracked `.rs` file, repo-relative. Git pathspec `*.rs` matches
-/// at any depth; the deterministic scope both CI and a local run agree on
-/// regardless of what untracked artefacts sit in the tree.
 pub(crate) fn tracked_rs_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let output = Command::new("git")
         .arg("ls-files")
