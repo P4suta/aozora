@@ -48,9 +48,8 @@ explain-hint-header = help: run `aozora explain <code>` for details, e.g.
 # the remainder.
 explain-hint-more = … and {$count} more
 
-# Section labels inside `aozora explain <code>` output. The reproduction /
-# fixed *examples* are language-neutral Aozora notation owned by aozora-spec;
-# the localized title / body prose is below, keyed by diagnostic code.
+# Section labels inside `aozora explain <code>` output.
+# The reproduction / fixed examples are language-neutral Aozora notation owned by the `aozora` crate's internal `spec` module; the localized title / body prose is below, keyed by diagnostic code.
 explain-repro-label = Reproduction:
 explain-fixed-label = After fix:
 explain-see-label = see:
@@ -128,15 +127,14 @@ concept-tcy-body =
 ## diagnostic code, where <slug> is the code's trailing `::` segment with `_`
 ## turned into `-` (e.g. `aozora::lex::unclosed_bracket` → `unclosed-bracket`).
 ## The body's `{$…}` placeables are filled from the live diagnostic by the
-## consumer (CLI `explain`, LSP hover). This prose was migrated out of
-## aozora-spec so the catalogue crate stays a pure machine contract; the codes,
-## severities, `#[error]` Display strings, and JSON are never localized.
+## consumer (CLI `explain`, LSP hover).
+## This prose lives outside the `aozora` crate's internal `spec` module so the catalogue stays a pure machine contract; the codes, severities, `#[error]` Display strings, and JSON are never localized.
 
 diag-source-contains-pua-title = Private-use codepoint in the source
 diag-source-contains-pua-body =
     The source contains the private-use codepoint `U+{$codepoint}`.
 
-    This character (`{$char}`) is a reserved codepoint that never appears in ordinary Aozora Bunko text; it collides with aozora-lex's internal markers (U+E001..U+E004).
+    This character (`{$char}`) is a reserved codepoint that never appears in ordinary Aozora Bunko text; it collides with the aozora crate's internal lexer markers (U+E001..U+E004).
     It usually creeps in through an editor's invisible-character setting or an unseen character pasted from elsewhere.
 
     How to fix: delete that single character.
@@ -285,19 +283,19 @@ diag-unregistered-sentinel-title = Unregistered internal sentinel (pipeline-inte
 diag-unregistered-sentinel-body =
     An unregistered private-use sentinel was detected (a pipeline-internal consistency error).
 
-    This is most likely a bug in aozora-pipeline. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
+    This is most likely a bug in the aozora crate. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
 
 diag-registry-out-of-order-title = Placeholder registry out of order (pipeline-internal error)
 diag-registry-out-of-order-body =
     The placeholder registry is out of order (a pipeline-internal consistency error).
 
-    This may be a bug in aozora-pipeline. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
+    This may be a bug in the aozora crate. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
 
 diag-registry-position-mismatch-title = Placeholder registry position mismatch (pipeline-internal error)
 diag-registry-position-mismatch-body =
     A placeholder registry entry's position disagrees with the expected sentinel (a pipeline-internal consistency error).
 
-    This may be a bug in aozora-pipeline. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
+    This may be a bug in the aozora crate. Please report it with steps to reproduce: https://github.com/P4suta/aozora/issues
 
 ## doctor
 ##
