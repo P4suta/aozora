@@ -2,8 +2,6 @@
 name: fuzz
 
 on:
-  schedule:
-    - cron: "29 4 * * 4"
   workflow_dispatch:
 
 concurrency:
@@ -75,7 +73,7 @@ jobs:
         with:
           name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
           path: crates/aozora/fuzz/${{ matrix.crate }}/artifacts/${{ matrix.target }}/
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Open / update crash tracking issue
@@ -91,13 +89,13 @@ jobs:
           TITLE="Fuzz crash: ${CRATE}/${TARGET}"
 
           gh label create "$LABEL" -c B60205 \
-            -d "A cargo-fuzz target crashed in the scheduled fuzz soak" 2>/dev/null || true
+            -d "A cargo-fuzz target crashed in the manual fuzz soak" 2>/dev/null || true
 
           existing=$(gh issue list --label "$LABEL" --state open --json number,title \
             --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
 
           {
-            echo "The weekly fuzz soak crashed **\`${CRATE}/${TARGET}\`**."
+            echo "The manual fuzz soak crashed **\`${CRATE}/${TARGET}\`**."
             echo
             echo "Workflow run: ${RUN_URL}"
             echo

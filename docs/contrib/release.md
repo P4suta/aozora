@@ -29,15 +29,18 @@ check (`xtask release check`): the tag and main rulesets still encode their
 rules, and the PR-time native-SBOM path set still mirrors `release.yml`'s
 tag-time expectation.
 
+## Verification gates
+
+Every pull request and merge group runs the fast gate that `required` summarizes.
+`release-ready` runs the heavy checks, from coverage and the corpus sweep to mutation, fuzzing, sanitizers, and other platforms.
+The [gate split](../adr/fast-pull-request-gate-and-release-gate.md) records where each check runs.
+
 ## Cutting a release
 
 1. Land Conventional Commits on `main`. release-plz opens or updates the
    Release PR with the workspace version and `CHANGELOG.md`.
-2. Review that diff and the `release-ready` result. The result covers the fixed
-   external specification and corpus, all tests and documentation, deep
-   property/fuzz/sanitizer/mutation work, native shipping platforms,
-   performance contracts, generated wire surfaces, and installation from every
-   distribution artifact.
+2. Review that diff and the `release-ready` result.
+   The result covers the fixed external specification and corpus, all tests and documentation, deep property/fuzz/sanitizer/mutation work, native shipping platforms, performance contracts, generated wire surfaces, and installation from every distribution artifact.
 3. Add `release: approved` after review.
    Branch protection requires the `required` check; `release-ready` qualifies the exact commit for publication.
    The label grants no bypass of either gate.

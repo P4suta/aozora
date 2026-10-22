@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,7 +24,6 @@ jobs:
   qualify:
     runs-on: ubuntu-latest
     outputs:
-      release: ${{ (github.event_name == 'push' && steps.detect.outputs.version-changed == 'true') || steps.detect.outputs.release-branch == 'true' }}
       release-branch: ${{ steps.detect.outputs.release-branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +38,6 @@ jobs:
 
   rust:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,9 +48,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: >-
-            rust@1.99.1 just taplo github:crate-ci/typos cargo:cargo-nextest
-            cargo:cargo-llvm-cov tree-sitter npm:quicktype node go
+          install_args: rust@1.99.1 just cargo:cargo-nextest
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-rust
@@ -58,7 +56,6 @@ jobs:
 
   web:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,12 +89,11 @@ jobs:
             playground/playwright-report/
             playground/test-results/
             playground/.lighthouseci/reports/
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
   bindings:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,7 +111,6 @@ jobs:
 
   repo:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,60 +125,26 @@ jobs:
             cargo:cargo-deny cargo:cargo-audit cargo:cargo-shear uv pipx:reuse
       - run: just ci-repo
 
-  corpus:
+  rust-contracts:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
-    env:
-      AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/load-release-inputs
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ env.AOZORA_CORPUS_REPOSITORY }}
-          ref: ${{ env.AOZORA_CORPUS_SHA }}
-          path: .corpus
-          fetch-depth: 1
-          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.99.1 just cargo:cargo-nextest
+          install_args: rust@1.99.1 just cargo:cargo-nextest tree-sitter npm:quicktype node go
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: ci-corpus
-      - run: just ci-corpus
-
-  performance:
-    needs: qualify
-    if: needs.qualify.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev valgrind
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          version: 2026.7.13
-          cache: true
-          install_args: rust@1.99.1 just
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          key: ci-performance
-      - env:
-          BASELINE_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: just ci-perf
+          key: ci-rust-contracts
+      - run: just ci-rust-contracts
 
   release:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -200,74 +161,27 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-release
-      - run: just ci-release
-
-  fuzz-build:
-    needs: qualify
-    if: needs.qualify.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          version: 2026.7.13
-          cache: true
-          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          key: ci-fuzz
-      - run: just ci-fuzz
-
-  mutants-in-diff:
-    needs: qualify
-    if: github.event_name == 'pull_request' && needs.qualify.outputs.release != 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        shard: ["0/8", "1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          version: 2026.7.13
-          cache: true
-          install_args: rust@1.99.1 just cargo:cargo-mutants cargo:cargo-nextest
       - env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git diff --no-color "${BASE_SHA}...HEAD" > pr.diff
-      - run: >-
-          just mutants --in-diff pr.diff
-          --exclude 'crates/aozora/src/pandoc/**'
-          --exclude 'crates/aozora/src/fmt.rs'
-          --exclude 'crates/aozora/src/json.rs'
-          --shard '${{ matrix.shard }}'
-          --sharding round-robin
+          BASELINE_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: just ci-release
 
-  arm64:
+  rust-lint:
     needs: qualify
-    if: needs.qualify.outputs.release != 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.99.1 just
+          install_args: rust@1.99.1 just taplo github:crate-ci/typos
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: ci-arm64
-      - run: just test-aarch64
+          key: ci-rust-lint
+      - run: just ci-rust-lint
 
   msrv:
     runs-on: ubuntu-latest
@@ -318,20 +232,11 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.99.1 pandoc
+          install_args: rust@1.99.1 just pandoc
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-pandoc
-      - run: cargo build --locked --release -p aozora-cli
-      - run: |
-          input='｜青梅《おうめ》'
-          html=$(printf '%s' "$input" | ./target/release/aozora pandoc --to html)
-          grep -F 'aozora-ruby' <<<"$html"
-          grep -F '青梅' <<<"$html"
-          grep -F 'おうめ' <<<"$html"
-          gaiji='※［＃「木＋吶のつくり」、第3水準1-85-54］'
-          plain=$(printf '%s' "$gaiji" | ./target/release/aozora pandoc --to plain)
-          test "$plain" = '枘'
+      - run: just pandoc-smoke
 
   python:
     name: python (py${{ matrix.python }})
@@ -389,8 +294,8 @@ jobs:
           REPO: ${{ github.repository }}
           RELEASE_BRANCH: ${{ needs.qualify.outputs.release-branch }}
         run: |
-          labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')
           if [[ "$RELEASE_BRANCH" == true ]]; then
+            labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')
             grep -qx "release: approved" <<<"$labels" || {
               echo "::error::add the 'release: approved' label to merge this Release PR"
               exit 1
@@ -470,15 +375,12 @@ jobs:
     needs:
       - qualify
       - rust
+      - rust-lint
+      - rust-contracts
       - web
       - bindings
       - repo
-      - corpus
-      - performance
       - release
-      - fuzz-build
-      - mutants-in-diff
-      - arm64
       - msrv
       - wasm-test
       - pandoc-smoke

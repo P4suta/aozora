@@ -1,8 +1,6 @@
 name: mutants
 
 on:
-  schedule:
-    - cron: "13 6 * * 5"
   workflow_dispatch:
 
 concurrency:
@@ -102,5 +100,5 @@ jobs:
         with:
           name: mutants-${{ strategy.job-index }}
           path: mutants.out/
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: error

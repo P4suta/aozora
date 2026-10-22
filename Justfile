@@ -148,6 +148,10 @@ example NAME *ARGS:
 test *ARGS:
     cargo nextest run {{_ws}} --all-targets {{ARGS}}
 
+[doc("Run the fast gate tests with a fixed property budget and no corpus binaries.")]
+test-fast:
+    env AOZORA_PROPTEST_CASES=128 PROPTEST_RNG_SEED=20261022 cargo nextest run {{_ws}} --all-targets -E 'not binary(corpus_sweep) and not binary(corpus_document_edits)'
+
 [doc("Run tests matching a nextest filter expression.")]
 t FILTER *ARGS:
     cargo nextest run {{_ws}} -E 'test({{FILTER}})' {{ARGS}}
@@ -282,9 +286,9 @@ verify-spec-vectors:
     fi
     AOZORA_SPEC_REPO="$spec" cargo run -q --release -p aozora-xtask -- spec-vectors check
 
-[doc("Run property tests with the default case budget.")]
+[doc("Run deterministic property tests with the default case budget.")]
 prop:
-    cargo nextest run --workspace --all-features --test 'property_*' --run-ignored default
+    env AOZORA_PROPTEST_CASES=128 PROPTEST_RNG_SEED=20261022 cargo nextest run --workspace --all-features --test 'property_*' --run-ignored default
 
 [doc("Run property tests with 4096 cases per block.")]
 prop-deep:
@@ -822,18 +826,42 @@ test-aarch64:
 test-wasm:
     cargo build --locked --target wasm32-wasip1 -p aozora
 
-[doc("Run Rust lint, build, test, coverage, conformance, and drift gates.")]
+[doc("Check that the CLI renders ruby and resolves gaiji through Pandoc.")]
+pandoc-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --locked --release -p aozora-cli
+    input='｜青梅《おうめ》'
+    html=$(printf '%s' "$input" | "${CARGO_TARGET_DIR:-target}/release/aozora" pandoc --to html)
+    grep -F 'aozora-ruby' <<<"$html"
+    grep -F '青梅' <<<"$html"
+    grep -F 'おうめ' <<<"$html"
+    gaiji='※［＃「木＋吶のつくり」、第3水準1-85-54］'
+    plain=$(printf '%s' "$gaiji" | "${CARGO_TARGET_DIR:-target}/release/aozora" pandoc --to plain)
+    test "$plain" = '枘'
+
+[doc("Run the fast gate build, tests, and default doctests.")]
 ci-rust:
-    just lint-full
     just build
-    just test
+    just test-fast
     just test-doc
-    just test-doc-all
-    just test-internals
+
+[doc("Run formatting, all Clippy targets, spelling, and rustdoc checks for the fast gate.")]
+ci-rust-lint:
+    just lint-full
+
+[doc("Run the property, conformance, and drift gates.")]
+ci-rust-contracts:
     just prop
-    just coverage
     just conformance
     just drift-gate
+
+[doc("Run coverage, all-feature doctests, internal tests, and deep properties for the release gate.")]
+ci-rust-release:
+    just test-doc-all
+    just test-internals
+    just coverage
+    just prop-deep
 
 [doc("Run WASM, playground, browser, Lighthouse, and VS Code gates.")]
 ci-web:
@@ -897,14 +925,19 @@ ci-fuzz:
       )
     done
 
-[doc("Run native prerequisites and the Rust, WASI, web, bindings, repository, and performance suites.")]
-ci: native-prerequisites
+[doc("Run the local mirror of the fast pull request gate.")]
+ci:
     just ci-rust
+    just ci-rust-lint
+    just ci-rust-contracts
+    just msrv-local
     just test-wasm
+    just pandoc-smoke
     just ci-web
     just ci-bindings
+    just smoke-py
     just ci-repo
-    just ci-perf
+    just ci-release
 
 [doc("Start the bacon watcher with an optional job name.")]
 watch JOB="":
