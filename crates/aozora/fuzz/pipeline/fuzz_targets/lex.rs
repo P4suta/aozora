@@ -1,13 +1,4 @@
-//! Fuzz target — `aozora::parse` on arbitrary UTF-8.
-//!
-//! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
-//! iteration). The resulting source text is parsed through the public
-//! document API. Parsing must terminate without panicking and every
-//! reported diagnostic span must be non-inverted.
-//!
-//! Run with the standard `just fuzz-{quick,deep,marathon,triage,
-//! promote}` family from the workspace root, e.g.
-//! `just fuzz-quick pipeline lex`.
+//! Exercises public parsing with arbitrary UTF-8 source.
 
 #![no_main]
 

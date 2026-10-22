@@ -3,7 +3,7 @@
     reason = "classifier state transitions and the source-size cap establish these invariants"
 )]
 
-// Forced dispatcher inlining regressed measured throughput by 1–6% with fat LTO, so LLVM chooses inlining.
+// Forced inlining reduced measured throughput, so the compiler chooses inlining.
 
 use core::mem;
 use core::ops::Range;
@@ -69,7 +69,6 @@ pub(crate) fn classify_range<'src, 'al, I>(
 where
     I: IntoIterator<Item = PairEvent>,
 {
-    // The forward-target index reduced measured classification time from 170 ms to 20 ms on an annotation-dense document.
     install_forward_target_index_from_source(source);
     ClassifyStream::new(events.into_iter(), source, source_end, alloc)
 }
@@ -207,7 +206,6 @@ type SynthRubyView = (
     usize,
 );
 
-// Vec-based ruby synthesis accounted for about 67% of measured owned-pipeline heap allocations.
 fn build_synth_ruby_view(
     body: BodyView<'_>,
     prev_text_range: Span,
@@ -458,7 +456,7 @@ where
             PairKind::Bracket => {
                 let refmark = frame.gaiji_refmark;
                 if let Some(rm_span) = refmark {
-                    // Passing the existing body avoids memcpy paths measured at 25.13% and 22.63% in documents 50685 and 49178.
+                    // Reusing the body avoids copies measured in corpus documents 50685 and 49178.
                     if let Some((gaiji, bar)) = self.try_gaiji_emit(view, open_idx, rm_span) {
                         let gaiji_start = gaiji.span.source_span.start;
                         let adjacent = self

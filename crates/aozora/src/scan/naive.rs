@@ -1,16 +1,4 @@
-//! Brute-force ground-truth scanner.
-//!
-//! Walks every byte position and asks the PHF whether the 3-byte
-//! window starting there is a recognised trigger. No SIMD, no
-//! candidate filter, no chunking — just the obvious O(n × PHF)
-//! reference against which every clever backend is cross-checked
-//! via proptest.
-//!
-//! Useful only as a test fixture: the cleverer backends share
-//! constants (the trigger leading-byte set, the middle-byte set,
-//! the PHF) so two of them can silently agree on a wrong answer.
-//! `NaiveScanner` is the independent reference that closes that
-//! loophole.
+//! Provides the reference scanner for differential tests.
 
 use std::vec::Vec;
 
@@ -18,16 +6,12 @@ use crate::spec::classify_trigger_bytes;
 
 use crate::scan::trait_def::OffsetSink;
 
-/// Test-only brute-force reference scanner.
+const TRIGGER_BYTE_LEN: usize = 3;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NaiveScanner;
 
 impl NaiveScanner {
-    /// Scan `source` and return every trigger byte offset.
-    ///
-    /// Convenience wrapper around [`Self::scan`] that allocates a
-    /// fresh `Vec<u32>`. Test paths use this; production paths go
-    /// through [`crate::scan::scan_offsets`].
     #[must_use]
     pub(crate) fn scan_offsets(self, source: &str) -> Vec<u32> {
         let mut sink = Vec::new();
@@ -35,8 +19,6 @@ impl NaiveScanner {
         sink
     }
 
-    /// Sink-based variant: write every trigger byte offset into
-    /// `sink` in source order.
     #[expect(
         clippy::unused_self,
         reason = "value-method shape keeps this symmetric with scan_offsets so both are \
@@ -80,14 +62,12 @@ mod tests {
 
     #[test]
     fn finds_triggers_amid_japanese_text() {
-        // 漢《かん》字 — 《 at byte 3, 》 at byte 12.
         let s = "漢《かん》字";
         assert_eq!(NaiveScanner.scan_offsets(s), vec![3, 12]);
     }
 
     #[test]
     fn skips_non_trigger_chars_with_same_leading_byte() {
-        // hiragana 'あこ…' all start with 0xE3 but classify as None.
         let s = "あこんにちは、世界！";
         assert_eq!(NaiveScanner.scan_offsets(s), Vec::<u32>::new());
     }

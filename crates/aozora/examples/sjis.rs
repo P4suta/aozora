@@ -2,6 +2,11 @@
 
 use aozora::decode_sjis;
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "fixed example inputs must parse successfully and the example demonstrates stdout output"
+)]
 fn main() {
     let sjis: &[u8] = &[0x90, 0xC2, 0x8B, 0xF3, 0x95, 0xB6, 0x8C, 0xC9];
 

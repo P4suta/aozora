@@ -3,31 +3,11 @@
     reason = "the sanitize-stage size cap makes normalized offsets fit u32"
 )]
 
-//! Owned lex API + the single-pass owned normalizer.
-//!
-//! Produces an [`LexOutput`] whose normalized text, registry, and side
-//! tables are owned (lifetime-free, `Send + Sync`). The classify stage builds
-//! [`Node`] directly through an
-//! [`Allocator`](crate::syntax::alloc::Allocator); this module's
-//! [`Normalizer`] is the PUA-rewriter + position-recorder over those spans.
-//! Every interned string lives once, in the allocator's
-//! `NodeStore`, which threads straight into
-//! the output — no arena, no conversion step.
-//!
-//! ## Pipeline
-//!
-//! 1. The sanitize / tokenize / pair stages run as owned-data helpers operating
-//!    on byte spans and event indices — they never construct AST.
-//! 2. The classify stage is invoked with an
-//!    [`Allocator`](crate::syntax::alloc::Allocator); owned AST
-//!    nodes land in its `NodeStore`, strings
-//!    interned through the store's string interner
-//!    so byte-equal content shares a single id.
-//! 3. A single fused walk emits the PUA-rewritten text and builds the
-//!    position-keyed registry + source-keyed side table, recording each
-//!    `Node` (which is `Copy`) directly.
+//! Records classified nodes and their positions in owned [`LexOutput`].
 
 use core::mem::discriminant;
+
+const ESTIMATED_SPANS_PER_CONTAINER: usize = 40;
 use core::ops::Range;
 use std::sync::Arc;
 
@@ -40,16 +20,6 @@ use crate::spec::{Diagnostic, NormalizedOffset, Span};
 use crate::syntax::ast::{ContainerPair, LexOutput, Node, NodeRef, RegionOutput, SourceNode};
 use crate::syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
-const CONTAINER_CAPACITY_SPANS_PER_PAIR: usize = 40;
-
-/// Run the lex pipeline and materialise the result as an owned, lifetime-free
-/// [`LexOutput`] (`Send + Sync`).
-///
-/// The native owned producer: the classify stage builds the owned tree in one
-/// pass (the way the retired borrowed `lex` built the borrowed one), so the
-/// returned output owns all its payloads (interned strings, content / segment
-/// runs, side tables). This is what `Document::snapshot` / `Document::lex`
-/// call.
 #[must_use]
 pub(crate) fn lex(source: &str) -> LexOutput {
     Pipeline::run_to_completion(source)
@@ -63,13 +33,6 @@ pub(crate) fn lex_region(source: &str, range: Range<usize>) -> Option<RegionOutp
     Pipeline::run_region(source, range)
 }
 
-/// Output recorder for the [`Normalizer`] fold.
-///
-/// Holds the position-keyed registry entries and the source-keyed side table.
-/// Each emitted [`Node`] is `Copy`, so recording it is a plain push — no
-/// conversion, no second store (the allocator's
-/// `NodeStore` is authoritative and threads
-/// into the output separately).
 #[derive(Debug, Default)]
 pub(crate) struct Recorder {
     pub(crate) source_nodes: Vec<SourceNode>,
@@ -107,34 +70,15 @@ impl Recorder {
     }
 }
 
-/// Single-pass owned normalizer.
-///
-/// Streams the PUA-rewritten text into `out` and records each emitted
-/// sentinel's node through `recorder`. The classifier emits spans in source
-/// order, so every sentinel position is strictly greater than the previous and
-/// the registry consumes the entries via `from_sorted_slice` without
-/// re-sorting. The owned nodes are built upstream by the
-/// [`Allocator`](crate::syntax::alloc::Allocator) during the
-/// classify stage; this walker is the PUA-rewriter + position-recorder and does
-/// zero AST allocation of its own.
 #[derive(Debug)]
 pub(crate) struct Normalizer<'src> {
     pub(crate) out: String,
     source: &'src str,
     pub(crate) recorder: Recorder,
-    /// Stack of in-flight container opens awaiting their matching close. Each
-    /// entry is the (open `NormalizedOffset`, open [`RegionFormat`]) pushed by
-    /// [`SpanKind::BlockOpen`] emission; [`SpanKind::BlockClose`] pops and emits
-    /// a [`ContainerPair`]. The open payload is authoritative.
     open_stack: Vec<(NormalizedOffset, RegionFormat)>,
-    /// Resolved container open/close pairs in close order.
     pub(crate) container_pairs: Vec<ContainerPair>,
-    /// Diagnostics observed during the fold (post-classify).
     pub(crate) diagnostics: Vec<Diagnostic>,
-    /// Family tag of the most recent single-line layout directive on the
-    /// current source line, if any.
     pending_single_line: Option<&'static str>,
-    /// Nesting depth of open `［＃割り注］` … `［＃割り注終わり］` ranges.
     warichu_depth: u32,
 }
 
@@ -144,10 +88,8 @@ impl<'src> Normalizer<'src> {
             out: String::with_capacity(source.len()),
             source,
             recorder: Recorder::with_capacity(span_capacity_hint),
-            open_stack: Vec::with_capacity(span_capacity_hint / CONTAINER_CAPACITY_SPANS_PER_PAIR),
-            container_pairs: Vec::with_capacity(
-                span_capacity_hint / CONTAINER_CAPACITY_SPANS_PER_PAIR,
-            ),
+            open_stack: Vec::with_capacity(span_capacity_hint / ESTIMATED_SPANS_PER_CONTAINER),
+            container_pairs: Vec::with_capacity(span_capacity_hint / ESTIMATED_SPANS_PER_CONTAINER),
             diagnostics: Vec::new(),
             pending_single_line: None,
             warichu_depth: 0,
@@ -221,7 +163,6 @@ impl<'src> Normalizer<'src> {
         }
     }
 
-    /// Flag a container close whose family differs from its matched open.
     fn push_container_mismatch(&mut self, open: RegionFormat, close: RegionClose, span: Span) {
         let expected = RegionClose::of(open);
         if discriminant(&expected) != discriminant(&close) {
@@ -250,7 +191,6 @@ impl<'src> Normalizer<'src> {
         }
     }
 
-    /// Single-line-container break tracker for one classified `Aozora` node.
     fn track_single_line_break(&mut self, node: Node, break_span: Span) {
         match node {
             Node::Line(LineFormat::Indent { .. }) => {
@@ -290,9 +230,6 @@ impl<'src> Normalizer<'src> {
     }
 }
 
-/// Whether an owned AST node is a standalone block (renders on its own line, no
-/// surrounding plain-text context required). Pinned by variant kind so adding a
-/// new standalone-block variant only needs updating here.
 fn is_standalone_block_for_render(node: Node) -> bool {
     matches!(
         node,
@@ -304,8 +241,6 @@ fn is_standalone_block_for_render(node: Node) -> bool {
     )
 }
 
-// Container registries: pure copy of (u32, RegionFormat) / RegionClose — all
-// `Copy`. A static assertion pins the no-conversion expectation.
 const _: fn() = || {
     fn assert_copy<T: Copy>() {}
     assert_copy::<(u32, RegionFormat)>();
@@ -331,9 +266,6 @@ mod tests {
 
     #[test]
     fn track_single_line_break_sets_family_tag_per_line_format() {
-        // Kills the deleted `Center { .. }` and `Gothic` match arms (and pins
-        // the sibling indent / align-end arms): each single-line layout node
-        // must stamp its own family tag onto `pending_single_line`.
         let cases: &[(Node, &'static str)] = &[
             (
                 Node::Line(LineFormat::Indent {
@@ -359,9 +291,6 @@ mod tests {
 
     #[test]
     fn track_single_line_break_warichu_close_decrements_depth() {
-        // Kills the deleted `DirectiveKind::WarichuClose` match arm: after an
-        // open then a close the nesting depth must return to zero. With the
-        // arm gone the close is a no-op and the depth stays at 1.
         let mut norm = Normalizer::new("", 0);
         let open = Node::Directive(Directive {
             raw: StrId(0),
@@ -419,7 +348,6 @@ mod tests {
         let src = "｜青梅《おうめ》";
         let owned = lex(src);
 
-        // The single inline entry resolves back to the ruby base / reading.
         let Some((pos, _)) = owned.registry.iter_kind(Sentinel::Inline).next() else {
             panic!("expected one inline entry");
         };
@@ -444,7 +372,7 @@ mod tests {
     #[test]
     fn empty_source_round_trips() {
         let out = lex("");
-        assert_eq!(out.normalized, "");
+        assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
         assert!(out.sanitized.is_empty());

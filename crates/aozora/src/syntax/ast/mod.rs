@@ -1,4 +1,4 @@
-// Lifetime-free AST handles let cached parses outlive their Document and cross threads (ADR-0036).
+// ADR-0036 uses owned syntax tree handles so cached parses can outlive their `Document` and cross threads.
 
 mod graft;
 mod intern;

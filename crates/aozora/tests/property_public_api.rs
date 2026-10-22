@@ -5,6 +5,10 @@ use aozora_proptest::generators::*;
 use proptest::prelude::*;
 use std::{iter, mem};
 
+#[expect(
+    clippy::expect_used,
+    reason = "round-trip properties require both parses to succeed"
+)]
 fn parse_serialise_parse(source: &str) -> (String, String) {
     let doc = aozora::parse(source.to_owned()).expect("source fits parser span limit");
     let tree = doc.snapshot();

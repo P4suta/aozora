@@ -1,27 +1,4 @@
-/*
- * aozora-notation.css — canonical reference stylesheet for the HTML the
- * aozora renderer emits.
- *
- * This file is the SINGLE SOURCE OF TRUTH for how every `aozora-*` class in
- * `crate::classes::AOZORA_CLASSES` is presented. The renderer itself emits
- * only semantic class hooks (never inline style); consumers — the playground,
- * the VS Code preview, the `aozora` HTML export — adopt this sheet instead of
- * hand-rolling their own copy (which is how the class-name drift bugs crept
- * in). `crate::classes` tests assert that the `.aozora-*` selectors here match
- * `AOZORA_CLASSES` exactly, so a renamed class or a forgotten style is a
- * compile-time-adjacent test failure, not a silent visual regression.
- *
- * Theming: every colour / font hook is a `--aozora-*` custom property with a
- * self-contained fallback, so the sheet renders correctly stand-alone and a
- * consumer can bridge its own theme by setting the `--aozora-*` variables on
- * the container.
- *
- * Scope hooks (NOT renderer-emitted; applied by the consumer to the render
- * container): `.aozora-notation` (required, base typography) and
- * `.aozora-vertical` (optional, vertical writing mode).
- */
 
-/* ── Container + theme defaults ─────────────────────────────────────── */
 .aozora-notation {
   --aozora-fg: currentcolor;
   --aozora-muted: color-mix(in srgb, currentcolor 70%, transparent);
@@ -43,7 +20,6 @@
   margin: 0 0 0.75rem;
 }
 
-/* Vertical writing. Consumers apply this class to the container via their writing-mode toggle. */
 .aozora-notation.aozora-vertical {
   writing-mode: vertical-rl;
   -webkit-writing-mode: vertical-rl;
@@ -51,7 +27,6 @@
   line-height: 2;
 }
 
-/* ── Ruby (§ruby) ──────────────────────────────────────────────────── */
 .aozora-notation ruby {
   ruby-position: over;
 }
@@ -66,18 +41,15 @@
   display: none;
 }
 
-/* Left ruby — places the reading below the base text (to its left in vertical writing). */
 .aozora-ruby-left {
   ruby-position: under;
 }
 
-/* Ruby note — treats ruby as an annotation and renders the reading unobtrusively. */
 .aozora-ruby-note rt {
   color: var(--aozora-muted);
   font-style: normal;
 }
 
-/* ── Emphasis marks (§bouten) ──────────────────────────────────────── */
 .aozora-bouten {
   font-style: normal;
   -webkit-text-emphasis: filled sesame var(--aozora-fg);
@@ -86,61 +58,51 @@
   text-emphasis-position: over right;
 }
 
-/* Filled sesame marks */
 .aozora-bouten-goma {
   -webkit-text-emphasis-style: filled sesame;
   text-emphasis-style: filled sesame;
 }
 
-/* Open sesame marks */
 .aozora-bouten-shirogoma {
   -webkit-text-emphasis-style: open sesame;
   text-emphasis-style: open sesame;
 }
 
-/* Filled circles */
 .aozora-bouten-maru {
   -webkit-text-emphasis-style: filled circle;
   text-emphasis-style: filled circle;
 }
 
-/* Open circles */
 .aozora-bouten-shiromaru {
   -webkit-text-emphasis-style: open circle;
   text-emphasis-style: open circle;
 }
 
-/* Filled double circles */
 .aozora-bouten-nijumaru {
   -webkit-text-emphasis-style: filled double-circle;
   text-emphasis-style: filled double-circle;
 }
 
-/* Open double circles */
 .aozora-bouten-janome {
   -webkit-text-emphasis-style: open double-circle;
   text-emphasis-style: open double-circle;
 }
 
-/* Filled triangles */
 .aozora-bouten-kurosankaku {
   -webkit-text-emphasis-style: filled triangle;
   text-emphasis-style: filled triangle;
 }
 
-/* Open triangles */
 .aozora-bouten-shirosankaku {
   -webkit-text-emphasis-style: open triangle;
   text-emphasis-style: open triangle;
 }
 
-/* Multiplication signs */
 .aozora-bouten-batsu {
   -webkit-text-emphasis-style: "\00d7";
   text-emphasis-style: "\00d7";
 }
 
-/* Underlines, double underlines, wavy lines, chain lines, and dashed lines use text decoration. */
 .aozora-bouten-bosen {
   text-decoration: underline;
   text-decoration-color: var(--aozora-fg);
@@ -176,7 +138,6 @@
   text-emphasis-style: none;
 }
 
-/* Emphasis-mark position (right, left, or both). The default is over right. */
 .aozora-bouten-right {
   -webkit-text-emphasis-position: over right;
   text-emphasis-position: over right;
@@ -192,12 +153,10 @@
   text-emphasis-position: over right;
 }
 
-/* ── Bold and italic (§emphasis) ───────────────────────────────────── */
 .aozora-futoji {
   font-weight: 700;
 }
 
-/* Gothic — a sans-serif typeface, distinct from bold weight. */
 .aozora-goshikku {
   font-family: var(--aozora-sans);
 }
@@ -207,7 +166,6 @@
   transform: skewX(-12deg);
 }
 
-/* ── Font size (§font-size) ────────────────────────────────────────── */
 .aozora-font-extra-large { font-size: 1.8em; }
 .aozora-font-large { font-size: 1.4em; }
 .aozora-font-larger { font-size: 1.2em; }
@@ -215,7 +173,6 @@
 .aozora-font-small { font-size: 0.85em; }
 .aozora-font-smaller { font-size: 0.75em; }
 
-/* ── Superscript, subscript, and small text (§positioned) ──────────── */
 .aozora-uwatsuki {
   vertical-align: super;
   font-size: 0.75em;
@@ -236,12 +193,10 @@
   font-size: 0.7em;
 }
 
-/* ── Fractions (§bunsu) ────────────────────────────────────────────── */
 .aozora-bunsu {
   white-space: nowrap;
 }
 
-/* ── Accent decomposition (§accent) — precomposed glyphs with no decoration. */
 .aozora-accent {
   font-style: normal;
 }
@@ -250,15 +205,11 @@
   font-style: normal;
 }
 
-/* ── Tate-chu-yoko (§tcy) — combines horizontal digits upright in one vertical-writing cell.
- *    Without this rule, digits stack vertically (the cause of a known rendering bug).
- *    `text-combine-upright` has no effect in horizontal writing, so it is safe to apply always. */
 .aozora-combine-upright {
   -webkit-text-combine: horizontal;
   text-combine-upright: all;
 }
 
-/* ── Horizontal composition (§yokogumi) — sets text horizontally within vertical writing. */
 .aozora-yokogumi,
 .aozora-container-yokogumi {
   writing-mode: horizontal-tb;
@@ -274,7 +225,6 @@
   display: block;
 }
 
-/* ── Double angle brackets (§angle-quote) ──────────────────────────── */
 .aozora-angle-quote {
   color: var(--aozora-accent);
   background: var(--aozora-accent-bg);
@@ -282,7 +232,6 @@
   border-radius: 0.15em;
 }
 
-/* ── Gaiji (§gaiji) ────────────────────────────────────────────────── */
 .aozora-gaiji {
   color: inherit;
 }
@@ -295,7 +244,6 @@
   border-bottom: 1px dotted var(--aozora-gaiji-border);
 }
 
-/* ── Enclosures (circle, dotted circle, and double rule) (§enclosure) */
 .aozora-enclosure-circle,
 .aozora-enclosure-circle-dotted {
   display: inline-block;
@@ -315,7 +263,6 @@
   padding: 0 0.2em;
 }
 
-/* ── Ruled enclosures (§keigakomi) ─────────────────────────────────── */
 .aozora-keigakomi-box,
 .aozora-container-keigakomi {
   display: block;
@@ -329,7 +276,6 @@
   padding: 0 0.25em;
 }
 
-/* ── Indentation, end alignment, and hanging indents (§indent) ─────── */
 .aozora-container,
 .aozora-container-indent {
   display: block;
@@ -345,7 +291,6 @@
 .aozora-container-indent-9 { padding-inline-start: 9em; }
 .aozora-container-indent-10 { padding-inline-start: 10em; }
 
-/* Hanging indent. */
 .aozora-container-wrap-indent {
   display: block;
   padding-inline-start: 1em;
@@ -366,7 +311,6 @@
 .aozora-indent-9 { inline-size: 9em; }
 .aozora-indent-10 { inline-size: 10em; }
 
-/* End alignment. */
 .aozora-container-align-end {
   text-align: end;
 }
@@ -386,14 +330,12 @@
 .aozora-align-end-9 { inline-size: 9em; }
 .aozora-align-end-10 { inline-size: 10em; }
 
-/* ── Center alignment (§center) ────────────────────────────────────── */
 .aozora-center,
 .aozora-container-center {
   display: block;
   text-align: center;
 }
 
-/* ── Bold, italic, line-width, and composition containers (§container styles) */
 .aozora-container-futoji { font-weight: 700; }
 .aozora-container-goshikku { font-family: var(--aozora-sans); }
 
@@ -404,32 +346,23 @@
 .aozora-container-font-larger { font-size: 1.2em; }
 .aozora-container-font-smaller { font-size: 0.8em; }
 
-/* Line width (characters per line). The element carries `data-width`, but its
- * visual width depends on the consumer, so this sheet only makes it a block. */
 .aozora-container-line-width {
   display: block;
 }
 
-/* N-line by N-character composition. */
 .aozora-container-line-kumi {
   display: block;
 }
 
-/* Columns. Since `data-columns` cannot feed a CSS variable, the default is a plain block. */
 .aozora-container-columns {
   display: block;
 }
 
-/* Table. */
 .aozora-container-table {
   display: block;
   border-collapse: collapse;
 }
 
-/* ── Line-level font and bold markers (§line markers) ──────────────── */
-
-/* The renderer emits empty `<span>` markers for downstream tools.
- * They are intentionally invisible and have no visual representation in previews. */
 .aozora-line-font-extra-large,
 .aozora-line-font-large,
 .aozora-line-font-medium,
@@ -439,7 +372,6 @@
   display: none;
 }
 
-/* ── Inline notes (§warichu) — CSS supplies parentheses omitted by the renderer. */
 .aozora-warichu,
 .aozora-container-warichu {
   font-size: 0.8em;
@@ -448,14 +380,12 @@
 .aozora-warichu::before { content: "（"; }
 .aozora-warichu::after { content: "）"; }
 
-/* ── Kaeriten (§kaeriten) ──────────────────────────────────────────── */
 .aozora-kaeriten {
   font-size: 0.7em;
   vertical-align: super;
   color: var(--aozora-accent);
 }
 
-/* ── Headings (§heading) ───────────────────────────────────────────── */
 .aozora-heading {
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -464,25 +394,21 @@
 .aozora-heading-medium { font-size: 1.3em; }
 .aozora-heading-small { font-size: 1.1em; }
 
-/* Same-line heading — remains on the same line as the body text. */
 .aozora-heading-same-line {
   display: inline;
   font-size: 1em;
 }
 
-/* Window heading — encloses the heading in a rule. */
 .aozora-heading-window {
   display: inline-block;
   border: 1px solid var(--aozora-border);
   padding: 0 0.4em;
 }
 
-/* Heading hint — an unobtrusive indicator for inferred structure. */
 .aozora-heading-hint {
   font-weight: 600;
 }
 
-/* ── Captions, illustrations, margin notes, and editor notes (§notes) */
 .aozora-caption {
   display: block;
   font-size: 0.9em;
@@ -508,7 +434,6 @@
   font-size: 0.9em;
 }
 
-/* ── Page breaks (§page-break) ─────────────────────────────────────── */
 .aozora-page-break {
   display: block;
   border-block-start: 2px dashed var(--aozora-muted);
@@ -520,7 +445,6 @@
 }
 .aozora-page-break::before { content: "— 改ページ —"; }
 
-/* ── Section breaks (new leaf, column, or spread) (§section-break) ─── */
 .aozora-section-break {
   display: block;
   border-block-start: 1px dashed var(--aozora-border);
@@ -535,7 +459,6 @@
 .aozora-section-break-kaidan::before { content: "— 改段 —"; }
 .aozora-section-break-kaimihiraki::before { content: "— 改見開き —"; }
 
-/* In vertical writing, draw break rules sideways instead of top-to-bottom. */
 .aozora-vertical .aozora-page-break,
 .aozora-vertical .aozora-section-break {
   border-block-start: none;
@@ -545,14 +468,10 @@
   padding-inline-end: 0.4em;
 }
 
-/* ── End-of-body marker and hidden directives (§structural) ────────── */
-
-/* `aozora-body-end` marks the end of the body and has no visual representation. */
 .aozora-body-end {
   display: none;
 }
 
-/* Source directives emitted by the renderer with the `hidden` attribute. */
 .aozora-directive[hidden] {
   display: none;
 }

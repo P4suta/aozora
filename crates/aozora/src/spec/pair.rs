@@ -5,19 +5,19 @@ use crate::spec::Span;
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum PairKind {
-    /// Directive body delimiters (`［ … ］`).
+    /// Directive delimiters `［ … ］`.
     Bracket,
 
-    /// Ruby reading delimiters (`《 … 》`).
+    /// Ruby reading delimiters `《 … 》`.
     Ruby,
 
-    /// Double-angle quotation delimiters (`≪ … ≫`), displayed as `《…》`.
+    /// Quotation delimiters `≪ … ≫`, displayed as `《…》`.
     AngleQuote,
 
-    /// Accent-decomposition delimiters (`〔 … 〕`).
+    /// Accent notation delimiters `〔 … 〕`.
     Tortoise,
 
-    /// Quoted literal delimiters inside annotations (`「 … 」`).
+    /// Quoted literal delimiters `「 … 」` inside annotations.
     Quote,
 }
 
@@ -31,7 +31,7 @@ impl PairKind {
         Self::Quote,
     ];
 
-    /// Stable camelCase wire-format identifier.
+    /// Stable `camelCase` identifier.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {

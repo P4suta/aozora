@@ -10,7 +10,6 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# Rendering fuzz targets drive the public document snapshot.
 aozora = { path = "../.." }
 
 [workspace]

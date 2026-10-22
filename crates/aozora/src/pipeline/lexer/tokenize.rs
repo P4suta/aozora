@@ -3,53 +3,7 @@
     reason = "scanner branch guards establish the selected trigger position"
 )]
 
-//! Tokenize stage — linear tokenization of sanitized source into a token stream.
-//!
-//! Walks the sanitize-stage text via the SIMD-accelerated
-//! [`crate::scan`] module and exposes a stateful iterator yielding one
-//! [`Token`] per delimiter or contiguous text run. Triggers are the
-//! Aozora notation marker characters listed in [`TriggerKind`];
-//! everything else flows into [`Token::Text`] runs.
-//!
-//! Two production-ready surfaces sit side by side:
-//!
-//! - [`tokenize`] — streaming `impl Iterator<Item = Token>`, kept for
-//!   FFI / incremental / pull-based consumers that have no arena.
-//! - `tokenize_in` — arena-batch `BumpVec<'a, Token>` allocated
-//!   inside the caller's `Arena`; the scratch trigger /
-//!   newline offset buffers used during the merge walk also live in
-//!   the arena.
-//!
-//! The Aozora pipeline drives `tokenize_in` because it already owns an
-//! arena; benchmarks and FFI shims that want lazy semantics use
-//! `tokenize`. There is no third "heap-batch" entry point.
-//!
-//! ## Algorithm
-//!
-//! 1. [`crate::scan::scan_offsets`] returns the byte offsets of every
-//!    trigger character in `source`. On `x86_64` this dispatches to
-//!    Teddy (Hyperscan multi-pattern fingerprint matcher); on minimal
-//!    hosts to a SIMD-free DFA. Both produce byte-identical output.
-//! 2. A single [`memchr::memchr_iter`] sweep collects every newline
-//!    offset. Together with step 1, source bytes are touched twice
-//!    (once per scan), both at near memory-bandwidth speed.
-//! 3. [`Iterator::next`] merge-walks the two sorted offset streams
-//!    in event order, emitting `Text` / `Trigger` / `Newline` tokens.
-//! 4. `≪` / `≫` (U+226A/U+226B) are ordinary single-character triggers
-//!    (`AngleQuoteOpen` / `AngleQuoteClose`) — the aozora input encoding
-//!    for a 底本's double-angle brackets `《`/`》`. No look-ahead merge.
-//!
-//! `［＃` is NOT emitted as a merged trigger: `Hash` after
-//! `BracketOpen` is common but not universal (a stray `［` followed
-//! by plain text is legal). The pair stage inspects the two tokens together.
-//!
-//! ## Backend
-//!
-//! Trigger detection uses Teddy (the [Hyperscan](https://intel.github.io/hyperscan/)
-//! short-string algorithm via `aho-corasick::packed`); see
-//! [`crate::scan`] for the full backend selection. The previous naive
-//! per-codepoint walker ran at ~150 MiB/s; Teddy reaches 10–20 GiB/s
-//! on Japanese text.
+//! Splits sanitized source into delimiter, newline, and text tokens through [`tokenize`].
 
 use crate::scan::scan_offsets;
 use crate::spec::classify_trigger_bytes;
@@ -57,43 +11,17 @@ use crate::syntax::Span;
 
 use super::token::{Token, TriggerKind};
 
-const NEWLINE_CAPACITY_BYTES_PER_LINE: usize = 64;
+const ESTIMATED_LINE_BYTES: usize = 64;
 
-/// Streaming tokeniser over sanitized source text.
-///
-/// The input is expected to already be sanitize-stage output (BOM-stripped,
-/// LF-normalized). Giving raw source to this iterator is not wrong but
-/// means diagnostics and positions reference pre-normalization bytes,
-/// which will confuse downstream stages.
-///
-/// # Panics
-///
-/// Panics on construction if `source.len()` exceeds [`u32::MAX`]
-/// (≈ 4 GiB). All aozora spans use `u32` offsets per the
-/// [`crate::syntax::Span`] contract; inputs that large are rejected
-/// loudly rather than silently truncated.
 #[must_use]
 pub(crate) fn tokenize(source: &str) -> Tokenizer<'_> {
     Tokenizer::new(source)
 }
 
-/// Streaming tokenize-stage tokeniser over the merge of two pre-collected
-/// offset streams: trigger positions (from the SIMD scanner) and
-/// newline positions (from `memchr`).
-///
-/// The single-slot `pending` buffer holds a Trigger / Newline that
-/// was produced *together* with a closing Text run on the same
-/// `next()` call: [`Iterator::next`] returns the Text first, then
-/// the buffered event on the following call, preserving the legacy
-/// emission order without paying for a `Vec` accumulator.
 #[derive(Debug)]
 pub(crate) struct Tokenizer<'s> {
     source: &'s str,
-    /// Sorted ascending byte offsets where a trigger trigram begins.
-    /// Materialised eagerly because the SIMD scanner is much faster
-    /// than amortising its internal state across `next()` calls.
     trigger_offsets: Vec<u32>,
-    /// Sorted ascending byte offsets of `\n` characters.
     newline_offsets: Vec<u32>,
     t_idx: usize,
     n_idx: usize,
@@ -111,13 +39,8 @@ impl<'s> Tokenizer<'s> {
         );
         let trigger_offsets = scan_offsets(source);
         let bytes = source.as_bytes();
-        // memchr_iter is internally vectorised (AVX2 on x86_64, NEON on
-        // aarch64) — the same machine code memchr3 uses for trigger
-        // candidates, here narrowed to the single newline byte.
-        let mut newline_offsets: Vec<u32> =
-            Vec::with_capacity(bytes.len() / NEWLINE_CAPACITY_BYTES_PER_LINE);
+        let mut newline_offsets: Vec<u32> = Vec::with_capacity(bytes.len() / ESTIMATED_LINE_BYTES);
         for n in memchr::memchr_iter(b'\n', bytes) {
-            // source.len() <= u32::MAX is asserted at function entry.
             newline_offsets.push(u32::try_from(n).unwrap_or(u32::MAX));
         }
         Self {
@@ -142,10 +65,6 @@ impl<'s> Tokenizer<'s> {
         })
     }
 
-    /// Pair a flushed Text token (if any) with the structural event
-    /// that produced the flush. The Text comes first, the event is
-    /// buffered for the next `next()` call — preserving emission
-    /// order without intermediate allocation.
     fn pair_text_then(&mut self, text: Option<Token>, event: Token) -> Token {
         match text {
             Some(t) => {
@@ -177,9 +96,7 @@ impl Iterator for Tokenizer<'_> {
             (Some(_), None) => true,
             (None, Some(_)) => false,
             (None, None) => {
-                // No more events: emit any trailing text once, then EOF.
                 self.finished = true;
-                // source.len() <= u32::MAX is asserted at construction.
                 let total_len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
                 return self.flush_text(total_len);
             }
@@ -212,22 +129,13 @@ impl Iterator for Tokenizer<'_> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        // Lower bound 0 (we may be at EOF after a final flush). Upper
-        // bound is at most one event per remaining trigger / newline
-        // plus interleaved text + the pending slot. For consumers this
-        // is mainly a `Vec::with_capacity` hint, so over-estimating
-        // is cheap.
         let triggers_left = self.trigger_offsets.len().saturating_sub(self.t_idx);
         let newlines_left = self.newline_offsets.len().saturating_sub(self.n_idx);
-        // Each event contributes at most 2 tokens (text + structural).
         let upper = (triggers_left + newlines_left) * 2 + usize::from(self.pending.is_some()) + 1;
         (0, Some(upper))
     }
 }
 
-/// Look at the 3-byte window at `pos` and return its [`TriggerKind`].
-/// Caller guarantees `pos + 3 <= bytes.len()` and that the window is
-/// in fact a recognised trigger (the scanner's contract).
 #[inline]
 fn trigger_kind_at(bytes: &[u8], pos: usize) -> TriggerKind {
     let window: [u8; 3] = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
@@ -267,7 +175,7 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_tokens() {
-        assert_eq!(collect(""), Vec::<Token>::new());
+        assert!(collect("").is_empty());
     }
 
     #[test]
@@ -352,7 +260,6 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // "a"(0..1) before ｜, "b"(4..5) between ｜ and 《, "c"(8..9), "d"(12..13).
         assert_eq!(text_ranges.len(), 4);
         assert_eq!(text_ranges[0], Span::new(0, 1));
         assert_eq!(text_ranges[1], Span::new(4, 5));
@@ -390,15 +297,6 @@ mod tests {
 
     #[test]
     fn size_hint_upper_bound_is_exact_at_construction() {
-        // "｜《》" has exactly 3 triggers (Bar, RubyOpen, RubyClose) and
-        // 0 newlines. Fresh from `tokenize`, before any `next()`:
-        //   triggers_left = 3, newlines_left = 0, pending = None
-        //   upper = (3 + 0) * 2 + 0 + 1 = 7
-        // The exact `(0, Some(7))` pins the lower bound at 0, forbids a
-        // `None` upper, and picks operands so every arithmetic mutation
-        // (+↔*, *↔+, *↔/) yields a value other than 7:
-        //   (3*0)*2+0+1 = 1, (3+0)+2+0+1 = 6, (3+0)/2+0+1 = 2,
-        //   ((3+0)*2)*0+1 = 1, ((3+0)*2+0)*1 = 6.
         let tk = tokenize("｜《》");
         assert_eq!(tk.size_hint(), (0, Some(7)));
         assert_eq!(triggers(&tk.collect::<Vec<_>>()).len(), 3);
@@ -417,7 +315,6 @@ mod tests {
                 _ => None,
             })
             .expect("AngleQuoteOpen present");
-        // Single ≪ → 3 bytes starting at 0.
         assert_eq!(open_span, Span::new(0, 3));
     }
 }

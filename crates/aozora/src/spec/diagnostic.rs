@@ -60,11 +60,11 @@ pub(crate) mod codes {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Severity {
-    /// Genuine error; downstream consumers should treat the parse as suspect.
+    /// Error that may invalidate the parse result.
     Error,
-    /// Recoverable observation; parse continues and output is preserved, but the user should know.
+    /// Recoverable parsing issue.
     Warning,
-    /// Informational note; editor surfaces may show it as a tooltip or annotation but it does not affect CI / build status.
+    /// Informational observation.
     Note,
 }
 
@@ -89,7 +89,7 @@ impl Severity {
 pub enum DiagnosticSource {
     /// Issue traces back to the user-provided source text.
     Source,
-    /// Library-internal failure reported while parsing continues best-effort.
+    /// Library defect encountered while parsing.
     Internal,
 }
 
@@ -111,15 +111,13 @@ impl DiagnosticSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum InternalCheckCode {
-    /// An `［＃` digraph survived classification into the normalized text.
-    /// Indicates a missing recogniser for the keyword.
+    /// An annotation opener `［＃` remains in normalized text after classification.
     ResidualAnnotationMarker,
-    /// A PUA sentinel codepoint is present in the normalized text at a position that is not recorded in the placeholder registry.
+    /// A reserved sentinel has no corresponding registry entry.
     UnregisteredSentinel,
-    /// A placeholder-registry vector is not strictly ordered by position.
-    /// Indicates a normalizer driver bug.
+    /// Registry positions repeat or appear out of order.
     RegistryOutOfOrder,
-    /// A registry entry references a normalized byte position whose character does not match the expected sentinel kind.
+    /// A registry entry points to the wrong sentinel kind.
     RegistryPositionMismatch,
 }
 
@@ -166,13 +164,13 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("here")]
         at: miette::SourceSpan,
-        /// The offending PUA codepoint found in the source.
+        /// The reserved codepoint found in the source.
         codepoint: char,
-        /// Byte-range in the sanitized source for programmatic consumers that don't need miette's [`miette::SourceSpan`].
+        /// Byte span for consumers that don't use [`miette::SourceSpan`].
         span: Span,
     },
 
-    /// An open delimiter reached end-of-input with no matching close on the pairing stack.
+    /// Opening delimiter without a matching closer.
     #[error(
         "unclosed Aozora {}…{} delimiter",
         .kind.open_str(),
@@ -192,11 +190,11 @@ pub enum Diagnostic {
         at: miette::SourceSpan,
         /// Delimiter family of the unmatched opener.
         kind: PairKind,
-        /// Byte-range of the unmatched *open* delimiter in the sanitized source.
+        /// Byte-range of the unmatched *open* delimiter in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A close delimiter was seen with an empty stack, or with a stack top of a different [`PairKind`].
+    /// Closing delimiter without a compatible opener on the pairing stack.
     #[error("unmatched Aozora {} close delimiter", .kind.close_str())]
     #[diagnostic(
         code("aozora::lex::unmatched_close"),
@@ -216,7 +214,7 @@ pub enum Diagnostic {
         span: Span,
     },
 
-    /// An accent digraph was composed during sanitization, preserving its original serialization (ADR-0003).
+    /// Sanitization composed an accent digraph under ADR-0003.
     #[error("accent digraph decomposed in sanitize stage")]
     #[diagnostic(
         code("aozora::lex::accent_decomposition_applied"),
@@ -233,11 +231,11 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("decomposed here")]
         at: miette::SourceSpan,
-        /// Byte-range of the `〔…〕` span in the sanitized (post-decomposition) source.
+        /// Byte span of the accent notation in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A 外字 (gaiji) reference — `※［＃…］` — resolved to neither a Unicode scalar nor a JIS X 0213 cell, so the renderer falls back to the description text rather than the intended glyph.
+    /// A gaiji reference has no Unicode resolution, so rendering uses its description.
     #[error("gaiji reference resolved to neither Unicode nor JIS X 0213")]
     #[diagnostic(
         code("aozora::lex::unresolved_gaiji"),
@@ -253,7 +251,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("unresolved gaiji")]
         at: miette::SourceSpan,
-        /// Byte-range of the `※［＃…］` reference in the sanitized source.
+        /// Byte-range of the `※［＃…］` reference in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -278,7 +276,7 @@ pub enum Diagnostic {
         open_kind: &'static str,
         /// Container family named by the *close* marker.
         close_kind: &'static str,
-        /// Byte-range of the close marker in the sanitized source.
+        /// Byte-range of the close marker in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -304,7 +302,7 @@ pub enum Diagnostic {
         at: miette::SourceSpan,
         /// The suggested canonical spelling.
         canonical: Cow<'static, str>,
-        /// Byte-range of the directive in the sanitized source.
+        /// Byte-range of the directive in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -322,7 +320,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("empty reading")]
         at: miette::SourceSpan,
-        /// Byte-range of the `｜base《》` construct in the sanitized source.
+        /// Byte-range of the `｜base《》` construct in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -340,7 +338,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("nested ruby opens here")]
         at: miette::SourceSpan,
-        /// Byte-range of the inner `《` opener in the sanitized source.
+        /// Byte-range of the inner `《` opener in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -361,11 +359,11 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("unrecognised directive")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃ここから…］` directive in the sanitized source.
+        /// Byte-range of the `［＃ここから…］` directive in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A 縦中横 directive names a target absent from preceding text.
+    /// A `縦中横` directive names a target absent from preceding text.
     #[error("縦中横 target not found in the preceding text")]
     #[diagnostic(
         code("aozora::lex::tcy_target_not_found"),
@@ -380,11 +378,11 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("target has no referent")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃「X」は縦中横］` directive in the sanitized source.
+        /// Byte-range of the `［＃「X」は縦中横］` directive in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A bouten directive names a target with multiple preceding matches.
+    /// A bouten directive names a target that appears more than once in preceding text.
     #[error("ambiguous bouten target: more than one candidate run precedes it")]
     #[diagnostic(
         code("aozora::lex::bouten_target_ambiguous"),
@@ -401,11 +399,11 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("ambiguous target")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃「X」に傍点］` directive in the sanitized source.
+        /// Byte-range of the `［＃「X」に傍点］` directive in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A forward directive has a preceding referent that cannot be styled in place.
+    /// A forward directive has no supported way to style its preceding referent.
     #[error("forward-reference target found but not stylable in place")]
     #[diagnostic(
         code("aozora::lex::forward_referent_not_stylable"),
@@ -423,7 +421,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("target not stylable in place")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃「X」は…］` directive in the sanitized source.
+        /// Byte-range of the `［＃「X」は…］` directive in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -445,9 +443,9 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("break drops the container")]
         at: miette::SourceSpan,
-        /// Stable family tag of the dropped single-line container (`indent` / `align-end` / `warichu`).
+        /// Family tag of the dropped container, such as `indent`, `align-end`, or `warichu`.
         container: &'static str,
-        /// Byte-range of the break directive in the sanitized source.
+        /// Byte-range of the break directive in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -468,7 +466,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("unpaired kaeriten")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized source.
+        /// Byte-range of the `［＃…］` kaeriten directive in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -490,7 +488,7 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("isolated kaeriten")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized source.
+        /// Byte-range of the `［＃…］` kaeriten directive in the diagnostic's source buffer.
         span: Span,
     },
 
@@ -511,15 +509,15 @@ pub enum Diagnostic {
         /// Label location for diagnostic rendering.
         #[label("mismatched close")]
         at: miette::SourceSpan,
-        /// Family of the *open* marker (`傍点` / `傍線`).
+        /// Family of the opening marker, either `傍点` or `傍線`.
         open_family: &'static str,
         /// Family named by the *close* marker.
         close_family: &'static str,
-        /// Byte-range of the close marker in the sanitized source.
+        /// Byte-range of the close marker in the diagnostic's source buffer.
         span: Span,
     },
 
-    /// A library-internal check failed; [`InternalCheckCode`] identifies it.
+    /// A library check failed with the supplied [`InternalCheckCode`].
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
@@ -542,19 +540,19 @@ pub enum Diagnostic {
     },
 }
 
-/// Metadata and language-neutral examples returned by [`Diagnostic::explain`].
+/// Metadata and examples returned by [`Diagnostic::explain`].
 ///
-/// Localized titles and body text are resolved separately using `code` and `body_args`.
+/// Resolve localized text with `code` and `body_args`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DiagnosticInfo {
-    /// Stable `aozora::lex::*` code.
+    /// Stable diagnostic code.
     pub code: &'static str,
     /// Severity routing axis.
     pub severity: Severity,
     /// Whether the diagnostic concerns user input or a library defect.
     pub source: DiagnosticSource,
-    /// One-line remediation help — the `#[diagnostic(help(…))]` text.
+    /// Suggested action from the diagnostic's help text.
     pub help: String,
     /// Documentation URL for the code, when the variant carries one.
     pub url: Option<String>,
@@ -870,7 +868,7 @@ impl Diagnostic {
         }
     }
 
-    /// Create a bouten mismatch diagnostic from 点/線 family tags.
+    /// Create a bouten mismatch diagnostic from dot and line family tags.
     #[must_use]
     pub fn mismatched_bouten_container(
         at: Span,
@@ -1060,9 +1058,9 @@ impl Diagnostic {
         self.code().starts_with(codes::LINT_NAMESPACE)
     }
 
-    /// Named arguments for this instance's localized body message.
+    /// Named arguments for this diagnostic's localized message.
     ///
-    /// Returns an empty vector for messages without placeables.
+    /// Returns an empty vector when the message has no placeholders.
     #[must_use]
     pub fn body_args(&self) -> Vec<(&'static str, Cow<'static, str>)> {
         match self {
@@ -1165,7 +1163,7 @@ impl Diagnostic {
         codes::REGISTRY_POSITION_MISMATCH,
     ];
 
-    /// Metadata for a stable diagnostic code, or `None` if it is unknown.
+    /// Metadata for a stable code, or `None` for an unknown code.
     #[must_use]
     pub fn explain(code: &str) -> Option<DiagnosticInfo> {
         let sample = Self::sample_for_code(code)?;

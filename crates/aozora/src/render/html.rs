@@ -14,7 +14,8 @@ use crate::render::walk::{NewlineSink, SentinelKind, WalkSink, walk_with_newline
 
 /// Options for HTML rendering.
 ///
-/// Directive normalization is opt-in and uses an ephemeral source buffer (ADR-0022 and ADR-0026).
+/// Directive normalization uses a temporary buffer under ADR-0022 and ADR-0026.
+/// Defaults to [`DirectiveNormalization::Off`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RenderOptions {
@@ -30,7 +31,7 @@ impl RenderOptions {
     }
 }
 
-// Lossy Tier2 reductions affect only this temporary render buffer, preserving source text (ADR-0026).
+// ADR-0026 confines lossy reductions to this temporary render buffer.
 #[must_use]
 pub(crate) fn render_html_normalized(out: &LexOutput, level: DirectiveNormalization) -> String {
     let normalized = serialize_with(out, SerializeOptions { directives: level });

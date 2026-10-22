@@ -1,29 +1,4 @@
-//! Owned AST construction.
-//!
-//! [`Allocator`] builds [`Node`] and its payload types into an owned
-//! [`NodeStore`] (a string interner plus the flat
-//! content / segment pools). Byte-equal strings share a single interned
-//! [`StrId`](super::ast::StrId).
-//!
-//! ## Canonicalisation
-//!
-//! The builders apply these canonicalisations so the produced tree resolves to
-//! a single byte-identical form:
-//!
-//! - `content_plain("")` and `content_segments(&[])` both canonicalise to the
-//!   empty-segments form (an empty [`SegRange`](super::ast::SegRange)).
-//! - `content_segments` collapses an all-`Text` input into a single
-//!   concatenated `Plain` (the concatenation is re-interned).
-//! - Each `NonEmpty<Content>` field becomes a length-1 [`ContentRange`]; the
-//!   non-empty contract is upheld with an `expect` message (a classifier bug,
-//!   never reachable for well-formed emit sites).
-//! - `make_gaiji` interns the mencode tail whenever it is present, so the
-//!   classification and the retained `Unresolved` id stay in sync.
-//!
-//! ## Status
-//!
-//! This is the **sole** AST builder: the lex pipeline's `classify` stage drives
-//! it directly.
+//! Builds owned syntax trees through [`Allocator`].
 
 use crate::encoding::gaiji::GaijiCanonical;
 
@@ -39,19 +14,11 @@ use super::ast::{
     Ruby, Segment,
 };
 
-/// `true` for the canonical empty-content form (an empty segment run).
 fn is_empty_content(c: Content) -> bool {
     matches!(c, Content::Segments(r) if r.len == 0)
 }
 
-/// Summed byte length of the `Text` runs in `segs`, for pre-sizing the
-/// all-`Text` collapse buffer in [`Allocator::content_segments`].
-///
-/// `mutants::skip`: this value feeds only `String::with_capacity`, an advisory
-/// reservation. Any mutation here changes the reservation but never the bytes
-/// pushed, and the buffer is re-interned by value — so the resulting `StrId` is
-/// byte-identical regardless and no test can observe the difference
-/// (equivalent mutant).
+/// `mutants::skip`: changes to this capacity hint leave output unchanged.
 #[cfg_attr(test, mutants::skip)]
 fn text_run_len_hint(store: &NodeStore, segs: &[Segment]) -> usize {
     segs.iter()
@@ -62,10 +29,6 @@ fn text_run_len_hint(store: &NodeStore, segs: &[Segment]) -> usize {
         .sum()
 }
 
-/// Builder for [`Node`] and its payload types.
-///
-/// Owns the [`NodeStore`] every produced handle resolves against; call
-/// [`Self::into_store`] at the end of a parse to hand it to the lex output.
 #[derive(Debug, Default)]
 pub(crate) struct Allocator {
     store: NodeStore,
@@ -76,31 +39,21 @@ pub(crate) struct Allocator {
     reason = "every builder takes &(mut) self even when it is a pure wrapper, so call sites have a uniform shape."
 )]
 impl Allocator {
-    /// New allocator backed by an empty [`NodeStore`].
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Borrow the backing store (e.g. to resolve a handle mid-build).
     #[must_use]
     pub(crate) fn store(&self) -> &NodeStore {
         &self.store
     }
 
-    /// Finish allocation and return the owning [`NodeStore`] so the caller can
-    /// move it into the lex output and inspect its interner dedup counters.
     #[must_use]
     pub(crate) fn into_store(self) -> NodeStore {
         self.store
     }
 
-    // ---------------------------------------------------------------------
-    // Content / segment builders
-    // ---------------------------------------------------------------------
-
-    /// Build a plain-text body content. Empty input canonicalises to the
-    /// empty-segments form.
     pub(crate) fn content_plain(&mut self, s: &str) -> Content {
         if s.is_empty() {
             Content::Segments(self.store.push_segments(&[]))
@@ -109,17 +62,11 @@ impl Allocator {
         }
     }
 
-    /// Build a body content from a sequence of segments. Empty input → the
-    /// empty-segments form; all-`Text` input collapses into a single
-    /// concatenated `Plain` (re-interned).
     pub(crate) fn content_segments(&mut self, segs: &[Segment]) -> Content {
         if segs.is_empty() {
             return Content::Segments(self.store.push_segments(&[]));
         }
         if segs.iter().all(|s| matches!(s, Segment::Text(_))) {
-            // Resolve each text run, concatenate, and re-intern the all-`Text`
-            // collapse. Pre-size the buffer from the resolved lengths to avoid
-            // reallocation.
             let mut buf = String::with_capacity(text_run_len_hint(&self.store, segs));
             for s in segs {
                 if let Segment::Text(id) = s {
@@ -131,18 +78,15 @@ impl Allocator {
         Content::Segments(self.store.push_segments(segs))
     }
 
-    /// `Segment::Text(s)` — interns the string.
     pub(crate) fn seg_text(&mut self, s: &str) -> Segment {
         Segment::Text(self.store.intern(s))
     }
 
-    /// `Segment::Gaiji(g)` — wraps a payload built via [`Self::make_gaiji`].
     #[must_use]
     pub(crate) fn seg_gaiji(&self, g: Gaiji) -> Segment {
         Segment::Gaiji(g)
     }
 
-    /// `Segment::Directive(a)` — wraps a payload built via [`Self::make_directive`].
     #[must_use]
     pub(crate) fn seg_annotation(&self, a: Directive) -> Segment {
         Segment::Directive(a)
@@ -157,13 +101,6 @@ impl Allocator {
         Segment::Node(node)
     }
 
-    // ---------------------------------------------------------------------
-    // Payload builders (used by both Segment and Node constructors)
-    // ---------------------------------------------------------------------
-
-    /// Build a [`Gaiji`] payload. `mencode` is classified into its
-    /// [`GaijiCanonicalOwned`] form; the verbatim tail is interned for the
-    /// `Unresolved` arm. The resolved glyph is derived on demand.
     pub(crate) fn make_gaiji(
         &mut self,
         description: &str,
@@ -173,10 +110,6 @@ impl Allocator {
         let hint = self.store.intern(description);
         let canonical = match mencode {
             Some(m) => {
-                // Intern the tail, then classify the byte-identical interned
-                // string. Only the `Unresolved` arm keeps the id; the
-                // structured arms discard it just like
-                // `GaijiCanonical::from_mencode`.
                 let id = self.store.intern(m);
                 match GaijiCanonical::from_mencode(Some(self.store.resolve_str(id))) {
                     GaijiCanonical::MenKuTen(mkt) => GaijiCanonicalOwned::MenKuTen(mkt),
@@ -196,12 +129,6 @@ impl Allocator {
         }
     }
 
-    /// Build a [`Directive`] payload.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `raw` is empty (the `NonEmptyStr` contract the classify stage
-    /// upholds before emitting an annotation).
     pub(crate) fn make_directive(&mut self, raw: &str, kind: DirectiveKind) -> Directive {
         assert!(
             !raw.is_empty(),
@@ -213,22 +140,11 @@ impl Allocator {
         }
     }
 
-    /// Push a `NonEmpty<Content>` field as a length-1 [`ContentRange`],
-    /// upholding the non-empty contract.
     fn push_nonempty(&mut self, c: Content, msg: &'static str) -> ContentRange {
         assert!(!is_empty_content(c), "{msg}");
         self.store.push_contents(&[c])
     }
 
-    // ---------------------------------------------------------------------
-    // Node variant constructors (one per Node variant)
-    // ---------------------------------------------------------------------
-
-    /// `Node::Ruby(Ruby { base, reading, side: Right })`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `base` or `reading` is empty.
     pub(crate) fn ruby(&mut self, base: Content, reading: Content) -> Node {
         let base = self.push_nonempty(base, "classify stage must emit Ruby with non-empty base");
         let reading = self.push_nonempty(
@@ -243,11 +159,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::Ruby(Ruby { side: Left, … })` — a left-side ruby.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `base` or `reading` is empty.
     pub(crate) fn left_ruby(&mut self, base: Content, reading: Content) -> Node {
         let base = self.push_nonempty(base, "classify stage must emit Ruby with non-empty base");
         let reading = self.push_nonempty(
@@ -262,11 +173,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::MarginNote(MarginNote { kind, base, note })`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `base` or `note` is empty.
     pub(crate) fn side_note(&mut self, kind: MarginNoteKind, base: Content, note: Content) -> Node {
         let base = self.push_nonempty(
             base,
@@ -279,11 +185,6 @@ impl Allocator {
         Node::MarginNote(MarginNote { kind, base, note })
     }
 
-    /// `Node::Format` with a 傍点 attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `target` is empty.
     #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is part of the bouten contract — kind / target / position / origin each carry independent semantics."
@@ -311,21 +212,11 @@ impl Allocator {
         )
     }
 
-    /// `Node::Format` with a 縦中横 attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `text` is empty.
     #[cfg(test)]
     pub(crate) fn tate_chu_yoko(&mut self, text: Content, origin: ForwardOrigin) -> Node {
         self.forward_format(ForwardAttr::CombineUpright, text, origin)
     }
 
-    /// `Node::Format` with the given forward-scope `attr` applied to `text`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `text` is empty.
     pub(crate) fn forward_format(
         &mut self,
         attr: ForwardAttr,
@@ -362,14 +253,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::Format` for a #331 dotted-letter directive
-    /// ([`ForwardAttr::AccentDot`]): decorates the reclaimed `text` run and
-    /// interns the raw directive `body` (the selector grammar) so the renderer
-    /// can compose the dots and the serializer can re-emit it verbatim.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `text` is empty.
     pub(crate) fn accent_dot(&mut self, text: Content, body: &str, origin: ForwardOrigin) -> Node {
         let target = self.push_nonempty(
             text,
@@ -384,47 +267,36 @@ impl Allocator {
         })
     }
 
-    /// `Node::Gaiji(g)`.
     #[must_use]
     pub(crate) fn gaiji(&self, g: Gaiji) -> Node {
         Node::Gaiji(g)
     }
 
-    /// `Node::Line(lf)` — a single-line layout directive.
     #[must_use]
     pub(crate) fn line(&self, lf: LineFormat) -> Node {
         Node::Line(lf)
     }
 
-    /// `Node::PageBreak`.
     #[must_use]
     pub(crate) fn page_break(&self) -> Node {
         Node::PageBreak
     }
 
-    /// `Node::SectionBreak(k)`.
     #[must_use]
     pub(crate) fn section_break(&self, k: SectionKind) -> Node {
         Node::SectionBreak(k)
     }
 
-    /// `Node::BodyEnd`.
     #[must_use]
     pub(crate) fn body_end(&self) -> Node {
         Node::BodyEnd
     }
 
-    /// `Node::ForcedBreak`.
     #[must_use]
     pub(crate) fn forced_break(&self) -> Node {
         Node::ForcedBreak
     }
 
-    /// `Node::Heading(Heading { kind, style, text })`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `text` is empty.
     pub(crate) fn aozora_heading(
         &mut self,
         kind: HeadingKind,
@@ -435,15 +307,6 @@ impl Allocator {
         Node::Heading(Heading { kind, style, text })
     }
 
-    /// `Node::HeadingHint(HeadingHint { level, style, target, self_contained })`.
-    ///
-    /// `self_contained` is set when the quoted target has no referent in the
-    /// preceding source (a no-referent forward heading), so render shows the
-    /// target as the heading text while serialize stays bracket-only.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `target` is empty.
     #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is an independent part of the 見出し指定 contract — level / style / target / self_contained."
@@ -467,11 +330,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::Illustration` — keyword 挿絵 form.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `file` is empty.
     #[expect(
         clippy::too_many_arguments,
         reason = "every parameter is an independent part of the 挿絵 contract — file / number / dimensions / caption."
@@ -488,8 +346,6 @@ impl Allocator {
             "classify stage must emit Illustration with non-empty file path"
         );
         let file = self.store.intern(file);
-        // An empty `number` string is treated as absent (the `NonEmptyStr`
-        // contract).
         let number = number
             .filter(|n| !n.is_empty())
             .map(|n| self.store.intern(n));
@@ -503,12 +359,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::Illustration` — general image form (leading description, no
-    /// 挿絵 keyword / number / caption).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `file` or `description` is empty.
     pub(crate) fn sashie_general(
         &mut self,
         file: &str,
@@ -535,11 +385,6 @@ impl Allocator {
         })
     }
 
-    /// `Node::Kaeriten(Kaeriten { mark })`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `mark` is empty.
     pub(crate) fn kaeriten(&mut self, mark: &str) -> Node {
         assert!(
             !mark.is_empty(),
@@ -550,17 +395,11 @@ impl Allocator {
         })
     }
 
-    /// `Node::Directive(a)`.
     #[must_use]
     pub(crate) fn annotation(&self, a: Directive) -> Node {
         Node::Directive(a)
     }
 
-    /// `Node::AngleQuote(AngleQuote { content })`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `content` is empty.
     pub(crate) fn angle_quote(&mut self, content: Content) -> Node {
         let content = self.push_nonempty(
             content,
@@ -572,16 +411,12 @@ impl Allocator {
 
 #[cfg(test)]
 mod tests {
-    //! Per-variant round-trip tests for `Allocator`. Each builds one
-    //! `Node` and resolves its payloads against the store to confirm the
-    //! fields match.
+    //! Verifies allocator payloads with the backing store.
 
     use crate::encoding::gaiji::MenKuTen;
 
     use super::*;
 
-    /// Resolve a length-1 `ContentRange` to its `Plain` text, or `None` for a
-    /// mixed / multi-entry run.
     fn plain(alloc: &Allocator, range: ContentRange) -> Option<&str> {
         alloc.store().content_range_as_plain(range)
     }
@@ -854,7 +689,6 @@ mod tests {
         let mut a = Allocator::new();
         let s1 = a.seg_text("青");
         let s2 = a.seg_text("空");
-        // All-Text input collapses to a single concatenated Plain.
         let Content::Plain(id) = a.content_segments(&[s1, s2]) else {
             panic!("all-text content_segments must collapse to Plain");
         };
@@ -863,8 +697,6 @@ mod tests {
 
     #[test]
     fn into_store_hands_over_the_populated_store() {
-        // `into_store` must yield the *built* store (not a fresh default): a
-        // handle minted during the build has to still resolve against it.
         let mut a = Allocator::new();
         let Content::Plain(id) = a.content_plain("青梅") else {
             panic!("plain content should intern to a Plain handle");

@@ -7,6 +7,10 @@ use aozora::decode_auto;
 use aozora_corpus::{CorpusItem, FilesystemCorpus, par_load_decoded};
 
 #[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "the corpus test reports skipped inputs and round-trip progress"
+)]
 fn corpus_round_trip_is_a_fixed_point() {
     let Some(corpus) = configured_corpus() else {
         assert!(
@@ -76,6 +80,10 @@ fn configured_corpus() -> Option<FilesystemCorpus> {
     FilesystemCorpus::new(env::var_os(aozora_corpus::ENV_CORPUS_ROOT)?).ok()
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "corpus round-trip checks require both parses to succeed"
+)]
 fn sweep_item(item: CorpusItem) -> SweepOutcome {
     let Ok(utf8) = decode_auto(&item.bytes) else {
         return SweepOutcome::Undecodable(item.label);

@@ -3,50 +3,8 @@
     reason = "the fixed trigger patterns are a valid static automaton"
 )]
 
-//! Trigger-byte scanner for the Aozora notation lexer.
-//!
-//! ## What it does
-//!
-//! Given a source buffer, finds the byte offsets of every Aozora
-//! trigger character (`｜《》［］＃※〔〕「」`). Each is a 3-byte BMP
-//! UTF-8 codepoint; the scanner streams trigram start offsets into a
-//! caller-provided [`OffsetSink`], or returns a `Vec<u32>` via the
-//! convenience entry [`scan_offsets`].
-//!
-//! ## Why `aho-corasick`, not a hand-rolled SIMD kernel
-//!
-//! This crate used to carry the tree's only `unsafe`: a bespoke Teddy
-//! multi-pattern matcher with one SIMD inner kernel per ISA
-//! (`pshufb` / `vqtbl1q_u8` / `i8x16_swizzle`) plus a scalar fallback.
-//! It worked, but the candidate filter keyed only on the lead byte's
-//! nibbles — and `0xE3` is the lead byte of *every hiragana and
-//! katakana codepoint*, so on real Japanese prose the filter fired on
-//! a large fraction of the text and paid a scalar trigram-verify to
-//! reject each kana byte.
-//!
-//! [`aho_corasick`] solves the same problem with a safe, portable,
-//! expertly-maintained packed matcher whose fingerprint spans more
-//! than the lead byte, so it is *both* algorithmically more selective
-//! (fewer false-positive verifies) and free of `unsafe`. On 8 MiB of
-//! real prose it scanned ~24% faster than the hand-rolled SIMD while
-//! producing byte-identical offsets, and it carries every platform —
-//! the win is portable, not pinned to the dev machine's AVX2. The
-//! crate is now `#![forbid(unsafe_code)]`.
-//!
-//! ## Output channel
-//!
-//! [`OffsetSink`] decouples the scanner from "where the offsets land".
-//! `Vec<u32>` and `bumpalo::collections::Vec<'_, u32>` both implement
-//! it, so callers with an arena (the lex pipeline) write offsets
-//! directly into the arena.
-//!
-//! ## Naive reference
-//!
-//! `NaiveScanner` is the brute-force `O(n × classify)` walker — the
-//! independent oracle the production scanner is differentially tested
-//! against (`tests/property_backend_equiv.rs`), and the safe scanner
-//! used directly on `no_std` builds (where `aho-corasick`'s packed
-//! path — which needs runtime CPU detection — is unavailable).
+//! Finds notation delimiter offsets through [`scan_offsets`].
+//! ADR-0035 requires a safe, portable matcher, provided by [`aho_corasick`].
 
 #![forbid(unsafe_code)]
 
@@ -59,14 +17,6 @@ pub(crate) use trait_def::OffsetSink;
 #[cfg(test)]
 pub(crate) use naive::NaiveScanner;
 
-/// The process-wide trigger automaton, built once.
-///
-/// `aho-corasick`'s automaton construction (and its one-time runtime
-/// CPU-feature detection for the packed backend) is amortised across
-/// every parse via a `OnceLock`, mirroring the old per-process backend
-/// detection. The patterns come straight from the canonical
-/// [`crate::spec::trigger::ALL_TRIGGER_TRIGRAMS`] so the scanner and the
-/// classifier can never disagree on the trigger set.
 fn automaton() -> &'static aho_corasick::AhoCorasick {
     use crate::spec::trigger::ALL_TRIGGER_TRIGRAMS;
     use aho_corasick::{AhoCorasick, MatchKind};
@@ -81,35 +31,18 @@ fn automaton() -> &'static aho_corasick::AhoCorasick {
     })
 }
 
-/// Force the one-time automaton build (and packed-backend CPU
-/// detection) now, off the hot path. The first [`scan_offsets`] then
-/// reuses the cached automaton. Idempotent and sub-microsecond.
-///
-/// `no_std` builds scan with `NaiveScanner` and have nothing to warm,
-/// so this is a documented no-op there.
-// mutants::skip — deleting the body only defers the idempotent one-time
-// automaton build to the first `scan_into`; it produces no observable
-// output difference (the automaton is identical whenever it is built), so
-// there is nothing an assertion can pin.
+// mutants::skip: removing prewarming changes initialization timing without changing output.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn prewarm() {
     automaton();
 }
 
-/// Push every trigger offset in `source` into `sink`, in ascending
-/// order. Generic over the sink so the lex pipeline writes straight
-/// into its arena with no heap round-trip.
 fn scan_into<S: OffsetSink>(source: &str, sink: &mut S) {
     for m in automaton().find_iter(source) {
         sink.push(u32::try_from(m.start()).unwrap_or(u32::MAX));
     }
 }
 
-/// Scan `source` and return every trigger byte offset.
-///
-/// Allocates a fresh `Vec<u32>`; the [`OffsetSink`] abstraction keeps the
-/// scan loop generic over the buffer, but the lex pipeline drives it through
-/// this heap entry.
 #[must_use]
 pub(crate) fn scan_offsets(source: &str) -> Vec<u32> {
     let mut sink = Vec::new();
@@ -123,9 +56,6 @@ mod tests {
 
     #[test]
     fn scan_matches_naive_on_mixed_sample() {
-        // Whatever the production scanner does, it must agree with the
-        // brute-force naive reference on a representative mixed sample
-        // (ruby, refmark, square brackets, hash, corner brackets).
         let s = "漢《かん》字、※［＃ここまで］「終わり」";
         let scanned = scan_offsets(s);
         let naive = NaiveScanner.scan_offsets(s);
@@ -135,8 +65,6 @@ mod tests {
 
     #[test]
     fn skips_kana_sharing_the_e3_lead_byte() {
-        // The whole motivation: あいうえお all start with 0xE3 but are
-        // not triggers. The scanner must emit nothing for pure kana.
-        assert_eq!(scan_offsets("あいうえおこんにちは"), Vec::<u32>::new());
+        assert!(scan_offsets("あいうえおこんにちは").is_empty());
     }
 }

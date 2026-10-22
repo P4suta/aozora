@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# Re-extract aozora-gaiji-chuki.tsv from the upstream XML mirror.
-#
-# Run when the upstream `kurema/AozoraGaijiChukiXml` ships a new
-# revision (8th edition currently). Output is committed to the repo
-# alongside this script.
-#
-# Steps:
-#   1. download Chuki.xml (~4 MB, CC0)
-#   2. awk-walk it, emitting `description<TAB>character` rows
-#   3. perl-filter: keep only single-codepoint values, dedupe,
-#      decode XML entities, format codepoint as hex
-#   4. prepend the schema-comment header
-#
-# The committed `aozora-gaiji-chuki.tsv` is the *generated artifact*;
-# the source of truth is the upstream XML. xtask gaiji-gen reads the
-# TSV, not the XML, so consumers do not need network access at gen
-# time.
 
 set -euo pipefail
 

@@ -599,7 +599,7 @@ fn forward_target_is_preceded(
     source[..cutoff as usize].contains(target)
 }
 
-// The corpus includes headings that quote 両頭 from 両頭《りやうとう》, so their look-back omits ruby readings.
+/// Corpus headings quote `両頭` from `両頭《りやうとう》`, so matching skips ruby readings.
 fn forward_heading_target_is_preceded_ruby_stripped(
     view: BodyView<'_>,
     source: &str,
@@ -716,7 +716,7 @@ fn resolve_forward_referent(search: ReferentSearch<'_>, target: &str) -> Forward
 }
 
 struct ForwardQuoteExtract<'s> {
-    // This inline target capacity covers the measured 99th percentile in the corpus.
+    // This inline target capacity covers the measured ninety-ninth percentile in the corpus.
     targets: smallvec::SmallVec<[&'s str; 4]>,
     suffix: &'s str,
     nested_source: bool,

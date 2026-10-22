@@ -7,28 +7,27 @@ use crate::spec::PairKind;
 pub enum SlugFamily {
     /// `［＃改ページ］` and other section-level page breaks.
     PageBreak,
-    /// `［＃改丁］`, `［＃改段］`, `［＃改見開き］`.
+    /// Section break such as `［＃改丁］`.
     Section,
-    /// Block container open marker (`［＃ここから...］`).
-    /// Pairs with the corresponding [`SlugFamily::BlockContainerClose`] slug.
+    /// Block opener `［＃ここから...］`, paired with [`Self::BlockContainerClose`].
     BlockContainerOpen,
-    /// Block container close marker (`［＃ここで...終わり］`).
+    /// Block closer `［＃ここで...終わり］`.
     BlockContainerClose,
-    /// Leaf-line layout slug applied to the immediately preceding paragraph (`地付き`, `{N}字下げ`, `地から{N}字上げ`).
+    /// Layout directive for the preceding paragraph.
     LeafAlign,
-    /// Forward-reference bouten / underline (`［＃「target」に傍点］`).
+    /// Emphasis marks on a preceding text span.
     Bouten,
-    /// Inline figure (`［＃挿絵（path）入る］`).
+    /// Inline figure reference.
     Illustration,
-    /// Framed rule frame (open / close).
+    /// Framed rule opener or closer.
     Framed,
-    /// Warichu inline-break (open / close).
+    /// Inline note opener or closer.
     Warichu,
-    /// Forward-reference 縦中横 (`［＃「target」は縦中横］`).
+    /// Horizontal text within vertical writing.
     CombineUpright,
     /// A single kanbun return mark.
     KaeritenSingle,
-    /// Kaeriten compound mark (一レ, 二レ, …).
+    /// Compound kanbun return mark.
     KaeritenCompound,
 }
 
@@ -49,7 +48,7 @@ impl SlugFamily {
         Self::KaeritenCompound,
     ];
 
-    /// Stable camelCase wire-format identifier.
+    /// Stable `camelCase` identifier.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {
@@ -74,9 +73,9 @@ impl SlugFamily {
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct SlugEntry {
-    /// Canonical body text (without the surrounding `［＃` / `］`).
+    /// Canonical directive body without `［＃` and `］`.
     pub canonical: &'static str,
-    /// Coarse category / family.
+    /// Directive category.
     pub family: SlugFamily,
     /// Whether the canonical text takes a numeric parameter or illustration path.
     pub accepts_param: bool,

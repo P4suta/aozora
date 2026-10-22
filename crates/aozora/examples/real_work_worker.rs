@@ -1,4 +1,4 @@
-//! Long-lived JSONL worker used to verify the packaged Rust crate.
+//! Verifies the packaged Rust crate through a persistent worker that exchanges JSON messages, one per line.
 
 use std::error::Error;
 use std::io::{self, BufRead, Write};
