@@ -38,8 +38,9 @@ tag-time expectation.
    property/fuzz/sanitizer/mutation work, native shipping platforms,
    performance contracts, generated wire surfaces, and installation from every
    distribution artifact.
-3. Add `release: approved` after review. Branch protection still requires
-   `release-ready`; the label cannot make a failed or absent proof mergeable.
+3. Add `release: approved` after review.
+   Branch protection requires the `required` check; `release-ready` qualifies the exact commit for publication.
+   The label grants no bypass of either gate.
 4. Squash-merge the Release PR by hand. GitHub web-flow signs the resulting
    commit; auto-merge remains disabled for Release PRs.
 5. Wait for release-plz to publish the public crates in dependency order and
