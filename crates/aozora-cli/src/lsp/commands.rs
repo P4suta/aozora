@@ -1,5 +1,3 @@
-//! Canonicalization workspace command.
-
 use aozora::Catalogue;
 use tower_lsp::lsp_types::{
     DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Range, TextDocumentEdit,

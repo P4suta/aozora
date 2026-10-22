@@ -1,30 +1,7 @@
-//! Snapshot the CLI's user-visible surface so changes to `--help`,
-//! `--version`, and subcommand output land as intentional review
-//! diffs instead of silent drift.
-//!
-//! Uses `std::process::Command` + the `CARGO_BIN_EXE_aozora`
-//! environment variable that Cargo provides for integration tests
-//! against binary targets — no extra dev-dep needed (no
-//! `assert_cmd`, no `escargot`).
-//!
-//! `insta` filters (see `cli_filters`) mask runtime/platform artifacts
-//! so the golden files capture the *surface* and not incidental noise.
+//! Snapshots of CLI help, version, and subcommand output.
 
 use std::process::Command;
 
-/// Filters applied to every CLI snapshot so the golden files record the
-/// user-visible surface (flags, subcommands, prose) and never runtime or
-/// platform artifacts that would otherwise force a spurious re-accept:
-///
-/// - the version stamp — core triple + optional pre-release
-///   (`-dev` / `-nightly.<date>`) + optional build metadata
-///   (`+g<sha>` / `+g<sha>.dirty`) — so a workspace `version` bump or a
-///   `dev` build's commit sha never invalidates a snapshot (see
-///   `aozora-buildstamp`);
-/// - the Windows `.exe` suffix clap prints in the `Usage:` line: the test
-///   spawns `CARGO_BIN_EXE_aozora`, which is `aozora.exe` on Windows, so
-///   clap derives `Usage: aozora.exe …` there — normalising it keeps the
-///   surface identical across the platforms the cross-os matrix runs on.
 fn cli_filters() -> Vec<(&'static str, &'static str)> {
     vec![
         (r"\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[\w.]+)?", "[VERSION]"),

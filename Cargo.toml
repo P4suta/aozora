@@ -1,14 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
-  # Published: the Rust library front door, the CLI+LSP tool binary, and the
-  # tree-sitter grammar. The former building-block crates (spec / syntax /
-  # scan / encoding / veb / pipeline / render / fmt / pandoc / cst / query)
-  # are folded into `aozora`; lsp / i18n / buildstamp fold into `aozora-cli`.
   "crates/aozora",
   "crates/aozora-cli",
   "crates/tree-sitter-aozora",
-  # Dev-only / distribution (publish = false or a separate channel).
   "crates/aozora-corpus",
   "crates/aozora-proptest",
   "crates/aozora-conformance",
@@ -20,20 +15,12 @@ members = [
   "crates/aozora-xtask",
   "crates/aozora-trace",
 ]
-# `aozora-go` is a standalone Go module (host SDK) with no Cargo manifest.
-# Listed in `exclude` so `cargo` ignores it during workspace globbing even
-# if a stray `Cargo.toml` is added there by accident.
 exclude = ["crates/aozora-go"]
 
 [workspace.package]
 version = "0.5.0"
 edition = "2024"
-# MSRV — the public contract, and a MEASURED floor, not a mirror of the
-# toolchain we develop on (that is rust-toolchain.toml's channel; the two
-# are deliberately different numbers — ADR-0034). Raised only when a new
-# stable feature is actually needed. 1.89 is set by `rustyline`'s use of
-# `file_lock`; our own code needs 1.88 (let-chains). Policy and the
-# re-measurement recipe: docs/contrib/msrv.md.
+# rustyline's file_lock use sets the measured MSRV (ADR-0034).
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 description = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
@@ -64,13 +51,7 @@ explicit_outlives_requirements = "warn"
 
 let_underscore_drop = "warn"
 keyword_idents_2024 = "warn"
-# `variant_size_differences` (rustc): used to nudge fat variants
-# behind `Box`. The lexer's `SpanKind::Aozora` already wraps its
-# inner `AozoraNode` in `Box` so the variant is 8 bytes, but the
-# residual ratio against 0-byte unit variants (`Plain`, `Newline`)
-# still trips the heuristic. Allowed at the workspace level — the
-# related `clippy::large_enum_variant` carve-out below documents the
-# same call.
+# Parser payloads remain inline to preserve Copy semantics (ADR-0036).
 variant_size_differences = "allow"
 ambiguous_negative_literals = "warn"
 
@@ -130,288 +111,132 @@ rc_mutex = "warn"
 lossy_float_literal = "warn"
 suspicious_xor_used_as_pow = "warn"
 
+# Repeating module names keeps public types clear when imported on their own.
 module_name_repetitions = "allow"
+# Transitive dependencies cannot always share a single version.
 multiple_crate_versions = "allow"
+# Public functions become const only when their API commits to const evaluation.
 missing_const_for_fn = "allow"
+# Explicit crate visibility makes internal API boundaries clear inside private modules.
 redundant_pub_crate = "allow"
-# `large_enum_variant`: SpanKind::Aozora already wraps its inner
-# `AozoraNode` in `Box` (~8 bytes ptr) to keep the variant data 7×
-# smaller than the inline form (~56 bytes). The clippy heuristic
-# still flags Box-vs-1-byte ContainerKind discrepancy as "more than
-# 3× larger"; further uniformisation (boxing every variant) would
-# regress code clarity and force Box::new at every construction
-# site for negligible additional layout savings.
+# Boxing parser payloads would add allocation and indirection to the lexer hot path (ADR-0036).
 large_enum_variant = "allow"
 
 [workspace.dependencies]
-# Published crates carry a registry version alongside the workspace path.
 aozora = { version = "0.5.0", path = "crates/aozora" }
 tree-sitter-aozora = { version = "0.5.0", path = "crates/tree-sitter-aozora" }
-# publish=false → path-only (no crates.io version): a version pin here would go
-# stale on the workspace-lockstep bump (release-plz never releases it) and break
-# `cargo update`, and force a non-existent registry version onto consumers.
+# Unpublished crates have no registry versions that consumers can resolve.
 aozora-trace = { path = "crates/aozora-trace" }
 
-# Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
 
-# Stack-inline small vectors — Innovation I-8. `smallvec` over
-# `tinyvec` because the workspace's hot-stack payloads (e.g.,
-# `(PairKind, usize)`) lack a meaningful `Default` impl that
-# `tinyvec` would require.
+# Hot-stack payloads lack the meaningful Default implementation that tinyvec requires.
 smallvec = "1.15"
 
-# SIMD-friendly substring scan
 memchr = "2.8"
 
-# Multi-pattern search: the trigger-trigram scan automaton (`aozora::scan`)
-# and the annotation-keyword body dispatcher (`aozora::pipeline`
-# `classify::directive::build_body_dispatcher`). `default-features = false`
-# at the workspace level so each consumer opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
-# publish=false → path-only (see aozora-trace above).
 aozora-corpus = { path = "crates/aozora-corpus" }
 aozora-proptest = { path = "crates/aozora-proptest" }
 
-# Error handling
 thiserror = "2.0.18"
 anyhow = "1.0"
-# Bare miette (the `Diagnostic` derive + `SourceSpan` only) at the
-# workspace level so the parser-core / library crates (spec / syntax /
-# pipeline / encoding) don't drag miette's `fancy` graphical-renderer
-# dependency tree (backtrace, supports-color, terminal_size, textwrap)
-# into every downstream library consumer (afm, the WASM / Python builds).
-# Only `aozora-cli` opts into `fancy` — it renders diagnostics to a TTY.
+# Library and WASM consumers do not need the CLI's graphical diagnostic renderer dependencies.
 miette = { version = "7.6.0" }
 regex = "1.12"
 
-# Serialization / data
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# JSON Schema generation for the wire format. Used by aozora's
-# `schema` feature to dump schemas of Diagnostic / Node /
-# Pair / ContainerPair — the artefacts ship in
-# `crates/aozora-conformance/json/` and are CI drift-gated.
 schemars = { version = "1.0", features = ["preserve_order"] }
 toml = "1.1"
 flate2 = "1.1"
 
-# DWARF symbolication for samply trace analysis (aozora-trace).
-# `loader` feature pulls in `object` + `memmap2` for in-process ELF
-# parsing — no shell-out to `addr2line(1)`.
 addr2line = { version = "0.27.1", default-features = false }
-# ELF / Mach-O / PE parsing — for build-id verification in the
-# symbolicator. addr2line uses object internally; we add it
-# explicitly so we can read .note.gnu.build-id.
+# Direct object access is needed for build-id verification alongside addr2line.
 object = { version = "0.40", default-features = false, features = ["read"] }
 
-# Encoding
 encoding_rs = "0.8.35"
 
-# Compile-time hash maps (gaiji UCS lookup table, kaeriten/bouten slugs)
 phf = { version = "0.14", features = ["macros"] }
 
-# Filesystem walking — used by aozora-corpus to iterate test corpora and by
-# the folded formatter batch engine (aozora-cli `src/fmt/`) to recurse directories
 walkdir = "2.5"
 
-# aozora-cli formatter (`src/fmt/`): coloured unified diff for `--diff`, TTY-aware stdout
 similar = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
 anstyle = "1.0"
-# Batch progress reporting for directory `aozora fmt` (the `fold_files` loop):
-# a discovery spinner and a per-file bar, plus a clean way to interleave the
-# formatter's own stdout/stderr lines with the bar (`suspend`). indicatif is
-# the de-facto Rust progress crate — the reporter behind cargo, rustup, and
-# wasm-pack. It draws to stderr and is TTY-aware, so the whole UI stays silent
-# the moment output is piped (which is exactly the strict gate we want: shown
-# only on an interactive stderr, off under `--quiet`, never over `--json`). It
-# reuses `console` (already in the graph via insta) for terminal width, so no
-# new transitive terminal layer. Default features only — no extra unicode
-# subtree; `console` already measures East-Asian-Wide filenames correctly.
 indicatif = "0.18"
 
-# In-process LSP runtime (aozora-cli `src/lsp/`: tower-lsp over tokio stdio)
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
 dashmap = "6"
-parking_lot = "0.12" # non-poisoning Mutex for the writer-only buffer state
-arc-swap = "1.7" # wait-free read snapshot swap
+parking_lot = "0.12"
+arc-swap = "1.7"
+# Disabling CR and Unicode line breaks matches LineIndex, as checked by doc_line_view_rope_matches_line_index.
 ropey = { version = "1.6", default-features = false, features = [
   "simd",
-] } # default features OFF: with neither cr_lines nor unicode_lines, ropey's line metrics count only 0x0A — byte-identical to LineIndex (see doc_line_view guard test)
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-hdrhistogram = { version = "=7.5.4", default-features = false } # constant-memory percentile metrics
+# Percentile metrics need constant-memory storage.
+hdrhistogram = { version = "=7.5.4", default-features = false }
 
-# Pandoc AST serde for `aozora`'s `pandoc` feature (Phase M1).
-# `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs
-# ~900/mo), more recently updated, and explicitly designed for
-# writing filters. Both crates serialize the same JSON ABI Pandoc
-# emits via `--to json`, so we get round-trip compatibility either
-# way; we pick the more active one.
 pandoc_ast = "0.8"
 
-# Unicode-width-aware terminal table rendering — used by `aozora spec kinds`
-# (CLI introspection) to lay out the per-enum tables. Hand-rolled
-# alignment would mis-handle the East-Asian-Wide camelCase tags some
-# `NodeKind` rows carry; comfy-table is the maintained mainstream
-# choice (1.5M+ downloads/mo, used by sqlx / cargo-edit / lazygit-ui).
+# East Asian wide labels would be misaligned by byte-based terminal table padding.
 comfy-table = { version = "7.2", default-features = false }
 
-# Physical-core count detection — used by aozora-corpus's
-# parallel-load helper to size the rayon thread pool to *physical*
-# cores rather than logical (hyperthreaded) ones, since the parser is
-# memory-bandwidth bound and SMT siblings starve each other on the
-# corpus-load throughput. Mainstream pure-Rust crate;
-# `#[forbid(unsafe_code)]` in our code is preserved.
+# Physical-core sizing avoids bandwidth contention between SMT siblings during corpus loading.
 num_cpus = "1.16"
 
-# zstd compression — used by `aozora-corpus::archive` for the
-# compressed archive variant and by `xtask corpus pack` for the
-# build-time pack. zstd over gzip / xz: 5-10× faster decompression
-# at comparable ratios, dictionary support for small-file corpora,
-# and frame-level random access matters for sweep parallelism.
-# Pure-Rust API; underlying libzstd is C, but the boundary is hidden
-# behind the `zstd` crate's safe API (same shape as encoding_rs /
-# num_cpus / rayon).
+# Corpus sweeps need dictionary compression and frame-level random access.
 zstd = "0.13"
 
-# Content-addressed hashing — used by `aozora-corpus::archive` for
-# per-entry source hashes (incremental pack diff). blake3 is the
-# modern fast-and-secure default; pure-Rust SIMD impl, no unsafe in
-# our code.
 blake3 = "1.5"
 
-# Pure-safe-Rust syscall wrapper — used by `xtask corpus uncache`
-# for `posix_fadvise(POSIX_FADV_DONTNEED)` to evict corpus files
-# from the kernel page cache without sudo, so cold-cache benchmark
-# runs measure honest disk-bound throughput instead of warm reread.
-# rustix itself uses unsafe internally to invoke syscalls (same
-# shape as encoding_rs / num_cpus / rayon); the API surface we
-# consume is safe.
+# Cold-cache benchmarks need to evict corpus pages without requiring sudo.
 rustix = { version = "1.1", features = ["fs"] }
 
-# Test helpers
 tempfile = "3.27"
 
-# Parallelism — workspace-default work-stealing thread pool. Retained
-# for batch tooling (corpus sweeps, doc-parallel benchmark drivers).
 rayon = "1.12"
 
-# CLI
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
-# Shell-completion script generation for `aozora completions <shell>`.
-# Tracks clap's 4.x line; scripts are generated at release time, never
-# committed (ADR-0012), so this is a CLI-only dependency.
 clap_complete = "4.5"
-# nushell is not one of `clap_complete::Shell`'s built-ins, so its
-# generator ships in a sibling crate. Same release-time policy.
+# Nushell completion generation is not provided by clap_complete's built-in shells.
 clap_complete_nushell = "4.5"
-# Man-page (roff) generation for the hidden `aozora man` subcommand.
-# Same release-time, never-committed policy as clap_complete (ADR-0012).
 clap_mangen = "0.3"
-# File-system watching for `aozora <cmd> --watch` — re-run on save.
-# notify is the de-facto cross-platform watcher (inotify / FSEvents /
-# ReadDirectoryChangesW); CLI-only, like the clap_* generators above.
 notify = "8.2"
-# Line editor for the interactive `aozora repl` — the de-facto Rust readline
-# (a Linenoise port; the line-editing / history backbone behind nushell,
-# sqlx-cli, rusqlite's shell, and countless REPLs). Gives Emacs/vi key
-# bindings, in-session history, and a graceful non-tty fallback for free, so
-# the REPL stays a thin shell over the parser engine rather than reimplementing
-# terminal handling. CLI-only, like the clap_* generators / notify above.
 rustyline = "18.0"
 
-# Full-screen terminal UI for the live `aozora tui` editor. `ratatui` is the
-# de-facto Rust TUI framework — the maintained successor to tui-rs, the widget
-# / layout / immediate-mode-render engine behind gitui, bottom, atuin and
-# countless terminal apps. `crossterm` is its default cross-platform backend
-# (raw mode, the alternate screen, key events; the same terminal layer ratatui
-# re-exports). `tui-textarea-2` is the maintained multi-line editor widget for
-# ratatui — the source EDIT pane, so the TUI reuses a real editor instead of
-# hand-rolling cursor / selection / undo handling.
-#
-# On `tui-textarea-2` vs the upstream `tui-textarea`: the two are the SAME
-# widget (`tui_textarea::TextArea`, identical API); `tui-textarea-2`
-# (github.com/srothgan/tui-textarea) is the fork that tracks current ratatui,
-# and it is the one we can actually use here. Upstream `tui-textarea` 0.7 is
-# pinned to `ratatui ^0.29`, and `ratatui 0.29.0` in turn hard-pins
-# `unicode-width =0.2.0` — which is unsatisfiable alongside the already-shipped
-# `rustyline` (the `aozora repl` line editor), whose `unicode-width ^0.2.2`
-# lives in the same binary's dependency graph. Staying on STABLE, official
-# ratatui therefore means ratatui 0.30 (which relaxes that pin) + crossterm
-# 0.29 + tui-textarea-2 0.12 (its `crossterm` default feature pulls the same
-# ratatui-core / ratatui-widgets 0.30 crates and crossterm 0.29 the umbrella
-# uses). The alternative — pre-release ratatui 0.29.1-alpha — is rejected by
-# the ADR-0017 stable-pin policy. CLI-only, like rustyline / notify / the
-# clap_* generators above; the TUI is a thin shell over the parser engine and
-# reimplements no parse / render / diagnostic logic.
-#
-# Backend selection: both crates ship several backends (crossterm / termion /
-# termwiz / termina) behind features, and their default sets would land the
-# unused termwiz backend — with its wezterm-* subtree and `terminfo` (WTFPL,
-# outside our SPDX allow-list) — in `Cargo.lock`, tripping the lockfile-based
-# dependency-review gate even though nothing compiles it. We use crossterm
-# only, so `default-features = false` + `features = ["crossterm"]` keeps the
-# graph to the one backend we drive and drops that subtree from the lock
-# entirely (only pull what we use).
+# Upstream tui-textarea's ratatui pin conflicts with rustyline's unicode-width requirement (ADR-0017).
+# Crossterm-only features exclude the unused termwiz backend and its WTFPL dependency from the lockfile.
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
 
-# Localization (aozora-cli `src/i18n.rs`) — the Project Fluent stack, the de-facto Rust
-# i18n standard (Mozilla's localization system, the engine behind Firefox).
-# Message catalogs are external `.ftl` files so translators never touch Rust
-# and a new language is one file. `fluent-bundle` is the core runtime (FTL
-# parse + message formatting); `unic-langid` models BCP-47 language
-# identifiers; `fluent-langneg` negotiates a requested locale against the
-# available catalogs. The CLI and LSP share the one catalog. All are pinned
-# per ADR-0017 and consumed only by aozora-cli's i18n module (no `langid!` macro — it
-# expands to `unsafe`, which the workspace forbids — so no `macros` feature).
 fluent-bundle = "0.16"
-# Fluent's own parser/AST crate. `FluentResource::entries()` hands back
-# `fluent_syntax::ast::Entry`, and fluent-bundle re-exports neither the module
-# nor the type, so reading a catalog's message ids back out of the parsed
-# resource needs it named directly (aozora-cli i18n, test-only). Must track the
-# version fluent-bundle itself depends on — 0.16 wants 0.12 — or `ast::Entry`
-# resolves to two unrelated types.
+# fluent-syntax must match fluent-bundle's AST types because they are not re-exported.
 fluent-syntax = "0.12"
+# The langid macro expands to unsafe code, which the workspace forbids.
 unic-langid = "0.9"
-# Pinned to 0.13 (not 0.14): fluent-langneg 0.14 rebased its identifier type on
-# ICU4X's `icu_locid`, whereas fluent-bundle 0.16 and `unic-langid` here speak
-# `unic_langid::LanguageIdentifier`. 0.13 keeps the whole stack on the one
-# identifier type so bundles and negotiation share it without a bridge.
+# fluent-langneg 0.14 uses ICU4X identifiers that cannot be shared with fluent-bundle's unic-langid types.
 fluent-langneg = "0.13"
 
-# Testing
 insta = { version = "1.47", features = ["yaml", "json", "filters"] }
 proptest = "1.11"
 criterion = { version = "0.8", features = ["html_reports"] }
 dhat = "0.3"
 pretty_assertions = "1.4.1"
-# cargo-mutants companion crate: provides the `#[mutants::skip]` no-op
-# attribute so genuinely-equivalent mutants (compile-time invariant guards,
-# allocation-capacity hints) can be excluded from the mutation sweep with an
-# in-source justification. Used only under `#[cfg_attr(test, …)]`, so it is a
-# dev-dependency at each use site. See https://mutants.rs/attrs.html.
 mutants = "0.0.4"
 
 [profile.release]
-# `lto = "fat"` (vs the prior "thin") so cross-crate function calls
-# in the folded lex pipeline (aozora::render → aozora::pipeline →
-# aozora::scan phase functions) inline across the boundary. Measured
-# 30%+ wall-clock regression on the corpus sweep with thin LTO once
-# the lex orchestrator was split out of the monolithic `lex()`; fat LTO
-# recovers it. The compile-time cost is acceptable
-# because the workspace already pins `codegen-units = 1` for release.
+# Thin LTO regressed corpus-sweep wall time by over 30% after lexer phase extraction.
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
 opt-level = 3
 
-# Distribution profile for published native artifacts.
 [profile.dist]
 inherits = "release"
 opt-level = "z"
@@ -425,20 +250,9 @@ debug = 1
 
 [profile.dev]
 split-debuginfo = "unpacked"
-# `debug = "line-tables-only"` keeps backtraces (line + file + symbol
-# names) but drops the local-variable / parameter DWARF that doubles
-# rustc's link-stage memory and time. Backtraces retain the information used
-# during routine native development without paying for debugger-only locals.
+# Line tables retain backtraces without the link-time memory cost of debugger locals.
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
-# `opt-level = 2` for every transitive dep (proc-macros and otherwise).
-# Two effects:
-#   1. proc macros (syn, serde_derive, clap_derive, schemars_derive,
-#      zerocopy_derive) execute faster, which speeds up the host
-#      crate's compile that consumes their `TokenStream` output.
-#   2. dependency object code that gets linked into test binaries
-#      runs faster, shrinking the test step in the coverage job.
-# The cold-cache cost is paid once by the native Cargo cache. Workspace crates
-# stay at the default opt-level=0 so iteration keeps full incremental speed.
+# Optimized dependencies speed proc macros and tests while workspace crates retain incremental builds.
 opt-level = 2

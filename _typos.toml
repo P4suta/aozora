@@ -1,46 +1,38 @@
-# typos (https://github.com/crate-ci/typos) configuration
-# Named `_typos.toml` so it doesn't shadow Cargo features matching on `typos.*`.
-
 [default]
-# Honorary words unique to this project / domain.
+# Git hashes can contain letter sequences that resemble misspellings.
 extend-ignore-identifiers-re = [
-  "[A-Fa-f0-9]{7,}", # git SHAs in comments
+  "[A-Fa-f0-9]{7,}",
 ]
 
 [default.extend-words]
-# Sibling repository name (P4suta/afm) referenced in README / ARCHITECTURE.
+# afm is the sibling repository's name.
 afm = "afm"
-# French fragments embedded in Aozora accent-decomposition examples.
-# "fune`bre" (funèbre) and siblings appear in source text and tests.
+# Aozora accent-decomposition examples contain the French fragment fune`bre.
 bre = "bre"
-# Proper names surfaced in NOTICE / docs. Listed here rather than
-# suppressed so typos still catches typos *around* them.
+# Author, translator, and contributor names appear in notices and documentation.
 Dostoyevsky = "Dostoyevsky"
 Fyodor = "Fyodor"
 Yonekawa = "Yonekawa"
 Masao = "Masao"
 Yasunobu = "Yasunobu"
-# Hepburn romaji morae in the render-slug consistency test
-# (`aozora/src/spec/slugs.rs` `tests::hepburn`) — valid kana
-# romanisations that collide with the dictionary.
+# Hepburn morae in render-slug tests collide with dictionary entries.
 gya = "gya"
 myu = "myu"
 ba = "ba"
 
 [files]
 extend-exclude = [
-  "spec/aozora/fixtures/", # Aozora Bunko source files
-  # Vendored JIS X 0213 / Unicode standard tables (folded into `aozora`) —
-  # kanji codepoint rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary
-  # on uppercase 2-letter hex spans like `BA` → `BY/BE`. The PHF table itself is
-  # generated into OUT_DIR (never the source tree), so only the `data/` inputs
-  # need excluding.
+  # Corpus source spellings must be preserved verbatim.
+  "spec/aozora/fixtures/",
+  # Vendored JIS and Unicode tables contain hexadecimal spans that resemble misspellings.
   "crates/aozora/data/",
+  # Build, coverage, and mutation outputs contain generated text.
   "target/",
   "coverage/",
   "mutants.out/",
   "mutants.out.old/",
   "mutants-*/",
+  # Rendered HTML and lockfiles contain generated content.
   "*.html",
   "*.lock",
 ]

@@ -1,45 +1,28 @@
-//! Categories of balanced open/close delimiter pairs in Aozora notation.
-//!
-//! Trigger characters that always appear in isolation (`｜`, `＃`, `※`)
-//! do not have a corresponding [`PairKind`]; the tokenize stage emits
-//! them as a "solo" token.
-
 use crate::spec::Span;
 
-/// Pair kind. The variants enumerate every balanced delimiter Aozora
-/// notation recognises.
+/// Balanced delimiter family in Aozora notation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum PairKind {
-    /// `［ … ］` (U+FF3B / U+FF3D). Directive body container — always
-    /// a bracket pair, with or without the leading `＃`.
+    /// Directive body delimiters (`［ … ］`).
     Bracket,
 
-    /// `《 … 》` (U+300A / U+300B). Ruby reading.
+    /// Ruby reading delimiters (`《 … 》`).
     Ruby,
 
-    /// `≪ … ≫` (U+226A / U+226B). Double-angle quotation — the aozora
-    /// input encoding for a 底本's twin angle brackets, displayed back
-    /// as `《…》`. Its own pair kind (a stray `》` never closes a `≪`).
+    /// Double-angle quotation delimiters (`≪ … ≫`), displayed as `《…》`.
     AngleQuote,
 
-    /// `〔 … 〕` (U+3014 / U+3015). Accent-decomposition segment.
+    /// Accent-decomposition delimiters (`〔 … 〕`).
     Tortoise,
 
-    /// `「 … 」` (U+300C / U+300D). Quoted literal inside annotation
-    /// bodies (e.g. `［＃「青空」に傍点］`).
+    /// Quoted literal delimiters inside annotations (`「 … 」`).
     Quote,
 }
 
 impl PairKind {
-    /// Every variant in declaration order. Used by codegen so
-    /// downstream artefacts (TypeScript types, CLI tables) track the
-    /// enum without a hand-maintained parallel.
-    ///
-    /// A `&'static [Self]` (not a fixed-size array) so adding a variant to
-    /// this `#[non_exhaustive]` enum stays source-compatible for callers that
-    /// iterate `PairKind::ALL` — the length is not part of the contract.
+    /// Every variant in declaration order.
     pub const ALL: &'static [Self] = &[
         Self::Bracket,
         Self::Ruby,
@@ -48,9 +31,7 @@ impl PairKind {
         Self::Quote,
     ];
 
-    /// Stable camelCase string identifier used by the driver wire
-    /// formats. Centralised here so every driver agrees on the wire
-    /// spelling without hand-maintaining a parallel match.
+    /// Stable camelCase wire-format identifier.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {
@@ -62,11 +43,7 @@ impl PairKind {
         }
     }
 
-    /// The open delimiter literal for this pair (`［`, `《`, `≪`, `〔`, `「`).
-    ///
-    /// The single authority for the delimiter glyphs: diagnostic prose,
-    /// quick-fix titles, and any renderer that needs to name a delimiter
-    /// read them from here rather than hard-coding the character.
+    /// Opening delimiter literal.
     #[must_use]
     pub const fn open_str(self) -> &'static str {
         match self {
@@ -78,8 +55,7 @@ impl PairKind {
         }
     }
 
-    /// The close delimiter literal for this pair (`］`, `》`, `≫`, `〕`, `」`).
-    /// Counterpart of [`Self::open_str`].
+    /// Closing delimiter literal.
     #[must_use]
     pub const fn close_str(self) -> &'static str {
         match self {
@@ -92,15 +68,7 @@ impl PairKind {
     }
 }
 
-/// Resolved open/close pair, as observed by the pair stage.
-///
-/// Both `open` and `close` are byte-spans in the original source.
-/// Used downstream by editor surfaces such as LSP
-/// `textDocument/linkedEditingRange` and `documentHighlight`.
-///
-/// `Unclosed` opens (no matching close was found before EOF) and stray
-/// `Unmatched` closes are deliberately *not* represented here — they
-/// have no partner span to link to and would only confuse the editor.
+/// Matched delimiters with byte spans in the original source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -114,9 +82,7 @@ pub struct PairLink {
 }
 
 impl PairLink {
-    /// Construct a link between an `open` and `close` span of the same
-    /// `kind`. The caller guarantees the two spans are a genuinely
-    /// matched pair; this constructor does no validation.
+    /// Construct a link without checking whether the delimiters match.
     #[must_use]
     pub const fn new(kind: PairKind, open: Span, close: Span) -> Self {
         Self { kind, open, close }
@@ -131,7 +97,6 @@ mod tests {
     fn pair_kind_is_copy() {
         let k = PairKind::Bracket;
         let copy = k;
-        // Both still usable — Copy semantics confirmed.
         assert_eq!(k, copy);
     }
 
@@ -153,9 +118,6 @@ mod tests {
 
     #[test]
     fn as_json_tag_is_stable_per_pair_kind() {
-        // The wire spelling every driver agrees on — pin each variant's
-        // tag so a rename (or a body-stubbing regression) is caught here
-        // rather than silently drifting the JSON envelope.
         let cases = [
             (PairKind::Bracket, "bracket"),
             (PairKind::Ruby, "ruby"),

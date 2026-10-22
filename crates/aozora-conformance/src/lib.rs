@@ -4,45 +4,13 @@
     reason = "the conformance harness fails immediately on malformed committed fixtures"
 )]
 
-//! Golden-fixture infrastructure for the aozora parser conformance
-//! suite.
+//! Golden-fixture infrastructure for the aozora parser conformance suite.
 //!
-//! # Fixture layout
-//!
-//! Each fixture lives under `crates/aozora-conformance/fixtures/<group>/<case>/`
-//! and contains:
-//!
-//! - `source.txt` — input bytes (UTF-8) for the parser
-//! - `expected.html` — golden output from `tree.to_html()`
-//! - `expected.serialize.txt` — golden output from
-//!   `aozora::fmt::format_source(...)`
-//! - `expected.diagnostics.json` — golden output from
-//!   `aozora::json::diagnostics(tree.diagnostics())`
-//! - `expected.nodes.json` — golden output from
-//!   `aozora::json::nodes(&tree)`
-//! - `expected.pairs.json` — golden output from
-//!   `aozora::json::pairs(&tree)`
-//! - `expected.container_pairs.json` — golden output from
-//!   `aozora::json::container_pairs(&tree)`
-//!
-//! The two source-text axes (`html`, `serialize`) anchor the
-//! human-readable surface; the four wire-format axes pin the JSON
-//! projections that drivers (FFI / WASM / `PyO3`) consume — every
-//! cross-language wire byte is exercised against the same fixture
-//! set, so a regression that survives the renderer gate but breaks
-//! a wire client lights up here.
-//!
-//! Tests load a fixture, parse it, and assert each rendered output
-//! matches its golden byte-for-byte. To regenerate goldens after an
-//! intentional output change, run with `UPDATE_GOLDEN=1`:
+//! To regenerate goldens after an intentional output change, run with `UPDATE_GOLDEN=1`:
 //!
 //! ```text
 //! UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 //! ```
-//!
-//! This scaffolding backs the byte-identical render gate over the
-//! representative `render` group as well as the hand-curated
-//! reference corpus used by the WPT-style conformance runner.
 
 #![forbid(unsafe_code)]
 
@@ -60,8 +28,8 @@ pub struct RenderFixture {
     pub dir: PathBuf,
     /// Source bytes from `source.txt`.
     pub source: String,
-    /// Expected HTML from `expected.html`. `None` if the file does
-    /// not exist (`UPDATE_GOLDEN` mode populates it on first run).
+    /// Expected HTML from `expected.html`.
+    /// `None` if the file does not exist (`UPDATE_GOLDEN` mode populates it on first run).
     pub expected_html: Option<String>,
     /// Expected serialize output from `expected.serialize.txt`.
     pub expected_serialize: Option<String>,
@@ -71,21 +39,18 @@ pub struct RenderFixture {
     pub expected_nodes: Option<String>,
     /// Expected pairs-wire JSON from `expected.pairs.json`.
     pub expected_pairs: Option<String>,
-    /// Expected container-pairs-wire JSON from
-    /// `expected.container_pairs.json`.
+    /// Expected container-pairs-wire JSON from `expected.container_pairs.json`.
     pub expected_container_pairs: Option<String>,
 }
 
 impl RenderFixture {
     /// Load every fixture under `fixtures_root/<group>/`.
     ///
-    /// Returns fixtures sorted alphabetically by `<group>/<case>` so
-    /// test failure output is reproducible.
+    /// Returns fixtures sorted alphabetically by `<group>/<case>`.
     ///
     /// # Panics
     ///
-    /// Panics if the fixture tree cannot be read or a fixture lacks its
-    /// required source file.
+    /// Panics if the fixture tree cannot be read or a fixture lacks its required source file.
     #[must_use]
     pub fn load_group(fixtures_root: &Path, group: &str) -> Vec<Self> {
         let group_dir = fixtures_root.join(group);
@@ -141,8 +106,8 @@ impl RenderFixture {
         }
     }
 
-    /// Write `expected.html` if `UPDATE_GOLDEN=1` is set, return the
-    /// new content. Otherwise return the existing golden or panic.
+    /// Write `expected.html` if `UPDATE_GOLDEN=1` is set, return the new content.
+    /// Otherwise return the existing golden or panic.
     #[must_use]
     pub fn html_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {
@@ -240,9 +205,6 @@ fn read_wire_golden(path: &Path) -> Option<String> {
     })
 }
 
-/// Internal helper bundle for `RenderFixture::golden_for` — keeps the
-/// argument count under the workspace `clippy::too_many_arguments`
-/// threshold without splitting the Read / Write paths.
 struct GoldenSpec<'a> {
     kind: &'a str,
     filename: &'a str,
@@ -250,8 +212,7 @@ struct GoldenSpec<'a> {
     actual: &'a str,
 }
 
-/// Path to the workspace's `crates/aozora-conformance/fixtures/`
-/// directory. Resolved at test time via `CARGO_MANIFEST_DIR`.
+/// Path to the workspace's `crates/aozora-conformance/fixtures/` directory.
 #[must_use]
 pub fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")

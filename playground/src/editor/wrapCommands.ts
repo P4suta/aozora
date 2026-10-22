@@ -1,13 +1,11 @@
 import type { Command, EditorView, KeyBinding } from '@codemirror/view';
 
 export interface WrapShape {
-  /** Stable id for this wrap action. */
   id: string;
-  /** Snippet template with `BASE` for the selection and `${0}` for the final cursor. */
+  /** Uses `BASE` for the selection and `${0}` for the final cursor. */
   template: string;
 }
 
-/** Ruby emits a leading `｜` so its span is unambiguous. */
 export const WRAP_SHAPES: readonly WrapShape[] = [
   { id: 'aozora.wrap.ruby', template: '｜BASE《${0}》' },
   {
@@ -32,12 +30,7 @@ export const WRAP_SHAPES: readonly WrapShape[] = [
   },
 ] as const;
 
-/**
- * Build a CM6 `Command` that applies the given wrap template to the
- * current selection. If the selection is empty, `BASE` substitutes
- * the empty string — the resulting snippet still has its `${0}`
- * tabstop, so cursor placement is well-defined.
- */
+/** Empty selections substitute an empty `BASE` and retain the `${0}` cursor position. */
 export function wrapCommand(shape: WrapShape): Command {
   return (view: EditorView) => {
     const sel = view.state.selection.main;
@@ -74,12 +67,6 @@ export function getWrapCommand(id: string): Command | null {
   return shape ? wrapCommand(shape) : null;
 }
 
-/**
- * Keybindings registered globally. Mirrors the in-repo VSCode
- * extension's bindings: Ctrl/Cmd+Alt+R for ruby, Ctrl/Cmd+Alt+B for
- * bouten. angleQuote is on Shift+Ctrl/Cmd+Alt+R (the extension leaves
- * it unbound).
- */
 export const aozoraWrapKeymap: KeyBinding[] = [
   {
     key: 'Mod-Alt-r',

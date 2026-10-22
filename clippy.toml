@@ -1,8 +1,4 @@
-# ---------------------------------------------------------------------------
-# doc_markdown — domain terms that shouldn't need backticks in docs.
-# Documented escape hatch:
-# https://rust-lang.github.io/rust-clippy/master/index.html#doc_markdown
-# ---------------------------------------------------------------------------
+# Domain terms and encoding names are valid prose without code formatting.
 doc-valid-idents = [
   "..",
   "CommonMark",
@@ -17,74 +13,31 @@ doc-valid-idents = [
   "JIS",
 ]
 
-# ---------------------------------------------------------------------------
-# Complexity thresholds — tighter than clippy's defaults so creeping
-# complexity is caught at the gate, not in review. Feedback memory:
-# `feedback_minimal_surface_area`.
-# ---------------------------------------------------------------------------
-
-# clippy default: 7 arguments. Our project rule: <=4 for production fns.
-# When a function genuinely needs more, wrap the group into a struct — the
-# struct becomes a self-documenting parameter object.
 too-many-arguments-threshold = 4
 
-# clippy default: 100 lines. We aim for single-screen functions; anything
-# beyond 80 lines is probably hiding multiple responsibilities.
 too-many-lines-threshold = 80
 
-# type_complexity scores a type by how deeply its generic arguments,
-# tuples, and references nest, and fires once that score crosses this
-# threshold. 250 is clippy's own default: unlike the tightened caps above
-# it is left as-is, because the parser's legitimately-parameterised
-# signatures would make a lower type-nesting bar noisy without catching any
-# real unreadability.
+# Parser type nesting makes a lower complexity threshold noisy without improving readability.
 type-complexity-threshold = 250
 
-# Boolean-flag functions become hard to read at the call site. Reject two
-# or more bool params in a row — pass a dedicated enum instead.
 max-fn-params-bools = 1
 
-# Enum variants that share a common prefix (e.g. `RubyExplicit` /
-# `RubyImplicit`) are clearer factored into a sub-type.
 enum-variant-name-threshold = 2
 enum-variant-size-threshold = 256
 
-# ---------------------------------------------------------------------------
-# Industry-standard baselines — echoes the tight defaults used by mature Rust
-# projects (tokio, serde, ripgrep) adapted for our constraints.
-# ---------------------------------------------------------------------------
-
-# MSRV — the public contract's floor. Two jobs: clippy withholds idioms we
-# cannot use yet, and `clippy::incompatible_msrv` flags any std API newer
-# than this. That second one makes `just clippy-strict` the fast MSRV gate
-# — it names the offending line before CI's msrv job ever compiles.
-#
-# This tracks Cargo.toml's `rust-version`, NOT rust-toolchain.toml's
-# channel (ADR-0034). Pointing it at the channel would set the floor to
-# whatever we happen to develop on, `incompatible_msrv` would have nothing
-# left to detect, and the lint would go quietly dead. `xtask msrv check`
-# keeps this equal to `rust-version`.
+# The public MSRV keeps incompatible_msrv effective against the development toolchain (ADR-0034).
 msrv = "1.89.0"
 
-# Tests are allowed to be expressive about failure: unwrap / expect / panic
-# are diagnostic shortcuts, not bugs. Production code remains strict.
+# Test assertions use unwrap, expect, and panic to report failures directly.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 
-# Don't hold our own API hostage to "avoid breaking exports" while the crate
-# is pre-1.0.
+# The pre-1.0 API can change when needed to simplify its implementation.
 avoid-breaking-exported-api = false
 
-# Large owned types silently copied by value are a common perf surprise.
-# Default is 200 bytes; tighten to 128 so moves-by-value of fat structs
-# surface during development.
 pass-by-value-size-limit = 128
 
-# ---------------------------------------------------------------------------
-# disallowed-methods — banned standard-library calls that are bug-sources
-# or wrong layer. Add new entries (with a reason) when patterns emerge.
-# ---------------------------------------------------------------------------
 disallowed-methods = [
   { path = "std::mem::forget", reason = "leaks destructors; use `ManuallyDrop` or explicit drop" },
   { path = "std::env::set_var", reason = "races with other threads; wire via Options instead" },
@@ -92,9 +45,6 @@ disallowed-methods = [
   { path = "std::process::exit", reason = "bypasses destructors; use `ExitCode` / return from main" },
 ]
 
-# ---------------------------------------------------------------------------
-# disallowed-types — banned type usages with rationale.
-# ---------------------------------------------------------------------------
 disallowed-types = [
   { path = "std::sync::RwLock", reason = "tokio / parking_lot preferred where available; raise an ADR to opt in" },
 ]

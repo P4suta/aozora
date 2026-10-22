@@ -1,20 +1,5 @@
 #![expect(clippy::expect_used, reason = "fmt::Write into String is infallible")]
 
-//! HTML rendering for individual AST nodes.
-//!
-//! Emits per-node HTML by reading an owned [`Node`] and resolving every
-//! [`StrId`](crate::syntax::ast::StrId) /
-//! [`ContentRange`] /
-//! [`SegRange`](crate::syntax::ast::SegRange) against a [`NodeStore`].
-//!
-//! Only the AST-payload-reading emitters live here. The five pure-scalar leaf
-//! variants ([`Node::Line`] / [`Node::PageBreak`] /
-//! [`Node::BodyEnd`] / [`Node::ForcedBreak`] /
-//! [`Node::SectionBreak`]) emit their fixed markup directly (e.g. the
-//! section-break slug table). The heading tag writers, the illustration
-//! dimension parser, the line renderer, and the text escaper are reused from
-//! [`crate::render::spelling::html`].
-
 use core::fmt::{self, Write};
 
 use crate::spec::roman_slug;
@@ -34,16 +19,6 @@ use crate::render::spelling::html::{
     escape_text, parse_sashie_dimensions, render_line, write_heading_close, write_heading_open,
 };
 
-/// Render a single owned [`Node`] into `writer`.
-///
-/// Every inline / leaf node emits its markup unconditionally: there is no
-/// `entering` flag, since containers are driven through `RenderState` and
-/// never reach here. `store` is the resolve authority for the node's interned
-/// payloads.
-///
-/// # Errors
-///
-/// Propagates formatter write errors.
 #[cfg(test)]
 pub(crate) fn render<W: Write>(node: Node, store: &NodeStore, out: &mut W) -> fmt::Result {
     render_with_depth(node, store, out, 0)
@@ -60,9 +35,6 @@ pub(super) fn render_with_depth<W: Write>(
         Node::Format(f) => render_format(&f, store, out, nested_depth),
         Node::MarginNote(s) => render_side_note(&s, store, out, nested_depth),
         Node::Gaiji(g) => render_gaiji(&g, store, out),
-        // Pure-scalar leaves: render directly through the shared lifetime-free
-        // helpers / inline byte spellings (the section-break slug table stays
-        // keyed by the canonical keyword).
         Node::Line(lf) => render_line(lf, out),
         Node::PageBreak => out.write_str(r#"<div class="aozora-page-break"></div>"#),
         Node::BodyEnd => out.write_str(r#"<div class="aozora-body-end"></div>"#),
@@ -83,13 +55,6 @@ pub(super) fn render_with_depth<W: Write>(
     }
 }
 
-// ----------------------------------------------------------------------
-// Content resolve layer — resolve a `ContentRange` / `Content` and emit
-// its HTML.
-// ----------------------------------------------------------------------
-
-/// Render a [`ContentRange`] run (length 1 by construction) by emitting the
-/// HTML of each resolved [`Content`].
 fn render_content_range<W: Write>(
     range: ContentRange,
     store: &NodeStore,
@@ -102,9 +67,6 @@ fn render_content_range<W: Write>(
     Ok(())
 }
 
-/// Render a single [`Content`]. A `Plain` run escapes to text; a
-/// `Segments` run walks its segments, escaping text and nesting gaiji +
-/// directive markup.
 fn render_content_one<W: Write>(
     c: Content,
     store: &NodeStore,
@@ -203,22 +165,6 @@ fn render_nested_content_one<W: Write>(
     }
 }
 
-// ----------------------------------------------------------------------
-// Per-variant AST emitters.
-// ----------------------------------------------------------------------
-
-/// Render a ruby node to a `<ruby>` element (a left-side ruby classes its
-/// `<rt>` for below-the-line placement).
-///
-/// When `base_emphasis` is set (#384) — a declined forward directive
-/// `［＃「X」に傍点/罫囲み/…］` named this ruby's base as its unique referent — the
-/// base is wrapped in that attribute's emphasis element **inside** the `<ruby>`,
-/// before the `<rt>`, so the emphasis marks the base glyphs and not the reading.
-/// The wrapper is derived by reusing [`render_format`] over a synthetic
-/// [`ForwardOrigin::SelfContained`] leaf on the base, so every attribute kind
-/// (傍点 → `<em>`, 罫囲み → framed `<span>`, 行右小書き / 太字 / 二重傍線 / …) wraps
-/// identically; the separate `Referenced` directive leaf still renders nothing,
-/// so exactly one styled copy exists (no #228 double-render).
 fn render_ruby<W: Write>(
     r: &Ruby,
     store: &NodeStore,
@@ -238,9 +184,6 @@ fn render_ruby<W: Write>(
         }
         None => render_content_range(r.base, store, out, nested_depth)?,
     }
-    // A left-side ruby (saidoku building block) marks its `<rt>` with a class
-    // so a stylesheet can place the reading below; the right-side form is
-    // unchanged.
     out.write_str(match r.side {
         RubySide::Left => r#"<rp>(</rp><rt class="aozora-ruby-left">"#,
         RubySide::Right => "<rp>(</rp><rt>",
@@ -249,8 +192,6 @@ fn render_ruby<W: Write>(
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
-/// Render a margin note as a `<ruby>` whose `<rt class="aozora-margin-note">`
-/// carries the note text. The note's `kind` is ignored in HTML (serialize-only).
 fn render_side_note<W: Write>(
     s: &MarginNote,
     store: &NodeStore,
@@ -264,16 +205,7 @@ fn render_side_note<W: Write>(
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
-/// Render a forward-reference emphasis (bouten / combine-upright / font-size /
-/// italic / span / bold) to its HTML element.
-///
-/// A `Referenced` origin emits **nothing** — its
-/// target literal already lives in the upstream plain run (or a ruby base), so
-/// re-rendering it here would double the text (#228). This is load-bearing and
-/// pinned by the curated `Referenced` inputs. A `Detached` decoration (#333) is
-/// *not* `Referenced`, so it falls through the gate and renders styled — it is
-/// the styled-literal half of a non-adjacent split, and its literal was removed
-/// from the plain run, so rendering it here is the sole (correct) copy.
+// A Referenced directive's literal is already upstream, so rendering it again would duplicate text (ADR-0019).
 fn render_format<W: Write>(
     f: &ForwardFormat,
     store: &NodeStore,
@@ -313,11 +245,6 @@ fn render_format<W: Write>(
             out.write_str("</span>")
         }
         ForwardAttr::Fraction => render_fraction(f, store, out, nested_depth),
-        // Enclosures drawn as a CSS-styled span — the glyph / keyword names the
-        // kind (serialize-only) and the stylesheet draws the frame, one class per
-        // kind: 「□」囲み / ○付き文字 / 点線丸囲み / 二重罫囲み. 罫囲み has no
-        // dedicated span class (`None`) and keeps the slug-keyed
-        // `aozora-keigakomi-inline` via the semantic fall-through.
         ForwardAttr::Framed(kind) => match framed_span_class(kind) {
             Some(class) => {
                 write!(out, r#"<span class="{class}">"#)?;
@@ -326,17 +253,8 @@ fn render_format<W: Write>(
             }
             None => render_forward_semantic(f, store, out, nested_depth),
         },
-        // ドット付き (#331): compose the addressed letters of the reclaimed run
-        // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
         ForwardAttr::AccentDot => render_accent_dot(f, store, out, nested_depth),
-        // アクサン / ウムラウト: compose the single target letter with its accent
-        // mark into the precomposed glyph (é / ö) — see `render_accent`. Its own
-        // arm keeps it off the bold catch-all below (the #376/#385 bug class).
         ForwardAttr::Accent(_) => render_accent(f, store, out, nested_depth),
-        // 文末より N字上げ揃え: end-align the run. Reuses the line-form's
-        // `aozora-align-end` class / `data-offset` so the two scopes style
-        // identically; without this explicit arm the run would fall through to
-        // the bold default below.
         ForwardAttr::AlignEnd { offset } => {
             write!(
                 out,
@@ -385,11 +303,6 @@ fn render_fraction<W: Write>(
     out.write_str("</span>")
 }
 
-/// The dedicated `aozora-*` span class for an enclosure that the stylesheet
-/// draws around its target, or `None` for [`EnclosureKind::Rule`], which keeps
-/// the slug-keyed `aozora-keigakomi-inline` semantic rendering. Exhaustive so a
-/// future enclosure kind is compiler-flagged here rather than silently sharing
-/// the ruled-frame class.
 const fn framed_span_class(kind: EnclosureKind) -> Option<&'static str> {
     match kind {
         EnclosureKind::Rule => None,
@@ -400,11 +313,6 @@ const fn framed_span_class(kind: EnclosureKind) -> Option<&'static str> {
     }
 }
 
-/// Render a forward attribute that maps to a plain semantic element keyed by
-/// its canonical-keyword slug (太字 / 斜体 / 上下付き / 小書き / 絶対サイズ / …).
-/// The parameterized and bespoke attributes (bouten / font-size / fraction /
-/// box / accent-dot / align-end) are handled by their own arms in
-/// [`render_format`]; this is the catch-all for the simple styled runs.
 fn render_forward_semantic<W: Write>(
     f: &ForwardFormat,
     store: &NodeStore,
@@ -438,12 +346,6 @@ fn render_forward_semantic<W: Write>(
     out.write_str(close)
 }
 
-/// Render a #331 dotted-letter forward: compose the addressed letters of the
-/// reclaimed run into their precomposed glyphs inside an `aozora-accent-dot`
-/// span. The selector grammar lives in [`ForwardPayload::AccentBody`]; the shared
-/// composer (also the classifier's validator) produces the visible run. A
-/// literal class (not slug-derived) keeps this off the `slugs.rs` / Hepburn
-/// path; a body-less or structured target falls back to the run verbatim.
 fn render_accent_dot<W: Write>(
     f: &ForwardFormat,
     store: &NodeStore,
@@ -455,21 +357,14 @@ fn render_accent_dot<W: Write>(
         (Some(run), ForwardPayload::AccentBody(body_id)) => {
             match compose_accent_dots(run, store.resolve_str(body_id)) {
                 Some(composed) => escape_text(&composed, out)?,
-                // Unreachable post-classify; render the run rather than drop it.
                 None => escape_text(run, out)?,
             }
         }
-        // A structured / body-less target can't be composed; emit as-is.
         _ => render_format_target(f, store, out, nested_depth)?,
     }
     out.write_str("</span>")
 }
 
-/// Render a forward accent-mark forward: compose the single target letter with
-/// its accent `mark` into the precomposed glyph (é / ö) inside an
-/// `aozora-accent` span. The shared composer (also the classifier's validator)
-/// is the single authority; a structured or non-composable target — unreachable
-/// post-classify — falls back to the target verbatim rather than dropping it.
 fn render_accent<W: Write>(
     f: &ForwardFormat,
     store: &NodeStore,
@@ -495,19 +390,11 @@ fn render_accent<W: Write>(
                 _ => escape_text(run, out)?,
             }
         }
-        // A structured target can't be composed; emit as-is.
         None => render_format_target(f, store, out, nested_depth)?,
     }
     out.write_str("</span>")
 }
 
-/// Render a gaiji node to a `<span class="aozora-gaiji">`.
-///
-/// Reconstructs an [`crate::syntax::GaijiCanonical`] (the `Unresolved` tail's
-/// [`StrId`](crate::syntax::ast::StrId) resolves against `store`) and calls
-/// its `resolve`, reusing the shared JIS-table lookup. A resolved gaiji emits
-/// its `data-codepoint` + glyph; an unresolved one emits its escaped `hint` as
-/// `data-description` + body. `standalone` is ignored in HTML (serialize-only).
 fn render_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Result {
     let hint = store.resolve_str(g.hint);
     let canonical = match g.canonical {
@@ -519,8 +406,6 @@ fn render_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Res
     };
     if let Some(resolved) = canonical.resolve(hint) {
         out.write_str(r#"<span class="aozora-gaiji" data-codepoint=""#)?;
-        // Round-trip Resolved through a tiny String buffer so we can iterate
-        // its scalars without re-implementing the Char/Multi enum split.
         let mut buf = String::with_capacity(8);
         resolved
             .write_to(&mut buf)
@@ -547,8 +432,6 @@ fn render_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Res
 fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> fmt::Result {
     match a.kind {
         DirectiveKind::EditorNote => {
-            // ［＃入力者注(N)］ → a visible 注N superscript. `a.raw` is the whole
-            // bracketed directive; recover N (the classifier guaranteed the shape).
             let raw = store.resolve_str(a.raw);
             let n = raw
                 .strip_prefix("［＃入力者注(")
@@ -558,11 +441,6 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
             escape_text(n, out)?;
             return out.write_str("</sup>");
         }
-        // Ruby-placement editorial notes: a compact visible marker rather than a
-        // hidden span (so they do not vanish), but NOT the annotated run `X` —
-        // `X` is typically the immediately-preceding text, so re-emitting it
-        // would double-render. The raw bracket (with `X`) round-trips on
-        // serialize; the reader sees only the marker.
         DirectiveKind::RubyAttached | DirectiveKind::RubyRetarget => {
             return out.write_str(r#"<sup class="aozora-ruby-note">ルビ</sup>"#);
         }
@@ -570,9 +448,6 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
             return out.write_str(r#"<sup class="aozora-ruby-note">左ルビ</sup>"#);
         }
         DirectiveKind::RubyPairClose => {
-            // ［＃左に「Y」のルビ付き終わり］ → show the left-ruby reading Y. Y is
-            // the gloss (not surrounding text), so it does not double-render;
-            // recover it from the raw bracket the classifier guaranteed.
             let raw = store.resolve_str(a.raw);
             let y = raw
                 .strip_prefix("［＃左に「")
@@ -583,9 +458,6 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
             return out.write_str("」</sup>");
         }
         DirectiveKind::MarginNotePairOpen => {
-            // ［＃注記付き］ / ［＃左に注記付き］ → a compact marker at the span
-            // start; the note text is named on the matching close. The `左に`
-            // form sits on the left, so distinguish the marker label.
             let raw = store.resolve_str(a.raw);
             let label = if raw.starts_with("［＃左に") {
                 "左注記"
@@ -597,11 +469,6 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
             return out.write_str("</sup>");
         }
         DirectiveKind::MarginNotePairClose => {
-            // ［＃「Y」の注記付き終わり］ / ［＃左に「Y」の注記付き終わり］ → show the
-            // margin-note text Y. Y is the note (not surrounding text), so it
-            // does not double-render; recover it from the raw bracket the
-            // classifier guaranteed (may hold a nested ［＃…］ gaiji, echoed
-            // as literal notation).
             let raw = store.resolve_str(a.raw);
             let left = raw.starts_with("［＃左に「");
             let (label, prefix) = if left {
@@ -632,14 +499,12 @@ fn render_annotation<W: Write>(a: Directive, store: &NodeStore, out: &mut W) -> 
     out.write_str("</span>")
 }
 
-/// Render a kaeriten mark as `<sup class="aozora-kaeriten">…</sup>`.
 fn render_kaeriten<W: Write>(k: Kaeriten, store: &NodeStore, out: &mut W) -> fmt::Result {
     out.write_str(r#"<sup class="aozora-kaeriten">"#)?;
     escape_text(store.resolve_str(k.mark), out)?;
     out.write_str("</sup>")
 }
 
-/// Render an angle-quote as `<span class="aozora-angle-quote">《…》</span>`.
 fn render_angle_quote<W: Write>(
     d: AngleQuote,
     store: &NodeStore,
@@ -651,10 +516,6 @@ fn render_angle_quote<W: Write>(
     out.write_str("》</span>")
 }
 
-/// Render an illustration as a `<figure class="aozora-illustration">` with an
-/// `<img>` (optional width/height from the dimensions, alt from the
-/// description) and an optional `<figcaption>`. The figure `number` is ignored
-/// in HTML (serialize-only).
 fn render_sashie<W: Write>(
     s: &Illustration,
     store: &NodeStore,
@@ -698,8 +559,6 @@ fn render_sashie_image<W: Write>(s: &Illustration, store: &NodeStore, out: &mut 
     {
         write!(out, r#" width="{w}" height="{h}""#)?;
     }
-    // The general image form's leading description is the alt; the keyword
-    // 挿絵 form carries none, so alt stays empty.
     out.write_str(r#" alt=""#)?;
     if let Some(description) = s.description {
         escape_text(store.resolve_str(description), out)?;
@@ -707,9 +566,6 @@ fn render_sashie_image<W: Write>(s: &Illustration, store: &NodeStore, out: &mut 
     out.write_str(r#"" />"#)
 }
 
-/// Render an Aozora heading by wrapping its text with the shared
-/// `write_heading_open` / `write_heading_close` writers from
-/// [`crate::render::spelling::html`], keeping the `<hN>` / `<div>` spelling single-source.
 fn render_aozora_heading<W: Write>(
     h: &Heading,
     store: &NodeStore,
@@ -721,33 +577,20 @@ fn render_aozora_heading<W: Write>(
     write_heading_close(h.kind, h.style, out)
 }
 
-/// Render a heading hint (`［＃「X」は中見出し］`).
-///
-/// A referent-present hint that the lowering pass did not promote stays a
-/// hidden marker carrying its level / style / target as data attributes. A
-/// `self_contained` hint (a no-referent forward heading) instead renders its
-/// quoted target visibly, classed as a heading by level — the inline analogue
-/// of a promoted `<hN>`, valid where a block heading is not (the directive sits
-/// mid-line). Both serialize bracket-only, so the round-trip stays a fixed
-/// point.
 fn render_heading_hint<W: Write>(h: HeadingHint, store: &NodeStore, out: &mut W) -> fmt::Result {
     write!(
         out,
         r#"<span class="aozora-heading-hint" data-level="{level}""#,
         level = h.level.outline_level(),
     )?;
-    // `data-style` is emitted only for a non-standard style, so a standard
-    // hint's markup is unchanged.
     if let Some(style) = classes::heading_style_slug(h.style) {
         write!(out, r#" data-style="{style}""#)?;
     }
     if h.self_contained {
-        // Visible: the quoted run is itself the heading text.
         out.write_str(">")?;
         escape_text(store.resolve_str(h.target), out)?;
         return out.write_str("</span>");
     }
-    // Hidden marker: the heading text lives in the (promotable) referent run.
     out.write_str(r#" data-target=""#)?;
     escape_text(store.resolve_str(h.target), out)?;
     out.write_str(r#"" hidden></span>"#)
@@ -755,35 +598,24 @@ fn render_heading_hint<W: Write>(h: HeadingHint, store: &NodeStore, out: &mut W)
 
 #[cfg(test)]
 mod tests {
-    //! Byte-exact per-node render pins. Each test renders one owned node (or
-    //! calls a private emitter directly) and asserts the exact HTML, hitting
-    //! both sides of every node-kind / element decision so a deleted match arm
-    //! or stubbed emitter is observable.
 
     use super::*;
     use crate::render::MAX_NESTED_SOURCE_DEPTH;
     use crate::syntax::alloc::Allocator;
     use crate::syntax::{AccentMark, HeadingKind, HeadingStyle, MarginNoteKind};
 
-    /// Render a full owned node into a fresh `String` (`render` is infallible
-    /// over a `String` sink).
     fn html(node: Node, store: &NodeStore) -> String {
         let mut s = String::new();
         render(node, store, &mut s).expect("render into String is infallible");
         s
     }
 
-    /// The pure-scalar `ForcedBreak` leaf emits `<br />`, not the
-    /// `<!-- name -->` fallback of an unhandled variant.
     #[test]
     fn forced_break_renders_br() {
         let store = Allocator::new().into_store();
         assert_eq!(html(Node::ForcedBreak, &store), "<br />");
     }
 
-    /// A `Content::Segments` run walks its segments in order, emitting text,
-    /// gaiji, and nested-directive markup — each segment arm is load-bearing,
-    /// and the whole `Segments` arm is too (its deletion drops the run).
     #[test]
     fn content_segments_renders_each_segment_kind() {
         let mut a = Allocator::new();
@@ -797,19 +629,15 @@ mod tests {
 
         let mut out = String::new();
         render_content_one(content, &store, &mut out, 0).expect("render into String is infallible");
-        // Text segment (also proves the `Segments` arm did not collapse away).
         assert!(out.contains("あ"), "text segment missing: {out}");
-        // Gaiji segment.
         assert!(
             out.contains(r#"class="aozora-gaiji"#),
             "gaiji segment missing: {out}"
         );
-        // Nested-directive segment.
         assert!(
             out.contains(r#"class="aozora-directive"#),
             "directive segment missing: {out}"
         );
-        // Order is preserved: text, then gaiji, then directive.
         let t = out.find("あ").expect("text present");
         let gi = out.find("aozora-gaiji").expect("gaiji present");
         let di = out.find("aozora-directive").expect("directive present");
@@ -874,9 +702,6 @@ mod tests {
         );
     }
 
-    /// A margin note renders a full `<ruby>` with the note carried in an
-    /// `aozora-margin-note` `<rt>` — the emitter writes real markup, not the
-    /// empty `Ok(())` of a stubbed body.
     #[test]
     fn side_note_renders_ruby_markup() {
         let mut a = Allocator::new();
@@ -890,10 +715,6 @@ mod tests {
         );
     }
 
-    /// The semantic fall-through picks the HTML element per attribute kind:
-    /// 斜体 → `<i>`, 上付き → `<sup>`, 下付き → `<sub>`, the span family (横組み /
-    /// 小書き / 枠 / …) → `<span>`, and bold / gothic → `<b>`. Deleting any
-    /// arm reroutes its attribute to the `<b>` default, changing the tag.
     #[test]
     fn forward_semantic_selects_element_per_attr() {
         let mut a = Allocator::new();
@@ -921,16 +742,12 @@ mod tests {
         }
     }
 
-    /// A #331 dotted-letter forward composes its addressed letter into the
-    /// precomposed dotted glyph (`Sam` + `mは上ドット付き` → `Saṁ`), not the
-    /// verbatim run the fall-through would emit.
     #[test]
     fn accent_dot_composes_dotted_glyph() {
         let mut a = Allocator::new();
         let t = a.content_plain("Sam");
         let node = a.accent_dot(t, "mは上ドット付き", ForwardOrigin::SelfContained);
         let store = a.into_store();
-        // ṁ is U+1E41 (LATIN SMALL LETTER M WITH DOT ABOVE).
         let expected = "<span class=\"aozora-accent-dot\">Sa\u{1e41}</span>";
         assert_eq!(html(node, &store), expected);
     }
@@ -969,8 +786,6 @@ mod tests {
         );
     }
 
-    /// An Aozora heading wraps its text in the shared `<hN>` open/close writers
-    /// — real markup, not the empty `Ok(())` of a stubbed body.
     #[test]
     fn aozora_heading_renders_hn_markup() {
         let mut a = Allocator::new();

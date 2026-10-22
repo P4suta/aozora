@@ -1,6 +1,3 @@
-//! Resolve the positional path arguments into a concrete, ordered,
-//! de-duplicated list of files — or stdin.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
@@ -8,43 +5,20 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::fmt::cli::is_stdin;
 
-/// The resolved input source.
-///
-/// Re-exported from the crate root (with [`resolve`]) so the `aozora` CLI's
-/// `lint` subcommand reuses the formatter's exact path-discovery rules.
 #[derive(Debug)]
 pub(crate) enum Input {
-    /// Read a single document from stdin.
     Stdin,
-    /// A set of files discovered from the path arguments.
     Files(Resolved),
 }
 
-/// Files to process plus any non-fatal discovery errors (a `walkdir`
-/// traversal error, say) accumulated rather than aborting the whole run.
 #[derive(Debug, Default)]
 pub(crate) struct Resolved {
-    /// The discovered source files, sorted and de-duplicated.
     pub files: Vec<PathBuf>,
-    /// Non-fatal discovery errors (e.g. a traversal error), to be reported
-    /// without aborting the run.
     pub errors: Vec<String>,
 }
 
-/// Filename suffixes recognised as aozora sources during directory
-/// recursion (matched case-insensitively).
 const EXTENSIONS: &[&str] = &[".afm", ".aozora", ".aozora.txt"];
 
-/// Classify the path arguments. Returns [`Input::Stdin`] when no paths are
-/// given or the sole argument is `-`; mixing `-` with real paths is an error.
-///
-/// Recurses directories for `*.afm`, `*.aozora`, and `*.aozora.txt` files,
-/// skipping `target/` and dotted entries, then sorts and de-duplicates.
-///
-/// # Errors
-///
-/// Returns an error only when `-` (stdin) is mixed with real path arguments.
-/// Per-file traversal errors are accumulated in [`Resolved::errors`] instead.
 pub(crate) fn resolve(paths: &[PathBuf]) -> Result<Input> {
     if paths.is_empty() {
         return Ok(Input::Stdin);
@@ -65,10 +39,6 @@ pub(crate) fn resolve(paths: &[PathBuf]) -> Result<Input> {
     Ok(Input::Files(resolved))
 }
 
-/// Add one argument's files to `resolved`: recurse directories, take other
-/// paths verbatim. A missing path is pushed as-is so it surfaces as a read
-/// error during processing — keeping all per-file error accounting in one
-/// place rather than splitting it across discovery and processing.
 #[expect(
     clippy::filetype_is_file,
     reason = "recursion intentionally processes regular files only; symlinks are skipped to match WalkDir's follow_links(false)"
@@ -93,8 +63,6 @@ fn collect(path: &Path, resolved: &mut Resolved) {
     }
 }
 
-/// Skip `target` and dotted entries (e.g. `.git`) below the explicitly
-/// passed root; the root itself (depth 0) is never skipped.
 fn is_ignored(entry: &DirEntry) -> bool {
     if entry.depth() == 0 {
         return false;
@@ -103,8 +71,6 @@ fn is_ignored(entry: &DirEntry) -> bool {
     name == "target" || name.starts_with('.')
 }
 
-/// True for filenames ending in a recognised aozora source extension,
-/// e.g. `chapter.afm`, `本文.aozora`, `note.aozora.txt`.
 fn is_aozora_source(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
@@ -123,8 +89,6 @@ mod tests {
     use std::slice;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// A fresh, empty scratch directory under the OS temp dir, unique per
-    /// call so parallel test threads don't clobber each other.
     fn scratch_dir(name: &str) -> PathBuf {
         static SEQ: AtomicU32 = AtomicU32::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -182,8 +146,6 @@ mod tests {
 
     #[test]
     fn missing_path_is_passed_through_verbatim() {
-        // A non-existent, non-directory argument is kept as-is so it
-        // surfaces as a read error later — not dropped during discovery.
         let paths = [PathBuf::from("/definitely/not/here.afm")];
         let files = files_of(resolve(&paths).unwrap());
         assert_eq!(files, vec![PathBuf::from("/definitely/not/here.afm")]);
@@ -204,10 +166,10 @@ mod tests {
         let dir = scratch_dir("walk");
         let a = touch(&dir, "a.afm");
         let b = touch(&dir, "b.aozora");
-        touch(&dir, "c.txt"); // wrong extension → skipped
+        touch(&dir, "c.txt");
         let nested = touch(&dir, "sub/d.aozora.txt");
-        touch(&dir, "target/skip.afm"); // build dir → skipped
-        touch(&dir, ".hidden/skip.afm"); // dotted dir → skipped
+        touch(&dir, "target/skip.afm");
+        touch(&dir, ".hidden/skip.afm");
 
         let files = files_of(resolve(slice::from_ref(&dir)).unwrap());
         assert_eq!(

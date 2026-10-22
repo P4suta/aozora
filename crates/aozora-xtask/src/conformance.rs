@@ -3,31 +3,6 @@
     reason = "the conformance tool validates committed fixture and snapshot inputs"
 )]
 
-//! WPT-style conformance runner.
-//!
-//! Walks the fixture set under
-//! `crates/aozora-conformance/fixtures/render/<case>/`, reads each
-//! case's `meta.toml` for its conformance metadata
-//! (`feature` + `level`), runs the parser against the source, and
-//! aggregates pass / fail counts by `(feature, level)`.
-//!
-//! ## Tier model
-//!
-//! The fixture metadata retains the specification's three requirement levels,
-//! but the product gate treats every pinned projection as release-blocking:
-//!
-//! | Level   | Meaning                                          | Effect on `xtask conformance run` |
-//! | ------- | ------------------------------------------------ | --------------------------------- |
-//! | `must`  | Required for any conforming implementation.      | A failure exits non-zero. |
-//! | `should`| Recommended by the specification.                | A failure exits non-zero. |
-//! | `may`   | Optional in the specification.                   | A failure exits non-zero. |
-//!
-//! The canonical implementation under test is the Rust parser
-//! itself; the runner emits a `results.json` file so other
-//! implementations (the tree-sitter reference grammar, third-party
-//! ports) can publish their own per-case pass / fail ratio against
-//! the same manifest.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -48,15 +23,8 @@ const FIXTURE_REL: &str = "crates/aozora-conformance/fixtures/render";
 const RESULTS_REL: &str = "crates/aozora-conformance/conformance-results.json";
 const SPEC_VECTORS_REL: &str = "crates/aozora-conformance/spec-vectors/vectors";
 
-/// Per-fixture S-expression snapshot for the tree-sitter implementation,
-/// stored alongside the render goldens (`expected.html`, …).
 const TS_GOLDEN: &str = "expected.tree-sitter.txt";
-/// Published per-case pass / fail artefact for the tree-sitter run.
 const TS_RESULTS_REL: &str = "crates/aozora-conformance/conformance-results-tree-sitter.json";
-/// S-expression snapshot of the tree-sitter parse of every spec vector's
-/// `source`. Lives at the top of `spec-vectors/` — outside the vendored
-/// `vectors/` subtree that `sync-spec-vectors` / `verify-spec-vectors`
-/// rewrite and diff — so it survives a re-sync untouched.
 const TS_VECTORS_SNAPSHOT_REL: &str =
     "crates/aozora-conformance/spec-vectors/tree-sitter-snapshot.json";
 const TS_VECTORS_SNAPSHOT_FORMAT_VERSION: u32 = 1;
@@ -72,10 +40,6 @@ pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
             Implementation::TreeSitter => run_vectors_tree_sitter(vec_args.update),
         },
         ConformanceOp::Grammar(grammar_args) => {
-            // `--update` regenerates the committed parser; `--check` (or no
-            // flag, the default) runs the drift gate. clap's `conflicts_with`
-            // rejects both at once; the tuple reads both flags so neither is
-            // a dead field.
             let regenerate = matches!((grammar_args.update, grammar_args.check), (true, _));
             grammar::dispatch(regenerate)
         }
@@ -168,12 +132,6 @@ fn collect_cases(root: &Path) -> Result<Vec<CaseResult>, String> {
     let fixtures_dir = root.join(FIXTURE_REL);
     let entries = sorted_subdirectories(&fixtures_dir)?;
 
-    // Rayon's `par_iter()` preserves the input order on `collect()`,
-    // so the alphabetised fixture sequence above carries through to
-    // the resulting `Vec<CaseResult>`. `run_case` reads the fixture
-    // files and parses them through the aozora pipeline; both are
-    // pure with no shared mutable state, so the parallelisation is
-    // safe by construction.
     entries
         .par_iter()
         .map(|entry| -> Result<CaseResult, String> {
@@ -311,31 +269,6 @@ fn print_summary(summary: &Summary) {
     }
 }
 
-// ────────────────────────────────────────────────────────────────────
-// tree-sitter reference grammar
-// ────────────────────────────────────────────────────────────────────
-//
-// The reference grammar lives in `crates/tree-sitter-aozora` (built
-// from its `grammar.js` into the committed `src/parser.c`). It is a
-// *syntactic skeleton* — it classifies bracket structure but cannot
-// render HTML, so the byte-equality comparison the Rust path uses does
-// not apply. Two strict signals replace it:
-//
-//   1. A **per-tier pass rate** (issue #82's ask): a fixture "passes"
-//      when the grammar parses it without ERROR / MISSING nodes. This
-//      is a coverage measurement, printed per level. Any ERROR or MISSING
-//      node fails the gate.
-//   2. A **snapshot drift gate**: each fixture's `root.to_sexp()` is
-//      pinned to `expected.tree-sitter.txt`. `to_sexp()` carries node
-//      kinds / fields with no byte offsets, so it is deterministic and
-//      only changes when the grammar's structure changes — exactly the
-//      drift we want surfaced. ANY mismatch fails, tier-independent: a
-//      snapshot is a fingerprint. `--update` regenerates the snapshots
-//      after an intentional grammar change.
-
-/// Parse `source` with the reference grammar, returning its
-/// S-expression and whether the parse contains any ERROR / MISSING
-/// node. `root.has_error()` already subsumes both.
 fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -353,10 +286,6 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
     let fixtures_dir = root.join(FIXTURE_REL);
     let entries = sorted_subdirectories(&fixtures_dir)?;
 
-    // A plain sequential walk: `tree_sitter::Parser` is not shareable
-    // across rayon worker threads, and parsing 64 tiny fixtures is a
-    // sub-millisecond affair, so the rust path's `par_iter` buys nothing
-    // here.
     let mut cases = Vec::with_capacity(entries.len());
     let mut drifts = Vec::new();
     let mut missing = Vec::new();
@@ -437,8 +366,6 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
     require_error_free(&summary, "fixtures")
 }
 
-/// Print the per-tier pass rate (coverage) and any snapshot drift (the
-/// gate). The pass rate is informational; only `drifts` fails the run.
 fn print_ts_summary(summary: &Summary, drifts: &[String], unit: &str) {
     eprintln!(
         "xtask conformance (tree-sitter): {} / {} {unit} parse without ERROR nodes",
@@ -461,17 +388,13 @@ fn print_ts_summary(summary: &Summary, drifts: &[String], unit: &str) {
     }
 }
 
-/// One spec vector's tree-sitter parse, pinned in the snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct TsVectorEntry {
     name: String,
-    /// The grammar produced an ERROR / MISSING node (a non-pass).
     error: bool,
-    /// `root.to_sexp()` — the structural fingerprint that gates drift.
     sexp: String,
 }
 
-/// The committed tree-sitter snapshot over the whole spec-vector corpus.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct TsVectorSnapshot {
     #[serde(rename = "formatVersion")]
@@ -480,12 +403,6 @@ struct TsVectorSnapshot {
     vectors: Vec<TsVectorEntry>,
 }
 
-/// Run the reference grammar over every spec vector's `source` (#242).
-///
-/// Mirrors `run_tree_sitter` but over the specification corpus: a
-/// per-tier pass rate report (no ERROR nodes) plus a single
-/// S-expression snapshot gate (`TS_VECTORS_SNAPSHOT_REL`). `--update`
-/// regenerates the snapshot after an intentional grammar change.
 fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);
@@ -518,7 +435,6 @@ fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
         });
     }
 
-    // Stable order regardless of read_dir: sort the snapshot by name.
     snapshot_vectors.sort_by(|a, b| a.name.cmp(&b.name));
     let snapshot = TsVectorSnapshot {
         format_version: TS_VECTORS_SNAPSHOT_FORMAT_VERSION,
@@ -580,9 +496,6 @@ fn require_error_free(summary: &Summary, unit: &str) -> Result<(), String> {
     }
 }
 
-/// Names whose tree-sitter parse changed between the committed snapshot
-/// and a fresh run — including vectors added (`(new)`) or removed
-/// (`(removed)`) from the corpus.
 fn snapshot_drifts(prev: &TsVectorSnapshot, current: &TsVectorSnapshot) -> Vec<String> {
     let index = |snap: &TsVectorSnapshot| -> BTreeMap<String, (bool, String)> {
         snap.vectors
@@ -609,21 +522,6 @@ fn snapshot_drifts(prev: &TsVectorSnapshot, current: &TsVectorSnapshot) -> Vec<S
     drifts.sort();
     drifts
 }
-
-// ────────────────────────────────────────────────────────────────────
-// Specification conformance vectors
-// ────────────────────────────────────────────────────────────────────
-//
-// The sibling `aozora-notation-spec` repository owns the conformance
-// corpus; its vectors are vendored under
-// `crates/aozora-conformance/spec-vectors/` by `just sync-spec-vectors`.
-// Unlike the fixture runner above (which compares the parser against its
-// OWN golden output), this runner holds the parser to the
-// SPECIFICATION's expectations: it parses each vector's `source` and
-// diffs the projections the spec pins in `expected`, governed by
-// `meta.level` remains in reports for traceability. The release gate is
-// intentionally stricter than the language-agnostic runner contract: every
-// supplied projection, including HTML, must match.
 
 #[derive(Deserialize)]
 struct Vector {
@@ -734,23 +632,15 @@ fn sorted_subdirectories(directory: &Path) -> Result<Vec<fs::DirEntry>, String> 
     Ok(entries)
 }
 
-/// Parse one vector's source and diff each projection the spec pins.
-///
 fn compare_vector(vector: &Vector) -> Result<Vec<String>, String> {
     let doc = aozora::parse(vector.source.clone()).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let mut mismatches = Vec::new();
 
     if let Some(expected) = vector.expected.serialize.as_ref() {
-        // The canonical serialize of the source matches the pinned golden.
         if tree.to_source() != *expected {
             mismatches.push("serialize".to_owned());
         }
-        // Contract unification (#190): the golden is its own fixed point —
-        // re-serialising the canonical form returns it unchanged. Folds the
-        // "source-exact" check into the single canonical-idempotence
-        // invariant, so a golden that is idempotent yet differs from the
-        // canonical form of its source is unrepresentable.
         if aozora::parse(expected.clone())
             .expect("source fits parser span limit")
             .snapshot()
@@ -781,8 +671,6 @@ fn compare_vector(vector: &Vector) -> Result<Vec<String>, String> {
     Ok(mismatches)
 }
 
-/// Pull the `data` array out of a `{ schemaVersion, data }` wire
-/// envelope, taking ownership of the items.
 fn wire_data(json: &str) -> Result<Vec<Value>, String> {
     let mut value: Value =
         serde_json::from_str(json).map_err(|err| format!("parse wire envelope: {err}"))?;
@@ -792,13 +680,6 @@ fn wire_data(json: &str) -> Result<Vec<Value>, String> {
     }
 }
 
-/// Project the parser's diagnostic wire entries into the spec's
-/// `{ code, severity, span }` shape.
-///
-/// Strips the pipeline-internal sanity checks (not part of the spec's
-/// diagnostic contract) and rewrites the `snake_case` `kind` to the
-/// kebab-case `code` of §9 — mirrors
-/// `aozora-notation-spec/tools/import_vectors.py::map_diagnostic`.
 fn normalized_actual_diagnostics(wire_json: &str) -> Result<Vec<ActualDiagnostic>, String> {
     let mut out = Vec::new();
     for entry in wire_data(wire_json)? {
@@ -837,8 +718,6 @@ fn span_from_value(value: &Value) -> Result<SpanCmp, String> {
     Ok(SpanCmp { start, end })
 }
 
-/// Order-sensitive equality per `RUNNER.md`: every diagnostic matches on
-/// `code` and `severity`, and on `span` only when the spec pins one.
 fn diagnostics_match(expected: &[ExpectedDiagnostic], actual: &[ActualDiagnostic]) -> bool {
     expected.len() == actual.len()
         && expected.iter().zip(actual).all(|(want, got)| {
@@ -975,7 +854,6 @@ mod tests {
     #[test]
     fn span_from_value_parses_start_end() {
         let v = serde_json::json!({ "start": 4, "end": 9 });
-        // `SpanCmp` has no `Debug`, so compare fields rather than the struct.
         let span = span_from_value(&v).unwrap_or_else(|_| panic!("valid span"));
         assert_eq!(span.start, 4, "start parsed");
         assert_eq!(span.end, 9, "end parsed");
@@ -1135,7 +1013,6 @@ mod tests {
 
     #[test]
     fn compare_vector_matching_serialize_passes() {
-        // Parse once to learn the parser's own serialize output, then pin it.
         let doc = aozora::parse("plain text".to_owned()).expect("source fits parser span limit");
         let expected_serialize = doc.snapshot().to_source();
         let mut exp = empty_expected();

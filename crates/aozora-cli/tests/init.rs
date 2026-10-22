@@ -1,9 +1,4 @@
-//! End-to-end tests for `aozora init` — the project scaffolder.
-//!
-//! Every spawn goes through [`common::hermetic_command`] (which pins
-//! `AOZORA_LANG=en` and seals the global XDG config layer) and runs in a fresh
-//! `TempDir`, so the report and the written files are a pure function of the
-//! flags, not of the host environment.
+//! End-to-end tests for `aozora init`.
 
 use std::fs;
 use std::path::Path;
@@ -13,7 +8,6 @@ use tempfile::TempDir;
 
 mod common;
 
-/// Run `aozora init <args…>` inside `dir`, returning the raw [`Output`].
 fn init_in(dir: &Path, args: &[&str]) -> Output {
     common::hermetic_command()
         .arg("init")
@@ -38,7 +32,6 @@ fn init_writes_the_three_files_with_expected_content() {
     let output = init_in(work.path(), &[]);
     assert_eq!(output.status.code(), Some(0));
 
-    // The commented config template documents every ConfigFile key.
     let config = fs::read_to_string(work.path().join(".aozora.toml")).expect("config written");
     for key in ["encoding", "format", "strict", "color", "lang"] {
         assert!(
@@ -46,12 +39,10 @@ fn init_writes_the_three_files_with_expected_content() {
             "config template mentions `{key}`: {config}"
         );
     }
-    // The sample exercises the three advertised notations.
     let sample = fs::read_to_string(work.path().join("hon.aozora")).expect("sample written");
     assert!(sample.contains("《おうめ》"), "ruby reading: {sample}");
     assert!(sample.contains("に傍点"), "傍点 directive: {sample}");
     assert!(sample.contains("字下げ"), "字下げ directive: {sample}");
-    // The .gitignore is there too.
     let ignore = fs::read_to_string(work.path().join(".gitignore")).expect("gitignore written");
     assert!(ignore.contains("*.html"), "ignores rendered HTML: {ignore}");
 }
@@ -74,9 +65,7 @@ fn init_scaffolds_a_named_directory_creating_it() {
 #[test]
 fn init_is_idempotent_and_never_clobbers_without_force() {
     let work = TempDir::new().expect("work tempdir");
-    // First run creates everything.
     assert_eq!(init_in(work.path(), &[]).status.code(), Some(0));
-    // Hand-edit the config so we can prove the second run leaves it untouched.
     let config = work.path().join(".aozora.toml");
     fs::write(&config, "strict = true\n").expect("edit config");
 
@@ -150,10 +139,8 @@ fn init_localizes_the_report_under_lang() {
         .expect("spawn aozora init");
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-    // Prose axis follows --lang...
     assert!(stdout.contains("作成"), "ja created word: {stdout}");
     assert!(stdout.contains("次のステップ"), "ja next-steps: {stdout}");
-    // ...while the file names stay literal.
     assert!(
         stdout.contains(".aozora.toml"),
         "literal file name: {stdout}"
@@ -162,8 +149,6 @@ fn init_localizes_the_report_under_lang() {
 
 #[test]
 fn init_scaffold_renders_and_checks_cleanly() {
-    // The whole point: right after `init`, the sample renders and checks with
-    // no diagnostics — drive the real binary against the scaffolded files.
     let work = TempDir::new().expect("work tempdir");
     assert_eq!(init_in(work.path(), &[]).status.code(), Some(0));
     let sample = work.path().join("hon.aozora");

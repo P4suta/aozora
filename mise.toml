@@ -1,5 +1,4 @@
-# Native development toolchain. `rust-toolchain.toml`, Cargo.lock and the
-# language-specific lockfiles remain their respective sources of truth.
+# Locked tool versions reproduce the canonical native development environment (ADR-0053).
 [settings]
 lockfile = true
 

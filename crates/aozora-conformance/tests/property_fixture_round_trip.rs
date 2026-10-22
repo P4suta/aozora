@@ -1,30 +1,9 @@
-//! Property-test the parser against every fixture in the conformance
-//! corpus, plus shrinker-driven mutations of those fixtures.
-//!
-//! The existing `render_gate.rs` is byte-identical: it asserts the
-//! current parse output matches the committed golden. This test
-//! complements that with two looser-but-broader properties:
-//!
-//! 1. **Parse + serialise + parse is total**: every fixture's source
-//!    must parse, serialise, and re-parse without panic. Catches a
-//!    regression that breaks fixture parsing in a way the golden gate
-//!    doesn't (e.g. divergent diagnostic output that doesn't affect
-//!    the rendered HTML).
-//!
-//! 2. **Fixture-derived shrinking**: each fixture's source is fed into
-//!    a proptest as a *seed* — the shrinker can chop / mutate it to
-//!    surface inputs adjacent to the canonical fixture set. Any
-//!    regression that breaks "fixture-like" inputs (slight whitespace
-//!    drift, truncated body, ASCII noise injected) shows up as a
-//!    shrunken counter-example.
+//! Round-trip properties for conformance fixtures and their truncated variants.
 
 use aozora_conformance::{RenderFixture, fixtures_root};
 use aozora_proptest::config::default_config;
 use proptest::prelude::*;
 
-/// Load every fixture under `fixtures/render/` once. Cached behind a
-/// `OnceLock` so the proptest's per-iteration cost stays at "draw an
-/// index", not "walk the filesystem".
 fn all_fixture_sources() -> &'static Vec<String> {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Vec<String>> = OnceLock::new();
@@ -63,12 +42,6 @@ fn every_fixture_round_trips_without_panic() {
 proptest! {
     #![proptest_config(default_config())]
 
-    /// Every fixture, plus a per-iteration shrinker-driven byte
-    /// truncation, must parse + serialise + re-parse without panic.
-    /// The shrinker is what makes this catch regressions the static
-    /// fixture corpus doesn't already cover — a truncation that
-    /// previously parsed cleanly but now panics will surface as a
-    /// shrunken counter-example instead of a flaky render diff.
     #[test]
     fn fixture_truncations_are_total(
         idx in any::<prop::sample::Index>(),
@@ -76,8 +49,6 @@ proptest! {
     ) {
         let sources = all_fixture_sources();
         let source = idx.get(sources);
-        // Truncate to a char boundary so `Document::new` (which takes
-        // owned UTF-8) doesn't panic on the truncate itself.
         let cap = truncate_to.min(source.len());
         let truncated = take_to_char_boundary(source, cap);
         parse_serialise_parse(truncated);

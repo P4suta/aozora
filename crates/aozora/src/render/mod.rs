@@ -1,14 +1,3 @@
-//! HTML / Aozora-source renderers over the semantic AST.
-//!
-//! Rendering options used by [`crate::Snapshot`] to emit semantic HTML5 or
-//! canonical Aozora source text.
-//!
-//! # Public surface
-//!
-//! - [`RenderOptions`] configures [`crate::Snapshot::to_html_with`].
-//! - [`SerializeOptions`] configures [`crate::Snapshot::to_source_with`].
-//! - [`DirectiveNormalization`] controls opt-in canonical directive handling.
-
 #![forbid(unsafe_code)]
 
 mod classes;

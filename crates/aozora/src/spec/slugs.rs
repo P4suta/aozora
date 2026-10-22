@@ -1,40 +1,6 @@
-//! Canonical slug catalogue for Aozora annotation bodies (Phase 1.2 of
-//! the editor-integration sprint).
-//!
-//! `classify::BODY_PATTERNS` is the *parser-side* aho-corasick
-//! table — its goal is exhaustive matching, including every digit a
-//! `{N}字下げ` form can start with. This module is the *editor-side*
-//! mirror: the public, stable list of slugs an LSP completion menu
-//! offers and the LSP `canonicalize` code action snaps user input to.
-//!
-//! The two tables must stay in sync: every `SLUGS` entry has to be one the
-//! classifier dispatches without leaking a residual annotation marker.
-//!
-//! ## Why a separate table
-//!
-//! - **Granularity**: the editor wants `{N}字下げ` (one entry, accepts
-//!   a parameter), not ten distinct rows for each digit prefix.
-//! - **Documentation**: each entry carries a Japanese `doc` string that
-//!   becomes the LSP completion item's `documentation` field.
-//! - **Stability**: `BODY_PATTERNS`'s exact shape is tied to classify-stage
-//!   internals (`LeftmostLongest` dispatch order, `BodyFamily` variants);
-//!   downstream editor consumers should not depend on it.
-//!
-//! ## Canonicalisation
-//!
-//! [`canonicalise_slug`] maps a known orthographic *variant* (typically
-//! a hiragana-only spelling — `ぼうてん`, `にぼうてん`) to the canonical
-//! form (`傍点`). The variant table is intentionally small: it covers
-//! the highest-frequency author-side abbreviations the editor surface
-//! treats as a one-keystroke-quick-fix. Any input that is already
-//! canonical short-circuits with `Some(canonical)` so callers can
-//! always trust the return value.
-
 use crate::spec::PairKind;
 
-/// Family / coarse category a slug belongs to. Used by the LSP
-/// completion UI to group entries (`CompletionItem::sort_text`) and
-/// pick an appropriate `CompletionItemKind` icon.
+/// Directive category for editor completion entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -43,13 +9,12 @@ pub enum SlugFamily {
     PageBreak,
     /// `［＃改丁］`, `［＃改段］`, `［＃改見開き］`.
     Section,
-    /// Block container open marker (`［＃ここから...］`). Pairs with
-    /// the corresponding [`SlugFamily::BlockContainerClose`] slug.
+    /// Block container open marker (`［＃ここから...］`).
+    /// Pairs with the corresponding [`SlugFamily::BlockContainerClose`] slug.
     BlockContainerOpen,
     /// Block container close marker (`［＃ここで...終わり］`).
     BlockContainerClose,
-    /// Leaf-line layout slug applied to the immediately preceding
-    /// paragraph (`地付き`, `{N}字下げ`, `地から{N}字上げ`).
+    /// Leaf-line layout slug applied to the immediately preceding paragraph (`地付き`, `{N}字下げ`, `地から{N}字上げ`).
     LeafAlign,
     /// Forward-reference bouten / underline (`［＃「target」に傍点］`).
     Bouten,
@@ -61,17 +26,14 @@ pub enum SlugFamily {
     Warichu,
     /// Forward-reference 縦中横 (`［＃「target」は縦中横］`).
     CombineUpright,
-    /// Kaeriten single mark (一, 二, 三, 上, 中, 下, 甲, 乙, 丙, 丁,
-    /// 四, レ).
+    /// A single kanbun return mark.
     KaeritenSingle,
     /// Kaeriten compound mark (一レ, 二レ, …).
     KaeritenCompound,
 }
 
 impl SlugFamily {
-    /// Every variant in declaration order. Lets the wire-tag
-    /// exhaustiveness test and codegen enumerate the families without a
-    /// hand-maintained parallel.
+    /// Every variant in declaration order.
     pub const ALL: [Self; 12] = [
         Self::PageBreak,
         Self::Section,
@@ -87,10 +49,7 @@ impl SlugFamily {
         Self::KaeritenCompound,
     ];
 
-    /// Stable camelCase identifier used by the driver wire formats.
-    /// Centralised in the enum's own crate so the wire spelling has a
-    /// single authority and the `match` is exhaustiveness-checked at
-    /// compile time (no `_` fallback — a new family must declare its tag).
+    /// Stable camelCase wire-format identifier.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {
@@ -119,32 +78,17 @@ pub struct SlugEntry {
     pub canonical: &'static str,
     /// Coarse category / family.
     pub family: SlugFamily,
-    /// Whether the slug expects a numeric parameter (or, for `Illustration`,
-    /// a path) following the canonical text.
+    /// Whether the canonical text takes a numeric parameter or illustration path.
     pub accepts_param: bool,
-    /// Short Japanese description shown in LSP `CompletionItem.detail`
-    /// / `documentation` fields. Single sentence, no surrounding
-    /// punctuation, terminating period.
+    /// Japanese description for editor completion details.
     pub doc: &'static str,
-    /// For `BlockContainerOpen` / `BlockContainerClose` slugs, the
-    /// canonical text of the partner slug — so the editor can link
-    /// them together (insert close on accept, jump to partner, …).
-    /// `None` for non-paired families.
+    /// Canonical partner text for a paired marker, or `None`.
     pub partner: Option<&'static str>,
-    /// Always [`PairKind::Bracket`] for the slugs in this table — the
-    /// surrounding `［＃ … ］` is a bracket pair. Carried so editor
-    /// snippets can render the wrapper bracket pair without having to
-    /// re-derive it.
+    /// Delimiter family used to wrap the directive body.
     pub wrapper: PairKind,
 }
 
-/// Canonical slug catalogue. See module docs.
-///
-/// Order is irrelevant for behavior; entries are grouped by family for
-/// readability. The `every_canonical_resolves_through_canonicalise_slug`
-/// test pins identity round-trip for every entry.
 pub(crate) const SLUGS: &[SlugEntry] = &[
-    // --- Section / page break ----------------------------------------------
     SlugEntry {
         canonical: "改ページ",
         family: SlugFamily::PageBreak,
@@ -177,7 +121,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: None,
         wrapper: PairKind::Bracket,
     },
-    // --- Block containers (open / close pairs) -----------------------------
     SlugEntry {
         canonical: "ここから字下げ",
         family: SlugFamily::BlockContainerOpen,
@@ -258,7 +201,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: Some("割り注"),
         wrapper: PairKind::Bracket,
     },
-    // --- Leaf alignment (single-paragraph) ---------------------------------
     SlugEntry {
         canonical: "地付き",
         family: SlugFamily::LeafAlign,
@@ -283,7 +225,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: None,
         wrapper: PairKind::Bracket,
     },
-    // --- Bouten / underline (forward-ref via 「target」に...) --------------
     SlugEntry {
         canonical: "傍点",
         family: SlugFamily::Bouten,
@@ -372,7 +313,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: None,
         wrapper: PairKind::Bracket,
     },
-    // --- Other inline -----------------------------------------------------
     SlugEntry {
         canonical: "挿絵（{path}）入る",
         family: SlugFamily::Illustration,
@@ -389,7 +329,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: None,
         wrapper: PairKind::Bracket,
     },
-    // --- Kaeriten single (12) ---------------------------------------------
     SlugEntry {
         canonical: "一",
         family: SlugFamily::KaeritenSingle,
@@ -486,7 +425,6 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
         partner: None,
         wrapper: PairKind::Bracket,
     },
-    // --- Kaeriten compound (6) --------------------------------------------
     SlugEntry {
         canonical: "一レ",
         family: SlugFamily::KaeritenCompound,
@@ -537,13 +475,7 @@ pub(crate) const SLUGS: &[SlugEntry] = &[
     },
 ];
 
-/// Variant → canonical mapping for [`canonicalise_slug`]. Each row
-/// covers one common abbreviation or hiragana spelling that the LSP
-/// snaps to the canonical form. Identity rows (`canonical → canonical`)
-/// are inserted automatically by [`canonicalise_slug`] so this table
-/// only needs the *non-trivial* variants.
 const VARIANTS: &[(&str, &str)] = &[
-    // Bouten — hiragana variants commonly typed in drafts.
     ("ぼうてん", "傍点"),
     ("にぼうてん", "傍点"),
     ("しろぼうてん", "白ゴマ傍点"),
@@ -559,48 +491,27 @@ const VARIANTS: &[(&str, &str)] = &[
     ("はせん", "波線"),
     ("ぼうせん", "傍線"),
     ("にじゅうぼうせん", "二重傍線"),
-    // Page break.
     ("かいぺーじ", "改ページ"),
     ("ページかえ", "改ページ"),
     ("かいちょう", "改丁"),
     ("かいだん", "改段"),
     ("かいみひらき", "改見開き"),
-    // Block container open / close.
     ("ここからじさげ", "ここから字下げ"),
     ("ここでじさげおわり", "ここで字下げ終わり"),
     ("ここからじつき", "ここから地付き"),
     ("ここでじつきおわり", "ここで地付き終わり"),
-    // Leaf align.
     ("じつき", "地付き"),
-    // Other inline.
     ("たてちゅうよこ", "縦中横"),
     ("たて中横", "縦中横"),
     ("そうにゅうえ", "挿絵（{path}）入る"),
-    // Framed / warichu.
     ("けいがこみ", "罫囲み"),
     ("けいがこみおわり", "罫囲み終わり"),
     ("わりちゅう", "割り注"),
     ("わりちゅうおわり", "割り注終わり"),
 ];
 
-/// Snap an input slug body (with the surrounding `［＃ … ］` already
-/// stripped) to the canonical form, if one is recognised.
-///
-/// Returns:
-/// - `Some(s)` — `s` is the canonical text. `s` is `&'static str`
-///   pointing into [`SLUGS`]'s `canonical` field, so callers can use
-///   it as a stable key.
-/// - `None` — no recognised slug. Callers may still parse `input` as a
-///   `{N}字下げ` parametric form (which intentionally has no fixed
-///   variant).
-///
-/// Identity rows are accepted: passing a canonical string back returns
-/// the same pointer. This lets the LSP's `canonicalize` code action
-/// short-circuit safely.
 #[must_use]
 pub(crate) fn canonicalise_slug(input: &str) -> Option<&'static str> {
-    // Identity short-circuit. SLUGS is small (~40 entries) and the
-    // strings are short, so a linear scan beats hashing on cache cost.
     for entry in SLUGS {
         if entry.canonical == input {
             return Some(entry.canonical);
@@ -614,32 +525,10 @@ pub(crate) fn canonicalise_slug(input: &str) -> Option<&'static str> {
     None
 }
 
-/// One row of the *render* slug table.
-///
-/// The single source of truth for the romaji CSS slug emitted for a
-/// given annotation. Kept separate from the completion catalogue
-/// catalogue) because render slugs key on the enum *keyword* (傍点 kind
-/// / emphasis kind / section kind), a vocabulary the completion table
-/// does not carry.
-///
-/// `roman` is the stable kebab-case CSS slug. `reading` is the kana the
-/// slug romanises (Hepburn, long vowels dropped — 改丁／かいちょう →
-/// `kaicho`); `None` marks a loanword kept in English (改ページ →
-/// `page-break`, キャプション → `caption`) which has no reading-derived
-/// spelling to check. `jis` cites the JIS Z 8125:2004 clause the term
-/// is reconciled against, where one exists.
-///
-/// The `render_slug_matches_reading` test re-derives Hepburn from
-/// `reading` and asserts it agrees with `roman`, so a slug that drifts
-/// from its reading — 小書き is こがき (→ `kogaki`), not the over-long
-/// spelling once shipped — cannot reappear.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct RenderSlug {
-    /// Canonical Japanese keyword (matches the enum→keyword tables in
-    /// the syntax layer), used as the lookup key.
     pub canonical: &'static str,
-    /// Kana the slug romanises, or `None` for an English loanword slug.
     #[cfg_attr(
         all(not(test), not(feature = "json")),
         expect(
@@ -648,9 +537,7 @@ pub(crate) struct RenderSlug {
         )
     )]
     pub reading: Option<&'static str>,
-    /// Stable kebab-case CSS slug.
     pub roman: &'static str,
-    /// JIS Z 8125:2004 clause, where the term is standardised.
     #[cfg_attr(
         all(not(test), not(feature = "json")),
         expect(
@@ -661,10 +548,7 @@ pub(crate) struct RenderSlug {
     pub jis: Option<&'static str>,
 }
 
-/// The render slug catalogue — the single source of truth for romaji
-/// CSS slugs. See [`RenderSlug`].
 pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
-    // --- Section / page break (JIS Z 8125:2004 §07.24) ---------------------
     RenderSlug {
         canonical: "改丁",
         reading: Some("かいちょう"),
@@ -689,7 +573,6 @@ pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "page-break",
         jis: Some("07.24.13"),
     },
-    // --- Bouten kinds (圏点 JIS Z 8125:2004 §07.16) ------------------------
     RenderSlug {
         canonical: "傍点",
         reading: Some("ごま"),
@@ -774,14 +657,6 @@ pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "kurosankaku",
         jis: Some("07.16"),
     },
-    // --- Emphasis / inline ---------------------------------------------------
-    // The emphasis family now uses reading-based romaji slugs (#115),
-    // matching the bouten kinds (#114): the slug is `hepburn(reading)`,
-    // enforced by `render_slug_matches_reading`. Two stay on their existing
-    // slugs deliberately — `caption` (a loanword, キャプション) and
-    // `keigakomi` (罫囲み＝けいがこみ, a valid reading already serving as the
-    // wire/API identifier). The slug is the CSS class only (`aozora-<slug>`);
-    // the wire `as_json_tag` is a separate, frozen vocabulary.
     RenderSlug {
         canonical: "斜体",
         reading: Some("しゃたい"),
@@ -794,9 +669,6 @@ pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "futoji",
         jis: None,
     },
-    // ゴシック体 — gothic typeface, distinct from 太字 (#435). ゴシック is a
-    // loanword (gothic), so `reading: None` opts out of the Hepburn check like
-    // `caption`; the slug is the fixed CSS class `aozora-goshikku`.
     RenderSlug {
         canonical: "ゴシック体",
         reading: None,
@@ -815,17 +687,12 @@ pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "shitatsuki",
         jis: Some("07.12.02"),
     },
-    // 分数 (`「a/b」は分数`). `reading: None` opts out of the Hepburn
-    // re-derivation check — ぶんすう romanises with a long vowel (bunsū),
-    // which would not match the stable `bunsu` slug.
     RenderSlug {
         canonical: "分数",
         reading: None,
         roman: "bunsu",
         jis: None,
     },
-    // 絶対サイズ (特大 / 大 / 中 / 小文字). Semantic English slugs (not Hepburn,
-    // so `reading: None`), distinct from the relative `font-larger`/`smaller`.
     RenderSlug {
         canonical: "特大文字",
         reading: None,
@@ -882,9 +749,6 @@ pub(crate) const RENDER_SLUGS: &[RenderSlug] = &[
     },
 ];
 
-/// Look up the romaji CSS slug for an annotation `canonical` keyword.
-/// Returns `None` for an unknown keyword (callers fall back to a
-/// neutral slug).
 #[must_use]
 pub(crate) fn roman_slug(canonical: &str) -> Option<&'static str> {
     RENDER_SLUGS
@@ -917,10 +781,6 @@ mod tests {
         assert_eq!(tags.len(), total, "duplicate wire tag in SlugFamily::ALL");
     }
 
-    /// Minimal Hepburn romaniser (long vowel お／う段 + う dropped,
-    /// matching the slug convention 改丁→`kaicho`). Test-only — the
-    /// production slugs are hand-written in [`RENDER_SLUGS`]; this
-    /// re-derives them from `reading` to catch a misspelling.
     #[expect(
         clippy::too_many_lines,
         reason = "exhaustive kana→romaji morae tables read clearest inline"
@@ -1037,7 +897,6 @@ mod tests {
         let mut out = String::new();
         let mut rest = kana;
         'outer: while !rest.is_empty() {
-            // Long-vowel う after an o/u sound collapses (ちょう→cho).
             if let Some(r) = rest.strip_prefix('う')
                 && (out.ends_with('o') || out.ends_with('u'))
             {
@@ -1058,7 +917,6 @@ mod tests {
                     continue 'outer;
                 }
             }
-            // Unknown kana — surface it so the test fails loudly.
             return format!("{out}?{rest}");
         }
         out
@@ -1199,8 +1057,6 @@ mod tests {
 
     #[test]
     fn block_container_open_pairs_with_close() {
-        // Every BlockContainerOpen entry must point at a partner whose
-        // family is BlockContainerClose, and vice versa.
         for entry in SLUGS {
             match entry.family {
                 SlugFamily::BlockContainerOpen => {
@@ -1236,8 +1092,6 @@ mod tests {
 
     #[test]
     fn accepts_param_aligns_with_brace_in_canonical() {
-        // Every entry whose canonical contains `{` must have
-        // accepts_param == true, and vice versa.
         for entry in SLUGS {
             let has_brace = entry.canonical.contains('{');
             assert_eq!(
@@ -1258,17 +1112,10 @@ mod tests {
         }
     }
 
-    /// Substitute placeholder tokens in a slug's canonical text with a
-    /// concrete value, so the wrapped body actually parses.
     fn instantiate(canonical: &str) -> String {
         canonical.replace("{N}", "2").replace("{path}", "fig01.png")
     }
 
-    /// Wrap an instantiated slug body in the source form a real document
-    /// would carry, picked by family. Forward-reference families
-    /// ([`SlugFamily::Bouten`] / [`SlugFamily::CombineUpright`]) attach to
-    /// a preceding inline target, so they need the `［＃「対象」に…］` /
-    /// `［＃「対象」は…］` shape rather than a bare `［＃…］`.
     fn wrap_for_family(family: SlugFamily, body: &str) -> String {
         match family {
             SlugFamily::Bouten => format!("対象［＃「対象」に{body}］"),
@@ -1277,13 +1124,6 @@ mod tests {
         }
     }
 
-    /// SLUGS ↔ classifier sync guard: every canonical slug in the
-    /// editor-side [`SLUGS`] table must round-trip through the live
-    /// classify stage without leaving a residual annotation marker — i.e.
-    /// the classifier recognises the slug and lands it in the placeholder
-    /// registry rather than leaking it through as plain text. A
-    /// [`codes::RESIDUAL_ANNOTATION_MARKER`] diagnostic on any entry means
-    /// [`SLUGS`] has drifted out of sync with `classify::BODY_PATTERNS`.
     #[test]
     fn every_canonical_slug_parses_without_residual_marker() {
         for entry in SLUGS {

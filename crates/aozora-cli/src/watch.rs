@@ -1,15 +1,4 @@
-//! `--watch`: re-run a document subcommand when its input file changes.
-//!
-//! Foreground and non-daemon (ADR-0014). The loop runs the command once
-//! up front, then again on every change to the input, debounced. Each
-//! run's exit code is swallowed — a diagnostic or `fmt --check` mismatch
-//! prints but does not stop the watch. The loop ends on Ctrl-C or a watcher
-//! failure.
-//!
-//! The input's *parent directory* is watched, not the file itself:
-//! editors commonly save by writing a temp file and renaming it over the
-//! target, which a direct file watch misses. Events are filtered to the
-//! target by file name.
+// ADR-0014 watches the parent directory because editors save by renaming a temporary file over the target.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -22,13 +11,8 @@ use anyhow::{Context, Result, bail};
 use notify::{Event, RecursiveMode, Watcher};
 use tracing::{debug, trace};
 
-/// Coalesce a burst of save events (an editor's temp-write + rename, or a
-/// formatter's own write-back) into a single re-run.
 const DEBOUNCE: Duration = Duration::from_millis(75);
 
-/// Run `once` immediately, then re-run it on every change to `path`
-/// until interrupted. Per-run exit codes are reported but not propagated;
-/// watcher backend failures and an unexpected event-channel disconnect are.
 pub(crate) fn watch(
     path: &Path,
     lang: &LanguageIdentifier,
@@ -97,7 +81,6 @@ fn debounce_deadline(now: Instant, debounce: Duration) -> Instant {
     now + debounce
 }
 
-/// The directory to watch: the file's parent, or `.` for a bare filename.
 fn watched_dir(path: &Path) -> &Path {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -105,39 +88,27 @@ fn watched_dir(path: &Path) -> &Path {
     }
 }
 
-/// Does `event` concern the target file? Matched by file name so an
-/// atomic save (rename of a temp over the target) still counts.
 fn touches(event: &Event, path: &Path) -> bool {
     let name = path.file_name();
     event.paths.iter().any(|p| p.file_name() == name)
 }
 
-/// Should this event be dropped without re-running? True for any event
-/// that does not concern the target file. Split from the watch loop so
-/// the negation is unit-testable.
 fn should_skip(event: &Event, path: &Path) -> bool {
     !touches(event, path)
 }
 
-/// Run the command once, printing any error but swallowing the exit code
-/// so the watch keeps going.
 fn rerun(once: &impl Fn() -> Result<ExitCode>) {
     if let Err(err) = once() {
         let _drop = writeln!(io::stderr(), "aozora: {err:#}");
     }
 }
 
-/// A between-runs banner, TTY only so piped output stays clean.
 fn banner(path: &Path, lang: &LanguageIdentifier) {
     let mut stderr = io::stderr().lock();
     let is_tty = stderr.is_terminal();
     let _drop = write_banner(&mut stderr, is_tty, path, lang);
 }
 
-/// Emit the banner line to `out` in `lang`, but only when writing to a
-/// terminal. Split from [`banner`] so the message text and the TTY gate can
-/// be exercised over a capturing writer without a real terminal. The banner
-/// text lives in the `watch-banner` catalog key.
 fn write_banner(
     out: &mut impl Write,
     is_terminal: bool,
@@ -174,25 +145,20 @@ mod tests {
     #[test]
     fn touches_matches_by_file_name() {
         let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/file.txt"));
-        // Same name in any directory counts — atomic saves rename a temp
-        // over the target, so directory equality would miss them.
         assert!(touches(&event, Path::new("file.txt")));
         assert!(touches(&event, Path::new("elsewhere/file.txt")));
-        // A different file in the watched directory does not.
         assert!(!touches(&event, Path::new("other.txt")));
     }
 
     #[test]
     fn should_skip_drops_unrelated_events() {
         let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/other.txt"));
-        // The negation must hold: an unrelated event is skipped.
         assert!(should_skip(&event, Path::new("file.txt")));
     }
 
     #[test]
     fn should_skip_keeps_matching_events() {
         let event = Event::new(EventKind::Any).add_path(PathBuf::from("/tmp/x/file.txt"));
-        // A matching event is *not* skipped — dropping the `!` would flip this.
         assert!(!should_skip(&event, Path::new("file.txt")));
     }
 
@@ -296,7 +262,6 @@ mod tests {
             calls.set(calls.get() + 1);
             Ok(ExitCode::SUCCESS)
         });
-        // A body of `()` would never call `once`.
         assert_eq!(calls.get(), 1);
     }
 
@@ -328,7 +293,6 @@ mod tests {
     fn write_banner_is_silent_off_a_terminal() {
         let mut out = Vec::new();
         write_banner(&mut out, false, Path::new("doc.txt"), &lang("en")).unwrap();
-        // The TTY gate must hold: no bytes when stderr is not a terminal.
         assert!(out.is_empty());
     }
 }

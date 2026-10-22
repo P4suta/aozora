@@ -12,7 +12,6 @@ describe('samples.ts', () => {
       expect(s.id).toBeTruthy();
       expect(s.title.length).toBeGreaterThan(0);
       expect(s.text.length).toBeGreaterThan(0);
-      // Every sample is a cited public-domain excerpt, not an invented string.
       expect(s.source.length).toBeGreaterThan(0);
     }
   });

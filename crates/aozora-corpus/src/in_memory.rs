@@ -1,25 +1,12 @@
-//! [`InMemoryCorpus`] — build a corpus from explicit byte-string pairs.
-//!
-//! Intended for unit tests that exercise the [`CorpusSource`] contract
-//! without touching the filesystem. The test constructs the exact set
-//! of inputs it wants and hands the source to code under test as
-//! `dyn CorpusSource`.
-
 use crate::{CorpusError, CorpusItem, CorpusSource};
 
 /// Corpus source populated from caller-supplied items.
 ///
-/// The internal store is a `Vec<CorpusItem>` snapshotted at construction
-/// time. Iteration yields clones of each item in insertion order. `Ok`
-/// is the only outcome: an in-memory source cannot raise I/O errors.
+/// Iteration yields clones of each item in insertion order.
+/// Iteration never yields errors.
 #[derive(Debug, Clone)]
 pub struct InMemoryCorpus {
     items: Vec<CorpusItem>,
-    // Stored as `String` rather than returned as a `&'static str` literal
-    // so the `provenance(&self) -> &str` method genuinely borrows from
-    // `&self`, matching what the trait contract signals to callers (and
-    // keeping symmetric shape with the filesystem/vendored impls, whose
-    // provenance strings are path-derived).
     provenance: String,
 }
 
@@ -33,9 +20,7 @@ impl InMemoryCorpus {
         }
     }
 
-    /// Construct from `(label, bytes)` pairs. Convenience over
-    /// [`InMemoryCorpus::new`] when the caller has loose tuples rather
-    /// than pre-built [`CorpusItem`] values.
+    /// Construct from `(label, bytes)` pairs.
     pub fn from_pairs<I, L, B>(pairs: I) -> Self
     where
         I: IntoIterator<Item = (L, B)>,
@@ -111,8 +96,6 @@ mod tests {
 
     #[test]
     fn from_pairs_with_owned_strings() {
-        // Exercise the String (not &str) branch of the Into<String> bound,
-        // so the generic parameter's full shape is covered.
         let corpus = InMemoryCorpus::from_pairs(vec![(String::from("owned"), vec![0u8])]);
         let item = corpus
             .iter()

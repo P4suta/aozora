@@ -1,11 +1,4 @@
-//! End-to-end test for `aozora lsp` — the **in-process** language server.
-//!
-//! Spawns `aozora lsp --stdio` and drives a real LSP session over its stdio:
-//! `initialize` → `initialized` → `didOpen` (of a document with an unclosed
-//! bracket), then reads until the server pushes `textDocument/publishDiagnostics`
-//! for that document. This proves the whole in-process pipeline — argv handling,
-//! the tower-lsp runloop over stdio, parse, and diagnostic projection — without
-//! the retired exec-delegate to a separate `aozora-lsp` binary.
+//! End-to-end tests for the language server over stdio.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdout, Command, Stdio, abort};
@@ -14,16 +7,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-/// The `aozora` binary under test.
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
-/// The document handle used for every handshake here — an opaque identifier the
-/// server only echoes back on `publishDiagnostics`, so one value serves all
-/// tests (each drives its own single-document server).
 const DOC_URI: &str = "file:///doc.aozora";
 
-/// Arm a watchdog that force-kills the whole test process if the server hangs,
-/// converting a deadlock into a visible failure rather than a wedged run.
 fn arm_watchdog() {
     thread::spawn(|| {
         thread::sleep(Duration::from_secs(30));
@@ -32,9 +19,6 @@ fn arm_watchdog() {
     });
 }
 
-/// Drive `initialize` (handshaking as `locale`) → `initialized` → `didOpen` (of
-/// `text`) and return the `diagnostics` array the server pushes for the opened
-/// document.
 fn open_and_collect_diagnostics(
     stdin: &mut impl Write,
     reader: &mut BufReader<ChildStdout>,
@@ -73,7 +57,6 @@ fn open_and_collect_diagnostics(
         }),
     );
 
-    // The server may interleave `window/logMessage` or other traffic first.
     loop {
         let msg = recv(reader);
         if msg["method"] == json!("textDocument/publishDiagnostics")
@@ -84,8 +67,6 @@ fn open_and_collect_diagnostics(
     }
 }
 
-/// Frame a JSON-RPC message with its `Content-Length` header and write it to
-/// the server's stdin.
 fn send(stdin: &mut impl Write, msg: &Value) {
     let body = serde_json::to_vec(msg).expect("serialize JSON-RPC message");
     write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).expect("write header");
@@ -93,7 +74,6 @@ fn send(stdin: &mut impl Write, msg: &Value) {
     stdin.flush().expect("flush stdin");
 }
 
-/// Read one `Content-Length`-framed JSON-RPC message off the server's stdout.
 fn recv(reader: &mut BufReader<ChildStdout>) -> Value {
     let mut content_length: Option<usize> = None;
     loop {
@@ -102,7 +82,7 @@ fn recv(reader: &mut BufReader<ChildStdout>) -> Value {
         assert!(n != 0, "server closed stdout before a full message arrived");
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
-            break; // blank line terminates the header block
+            break;
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
             content_length = Some(rest.trim().parse().expect("Content-Length is a number"));
@@ -114,7 +94,6 @@ fn recv(reader: &mut BufReader<ChildStdout>) -> Value {
     serde_json::from_slice(&body).expect("body is valid JSON")
 }
 
-/// A killed-on-drop child, so a hung server never wedges the test run.
 struct Daemon(Child);
 impl Drop for Daemon {
     fn drop(&mut self) {
@@ -139,8 +118,6 @@ fn in_process_lsp_completes_the_initialize_didopen_diagnostics_handshake() {
     let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
     let mut daemon = Daemon(child);
 
-    // Handshake + didOpen of a document with an unclosed bracket — the server
-    // must push at least one diagnostic back for it.
     let diagnostics =
         open_and_collect_diagnostics(&mut stdin, &mut reader, "本文［＃改ページ", "en");
     let diags = diagnostics.as_array().expect("diagnostics is an array");
@@ -148,14 +125,12 @@ fn in_process_lsp_completes_the_initialize_didopen_diagnostics_handshake() {
         !diags.is_empty(),
         "the unclosed bracket produces at least one diagnostic: {diagnostics}"
     );
-    // The code is the dotted `aozora::lex::*` contract the CLI shares.
     let codes: Vec<&str> = diags.iter().filter_map(|d| d["code"].as_str()).collect();
     assert!(
         codes.iter().any(|c| c.starts_with("aozora::lex::")),
         "diagnostic codes are the dotted aozora::lex::* contract: {codes:?}"
     );
 
-    // Orderly shutdown, then confirm a clean exit with no server panic.
     send(
         &mut stdin,
         &json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null }),
@@ -183,11 +158,6 @@ fn in_process_lsp_completes_the_initialize_didopen_diagnostics_handshake() {
     );
 }
 
-/// Spawn a fresh server that handshakes as `locale`, open a document that always
-/// yields a diagnostic, and return that diagnostic's localized `message`.
-/// `AOZORA_LANG` is cleared so the client's handshake locale — not the daemon's
-/// environment — is what resolves the UI language (it sits above the OS `LANG`
-/// in the precedence chain, so it decides regardless of the test host's `LANG`).
 fn first_diagnostic_message(locale: &str) -> String {
     let mut child = Command::new(BIN)
         .args(["lsp", "--stdio"])
@@ -210,19 +180,11 @@ fn first_diagnostic_message(locale: &str) -> String {
         .expect("the server reports a diagnostic with a message")
         .to_owned();
 
-    // Closing stdin is EOF to the stdio transport, so the server leaves its read
-    // loop and exits; the `Daemon` drop still guards against a hang.
     drop(stdin);
     let _exit = daemon.0.wait();
     message
 }
 
-/// The client's `initialize` locale — not the daemon's own environment — decides
-/// the server's UI language. Two fresh servers open the same document; the one
-/// that handshakes as Japanese must answer in a different language than the one
-/// that handshakes as English. Each server is its own process, so the resolved
-/// language — a process-global fixed by the first handshake — stays
-/// deterministic; a single shared process would let test order decide it.
 #[test]
 fn initialize_locale_decides_the_ui_language() {
     arm_watchdog();

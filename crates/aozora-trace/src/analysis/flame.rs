@@ -1,19 +1,3 @@
-//! Folded-stack format — feeds `flamegraph.pl` / inferno.
-//!
-//! Each line is `root;parent;…;leaf <samples>`.
-//!
-//! Brendan Gregg's folded-stack convention; both `flamegraph.pl` and
-//! `inferno-flamegraph` consume it directly, so we don't need to bake
-//! a flamegraph renderer into this crate.
-//!
-//! ## Why root-first
-//!
-//! `walk_stack` yields leaf-first.
-//!
-//! Folded-stack format expects root-first, so we reverse the walk
-//! before joining; the join uses `;` (the format's required
-//! separator).
-
 use std::collections::HashMap;
 
 use crate::Trace;
@@ -22,8 +6,7 @@ use crate::Trace;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FoldedStack {
-    /// Frame labels in root → leaf order (the order the folded-stack
-    /// format expects), ready to join with `;`.
+    /// Frame labels in root-to-leaf order, ready to join with `;`.
     pub stack: Vec<String>,
     /// Total sample weight that landed on this exact stack.
     pub samples: u64,
@@ -31,9 +14,7 @@ pub struct FoldedStack {
 
 /// Aggregate every (thread, sample) into a folded-stack list.
 ///
-/// Lines are deduplicated (identical stacks summed) and sorted by
-/// sample count descending — the inferno renderer doesn't care
-/// about order, but the descending sort makes the output greppable.
+/// Identical stacks are summed and sorted by sample count descending.
 #[must_use]
 pub fn folded_stacks(trace: &Trace) -> Vec<FoldedStack> {
     let mut grouped: HashMap<Vec<String>, u64> = HashMap::new();
@@ -42,8 +23,6 @@ pub fn folded_stacks(trace: &Trace) -> Vec<FoldedStack> {
             let Some(stack_idx) = sample.stack_idx else {
                 continue;
             };
-            // Walk leaf->root, then reverse so the stored stack is
-            // root->leaf to match folded-stack convention.
             let mut frames: Vec<String> = thread
                 .walk_stack(stack_idx)
                 .map(|fi| thread.frame_label(fi))
@@ -66,9 +45,6 @@ pub fn folded_stacks(trace: &Trace) -> Vec<FoldedStack> {
 pub fn render_folded(rows: &[FoldedStack]) -> String {
     let mut out = String::new();
     for r in rows {
-        // `;` is folded-stack's separator. Sanitise function names
-        // that happen to contain `;` (rare in Rust mangled names,
-        // but possible in raw addresses) by replacing with `:`.
         for (i, frame) in r.stack.iter().enumerate() {
             if i > 0 {
                 out.push(';');

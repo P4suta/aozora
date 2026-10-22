@@ -1,11 +1,3 @@
-// Regression guard for the preview webview's defense-in-depth against
-// HTML injection (the `aozora/renderHtml` -> webview path).
-//
-// A full render test needs the VS Code Electron harness; until that
-// exists, assert the security-critical configuration stays present in
-// `preview.ts` so it can never be silently weakened. Plain ESM + the
-// built-in `node:test` runner — no extra tooling, no types, and tsc
-// skips `.mjs`. Run with `node --test` (or `bun run test`).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

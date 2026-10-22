@@ -1,31 +1,14 @@
-//! Sorted-key map with cache-friendly binary search.
-//!
-//! Pairs an [`EytzingerArray`] of keys with a parallel `Vec` of values
-//! laid out in matching Eytzinger order, so a single search returns
-//! both the key index and the associated value with no second
-//! indirection.
-
 use std::vec::Vec;
 
 use crate::collections::eytzinger::EytzingerArray;
 
-/// Sorted-key, value-bearing map. Lookup by key is O(log n) with the
-/// cache-friendliness of [`EytzingerArray`].
-///
-/// Construction takes a sorted-ascending iterator of `(key, value)`
-/// pairs; both keys and values are reordered into Eytzinger layout in
-/// lockstep, so the matching `value` lives at the same index as its
-/// `key`.
 #[derive(Debug, Clone)]
 pub(crate) struct EytzingerMap<K, V> {
     keys: EytzingerArray<K>,
-    /// Values in Eytzinger order: `values[k]` corresponds to the key
-    /// at Eytzinger index `k`. Constructed lock-step with the keys.
     values: Vec<V>,
 }
 
 impl<K, V> EytzingerMap<K, V> {
-    /// Empty map.
     #[must_use]
     pub(crate) const fn new() -> Self {
         Self {
@@ -34,14 +17,12 @@ impl<K, V> EytzingerMap<K, V> {
         }
     }
 
-    /// Number of (key, value) pairs.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.keys.len()
     }
 
-    /// True iff zero pairs.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
@@ -56,22 +37,14 @@ impl<K, V> Default for EytzingerMap<K, V> {
 }
 
 impl<K: Ord, V> EytzingerMap<K, V> {
-    /// Look up `key`. Returns the matching value reference, or `None`.
     #[must_use]
     pub(crate) fn get(&self, key: &K) -> Option<&V> {
         let eytz = self.keys.search(key)?;
-        // The keys array is the source of truth for length and bounds;
-        // values is built in lockstep, so this index is always valid.
         self.values.get(eytz)
     }
 }
 
 impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
-    /// Construct from a sorted-ascending slice of `(key, value)` pairs.
-    ///
-    /// # Panics
-    ///
-    /// Panics in debug builds if the keys are not sorted ascending.
     #[must_use]
     pub(crate) fn from_sorted_slice(sorted: &[(K, V)]) -> Self {
         Self::from_sorted_by(sorted, Clone::clone)
@@ -114,7 +87,6 @@ impl<K: Ord + Clone, V: Clone> EytzingerMap<K, V> {
         }
     }
 
-    /// Iterate `(key, value)` pairs in ascending key order. O(n).
     #[cfg(test)]
     #[must_use]
     pub(crate) fn iter_sorted(&self) -> SortedIter<'_, K, V> {
@@ -149,8 +121,6 @@ impl IndexPlacer<'_> {
     }
 }
 
-/// In-order iterator over an [`EytzingerMap`]. Yields `(key, value)`
-/// pairs in ascending key order.
 #[derive(Debug)]
 #[cfg(test)]
 pub(crate) struct SortedIter<'a, K, V> {
@@ -176,8 +146,6 @@ impl<'a, K, V> Iterator for SortedIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<(&'a K, &'a V)> {
-        // See `EytzingerArray::SortedIter::next` for why no outer loop
-        // is needed — same descend-and-pop cycle, paired key + value.
         let n = self.map.len();
         while let Some(node) = self.descend
             && node < n
@@ -189,7 +157,6 @@ impl<'a, K, V> Iterator for SortedIter<'a, K, V> {
 
         let node = self.stack.pop()?;
         self.descend = Some(2 * node + 2);
-        // Both arrays are length n by construction.
         let k = self.map.keys.get(node)?;
         let v = self.map.values.get(node)?;
         Some((k, v))
@@ -258,7 +225,6 @@ mod tests {
             for (k, v) in &pairs {
                 assert_eq!(m.get(k), Some(v), "size={n} key={k}");
             }
-            // Odd numbers (gaps in the key set) must miss.
             for k in 0..n {
                 assert_eq!(m.get(&(k * 2 + 1)), None, "size={n} odd key={}", k * 2 + 1);
             }
@@ -269,7 +235,6 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "sorted ascending")]
     fn debug_panic_on_unsorted_keys() {
-        // Body is the panic, not the return value — drop explicitly.
         drop(EytzingerMap::from_sorted_slice(&[(3u32, ()), (1, ())]));
     }
 
@@ -287,13 +252,11 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Map lookup must agree with HashMap-equivalent ground truth.
         #[test]
         fn map_get_matches_linear_lookup(
             mut pairs in vec_strategy((0u32..1_000, any::<u32>()), 0..200),
             probes in vec_strategy(0u32..1_000, 0..50),
         ) {
-            // Deduplicate by key (last write wins) and sort.
             pairs.sort_by_key(|(k, _)| *k);
             pairs.dedup_by_key(|(k, _)| *k);
             let m = EytzingerMap::from_sorted_slice(&pairs);
@@ -304,7 +267,6 @@ mod proptests {
             }
         }
 
-        /// Sorted iteration must yield the original input order.
         #[test]
         fn iter_sorted_round_trips(
             mut pairs in vec_strategy((0u32..1_000, any::<u32>()), 0..200),

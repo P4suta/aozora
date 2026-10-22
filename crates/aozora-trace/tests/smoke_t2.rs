@@ -1,8 +1,4 @@
-//! Smoke test: load a sample samply trace, symbolicate it, and
-//! verify the analyses return non-empty, sensible reports.
-//!
-//! Skipped when the trace file isn't available — required only on
-//! the host that just ran `just samply-corpus`.
+//! Smoke checks for saved samply traces, skipped when the input file is unavailable.
 
 use std::env;
 use std::fs;
@@ -32,7 +28,6 @@ fn full_workflow_t2_trace() {
     assert!(trace.total_samples() > 1000);
     assert!(trace.libs.len() >= 3);
 
-    // Symbolicate via DWARF in the binary.
     let mut sym = Symbolicator::new();
     sym.add_binary("throughput_by_class", Path::new(BINARY_PATH))
         .expect("loader");
@@ -42,8 +37,6 @@ fn full_workflow_t2_trace() {
     assert!(resolved > 0, "DWARF resolution returned nothing");
     assert!(resolved <= attempted);
 
-    // Hot leaves — should have a non-empty list and the top frame
-    // should not be an unresolved hex address.
     let hot = analysis::hot_leaves(&trace, 5);
     assert!(!hot.rows.is_empty());
     assert!(
@@ -52,11 +45,9 @@ fn full_workflow_t2_trace() {
         hot.rows[0].label
     );
 
-    // Library distribution — must include the binary.
     let libs = analysis::library_distribution(&trace);
     assert!(libs.rows.iter().any(|r| r.library == "throughput_by_class"));
 
-    // Rollup with built-in aozora defaults.
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
     let roll = analysis::rollup(&trace, &cat);
     let known = ["scan", "tokenize", "memchr_scan"];
@@ -67,13 +58,11 @@ fn full_workflow_t2_trace() {
         );
     }
 
-    // Folded stacks → at least 1 line.
     let folded = analysis::folded_stacks(&trace);
     assert!(!folded.is_empty());
     let folded_text = analysis::render_folded(&folded);
     assert!(folded_text.contains(';') || !folded.is_empty());
 
-    // Render each report — must not panic and must produce > 0 chars.
     assert!(!hot.render_table().is_empty());
     assert!(!libs.render_table().is_empty());
     assert!(!roll.render_table().is_empty());
@@ -89,7 +78,6 @@ fn cache_round_trip_t2_trace() {
     sym.add_binary("throughput_by_class", Path::new(BINARY_PATH))
         .expect("loader");
 
-    // Resolve, persist, load back, apply to a fresh trace.
     let mut cache = SymbolCache::default();
     let (n_resolved, _) = sym.resolve_into(&mut trace, &mut cache);
     assert!(n_resolved > 0);
@@ -114,7 +102,6 @@ fn cache_round_trip_t2_trace() {
 fn category_compile_round_trips() {
     let cfg = RollupConfig::aozora_defaults();
     let cat = cfg.compile().expect("compile");
-    // Spot-check a known function name from the trace.
     assert_eq!(
         cat.classify("aho_corasick::packed::teddy::generic::Slim<V,3_usize>::find"),
         "scan"

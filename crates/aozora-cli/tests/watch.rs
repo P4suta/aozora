@@ -9,8 +9,6 @@ mod common;
 
 #[test]
 fn watch_on_stdin_is_a_usage_error() {
-    // `--watch -` cannot watch a pipe; it must fail fast with exit 2 and
-    // never enter the watch loop.
     let mut child = common::hermetic_command()
         .args(["check", "--watch", "-"])
         .stdin(Stdio::piped())
@@ -18,7 +16,6 @@ fn watch_on_stdin_is_a_usage_error() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn aozora");
-    // Close stdin so the child cannot block on a read.
     drop(child.stdin.take());
     let deadline = Instant::now() + Duration::from_secs(2);
     while child.try_wait().expect("poll aozora").is_none() {
@@ -78,7 +75,6 @@ fn watch_reruns_on_change() {
     child.kill().expect("kill watch");
     let output = child.wait_with_output().expect("wait for aozora");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The initial render plus the post-edit render both reached stdout.
     assert!(
         stdout.matches("ruby").count() >= 2,
         "watch re-rendered on change: {stdout:?}"

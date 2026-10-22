@@ -1,10 +1,3 @@
-//! Smoke tests for the language server's pure helper surface. The tower-lsp
-//! backend itself is driven end-to-end in [`super::backend`]'s `e2e` module (an
-//! in-crate `#[cfg(test)]` harness that builds the real `LspService`, drives it
-//! as a `tower::Service`, and drains the loopback `ClientSocket` — no
-//! stdin/stdout framing needed). These smoke tests stay focused on the pure
-//! provider helpers (diagnostics / format / hover).
-
 use tower_lsp::lsp_types::{DiagnosticSeverity, HoverContents, Position};
 
 use super::diagnostics::diagnostics_for_source;
@@ -12,8 +5,6 @@ use super::formatting::format_edits;
 use super::hover::hover_at;
 use crate::i18n::LanguageIdentifier;
 
-/// The pinned message language for these pure-helper smoke checks — the
-/// providers are locale-parameterised, so pin English for determinism.
 fn en() -> LanguageIdentifier {
     "en".parse().expect("en parses")
 }
@@ -27,9 +18,6 @@ fn plain_text_yields_no_diagnostics_and_no_edits() {
 
 #[test]
 fn pua_collision_produces_warning_diagnostic() {
-    // PUA collision triggers SourceContainsPua plus an internal
-    // sanity-check; at least one warning-severity diagnostic must
-    // surface.
     let src = "oops\u{E001}here";
     let diags = diagnostics_for_source(src, &en());
     assert!(
@@ -42,8 +30,6 @@ fn pua_collision_produces_warning_diagnostic() {
 
 #[test]
 fn redundant_bar_ruby_reformats_to_bare() {
-    // Bare ruby is canonical (all-kanji base at line start, ADR 0002/0003);
-    // a redundant explicit ｜ canonicalises away to the bare form.
     let src = "｜日本《にほん》";
     let edits = format_edits(src);
     assert_eq!(edits.len(), 1, "a redundant ｜ should produce one edit");
@@ -56,7 +42,6 @@ fn redundant_bar_ruby_reformats_to_bare() {
 
 #[test]
 fn canonical_ruby_reformats_to_itself() {
-    // Bare ruby with an all-kanji base is already canonical → no edits.
     let src = "日本《にほん》";
     assert!(format_edits(src).is_empty());
 }
@@ -71,7 +56,6 @@ fn hover_on_known_gaiji_mentions_resolved_character() {
         HoverContents::Markup(m) => m.value,
         _ => panic!("expected Markdown hover"),
     };
-    // JIS X 0213:2004 plane 1 row 85 cell 54 = 枘 (U+6798).
     assert!(md.contains("枘") || md.contains("6798"));
 }
 

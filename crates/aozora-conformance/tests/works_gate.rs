@@ -1,34 +1,10 @@
-//! Byte-identical golden-HTML gate over a small set of REAL 青空文庫
-//! works.
+//! Golden-HTML checks for vendored Aozora Bunko works.
 //!
-//! The crafted per-family fixtures under `fixtures/render/` isolate one
-//! notation construct each. This gate is complementary: it renders a
-//! lean, hand-picked set of *whole* public-domain works — the CRLF is
-//! normalised to LF and the source is vendored verbatim under
-//! `fixtures/works/<slug>/source.txt` — and byte-compares
-//! `aozora::parse(src).expect("source fits parser span limit").snapshot().to_html()` to the committed
-//! `expected.html`. Its job is to catch rendering drift on the
-//! notation *combinations* real works exhibit (ruby beside 傍点 beside
-//! 縦中横 beside 字下げ …) that the single-construct fixtures cannot see.
-//!
-//! It is corpus-free: the works are vendored, so the gate reads no
-//! `AOZORA_CORPUS_ROOT` and always runs — it lives in the `conformance`
-//! CI job next to the spec-vector and reference-grammar checks.
-//!
-//! The committed golden is the parser's *own* `to_html()` output — a
-//! drift-detection baseline, not an independent oracle. After an
-//! intentional renderer change, regenerate and review the diff:
+//! After an intentional renderer change, regenerate and review the diff:
 //!
 //! ```text
 //! UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate
 //! ```
-//!
-//! The original 14 works were hand-picked; the rest were selected reproducibly
-//! by `xtask corpus select-works` (a deterministic greedy family set-cover under
-//! a source-byte budget) — see `fixtures/works-selection.toml` for each work's
-//! corpus path and family profile. Rather than hand-maintain a "families
-//! exercised" table, `works_family_coverage_holds` pins the union of `aozora-*`
-//! render classes the whole set covers (`fixtures/works/COVERAGE.txt`).
 
 use std::collections::BTreeSet;
 use std::{env, fs};
@@ -57,11 +33,6 @@ fn load_works_fixtures() -> Vec<RenderFixture> {
     fixtures
 }
 
-/// The set of `aozora-*` render classes the whole works golden set exercises —
-/// an executable replacement for a hand-maintained "families exercised" table.
-/// Deleting a fixture that was the sole source of a class fails this test; new
-/// classes are fine (the check is coverage ⊇ baseline). Re-seed the committed
-/// `works/COVERAGE.txt` with `UPDATE_GOLDEN=1`.
 #[test]
 fn works_family_coverage_holds() {
     let mut classes: BTreeSet<String> = BTreeSet::new();
@@ -97,7 +68,6 @@ fn works_family_coverage_holds() {
     );
 }
 
-/// Collect every `aozora-<token>` run (render class) appearing in `html`.
 fn collect_aozora_classes(html: &str, out: &mut BTreeSet<String>) {
     let bytes = html.as_bytes();
     let mut i = 0;

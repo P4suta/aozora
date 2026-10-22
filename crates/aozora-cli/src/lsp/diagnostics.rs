@@ -3,32 +3,7 @@
     reason = "diagnostic codes are normalized to a non-empty final segment"
 )]
 
-//! aozora lexer diagnostic → LSP `Diagnostic` adapter.
-//!
-//! The machine *catalogue* — codes, severities, documentation URLs — is
-//! single-sourced in the `aozora` spec layer (surfaced through the crate
-//! facade), the same authority `aozora check` and `aozora explain` render
-//! from. The human-facing prose — the one-line title and the verbose body —
-//! comes from the shared Fluent localization catalog keyed by diagnostic code, the same
-//! catalog the CLI's `explain` and human report use. This module is a thin
-//! adapter: it maps each [`aozora::Diagnostic`] onto a `tower_lsp`
-//! [`Diagnostic`], converting byte spans into line/UTF-16 coordinates via a
-//! [`DocLineView`] and attaching a serialised quick-fix [`DiagnosticPayload`]
-//! for the `code_action` handler.
-//!
-//! The message language is the server's UI language (`super::server_locale::ui_lang`,
-//! resolved once at startup from `AOZORA_LANG > LANG > en`), threaded in as
-//! `lang` by the backend so a `ja`/`zh` editor gets localized diagnostic
-//! prose. The machine axis — code, severity, span, documentation URL — is
-//! unchanged by the locale.
-//!
-//! `DiagnosticPayload` / `SerializablePairKind` live here (not in the
-//! catalogue crate) because they are an LSP concern: the `data` channel and
-//! the `WorkspaceEdit` the quick-fix builds. `code_action` imports them from
-//! `crate::lsp::diagnostics`.
-
 use aozora::InternalCheckCode;
-// `Document` is reached only by the `#[cfg(test)]` `diagnostics_for_source`.
 use aozora::{Diagnostic as AozoraDiagnostic, PairKind, Severity};
 
 use crate::i18n::{self as i18n, FluentArgs, LanguageIdentifier};
@@ -39,60 +14,32 @@ use tower_lsp::lsp_types::{
 
 use crate::lsp::doc_line_view::DocLineView;
 
-/// Serialised payload attached to an LSP diagnostic's `data` field. Lets the
-/// `code_action` quick-fix handler build an edit without re-parsing or
-/// re-classifying the offending span.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub(crate) enum DiagnosticPayload {
-    /// `UnclosedBracket` — the open delimiter is here; the missing close is
-    /// `expected_close`.
     UnclosedBracket {
-        /// Which delimiter pair was left open.
         pair_kind: SerializablePairKind,
-        /// The close delimiter that would balance it.
         expected_close: String,
     },
-    /// `UnmatchedClose` — the close delimiter is here without a matching open.
     UnmatchedClose {
-        /// Which delimiter pair the stray close belongs to.
         pair_kind: SerializablePairKind,
     },
-    /// `SourceContainsPua` — a private-use codepoint clashes with the lexer's
-    /// sentinel reservations.
     SourceContainsPua {
-        /// The offending Unicode scalar value.
         codepoint: u32,
     },
-    /// `ResidualAnnotationMarker` — a `［＃...］` pair survived classification
-    /// (likely a typo or unsupported keyword); no automatic fix.
     ResidualAnnotationMarker,
-    /// `NonCanonicalDirective` — the flagged `［＃…］` body is a verified
-    /// near-miss; `canonical` is the catalogue spelling the quick-fix
-    /// substitutes (bracket span and all).
     NonCanonicalDirective {
-        /// The canonical directive body (without the `［＃` / `］` delimiters).
         canonical: String,
     },
 }
 
-/// Serde-stable stringification of [`PairKind`] for the `data` channel.
-///
-/// The delimiter glyphs themselves come from [`PairKind::open_str`] /
-/// [`PairKind::close_str`] (the single authority); this enum only pins the
-/// kebab-case wire tags the quick-fix payload round-trips through.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum SerializablePairKind {
-    /// `［` … `]`
     Bracket,
-    /// `《` … `》`
     Ruby,
-    /// `≪` … `≫`
     AngleQuote,
-    /// `〔` … `〕`
     Tortoise,
-    /// `「` … `」`
     Quote,
 }
 
@@ -112,7 +59,6 @@ impl TryFrom<PairKind> for SerializablePairKind {
 }
 
 impl SerializablePairKind {
-    /// The [`PairKind`] this tag denotes.
     const fn pair_kind(self) -> PairKind {
         match self {
             Self::Bracket => PairKind::Bracket,
@@ -123,20 +69,15 @@ impl SerializablePairKind {
         }
     }
 
-    /// Open delimiter literal — delegates to the [`PairKind`] authority.
     pub(crate) const fn open_str(self) -> &'static str {
         self.pair_kind().open_str()
     }
 
-    /// Close delimiter literal — delegates to the [`PairKind`] authority.
     pub(crate) const fn close_str(self) -> &'static str {
         self.pair_kind().close_str()
     }
 }
 
-/// Parse `source` and return its diagnostics in LSP shape, with the human
-/// prose rendered in `lang`. A `&str`-source convenience used by the in-module
-/// tests; the server handlers go through [`diagnostics_from_aozora`] directly.
 #[cfg(test)]
 #[must_use]
 pub(crate) fn diagnostics_for_source(source: &str, lang: &LanguageIdentifier) -> Vec<Diagnostic> {
@@ -146,35 +87,23 @@ pub(crate) fn diagnostics_for_source(source: &str, lang: &LanguageIdentifier) ->
     diagnostics_from_aozora(&view, tree.diagnostics(), lang)
 }
 
-/// Map a slice of pre-computed `aozora` [`AozoraDiagnostic`]s to LSP diagnostics.
-///
-/// The LSP backend's `publishDiagnostics` path uses this with the diagnostics
-/// already held in the parse cache, skipping a re-parse. `view` maps each
-/// diagnostic's byte span onto an LSP position — rope-backed on the publish
-/// hot path (no per-keystroke line-table rebuild) or `&str`-backed elsewhere.
 #[must_use]
 pub(super) fn diagnostics_from_aozora(
     view: &DocLineView<'_>,
     diagnostics: &[AozoraDiagnostic],
     lang: &LanguageIdentifier,
 ) -> Vec<Diagnostic> {
-    // `lang` is the server's UI language, resolved once at startup and threaded
-    // in by the backend — the whole batch renders in one locale.
     diagnostics.iter().map(|d| to_lsp(view, d, lang)).collect()
 }
 
-/// Map `aozora`'s [`Severity`] onto the LSP severity enum.
 fn to_lsp_severity(severity: Severity) -> DiagnosticSeverity {
     match severity {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
-        // `Severity` is `#[non_exhaustive]`; `Note` and any future variant
-        // surface as informational rather than failing the build here.
         Severity::Note | _ => DiagnosticSeverity::INFORMATION,
     }
 }
 
-/// Build the serialised quick-fix payload for a diagnostic, if it has a fix.
 fn quick_fix_payload(d: &AozoraDiagnostic) -> Option<DiagnosticPayload> {
     match d {
         AozoraDiagnostic::SourceContainsPua { codepoint, .. } => {
@@ -201,8 +130,6 @@ fn quick_fix_payload(d: &AozoraDiagnostic) -> Option<DiagnosticPayload> {
             check: InternalCheckCode::ResidualAnnotationMarker,
             ..
         } => Some(DiagnosticPayload::ResidualAnnotationMarker),
-        // Every other variant (including the other three internal checks) has
-        // no automatic fix; `#[non_exhaustive]` requires the wildcard.
         _ => None,
     }
 }
@@ -218,10 +145,6 @@ fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic, lang: &LanguageIdentifie
     let span = d.span();
     let start = view.position(span.start as usize);
     let end = view.position(span.end as usize);
-    // Title + body come from the shared i18n catalog keyed by the code; the
-    // body's instance specifics (the offending delimiter, codepoint, canonical
-    // spelling) are interpolated from this live diagnostic's `body_args`. The
-    // documentation URL is the machine axis, read from the catalogue crate.
     let info = AozoraDiagnostic::explain(d.code())
         .expect("every emitted diagnostic code is catalogued in aozora-spec");
     let title = i18n::diag_title(lang, d.code());
@@ -260,9 +183,6 @@ mod tests {
         "en".parse().expect("en parses")
     }
 
-    /// Shim mirroring the pre-i18n `diagnostics_for_source(source)` arity,
-    /// pinned to English so the prose assertions below stay locale-stable
-    /// (they already asserted the canonical English wording).
     fn diagnostics_for_source(source: &str) -> Vec<Diagnostic> {
         super::diagnostics_for_source(source, &en())
     }
@@ -308,7 +228,6 @@ mod tests {
 
     #[test]
     fn unclosed_bracket_message_carries_example_and_close_char() {
-        // `［＃改ページ` (no closing ］) — must surface as UnclosedBracket.
         let src = "本文［＃改ページ";
         let diags = diagnostics_for_source(src);
         let unclosed = diags
@@ -329,7 +248,6 @@ mod tests {
 
     #[test]
     fn unmatched_close_message_lists_three_causes() {
-        // `］` without a leading `［` — surfaces as UnmatchedClose.
         let src = "本文 ］";
         let diags = diagnostics_for_source(src);
         let unmatched = diags
@@ -350,8 +268,6 @@ mod tests {
 
     #[test]
     fn every_diagnostic_has_a_title_and_body() {
-        // No generic fallthrough: every emitted diagnostic carries real
-        // catalogue prose (a title line, a blank line, then the body).
         let src = "本文［＃改ページ";
         let diags = diagnostics_for_source(src);
         assert!(!diags.is_empty());
@@ -389,9 +305,6 @@ mod tests {
 
     #[test]
     fn serializable_pair_kind_open_and_close_str_match_authority() {
-        // Each wire tag stringifies to the exact `PairKind` glyph via the
-        // spec authority; a stubbed body (`""` / `"xyzzy"`) is caught per
-        // variant for both `open_str` and `close_str`.
         let cases = [
             (SerializablePairKind::Bracket, "［", "］"),
             (SerializablePairKind::Ruby, "《", "》"),
@@ -417,8 +330,6 @@ mod tests {
 
     #[test]
     fn quick_fix_payload_maps_unmatched_close_to_its_pair_kind() {
-        // Deleting the `UnmatchedClose` arm drops the payload to `None`
-        // via the `_` fallthrough; pin both presence and the carried kind.
         let d = AozoraDiagnostic::unmatched_close(Span::new(3, 6), PairKind::Ruby);
         let payload = quick_fix_payload(&d);
         assert!(
@@ -434,8 +345,6 @@ mod tests {
 
     #[test]
     fn quick_fix_payload_carries_canonical_for_non_canonical_directive() {
-        // Deleting the `NonCanonicalDirective` arm drops the payload to
-        // `None`; the canonical spelling must round-trip into the payload.
         let d = AozoraDiagnostic::non_canonical_directive(Span::new(0, 9), "中央揃え");
         let payload = quick_fix_payload(&d);
         let Some(DiagnosticPayload::NonCanonicalDirective { canonical }) = payload else {
@@ -446,8 +355,6 @@ mod tests {
 
     #[test]
     fn quick_fix_payload_maps_residual_annotation_marker() {
-        // Deleting the `Internal { ResidualAnnotationMarker }` arm drops the
-        // payload to `None`; pin that this internal check gets its payload.
         let d = AozoraDiagnostic::internal(
             Span::new(0, 1),
             InternalCheckCode::ResidualAnnotationMarker,
@@ -478,11 +385,6 @@ mod tests {
 
     #[test]
     fn to_lsp_range_reflects_diagnostic_span_not_default() {
-        // `𠮷` is astral (4 bytes, 2 UTF-16 units); `文` is BMP (3 bytes,
-        // 1 unit). The stray close `］` occupies bytes 7..10, i.e. UTF-16
-        // columns 3..4 — distinct from any byte-offset reading and from
-        // `Range::default()` = (0,0)-(0,0), so dropping the `range` field
-        // from the built `Diagnostic` is caught.
         let source = "𠮷文］";
         let view = DocLineView::from_source(source);
         let d = AozoraDiagnostic::unmatched_close(Span::new(7, 10), PairKind::Bracket);
@@ -497,10 +399,7 @@ mod tests {
 
     #[test]
     fn diagnostic_prose_follows_the_requested_lang() {
-        // W7: the LSP threads the server lang into the shared catalog. The same
-        // diagnostic renders an English headline by default and a Japanese one
-        // under `ja`; the code / severity / range are unchanged by the locale.
-        let src = "本文［＃改ページ"; // unclosed bracket
+        let src = "本文［＃改ページ";
         let ja: LanguageIdentifier = "ja".parse().expect("ja parses");
         let msg = |lang: &LanguageIdentifier| {
             super::diagnostics_for_source(src, lang)
@@ -518,7 +417,6 @@ mod tests {
 
     #[test]
     fn codes_use_the_canonical_dotted_form() {
-        // Editor `code` strings match the CLI / book / `aozora explain` set.
         let diags = diagnostics_for_source("本文 ］");
         assert!(
             diags.iter().all(|d| {

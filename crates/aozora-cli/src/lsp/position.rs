@@ -1,20 +1,5 @@
-//! Byte-offset ↔ LSP `Position` conversion.
-//!
-//! LSP 3.17 `Position` is `{ line, character }` with `character` in
-//! **UTF-16 code units** from the start of the line; the aozora lexer
-//! works in byte offsets. Conversions are `O(byte_offset)`: the newline
-//! scans use `str::matches('\n')` / `rfind('\n')` / `match_indices`,
-//! which lower to memchr/memrchr SIMD, plus a short UTF-16 walk of the
-//! current line.
-
 use tower_lsp::lsp_types::Position;
 
-/// Convert a byte offset in `source` into an LSP `Position`.
-///
-/// Clamps to `source.len()` if `byte_offset` overshoots — LSP clients
-/// treat an out-of-range position as end-of-buffer anyway, and
-/// failing loudly here would just translate the lexer's "probably a
-/// bug" into "definitely a panic".
 #[must_use]
 pub(super) fn byte_offset_to_position(source: &str, byte_offset: usize) -> Position {
     let byte_offset = byte_offset.min(source.len());
@@ -26,21 +11,12 @@ pub(super) fn byte_offset_to_position(source: &str, byte_offset: usize) -> Posit
     Position::new(line, col)
 }
 
-/// Convert an LSP `Position` back into a byte offset in `source`.
-///
-/// Returns `None` if the position names a line past the end of the
-/// buffer; UTF-16 characters past the end of their line clamp to the
-/// line end (matching most LSP clients' own behaviour).
 #[must_use]
 pub(super) fn position_to_byte_offset(source: &str, position: Position) -> Option<usize> {
-    // Locate the start of `position.line`. Line N starts immediately
-    // after the (N-1)-th `\n` in source order; line 0 starts at byte 0.
     let line_start = if position.line == 0 {
         0
     } else {
         let target_index = (position.line as usize).checked_sub(1)?;
-        // `match_indices('\n')` lowers to `memchr_iter`, so this
-        // walks newlines at SIMD speed instead of byte-by-byte.
         let (newline_pos, _) = source.match_indices('\n').nth(target_index)?;
         newline_pos + 1
     };
@@ -86,7 +62,6 @@ mod tests {
 
     #[test]
     fn utf8_multibyte_uses_utf16_column() {
-        // 「あ」は UTF-8 で 3 バイト、UTF-16 で 1 code unit。
         let src = "あいう";
         assert_eq!(byte_offset_to_position(src, 3), Position::new(0, 1));
         assert_eq!(byte_offset_to_position(src, 6), Position::new(0, 2));
@@ -95,9 +70,7 @@ mod tests {
 
     #[test]
     fn surrogate_pair_counts_two_utf16_units() {
-        // U+1F600 (😀) は UTF-16 でサロゲートペア (2 code unit)。
         let src = "a😀b";
-        // 1 (a) + 2 (😀 surrogate pair) + 1 (b) = 4 UTF-16 code units
         assert_eq!(byte_offset_to_position(src, 5), Position::new(0, 3));
         assert_eq!(byte_offset_to_position(src, 6), Position::new(0, 4));
     }
@@ -124,7 +97,6 @@ mod tests {
     #[test]
     fn utf16_column_past_line_end_clamps_to_line_end() {
         let src = "abc\ndef";
-        // asking for column 99 on line 0 returns the line-end byte (3)
         assert_eq!(position_to_byte_offset(src, Position::new(0, 99)), Some(3));
     }
 

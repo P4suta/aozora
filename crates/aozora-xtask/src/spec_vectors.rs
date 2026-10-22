@@ -1,25 +1,3 @@
-//! Spec-vector vendoring: `check` / `sync` against the sibling spec repo.
-//!
-//! The [`aozora-notation-spec`](https://github.com/P4suta/aozora-notation-spec)
-//! sibling repository is the single source of truth for the conformance
-//! corpus. A copy is vendored under
-//! `crates/aozora-conformance/spec-vectors/` so local and cloud
-//! conformance gates run the vectors without a network
-//! round-trip or a checked-out sibling.
-//!
-//! - `sync` copies the vectors + schema + `RUNNER.md` out of the sibling's
-//!   `conformance/` subtree into the vendored copy. The spec wins: never
-//!   hand-edit the vendored files, edit the spec and re-sync. Vendored-only
-//!   files (`README.md`, `tree-sitter-snapshot.json`) are parser-repo-owned
-//!   and left untouched.
-//! - `check` fails when the source is missing or the vendored copy has
-//!   drifted. `just verify-spec-vectors` provides the optional local
-//!   convenience path; release qualification always supplies the pinned
-//!   source checkout.
-//!
-//! Override the sibling location with `AOZORA_SPEC_REPO` (absolute, or
-//! relative to the workspace root); it defaults to `../aozora-notation-spec`.
-
 use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
@@ -31,21 +9,13 @@ use walkdir::WalkDir;
 
 use crate::{SpecVectorsArgs, SpecVectorsOp};
 
-/// The vendored copy, relative to the workspace root.
 const DEST_REL: &str = "crates/aozora-conformance/spec-vectors";
-/// The sibling spec's subtree that gets vendored.
 const SPEC_CONFORMANCE_REL: &str = "conformance";
-/// Default sibling checkout, relative to the workspace root.
 const DEFAULT_SPEC_REL: &str = "../aozora-notation-spec";
-/// Environment override for the sibling spec location.
 const SPEC_REPO_ENV: &str = "AOZORA_SPEC_REPO";
 
-/// The `vectors/` corpus directory (recursively vendored).
 const VECTORS_SUBDIR: &str = "vectors";
-/// The JSON Schema the vectors validate against, relative to `conformance/`
-/// (spec side) and the vendored root (dest side).
 const SCHEMA_REL: &str = "schema/vector.schema.json";
-/// The must/should/may comparison contract.
 const RUNNER_REL: &str = "RUNNER.md";
 
 pub(crate) fn dispatch(args: &SpecVectorsArgs) -> Result<(), String> {
@@ -56,7 +26,6 @@ pub(crate) fn dispatch(args: &SpecVectorsArgs) -> Result<(), String> {
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
-    // <workspace>/crates/aozora-xtask/Cargo.toml → workspace root is two up.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let root = Path::new(manifest_dir)
         .parent()
@@ -67,14 +36,10 @@ fn workspace_root() -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-/// Resolve the sibling spec repo: `AOZORA_SPEC_REPO` (absolute as-is, or
-/// relative to the workspace root) else `../aozora-notation-spec`.
 fn spec_repo(root: &Path) -> PathBuf {
     resolve_spec_repo(root, env::var_os(SPEC_REPO_ENV))
 }
 
-/// Pure resolver behind [`spec_repo`] — split out so the override rules are
-/// testable without mutating process-global environment.
 fn resolve_spec_repo(root: &Path, override_var: Option<OsString>) -> PathBuf {
     override_var.map_or_else(
         || root.join(DEFAULT_SPEC_REL),
@@ -154,9 +119,6 @@ fn sync() -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("schema path has no parent: {}", dest_schema.display()))?;
 
-    // Replace vectors/ + schema/ wholesale so deletions in the spec
-    // propagate — a leftover vector would otherwise linger. The
-    // vendored-only files sit outside these subtrees and remain untouched.
     remove_dir_if_present(&dest_vectors)?;
     remove_dir_if_present(dest_schema_dir)?;
     fs::create_dir_all(&dest_vectors)
@@ -180,9 +142,6 @@ fn sync() -> Result<(), String> {
     Ok(())
 }
 
-/// Collect the byte-relative file paths under `root` (recursively, sorted).
-/// A missing `root` yields the empty set so the caller reports every file
-/// on the other side as drift rather than erroring.
 fn collect_files(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     let mut out = BTreeSet::new();
     if !root.exists() {
@@ -190,7 +149,6 @@ fn collect_files(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     }
     for entry in WalkDir::new(root).sort_by_file_name() {
         let entry = entry.map_err(|e| format!("walk {}: {e}", root.display()))?;
-        // Every non-directory entry (the corpus is plain files, no symlinks).
         if !entry.file_type().is_dir() {
             let rel = entry
                 .path()
@@ -203,9 +161,6 @@ fn collect_files(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     Ok(out)
 }
 
-/// Byte-exact recursive comparison of two directory trees (the moral
-/// equivalent of `diff -r`). Appends a human label per divergence to
-/// `drift`; the `vectors/` prefix names the vendored subtree.
 fn diff_tree(spec_dir: &Path, dest_dir: &Path, drift: &mut Vec<String>) -> Result<(), String> {
     let spec_files = collect_files(spec_dir)?;
     let dest_files = collect_files(dest_dir)?;
@@ -228,15 +183,12 @@ fn diff_tree(spec_dir: &Path, dest_dir: &Path, drift: &mut Vec<String>) -> Resul
                     drift.push(format!("differs: {label}"));
                 }
             }
-            // `all` is the union of the two sets, so every element is in at
-            // least one of them.
             (false, false) => {}
         }
     }
     Ok(())
 }
 
-/// Byte-exact comparison of a single vendored file against the spec.
 fn diff_file(
     label: &str,
     spec_file: &Path,
@@ -264,7 +216,6 @@ fn remove_dir_if_present(dir: &Path) -> Result<(), String> {
     }
 }
 
-/// Recursively copy `src` into an existing `dst` directory.
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     for entry in fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))? {
         let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", src.display()))?;
@@ -295,7 +246,6 @@ mod tests {
 
     use super::*;
 
-    /// A self-cleaning scratch directory (mirrors `grammar::ScratchDir`).
     struct Scratch {
         path: PathBuf,
     }
@@ -343,12 +293,9 @@ mod tests {
         let s = Scratch::new("drift");
         let src = s.path.join("src");
         let dst = s.path.join("dst");
-        // Shared file with different content → "differs".
         write(&src.join("shared/vector.json"), "spec");
         write(&dst.join("shared/vector.json"), "vendored");
-        // Only in spec → "missing from vendored".
         write(&src.join("only_spec/vector.json"), "x");
-        // Only in dest → "stale in vendored".
         write(&dst.join("only_dst/vector.json"), "y");
 
         let mut drift = Vec::new();
@@ -373,20 +320,17 @@ mod tests {
         let spec = s.path.join("spec.md");
         write(&spec, "canonical");
 
-        // Identical → no drift.
         let same = s.path.join("same.md");
         write(&same, "canonical");
         let mut drift = Vec::new();
         diff_file("RUNNER.md", &spec, &same, &mut drift).expect("diff_file");
         assert!(drift.is_empty(), "identical file is clean: {drift:?}");
 
-        // Different content → "differs".
         let other = s.path.join("other.md");
         write(&other, "edited");
         diff_file("RUNNER.md", &spec, &other, &mut drift).expect("diff_file");
         assert_eq!(drift, vec!["differs: RUNNER.md"]);
 
-        // Absent vendored file → "missing from vendored".
         drift.clear();
         diff_file("RUNNER.md", &spec, &s.path.join("nope.md"), &mut drift).expect("diff_file");
         assert_eq!(drift, vec!["missing from vendored: RUNNER.md"]);
@@ -395,17 +339,14 @@ mod tests {
     #[test]
     fn spec_repo_honours_absolute_and_relative_override() {
         let root = Path::new("/ws");
-        // Absolute override → used as-is.
         assert_eq!(
             resolve_spec_repo(root, Some(OsString::from("/elsewhere/spec"))),
             PathBuf::from("/elsewhere/spec")
         );
-        // Relative override → joined onto the workspace root.
         assert_eq!(
             resolve_spec_repo(root, Some(OsString::from("sibling/spec"))),
             PathBuf::from("/ws/sibling/spec")
         );
-        // No override → the default sibling next to the workspace.
         assert_eq!(
             resolve_spec_repo(root, None),
             PathBuf::from("/ws/../aozora-notation-spec")

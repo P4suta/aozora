@@ -1,9 +1,3 @@
-//! The `aozora fmt` batch engine: the file-discovery, diff/check reporting,
-//! progress UI, and encoding-selection plumbing that wraps the pure
-//! [`aozora::fmt::format_source`] round-trip. The `fmt`/`lint` subcommands in
-//! [`crate`] call [`run_engine`]; this module owns everything above the pure
-//! canonicalising core.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -25,13 +19,12 @@ mod progress;
 mod report;
 mod source;
 
-// CLI plumbing consumed by the `aozora` CLI's `fmt`/`lint` subcommands.
 pub(crate) use cli::{ColorChoice, FmtArgs};
 pub(crate) use discover::{Input, Resolved, resolve};
 pub(crate) use encoding::{Encoding, decode};
 pub(crate) use process::{read_and_format, write_back};
 pub(crate) use source::{read_file, read_stdin};
-// Reached only by the CLI's own oversize-input regression test.
+
 #[cfg(test)]
 pub(crate) use source::{MAX_SOURCE_BYTES, OversizeInput};
 
@@ -39,53 +32,25 @@ use cli::{CheckReport, Mode};
 use progress::{Printer, Tally};
 use report::{FileOutcome, Outcome, auto_stdout};
 
-/// The caller-injected human-output presentation policy for a run.
-///
-/// Bundles the three presentation choices the `fmt` subcommand injects — how to
-/// colourise terminal output (`color`, governing `--diff` hunks and the
-/// progress UI), whether to suppress the directory-batch progress UI + summary
-/// (`quiet`), and the message language for that localized summary (`lang`) — so
-/// the presentation surface is documented in one place. It is a parameter
-/// object: grouping these keeps [`run_engine`] within the project's
-/// argument-count budget.
 #[derive(Clone, Debug)]
 pub(crate) struct Presentation {
-    /// When to emit ANSI colour in `--diff` output (and any future coloured UI).
     pub color: ColorChoice,
-    /// Suppress the stderr progress UI and batch summary (mirrors `--quiet`).
     pub quiet: bool,
-    /// Message language for the localized batch summary.
     pub lang: LanguageIdentifier,
-    /// Diagnostic rendering shared with every document subcommand.
     pub diagnostic_format: diagnostics_render::DiagFormat,
-    /// Whether any parser diagnostic makes the run fail.
     pub strict: bool,
 }
 
-/// Constant-per-run engine context: how to decode inputs, the program name to
-/// prefix diagnostics with (`aozora fmt`), and the caller's [`Presentation`]
-/// policy unpacked into flat fields. Threaded through the engine.
 #[derive(Clone, Debug)]
 pub(super) struct Ctx {
     encoding: Encoding,
     color: ColorChoice,
     program: &'static str,
-    /// Suppress the stderr progress UI and batch summary.
     quiet: bool,
-    /// Message language for the localized batch summary.
     lang: LanguageIdentifier,
     diagnostic_policy: DiagnosticPolicy,
 }
 
-/// Run the formatter engine for already-parsed [`FmtArgs`] under an explicit
-/// `encoding`, `color`, and `program` label, returning the document-command
-/// exit code.
-///
-/// `encoding`, `program`, and the [`Presentation`] policy (colour + `--quiet` +
-/// language) are caller-injected. The `aozora` CLI's `fmt` subcommand calls it
-/// after folding `.aozora.toml`, passing its config-resolved encoding,
-/// `"aozora fmt"`, and a `Presentation` built from its global `--color` /
-/// `--quiet` and the resolved language.
 #[must_use]
 pub(crate) fn run_engine(
     args: &FmtArgs,
@@ -110,14 +75,7 @@ pub(crate) fn run_engine(
     }
 }
 
-/// Map a failed dispatch to its numeric process exit code, applying the
-/// broken-pipe policy. Split out of the `ExitCode`-returning [`run_engine`] so
-/// the decision is unit-testable against a plain, comparable `u8`.
-///
-/// A reader that closed our stdout pipe early (`aozora fmt … | head`) is a
-/// normal, silent success — exit 0, not an error; see ADR-0029. Every other
-/// error is a genuine failure: logged to stderr (prefixed with `program`) and
-/// mapped to exit 2.
+// ADR-0029 treats a closed output pipe as successful completion.
 fn err_exit_code(err: &anyhow::Error, program: &str) -> u8 {
     if is_broken_pipe(err) {
         0
@@ -129,9 +87,6 @@ fn err_exit_code(err: &anyhow::Error, program: &str) -> u8 {
 
 fn dispatch(args: &FmtArgs, ctx: &Ctx) -> Result<Outcome> {
     let mode = args.mode();
-    // Directory discovery can walk a large tree; show an indeterminate spinner
-    // while it runs (auto-hidden for fast walks by the tick delay). Clear it
-    // before touching the result so no spinner residue precedes the output.
     let spinner = progress::discovery_spinner(ctx, &mode);
     let input = resolve(args.paths());
     if let Some(spinner) = spinner {
@@ -143,7 +98,6 @@ fn dispatch(args: &FmtArgs, ctx: &Ctx) -> Result<Outcome> {
     }
 }
 
-/// Single-source path: read stdin once, then apply the mode.
 fn run_stdin(args: &FmtArgs, ctx: &Ctx, mode: &Mode) -> Result<Outcome> {
     let raw = read_stdin()?;
     let old = decode(&raw, ctx.encoding).context("decoding stdin")?;
@@ -223,7 +177,6 @@ fn stdin_check(report: &CheckReport, ctx: &Ctx, old: &str, new: &str) -> Result<
     Ok(outcome)
 }
 
-/// Multi-source path: dispatch the resolved file set by mode.
 fn run_files(args: &FmtArgs, ctx: &Ctx, mode: &Mode, resolved: &Resolved) -> Result<Outcome> {
     let opts = args.serialize_options();
     match mode {
@@ -244,7 +197,6 @@ fn run_files(args: &FmtArgs, ctx: &Ctx, mode: &Mode, resolved: &Resolved) -> Res
     }
 }
 
-/// Default stdout mode only makes sense for a single input.
 fn run_stdout(ctx: &Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
     let base = discovery_base(ctx, resolved);
     match resolved.files.as_slice() {
@@ -290,7 +242,6 @@ fn run_list(ctx: &Ctx, files: &[PathBuf], opts: SerializeOptions) -> Result<Outc
         if changed {
             printer.suspend(|| writeln!(output::stdout(), "{}", path.display()))?;
         }
-        // gofmt -l is informational: a clean exit even when files are listed.
         Ok(FileOutcome::new(diagnostics, changed))
     })
 }
@@ -335,8 +286,6 @@ fn run_check(ctx: &Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) -
     Ok(outcome)
 }
 
-/// A `--check` file's outcome: a changed file is a would-reformat (exit 1),
-/// an already-canonical one is clean.
 fn check_outcome(changed: bool) -> Outcome {
     if changed {
         Outcome::WouldReformat
@@ -345,23 +294,7 @@ fn check_outcome(changed: bool) -> Outcome {
     }
 }
 
-/// Run `per_file` over every file, folding outcomes and turning a per-file
-/// error into [`Outcome::Error`] (reported to stderr) without aborting the
-/// rest of the run.
-///
-/// This is the directory-batch loop and it owns the batch UI: a TTY-gated
-/// [`indicatif`](progress) progress bar advanced per file (with the current
-/// file as its message), and the localized "N formatted, M unchanged, K
-/// errors" summary printed to stderr on completion. The bar and summary are
-/// no-ops off an interactive stderr, so a piped run's byte stream is untouched.
-/// The per-file closure receives a [`Printer`] so its own stdout/stderr lines
-/// interleave cleanly with the live bar.
-///
-/// A broken output pipe is the one exception: it is terminal for the whole run
-/// (every later stdout write would fail too), so it propagates as `Err` for
-/// [`run_engine`] to turn into a quiet exit 0 rather than being logged per-file
-/// and downgraded to [`Outcome::Error`] (exit 2). See ADR-0029. On that early
-/// return neither the bar's tail nor the summary is drawn — the pipe is gone.
+// ADR-0029 propagates broken pipes because every later stdout write would fail too.
 fn fold_files<F>(
     ctx: &Ctx,
     files: &[PathBuf],
@@ -409,7 +342,6 @@ where
     Ok(outcome)
 }
 
-/// Report accumulated discovery errors and seed the run outcome with them.
 fn discovery_base(ctx: &Ctx, resolved: &Resolved) -> Outcome {
     let mut outcome = Outcome::Ok;
     for err in &resolved.errors {
@@ -467,11 +399,6 @@ mod tests {
 
     #[test]
     fn err_exit_code_is_zero_for_broken_pipe() {
-        // ADR-0029: a reader that closed our stdout pipe early is a silent
-        // success, so `err_exit_code` must map a broken-pipe error to 0 — never
-        // the error code 2. With the `is_broken_pipe` guard forced false the
-        // pipe error would fall to the logging arm and return 2, so pinning 0
-        // kills that mutant (and the whole-body mutant that returns 1).
         let pipe = stdout_broken_pipe_error();
         assert_eq!(
             err_exit_code(&pipe, "aozora fmt"),
@@ -488,10 +415,6 @@ mod tests {
 
     #[test]
     fn err_exit_code_is_two_for_other_errors() {
-        // Any non-pipe error is a genuine failure: logged to stderr and mapped
-        // to exit 2. With the `is_broken_pipe` guard forced true this would
-        // instead return 0, so pinning 2 kills that mutant (and the whole-body
-        // mutant that returns 0).
         let other = anyhow::anyhow!("boom");
         assert_eq!(
             err_exit_code(&other, "aozora fmt"),
@@ -534,18 +457,15 @@ mod tests {
     fn fix_rewrites_flagged_near_miss_only_when_opted_in() {
         let fix = SerializeOptions::default().directives(DirectiveNormalization::Canonical);
         let near_miss = "あ［＃字下げ終わり］";
-        // Default fmt keeps the flagged near-miss verbatim.
         assert!(
             format_source(near_miss).contains("［＃字下げ終わり］"),
             "default fmt must not rewrite notation"
         );
-        // Opt-in rewrites it to the canonical spelling.
         let fixed = format_source_with(near_miss, fix);
         assert!(
             fixed.contains("［＃ここで字下げ終わり］"),
             "fix should canonicalise the directive; got {fixed:?}"
         );
-        // A genuine editorial Unknown is left untouched even with the flag.
         let editorial = "あ［＃底本では「蒼空」］";
         assert!(
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
@@ -553,9 +473,6 @@ mod tests {
         );
     }
 
-    /// The neutral engine context each `fold_files` test threads through.
-    /// The tests run off a terminal, so the batch UI is gated out regardless
-    /// of `quiet`; `lang` is the English default.
     fn ctx() -> Ctx {
         Ctx {
             encoding: Encoding::default(),
@@ -586,12 +503,6 @@ mod tests {
 
     #[test]
     fn fold_files_propagates_broken_pipe_as_err() {
-        // A broken output pipe (`aozora fmt … | head`) is terminal for the whole
-        // run: `fold_files` must abort by returning the `Err` — which
-        // `run_engine` turns into a quiet exit 0 — never swallowing it into
-        // `Outcome::Error`. With the `is_broken_pipe` guard replaced by `false`
-        // the pipe error would instead fall to the logging arm and fold into
-        // `Ok(Outcome::Error)`, so pinning `Err`/broken-pipe kills that mutant.
         let (_dir, files) = fold_fixture_files(&["first", "second"]);
         let mut calls = 0_u32;
         let result = fold_files(
@@ -608,17 +519,11 @@ mod tests {
             is_broken_pipe(&err),
             "the propagated error must still carry the broken pipe"
         );
-        // It aborts on the first file rather than continuing the fold.
         assert_eq!(calls, 1, "a broken pipe is terminal for the whole run");
     }
 
     #[test]
     fn fold_files_downgrades_non_pipe_errors_to_outcome_error() {
-        // A per-file error that is *not* a broken pipe must be logged to stderr
-        // and downgraded to `Outcome::Error` without aborting the rest of the
-        // run — returned as `Ok(Outcome::Error)`, not `Err`. With the
-        // `is_broken_pipe` guard replaced by `true` every error would propagate
-        // as `Err`, so pinning the `Ok(Outcome::Error)` return kills that mutant.
         let (_dir, files) = fold_fixture_files(&["only"]);
         let result = fold_files(
             &ctx(),

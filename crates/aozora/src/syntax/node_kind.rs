@@ -1,25 +1,4 @@
-//! Cross-cutting "kind" tag for AST nodes.
-//!
-//! [`NodeKind`] enumerates every wire-distinct tag the owned-AST
-//! surfaces produce. It is used both for **internal** projection
-//! (`Node::kind`,
-//! `NodeRef::kind`) and for the
-//! **driver wire format** ([`crate`]'s host crate `aozora` projects
-//! the tag to a stable camelCase string via [`NodeKind::as_json_tag`]).
-//!
-//! The typed enum (rather than a `&'static str` constant) lets every
-//! consumer pattern-match the tag exhaustively — the compiler points
-//! out a new variant landing without a wire mapping — and concentrates
-//! the camelCase string in a single authority.
-
-/// Cross-cutting tag for an AST node or `NodeRef` projection.
-///
-/// `#[non_exhaustive]` so adding a new `Node` variant only needs
-/// to land here and on the per-call `match` sites; existing wire
-/// consumers see the new variant as an unrecognised tag and gracefully
-/// degrade (the camelCase mapping is exhaustive within this crate;
-/// downstream `match` over `NodeKind` is required to handle a `_` arm
-/// for forward-compat).
+/// Node kind emitted in parser projections and wire formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum NodeKind {
@@ -37,11 +16,9 @@ pub enum NodeKind {
     AlignEnd,
     /// Centring (中央) marker (`ページの左右中央` / `中央揃え`).
     Center,
-    /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on
-    /// in gothic, distinct from 太字.
+    /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on in gothic, distinct from 太字.
     LineGothic,
-    /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the
-    /// line it sits on.
+    /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the line it sits on.
     LineFontSize,
     /// 改ページ (page break).
     PageBreak,
@@ -67,20 +44,14 @@ pub enum NodeKind {
     Emphasis,
     /// Side annotation (注記) — `「X」の左に「Y」の注記`.
     MarginNote,
-    /// `NodeRef::BlockOpen` projection — paired-container open
-    /// sentinel position.
+    /// `NodeRef::BlockOpen` projection — paired-container open sentinel position.
     ContainerOpen,
-    /// `NodeRef::BlockClose` projection — paired-container close
-    /// sentinel position.
+    /// `NodeRef::BlockClose` projection — paired-container close sentinel position.
     ContainerClose,
 }
 
 impl NodeKind {
     /// Every variant in declaration order.
-    ///
-    /// Used by `aozora spec kinds` (CLI introspection) and the
-    /// TypeScript / JSON-Schema codegen so the artefact list
-    /// tracks the enum without a hand-maintained parallel.
     pub const ALL: [Self; 23] = [
         Self::Ruby,
         Self::Bouten,
@@ -108,11 +79,6 @@ impl NodeKind {
     ];
 
     /// Stable camelCase string identifier for this kind.
-    ///
-    /// Driver crates (`aozora-ffi` / `aozora-wasm` / `aozora-py`) all
-    /// emit JSON whose `kind` field equals this string verbatim, so
-    /// downstream TypeScript / Python / C consumers can switch on the
-    /// tag without consulting an out-of-band table.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {
@@ -147,9 +113,6 @@ impl NodeKind {
 mod tests {
     use super::*;
 
-    /// camelCase strings are pinned — accidental rename of one breaks
-    /// this test instead of silently breaking downstream tooling that
-    /// switches on the tag.
     #[test]
     fn camel_case_strings_are_stable() {
         assert_eq!(NodeKind::Ruby.as_json_tag(), "ruby");

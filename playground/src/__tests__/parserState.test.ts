@@ -9,13 +9,6 @@ import {
 } from '../editor/parserState';
 import { Document } from '../wasm-loader';
 
-/**
- * Semantic expectations for buildOffsetTables:
- *   - u2b is monotonically non-decreasing
- *   - u2b[source.length] equals the source UTF-8 byte length
- *   - b2u[byte] returns the first UTF-16 index of the character containing byte
- *   - the high surrogate owns all four bytes and the low surrogate owns none
- */
 describe('buildOffsetTables', () => {
   function utf8ByteLen(s: string): number {
     return new TextEncoder().encode(s).length;
@@ -40,7 +33,7 @@ describe('buildOffsetTables', () => {
     const src = '青空';
     const { u2b, byteLen } = buildOffsetTables(src);
     expect(byteLen).toBe(utf8ByteLen(src));
-    expect(byteLen).toBe(6); // 3 + 3
+    expect(byteLen).toBe(6);
     expect(u2b[0]).toBe(0);
     expect(u2b[1]).toBe(3);
     expect(u2b[2]).toBe(6);
@@ -60,18 +53,16 @@ describe('buildOffsetTables', () => {
   });
 
   it('assigns four bytes to the high surrogate and none to the low surrogate', () => {
-    // U+1F4DA is two UTF-16 code units but four UTF-8 bytes.
     const src = '本📚';
     const { u2b, byteLen } = buildOffsetTables(src);
     expect(byteLen).toBe(utf8ByteLen(src));
     expect(byteLen).toBe(7);
 
-    // The source consists of one BMP code unit plus the surrogate pair.
     expect(src.length).toBe(3);
     expect(u2b[0]).toBe(0);
-    expect(u2b[1]).toBe(3); // 📚 high start
-    expect(u2b[2]).toBe(7); // 📚 low → already past the 4 bytes
-    expect(u2b[3]).toBe(7); // sentinel
+    expect(u2b[1]).toBe(3);
+    expect(u2b[2]).toBe(7);
+    expect(u2b[3]).toBe(7);
   });
 
   it('encodes unpaired surrogates as the replacement character', () => {
@@ -99,12 +90,9 @@ describe('buildOffsetTables', () => {
   it('maps bytes inside a multibyte character to its UTF-16 index', () => {
     const src = 'a青b';
     const { b2u } = buildOffsetTables(src);
-    // byte 0 → 'a' (utf16 0)
     expect(b2u[0]).toBe(0);
-    // Every byte within the CJK character maps to its leading UTF-16 index.
     expect(b2u[1]).toBe(1);
     expect(b2u[2]).toBe(1);
-    // byte 4 → 'b' (utf16 2)
     expect(b2u[4]).toBe(2);
   });
 });

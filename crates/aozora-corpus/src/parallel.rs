@@ -1,52 +1,3 @@
-//! Parallel I/O + decode helpers.
-//!
-//! The default [`crate::CorpusSource::iter`] impl on [`crate::FilesystemCorpus`]
-//! returns a streaming iterator
-//! that fuses walkdir + read; this module exposes a path-first
-//! variant that splits the two so the read step can be fanned out
-//! across rayon workers while walkdir runs once on the calling
-//! thread.
-//!
-//! ## Physical-core thread pool
-//!
-//! [`par_load_decoded`] runs its parallel pass on a dedicated rayon
-//! pool sized to **physical** cores (`num_cpus::get_physical()`)
-//! rather than rayon's default logical-core (hyperthreaded) count.
-//! Empirical measurement on this corpus showed scaling **regressing**
-//! from 0.92 s @ 8 threads to 1.38 s @ 16 threads on an 8-core +
-//! 8-hyperthread WSL2 host — classic over-subscription on
-//! memory-bound decode work where two SMT siblings on one core
-//! contend for the same L1/L2 cache and per-core memory bandwidth.
-//! On systems where logical = physical (no SMT), the pool size
-//! matches rayon's default and the cost is zero.
-//! If the dedicated pool cannot be constructed, [`par_load_decoded`]
-//! falls back to processing items serially on the calling thread.
-//!
-//! ## Why "collect paths then parallel-read"
-//!
-//! `walkdir::WalkDir` is not parallel-safe — it owns the kernel
-//! `DIR*` cursor and its iterator state is not `Sync`. Forking the
-//! traversal across workers would either need a per-worker walker
-//! (each scanning a disjoint subtree, which requires a sharding
-//! decision the corpus shape doesn't make obvious) or a custom
-//! parallel-aware walker. Neither pays here: the walkdir phase is
-//! ~0.3 s on the 17 k-file corpus, well under any rayon coordination
-//! overhead. Collecting paths sequentially and then fanning the
-//! per-file read + caller closure is the embarrassingly-parallel
-//! shape that rayon's `par_iter` handles best.
-//!
-//! ## Why per-item closure (`F: Fn(CorpusItem) -> T`)
-//!
-//! The caller decides what to do with each decoded item: bench
-//! harnesses bucket by post-decode size, sweep tests run invariants,
-//! cache builders write derived files. Inverting that — having this
-//! module return `Vec<CorpusItem>` directly — would force the caller
-//! to walk the vec a second time to do its own work, doubling the
-//! read+decode amortisation cost from the rayon pool's per-worker
-//! arena warmth that the closure can capture (e.g. a
-//! [`thread_local!`] decode buffer) into a per-call cold one. The
-//! closure shape lets the caller participate in the parallel pass.
-
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -55,11 +6,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::{CorpusError, CorpusItem, FilesystemCorpus};
 
-/// Process-wide rayon pool sized to physical cores. Lazily constructed
-/// the first time it is requested; subsequent calls reuse the same
-/// pool so the worker threads stay warm across multiple corpus
-/// sweeps. `OnceLock` is the standard-library lazy-init primitive;
-/// no `unsafe` in our code.
+// Corpus loading measured slower with logical-core workers than with physical-core workers on WSL2.
 fn physical_core_pool() -> Option<&'static ThreadPool> {
     static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
@@ -75,18 +22,8 @@ fn physical_core_pool() -> Option<&'static ThreadPool> {
 
 /// Run `f` on the physical-core load pool.
 ///
-/// Lets downstream callers (e.g. `aozora-bench`'s
-/// `parallel_size_bands`) share the same pool that
-/// [`par_load_decoded`] uses — important for the warm-thread
-/// amortisation that keeps the decode-buffer thread-locals hot
-/// across consecutive corpus sweeps. Without this, callers that
-/// build their own rayon work would spin up a second pool of the
-/// default (logical-cores) size and re-introduce the
-/// over-subscription regression this pool exists to fix.
-///
-/// `f` runs synchronously; the function returns when `f` returns. If
-/// the dedicated pool cannot be constructed, `f` is invoked directly
-/// on the calling thread.
+/// `f` runs synchronously; the function returns when `f` returns.
+/// If the dedicated pool cannot be constructed, `f` is invoked directly on the calling thread.
 pub fn with_load_pool<R, F>(f: F) -> R
 where
     F: FnOnce() -> R + Send,
@@ -98,44 +35,21 @@ where
     }
 }
 
-/// Walk the corpus, read every file, and apply `per_item` to each
-/// `CorpusItem` in parallel via rayon.
+/// Read corpus files and apply `per_item` on the shared load pool.
 ///
-/// The walkdir traversal runs once on the calling thread (it is not
-/// `Sync`); the read + closure runs on rayon's work-stealing pool.
-/// Per-item I/O failures land as `Err` entries in the returned `Vec`,
-/// preserving the same "skip-or-fail is the caller's call" contract
-/// as the sequential `iter()` path.
-///
-/// Output order is rayon's collect order (matches the input
-/// `Vec<PathBuf>` order, which is walkdir's directory-entry order —
-/// `readdir(2)`-defined, OS- and filesystem-dependent, NOT
-/// lexicographic). Per-thread accumulator merging happens inside
-/// rayon's parallel-iterator collect — the caller does not see
-/// intermediate per-thread shards. If the caller needs deterministic
-/// output ordering, sort the returned `Vec` by `CorpusItem.label`
-/// before consuming it.
+/// Output follows filesystem order; sort by label for deterministic output.
+/// If the pool cannot be constructed, processing runs serially on the calling thread.
 ///
 /// # Errors
 ///
-/// Per-item errors are returned inline as `Err` entries; this function
-/// itself never returns `Err`. Walkdir-level errors (permission denied
-/// on a subdirectory, broken symlink) likewise surface as `Err`
-/// entries in their walkdir position.
+/// Traversal and per-file I/O failures are returned as inline error entries.
 pub fn par_load_decoded<F, T>(corpus: &FilesystemCorpus, per_item: F) -> Vec<Result<T, CorpusError>>
 where
     F: Fn(CorpusItem) -> T + Sync + Send,
     T: Send,
 {
-    // Step 1: serial walkdir to a Vec<PathBuf>. Cheap (~0.3 s on
-    // 17 k files thanks to the `is_text_dir_entry` no-extra-stat
-    // path); not parallelisable because walkdir is `!Sync`.
     let paths: Vec<Result<PathBuf, CorpusError>> = corpus.walk_paths().collect();
 
-    // Step 2: parallel read + decode + caller closure on the
-    // physical-core pool. Each worker pulls a
-    // `Result<PathBuf, _>`, propagates walkdir errors unchanged,
-    // otherwise reads the bytes and runs the closure.
     load_decoded_with_pool(corpus, paths, &per_item, physical_core_pool())
 }
 
@@ -212,7 +126,6 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         results.sort_unstable();
-        // 5, 4, 5, 5 sorted = 4, 5, 5, 5
         assert_eq!(results, vec![4, 5, 5, 5]);
     }
 
@@ -239,10 +152,6 @@ mod tests {
 
     #[test]
     fn par_load_decoded_visits_every_file_at_scale() {
-        // Many files so rayon definitely fans across workers; verify
-        // that every expected label survives the parallel collect
-        // (set equality — walkdir's directory-entry order is
-        // OS-dependent so we don't pin sequence, only membership).
         let files: Vec<(String, Vec<u8>)> = (0..50)
             .map(|i| (format!("doc-{i:03}.txt"), format!("body-{i}").into_bytes()))
             .collect();

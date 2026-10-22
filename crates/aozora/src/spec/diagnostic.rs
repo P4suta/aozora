@@ -1,47 +1,3 @@
-//! Lexer-emitted observations.
-//!
-//! A [`Diagnostic`] is non-fatal: the lexer always produces a
-//! best-effort output and never aborts mid-stream. Callers decide how
-//! to surface the diagnostics — the CLI can render them via
-//! [`miette::Report`], tests can assert on the variants, library
-//! consumers can ignore them.
-//!
-//! Every variant carries a byte-range [`Span`] in the *sanitized* source
-//! — the sanitize-stage output (BOM stripped, CRLF→LF, 〔…〕 accents decomposed),
-//! which is the text the later stages tokenize. To render a snippet,
-//! attach that sanitized text (e.g. via `crate::pipeline::lexer::sanitize`)
-//! so miette's caret lands on the right character; for input with no BOM /
-//! CRLF / accent digraphs the sanitized text equals the original bytes.
-//!
-//! # Severity and source axes
-//!
-//! Diagnostics split along two orthogonal axes:
-//!
-//! - **[`Severity`]** — `Error` / `Warning` / `Note`. Determines how
-//!   strictly a host (CLI, LSP, editor decorator) should treat the
-//!   observation. Defaults to `Error` for genuine syntax issues and
-//!   `Warning` for input that the parser can carry around but the
-//!   user should be told about.
-//! - **[`DiagnosticSource`]** — `Source` (problem traces back to
-//!   user input) vs. `Internal` (a pipeline-invariant violation;
-//!   appearance indicates a library bug). Hosts that filter by
-//!   `Internal` get a clear "library bug" channel without having to
-//!   match on individual variants.
-//!
-//! Each variant exposes both axes through accessors
-//! ([`Diagnostic::severity`] / [`Diagnostic::source`]).
-//!
-//! # Internal variant
-//!
-//! The four library-bug sanity checks
-//! (`ResidualAnnotationMarker`, `UnregisteredSentinel`,
-//! `RegistryOutOfOrder`, `RegistryPositionMismatch`) live as a single
-//! [`Diagnostic::Internal`] variant whose `code` field
-//! ([`InternalCheckCode`]) tags the specific check. Tests and tooling
-//! match on that code via [`codes`]. Consumers that want to filter
-//! library-bug diagnostics out of the [`crate::spec::Diagnostic`] stream
-//! reach for [`Diagnostic::source`].
-
 use std::borrow::Cow;
 
 use miette::Diagnostic as MietteDiagnostic;
@@ -50,137 +6,73 @@ use thiserror::Error;
 use crate::spec::PairKind;
 use crate::spec::Span;
 
-/// Stable identifier strings for known [`Diagnostic`] variants.
-///
-/// [`Diagnostic::code`] returns one of these for any production
-/// diagnostic. They are guaranteed stable across patch and minor
-/// releases; major-release variant additions land new constants here
-/// without touching existing ones.
 pub(crate) mod codes {
-    /// Source contains a lexer PUA sentinel codepoint.
     pub(crate) const SOURCE_CONTAINS_PUA: &str = "aozora::lex::source_contains_pua";
 
-    /// Open delimiter reached end-of-input with no matching close.
     pub(crate) const UNCLOSED_BRACKET: &str = "aozora::lex::unclosed_bracket";
 
-    /// Close delimiter saw an empty stack or a mismatched stack top.
     pub(crate) const UNMATCHED_CLOSE: &str = "aozora::lex::unmatched_close";
 
-    /// A `〔…〕` accent digraph was decomposed during the sanitize stage.
     pub(crate) const ACCENT_DECOMPOSITION_APPLIED: &str =
         "aozora::lex::accent_decomposition_applied";
 
-    /// A 外字 (gaiji) reference resolved to neither Unicode nor JIS X 0213.
     pub(crate) const UNRESOLVED_GAIJI: &str = "aozora::lex::unresolved_gaiji";
 
-    /// A paired container was closed by a closer of a different kind.
     pub(crate) const MISMATCHED_CONTAINER_CLOSE: &str = "aozora::lex::mismatched_container_close";
 
-    /// An explicit-base ruby (`｜base《》`) had an empty reading.
     pub(crate) const EMPTY_RUBY_READING: &str = "aozora::lex::empty_ruby_reading";
 
-    /// A ruby reading body itself opened another ruby (`《…《…》…》`).
     pub(crate) const NESTED_RUBY: &str = "aozora::lex::nested_ruby";
 
-    /// A `［＃ここから…］` opener matched no known container kind.
     pub(crate) const UNRECOGNISED_CONTAINER_DIRECTIVE: &str =
         "aozora::lex::unrecognised_container_directive";
 
-    /// A 縦中横 forward reference whose target is absent from the look-back.
     pub(crate) const TCY_TARGET_NOT_FOUND: &str = "aozora::lex::tcy_target_not_found";
 
-    /// A forward-reference bouten target occurs more than once before it.
     pub(crate) const BOUTEN_TARGET_AMBIGUOUS: &str = "aozora::lex::bouten_target_ambiguous";
 
-    /// An inline-style forward reference whose present target cannot be styled
-    /// in place.
-    ///
-    /// `X` is a ruby base, on an earlier line, inside another construct, or one
-    /// of several targets. The directive is kept; the styling is not applied.
     pub(crate) const FORWARD_REFERENT_NOT_STYLABLE: &str =
         "aozora::lex::forward_referent_not_stylable";
 
-    /// A page/section break appeared inside a single-line container.
     pub(crate) const BREAK_IN_SINGLE_LINE_CONTAINER: &str =
         "aozora::lex::break_in_single_line_container";
 
-    /// A bracketed kaeriten (`［＃二］`) has no matching lower-rank partner.
     pub(crate) const BRACKETED_KAERITEN_NO_PAIR: &str = "aozora::lex::bracketed_kaeriten_no_pair";
 
-    /// A kaeriten appeared outside a 漢文-like context (lookahead heuristic).
     pub(crate) const KAERITEN_OUTSIDE_KANBUN: &str = "aozora::lex::kaeriten_outside_kanbun";
 
-    /// A 傍点 range opener was closed by a 傍線 closer (or vice-versa).
     pub(crate) const MISMATCHED_BOUTEN_CONTAINER: &str = "aozora::lex::mismatched_bouten_container";
 
-    /// A `［＃…］` body spelled as a near-miss of a recognized directive.
-    ///
-    /// 送り仮名 drift, a synonym, or a malformed prefix / close, kept as
-    /// Unknown; the notation-hygiene lint suggests its canonical spelling.
-    /// The `aozora::lint::*` namespace marks an advisory authoring lint,
-    /// distinct from the `aozora::lex::*` lex faults above.
     pub(crate) const NON_CANONICAL_DIRECTIVE: &str = "aozora::lint::non_canonical_directive";
 
-    /// Prefix of every advisory notation-hygiene *lint* code.
-    ///
-    /// The single authority for the lint-vs-lex split that
-    /// [`crate::spec::Diagnostic::is_lint`] and the LSP filter on: a code in this
-    /// namespace is authoring guidance, not a malformed-input fault.
     pub(crate) const LINT_NAMESPACE: &str = "aozora::lint::";
 
-    /// Pipeline-internal: an `［＃` digraph survived classification
-    /// into the normalized text. Indicates a missing recogniser for
-    /// the keyword.
     pub(crate) const RESIDUAL_ANNOTATION_MARKER: &str = "aozora::lex::residual_annotation_marker";
 
-    /// Pipeline-internal: a PUA sentinel codepoint is present in the
-    /// normalized text at a position that is not recorded in the
-    /// placeholder registry.
-    ///
-    /// Source-side PUA collisions emit [`SOURCE_CONTAINS_PUA`]
-    /// upstream; this code is distinct.
     pub(crate) const UNREGISTERED_SENTINEL: &str = "aozora::lex::unregistered_sentinel";
 
-    /// Pipeline-internal: a placeholder-registry vector is not
-    /// strictly ordered by position. Indicates a normalizer driver
-    /// bug.
     pub(crate) const REGISTRY_OUT_OF_ORDER: &str = "aozora::lex::registry_out_of_order";
 
-    /// Pipeline-internal: a registry entry references a normalized
-    /// byte position whose character does not match the expected
-    /// sentinel kind.
     pub(crate) const REGISTRY_POSITION_MISMATCH: &str = "aozora::lex::registry_position_mismatch";
 }
 
 /// Severity of a [`Diagnostic`].
-///
-/// Hosts route diagnostics by severity: `Error` blocks downstream
-/// rendering or fails CI, `Warning` decorates the editor surface,
-/// `Note` is informational. The `aozora` library never panics on a
-/// `Diagnostic` — the parser produces a best-effort output and
-/// surfaces this enum as the host's policy hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Severity {
-    /// Genuine error; downstream consumers should treat the parse as
-    /// suspect.
+    /// Genuine error; downstream consumers should treat the parse as suspect.
     Error,
-    /// Recoverable observation; parse continues and output is
-    /// preserved, but the user should know.
+    /// Recoverable observation; parse continues and output is preserved, but the user should know.
     Warning,
-    /// Informational note; editor surfaces may show it as a tooltip
-    /// or annotation but it does not affect CI / build status.
+    /// Informational note; editor surfaces may show it as a tooltip or annotation but it does not affect CI / build status.
     Note,
 }
 
 impl Severity {
-    /// Every variant in declaration order. Used by codegen so
-    /// downstream artefacts track the enum without drift.
+    /// Every variant in declaration order.
     pub const ALL: [Self; 3] = [Self::Error, Self::Warning, Self::Note];
 
-    /// Stable lowercase wire-format identifier ("error" / "warning"
-    /// / "note"). The same string the driver wire format emits in
-    /// the `severity` field of `Diagnostic`.
+    /// Stable lowercase wire-format identifier.
     #[must_use]
     pub const fn as_json_str(self) -> &'static str {
         match self {
@@ -191,20 +83,13 @@ impl Severity {
     }
 }
 
-/// Origin of a [`Diagnostic`] — distinguishes user-input issues from
-/// library-internal sanity-check failures.
-///
-/// Production parses on well-formed input never emit `Internal`
-/// diagnostics. An `Internal` diagnostic indicates a bug in the
-/// lex pipeline and SHOULD be reported upstream.
+/// Whether a diagnostic concerns user input or a library defect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticSource {
     /// Issue traces back to the user-provided source text.
     Source,
-    /// Pipeline-internal invariant violation. Indicates a library
-    /// bug; the parse is still completed best-effort but downstream
-    /// tooling should surface this distinctly.
+    /// Library-internal failure reported while parsing continues best-effort.
     Internal,
 }
 
@@ -212,8 +97,7 @@ impl DiagnosticSource {
     /// Every variant in declaration order.
     pub const ALL: [Self; 2] = [Self::Source, Self::Internal];
 
-    /// Stable lowercase wire-format identifier ("source" /
-    /// "internal"). Matches the `source` field of `Diagnostic`.
+    /// Stable lowercase wire-format identifier.
     #[must_use]
     pub const fn as_json_str(self) -> &'static str {
         match self {
@@ -223,29 +107,19 @@ impl DiagnosticSource {
     }
 }
 
-/// Identifier of a specific pipeline-internal sanity check.
-///
-/// Carried by the [`Diagnostic::Internal`] variant. Tooling that
-/// wants per-check assertions matches on this enum; legacy callers
-/// (logs, regex grep) can still reach for the stable
-/// `aozora::lex::*` string via [`Self::as_code`].
-///
-/// `#[non_exhaustive]` so adding a new check variant is a minor
-/// release.
+/// Identifier for the check reported by [`Diagnostic::Internal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum InternalCheckCode {
-    /// An `［＃` digraph survived classification into the normalized
-    /// text. Indicates a missing recogniser for the keyword.
+    /// An `［＃` digraph survived classification into the normalized text.
+    /// Indicates a missing recogniser for the keyword.
     ResidualAnnotationMarker,
-    /// A PUA sentinel codepoint is present in the normalized text at
-    /// a position that is not recorded in the placeholder registry.
+    /// A PUA sentinel codepoint is present in the normalized text at a position that is not recorded in the placeholder registry.
     UnregisteredSentinel,
-    /// A placeholder-registry vector is not strictly ordered by
-    /// position. Indicates a normalizer driver bug.
+    /// A placeholder-registry vector is not strictly ordered by position.
+    /// Indicates a normalizer driver bug.
     RegistryOutOfOrder,
-    /// A registry entry references a normalized byte position whose
-    /// character does not match the expected sentinel kind.
+    /// A registry entry references a normalized byte position whose character does not match the expected sentinel kind.
     RegistryPositionMismatch,
 }
 
@@ -258,8 +132,7 @@ impl InternalCheckCode {
         Self::RegistryPositionMismatch,
     ];
 
-    /// Stable `aozora::lex::*` string identifier for this check.
-    /// Equivalent to the corresponding internal code constant.
+    /// Stable `aozora::lex::*` identifier for this check.
     #[must_use]
     pub const fn as_code(self) -> &'static str {
         match self {
@@ -275,12 +148,7 @@ impl InternalCheckCode {
 #[derive(Debug, Clone, Error, MietteDiagnostic)]
 #[non_exhaustive]
 pub enum Diagnostic {
-    /// Source contains a codepoint that collides with one of the
-    /// lexer's PUA sentinel reservations
-    /// reserved for parser placeholders.
-    /// Downstream stages will emit those same codepoints into normalized
-    /// text, so a collision means the placeholder registry can no longer
-    /// distinguish source-text occurrences from lexer-inserted markers.
+    /// Source contains a codepoint reserved for parser placeholders.
     #[error(
         "source contains lexer PUA sentinel codepoint U+{:04X}",
         u32::from(*.codepoint)
@@ -295,20 +163,16 @@ pub enum Diagnostic {
         )
     )]
     SourceContainsPua {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("here")]
         at: miette::SourceSpan,
         /// The offending PUA codepoint found in the source.
         codepoint: char,
-        /// Byte-range in the sanitized source for programmatic consumers
-        /// that don't need miette's [`miette::SourceSpan`].
+        /// Byte-range in the sanitized source for programmatic consumers that don't need miette's [`miette::SourceSpan`].
         span: Span,
     },
 
-    /// An open delimiter reached end-of-input with no matching close on
-    /// the pairing stack.
+    /// An open delimiter reached end-of-input with no matching close on the pairing stack.
     #[error(
         "unclosed Aozora {}…{} delimiter",
         .kind.open_str(),
@@ -323,20 +187,16 @@ pub enum Diagnostic {
         )
     )]
     UnclosedBracket {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("opened here")]
         at: miette::SourceSpan,
         /// Delimiter family of the unmatched opener.
         kind: PairKind,
-        /// Byte-range of the unmatched *open* delimiter in the sanitized
-        /// source.
+        /// Byte-range of the unmatched *open* delimiter in the sanitized source.
         span: Span,
     },
 
-    /// A close delimiter was seen with an empty stack, or with a stack
-    /// top of a different [`PairKind`].
+    /// A close delimiter was seen with an empty stack, or with a stack top of a different [`PairKind`].
     #[error("unmatched Aozora {} close delimiter", .kind.close_str())]
     #[diagnostic(
         code("aozora::lex::unmatched_close"),
@@ -347,9 +207,7 @@ pub enum Diagnostic {
         )
     )]
     UnmatchedClose {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("close here")]
         at: miette::SourceSpan,
         /// Delimiter family of the stray closer.
@@ -358,12 +216,7 @@ pub enum Diagnostic {
         span: Span,
     },
 
-    /// A `〔…〕` accent digraph (e.g. `〔e'〕` → `é`) was decomposed into
-    /// its Unicode-combined form during the sanitize stage. Purely
-    /// informational: the decomposition is intended behaviour (ADR-0003),
-    /// surfaced as a `Note` so an editor can show what changed. The
-    /// serializer reconstructs the original `〔…〕` form, so the transform
-    /// is loss-free.
+    /// An accent digraph was composed during sanitization, preserving its original serialization (ADR-0003).
     #[error("accent digraph decomposed in sanitize stage")]
     #[diagnostic(
         code("aozora::lex::accent_decomposition_applied"),
@@ -377,19 +230,14 @@ pub enum Diagnostic {
         )
     )]
     AccentDecompositionApplied {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("decomposed here")]
         at: miette::SourceSpan,
-        /// Byte-range of the `〔…〕` span in the sanitized (post-decomposition)
-        /// source.
+        /// Byte-range of the `〔…〕` span in the sanitized (post-decomposition) source.
         span: Span,
     },
 
-    /// A 外字 (gaiji) reference — `※［＃…］` — resolved to neither a Unicode
-    /// scalar nor a JIS X 0213 cell, so the renderer falls back to the
-    /// description text rather than the intended glyph.
+    /// A 外字 (gaiji) reference — `※［＃…］` — resolved to neither a Unicode scalar nor a JIS X 0213 cell, so the renderer falls back to the description text rather than the intended glyph.
     #[error("gaiji reference resolved to neither Unicode nor JIS X 0213")]
     #[diagnostic(
         code("aozora::lex::unresolved_gaiji"),
@@ -402,23 +250,14 @@ pub enum Diagnostic {
         )
     )]
     UnresolvedGaiji {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("unresolved gaiji")]
         at: miette::SourceSpan,
         /// Byte-range of the `※［＃…］` reference in the sanitized source.
         span: Span,
     },
 
-    /// A paired container opened with one kind (`［＃ここから2字下げ］`)
-    /// was closed by a closer of a different kind
-    /// (`［＃ここで地付き終わり］`). The label points at the *close* marker.
-    ///
-    /// `open_kind` / `close_kind` are the stable lowercase container-family
-    /// tags (`indent` / `warichu` / `keigakomi` / `align-end`); they are
-    /// `&'static str` rather than the `crate::syntax::ContainerKind` enum
-    /// because the spec layer sits below `crate::syntax`.
+    /// A container close names a different family from its opener.
     #[error("container opened as `{open_kind}` closed by a `{close_kind}` closer")]
     #[diagnostic(
         code("aozora::lex::mismatched_container_close"),
@@ -432,9 +271,7 @@ pub enum Diagnostic {
         )
     )]
     MismatchedContainerClose {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("mismatched close")]
         at: miette::SourceSpan,
         /// Container family of the *open* marker on the pairing stack.
@@ -445,20 +282,11 @@ pub enum Diagnostic {
         span: Span,
     },
 
-    /// A `［＃…］` body spelled as a verified near-miss of a recognized
-    /// directive — kept as `DirectiveKind::Editorial`; the canonical spelling
-    /// is offered as a fix. Advisory only, so it never blocks (exit 0 unless
-    /// `--strict`).
+    /// A verified non-canonical directive spelling with a suggested correction.
+    // Notation-hygiene policy belongs to this library, so its explanation points to ADR-0022 rather than the notation specification.
     #[error("non-canonical directive; the canonical form is `{canonical}`")]
     #[diagnostic(
         code("aozora::lint::non_canonical_directive"),
-        // ADR-0022, where the other sixteen point at the specification.
-        // The spec cannot host this one and should not: it is aozora's
-        // own hygiene layer, not a fact of the notation. `help` says how
-        // to fix it; the ADR is the only thing that says why a lint
-        // exists for it at all. Every catalogued code carries an https
-        // url (`explain_covers_every_catalogued_code`) — the url is the
-        // best authority for *that* code, not always the spec.
         url(
             "https://github.com/P4suta/aozora/blob/main/docs/adr/\
              0022-notation-hygiene-layer-roles.md"
@@ -471,21 +299,16 @@ pub enum Diagnostic {
         )
     )]
     NonCanonicalDirective {
-        /// Caret location for miette — the same byte-range as `span`.
+        /// Label location for diagnostic rendering.
         #[label("non-canonical directive")]
         at: miette::SourceSpan,
-        /// The catalogue canonical spelling. Owned for the parameterized /
-        /// forward-form entries, borrowed for the literal maps.
+        /// The suggested canonical spelling.
         canonical: Cow<'static, str>,
         /// Byte-range of the directive in the sanitized source.
         span: Span,
     },
 
-    /// An explicit-base ruby — `｜base《》` — supplied a base but an empty
-    /// reading. The base is present (a `｜` precedes the `《`), so this is
-    /// a genuine authoring slip, not a bare `《》` literal run. The
-    /// construct degrades to plain text. The label spans the whole
-    /// `｜base《》`.
+    /// An explicit ruby base has an empty reading and degrades to plain text.
     #[error("ruby base given but reading is empty")]
     #[diagnostic(
         code("aozora::lex::empty_ruby_reading"),
@@ -496,19 +319,14 @@ pub enum Diagnostic {
         )
     )]
     EmptyRubyReading {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("empty reading")]
         at: miette::SourceSpan,
         /// Byte-range of the `｜base《》` construct in the sanitized source.
         span: Span,
     },
 
-    /// A ruby reading body opened another ruby (`｜漢《字《かん》》`). Ruby
-    /// does not nest; the inner `《…》` is the offending opener. The outer
-    /// ruby is still parsed best-effort. The label points at the inner
-    /// `《`.
+    /// A ruby reading contains a nested ruby opener.
     #[error("ruby reading contains a nested ruby")]
     #[diagnostic(
         code("aozora::lex::nested_ruby"),
@@ -519,20 +337,14 @@ pub enum Diagnostic {
         )
     )]
     NestedRuby {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("nested ruby opens here")]
         at: miette::SourceSpan,
         /// Byte-range of the inner `《` opener in the sanitized source.
         span: Span,
     },
 
-    /// A `［＃ここから…］` directive looked like a paired-container opener
-    /// but named no known container kind (`字下げ` / `地付き` /
-    /// `地から…字上げ`). It is kept as an `Directive{Unknown}` (so output
-    /// is preserved) but not treated as a container. The label spans the
-    /// directive.
+    /// An unrecognized container opener retained as an unknown directive.
     #[error("unrecognised container directive")]
     #[diagnostic(
         code("aozora::lex::unrecognised_container_directive"),
@@ -546,20 +358,14 @@ pub enum Diagnostic {
         )
     )]
     UnrecognisedContainerDirective {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("unrecognised directive")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃ここから…］` directive in the sanitized
-        /// source.
+        /// Byte-range of the `［＃ここから…］` directive in the sanitized source.
         span: Span,
     },
 
-    /// A 縦中横 forward reference (`［＃「X」は縦中横］`) named a target `X`
-    /// that does not appear anywhere in the preceding text, so it has no
-    /// run to style. The directive degrades to an `Directive{Unknown}`.
-    /// The label spans the directive.
+    /// A 縦中横 directive names a target absent from preceding text.
     #[error("縦中横 target not found in the preceding text")]
     #[diagnostic(
         code("aozora::lex::tcy_target_not_found"),
@@ -571,21 +377,14 @@ pub enum Diagnostic {
         )
     )]
     TcyTargetNotFound {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("target has no referent")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃「X」は縦中横］` directive in the sanitized
-        /// source.
+        /// Byte-range of the `［＃「X」は縦中横］` directive in the sanitized source.
         span: Span,
     },
 
-    /// A forward-reference bouten (`［＃「X」に傍点］`) named a target `X`
-    /// that occurs more than once in the preceding text, so which run it
-    /// emphasises is ambiguous. The parser applies it to the match per its
-    /// look-back rule, but the author should disambiguate. The label spans
-    /// the directive.
+    /// A bouten directive names a target with multiple preceding matches.
     #[error("ambiguous bouten target: more than one candidate run precedes it")]
     #[diagnostic(
         code("aozora::lex::bouten_target_ambiguous"),
@@ -599,23 +398,14 @@ pub enum Diagnostic {
         )
     )]
     BoutenTargetAmbiguous {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("ambiguous target")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃「X」に傍点］` directive in the sanitized
-        /// source.
+        /// Byte-range of the `［＃「X」に傍点］` directive in the sanitized source.
         span: Span,
     },
 
-    /// An inline-style forward reference (`［＃「X」は太字／斜体］`, `［＃「X」に傍点］`,
-    /// `は縦中横`, `は「□」囲み`, …) named a target `X` that *is* present in the
-    /// preceding text but cannot be styled in place: it is a ruby base
-    /// (`我《われ》…［＃「我」に傍点］`), on an earlier line, inside another construct,
-    /// or one of several quoted targets. The directive is retained and the text
-    /// round-trips, but the emphasis is **not** applied to the earlier run. The
-    /// label spans the directive.
+    /// A forward directive has a preceding referent that cannot be styled in place.
     #[error("forward-reference target found but not stylable in place")]
     #[diagnostic(
         code("aozora::lex::forward_referent_not_stylable"),
@@ -630,23 +420,14 @@ pub enum Diagnostic {
         )
     )]
     ForwardReferentNotStylable {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("target not stylable in place")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃「X」は…］` directive in the sanitized source.
         span: Span,
     },
 
-    /// A page or section break (`［＃改ページ］` / `［＃改段］` / …) appeared
-    /// inside a single-line container — a single-line layout directive
-    /// (`［＃地付き］` / `［＃N字下げ］`) sharing a source line with a later
-    /// break, or a break between `［＃割り注］` and `［＃割り注終わり］`. A
-    /// single-line container governs only the rest of its line, so a break
-    /// on that line drops the container's effect. The label points at the
-    /// break. `container` is the stable family tag of the dropped container
-    /// (`indent` / `align-end` / `warichu`).
+    /// A page or section break drops a single-line container's effect.
     #[error("page/section break inside a single-line `{container}` container")]
     #[diagnostic(
         code("aozora::lex::break_in_single_line_container"),
@@ -661,25 +442,16 @@ pub enum Diagnostic {
         )
     )]
     BreakInSingleLineContainer {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("break drops the container")]
         at: miette::SourceSpan,
-        /// Stable family tag of the dropped single-line container
-        /// (`indent` / `align-end` / `warichu`).
+        /// Stable family tag of the dropped single-line container (`indent` / `align-end` / `warichu`).
         container: &'static str,
         /// Byte-range of the break directive in the sanitized source.
         span: Span,
     },
 
-    /// A bracketed kaeriten of rank ≥ 2 (`［＃二］` / `［＃下］` / `［＃乙］` …)
-    /// appeared in a document whose matching family base (`［＃一］` /
-    /// `［＃上］` / `［＃甲］`) is absent entirely — there is nothing for the
-    /// return mark to pair back to. The check is document-wide and
-    /// base-only: kanbun return-mark groups routinely span `、` / `。` and
-    /// line boundaries and 上下点 skips `中`, so any narrower scope flags
-    /// valid kanbun. The label points at the unpaired mark.
+    /// A bracketed kaeriten has no family base anywhere in the document.
     #[error("bracketed kaeriten has no matching base mark in the document")]
     #[diagnostic(
         code("aozora::lex::bracketed_kaeriten_no_pair"),
@@ -693,22 +465,14 @@ pub enum Diagnostic {
         )
     )]
     BracketedKaeritenNoPair {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("unpaired kaeriten")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
-        /// source.
+        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized source.
         span: Span,
     },
 
-    /// A kaeriten (`［＃二］` / `［＃レ］` / …) appeared outside a 漢文-like
-    /// context — it is the only kaeriten in the document and its
-    /// surroundings read as ordinary kana prose, so the mark is most likely
-    /// a stray annotation rather than a genuine return mark. Conservative
-    /// lookahead heuristic: a document with a cluster of kaeriten is never
-    /// flagged. The label points at the lone mark.
+    /// An isolated kaeriten appears in ordinary kana prose.
     #[error("kaeriten outside a 漢文-like context")]
     #[diagnostic(
         code("aozora::lex::kaeriten_outside_kanbun"),
@@ -723,23 +487,14 @@ pub enum Diagnostic {
         )
     )]
     KaeritenOutsideKanbun {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("isolated kaeriten")]
         at: miette::SourceSpan,
-        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
-        /// source.
+        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized source.
         span: Span,
     },
 
-    /// A 傍点 / 傍線 range form (`［＃傍点］ … ［＃傍点終わり］`) was opened with
-    /// one family (点 / 線) and closed by the other — e.g. a `［＃傍点］`
-    /// opener closed by `［＃傍線終わり］`. The two families render
-    /// differently (dots vs a line), so the run's emphasis is ambiguous.
-    /// The parser recovers by keying the run to the opener's variant. The
-    /// label points at the close marker. `open_family` / `close_family`
-    /// are the stable family tags (`傍点` / `傍線`).
+    /// A bouten range closes with a different family, recovering with the opener's style.
     #[error("傍点 range opened as `{open_family}` closed by a `{close_family}` closer")]
     #[diagnostic(
         code("aozora::lex::mismatched_bouten_container"),
@@ -753,9 +508,7 @@ pub enum Diagnostic {
         )
     )]
     MismatchedBoutenContainer {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("mismatched close")]
         at: miette::SourceSpan,
         /// Family of the *open* marker (`傍点` / `傍線`).
@@ -766,25 +519,10 @@ pub enum Diagnostic {
         span: Span,
     },
 
-    /// Pipeline-internal sanity-check failure — production parses on
-    /// well-formed input never emit this. The [`check`](Self::Internal)
-    /// payload identifies the specific check via the typed
-    /// [`InternalCheckCode`] enum; tooling that prefers the stable
-    /// string identifier reaches via
-    /// [`Self::code`](Self::code). Library consumers that just want
-    /// to filter "library bugs" out of the stream check
-    /// [`source`](Self::source) instead.
+    /// A library-internal check failed; [`InternalCheckCode`] identifies it.
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
-        // The issue tracker, where the sixteen source-level diagnostics
-        // point at the specification. This one is a bug in aozora, not a
-        // property of the notation, so the spec neither describes it nor
-        // should — and the only useful next step is to report it. Shared:
-        // every `InternalCheckCode` in `ALL_CODES`
-        // (residual_annotation_marker, unregistered_sentinel, …) explains
-        // through this one variant, so this url serves four catalogued
-        // codes, not one.
         url("https://github.com/P4suta/aozora/issues"),
         help(
             "this is a pipeline-internal sanity check; appearance \
@@ -794,35 +532,19 @@ pub enum Diagnostic {
         )
     )]
     Internal {
-        /// Caret location for miette rendering — the same byte-range as
-        /// the `span` field below, as the `(offset, length)` pair miette
-        /// wants.
+        /// Label location for diagnostic rendering.
         #[label("at this position")]
         at: miette::SourceSpan,
-        /// Typed identifier for the specific check that fired. Pin
-        /// per-check assertions on this rather than the stringly-typed
-        /// [`code`](Self::code) accessor so the compiler enforces
-        /// match exhaustiveness at the call site.
+        /// The check that failed.
         check: InternalCheckCode,
         /// Byte-range covering the violation site.
         span: Span,
     },
 }
 
-/// Introspected metadata for a diagnostic code — the machine axes plus the
-/// language-neutral example data behind `aozora explain <code>`.
+/// Metadata and language-neutral examples returned by [`Diagnostic::explain`].
 ///
-/// Returned by [`Diagnostic::explain`]. `severity` / `source` come from the
-/// inherent accessors and `help` / `url` from the live [`miette::Diagnostic`]
-/// impl of a representative instance, so none of them can drift from what
-/// `aozora check` renders. `repro` / `fixed` are the language-neutral example
-/// pair from the crate-private `DOCS` table, and `body_args` are the
-/// representative instance's [`Diagnostic::body_args`].
-///
-/// The localized *prose* — the one-line title and the long-form body — lives in
-/// a separate localization catalog, keyed by `code`, so this crate stays a pure
-/// machine contract. A consumer renders the title and body for a chosen
-/// language from the code and the `info.body_args` placeables.
+/// Localized titles and body text are resolved separately using `code` and `body_args`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct DiagnosticInfo {
@@ -830,7 +552,7 @@ pub struct DiagnosticInfo {
     pub code: &'static str,
     /// Severity routing axis.
     pub severity: Severity,
-    /// Origin axis: user input vs. library-internal.
+    /// Whether the diagnostic concerns user input or a library defect.
     pub source: DiagnosticSource,
     /// One-line remediation help — the `#[diagnostic(help(…))]` text.
     pub help: String,
@@ -840,31 +562,16 @@ pub struct DiagnosticInfo {
     pub repro: &'static str,
     /// The corrected form corresponding to [`Self::repro`].
     pub fixed: &'static str,
-    /// The representative instance's body placeables — the `(name, value)`
-    /// pairs the localized `diag-<code>-body` message interpolates (empty for
-    /// static-body variants). See [`Diagnostic::body_args`].
+    /// Arguments interpolated into this diagnostic's localized body message.
     pub body_args: Vec<(&'static str, String)>,
 }
 
-/// Static language-neutral example data for one diagnostic code.
-///
-/// A minimal reproduction in Aozora notation and its corrected form. The
-/// localized title / body prose lives in a separate localization catalog keyed
-/// by [`Self::code`].
 struct DiagnosticDoc {
-    /// The stable code this entry documents (a [`codes`] constant).
     code: &'static str,
-    /// A minimal reproduction in Aozora notation.
     repro: &'static str,
-    /// The corrected form of [`Self::repro`].
     fixed: &'static str,
 }
 
-/// One [`DiagnosticDoc`] per [`Diagnostic::ALL_CODES`] entry, in the same
-/// order. The single authority for the per-code language-neutral reproduction
-/// / fixed example pair; a coverage test pins `DOCS.len() == ALL_CODES.len()`
-/// and that every code resolves. The localized title / body prose lives in a
-/// separate localization catalog, keyed by code.
 const DOCS: [DiagnosticDoc; 21] = [
     DiagnosticDoc {
         code: codes::SOURCE_CONTAINS_PUA,
@@ -973,7 +680,6 @@ const DOCS: [DiagnosticDoc; 21] = [
     },
 ];
 
-/// The canonical example used in the unclosed-bracket body, per family.
 const fn pair_example(kind: PairKind) -> &'static str {
     match kind {
         PairKind::Ruby => "｜青空《あおぞら》",
@@ -984,7 +690,6 @@ const fn pair_example(kind: PairKind) -> &'static str {
     }
 }
 
-/// Look up the static [`DiagnosticDoc`] for a stable `code`.
 fn doc_for(code: &str) -> Option<&'static DiagnosticDoc> {
     DOCS.iter().find(|d| d.code == code)
 }
@@ -1058,9 +763,7 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::MismatchedContainerClose`]. The
-    /// `open_kind` / `close_kind` are the stable container-family tags
-    /// (`crate::syntax::ContainerKind::kind_str`).
+    /// Create a container mismatch diagnostic from stable family tags.
     #[must_use]
     pub fn mismatched_container_close(
         at: Span,
@@ -1136,9 +839,7 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::BreakInSingleLineContainer`]. The
-    /// `container` is the stable family tag of the dropped single-line
-    /// container (`indent` / `align-end` / `warichu`).
+    /// Create a break diagnostic with the dropped container's stable family tag.
     #[must_use]
     pub fn break_in_single_line_container(at: Span, container: &'static str) -> Self {
         let (offset, length) = span_to_miette_parts(at);
@@ -1169,9 +870,7 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::MismatchedBoutenContainer`]. The
-    /// `open_family` / `close_family` are the stable 点/線 family tags
-    /// (`crate::syntax::BoutenKind::family_str`).
+    /// Create a bouten mismatch diagnostic from 点/線 family tags.
     #[must_use]
     pub fn mismatched_bouten_container(
         at: Span,
@@ -1187,9 +886,7 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::Internal`]. Takes a typed
-    /// [`InternalCheckCode`] — the compiler enforces that every
-    /// production emit-site classifies the check correctly.
+    /// Create a diagnostic for a typed internal check.
     #[must_use]
     pub fn internal(at: Span, check: InternalCheckCode) -> Self {
         let (offset, length) = span_to_miette_parts(at);
@@ -1200,12 +897,7 @@ impl Diagnostic {
         }
     }
 
-    /// Severity routing axis. See [`Severity`].
-    ///
-    /// `#[non_exhaustive]` puts the responsibility on every match
-    /// here for adding-new-variant time, not on a catch-all arm —
-    /// the compiler will refuse to build until the new variant is
-    /// classified.
+    /// Severity of this diagnostic.
     #[must_use]
     pub fn severity(&self) -> Severity {
         match self {
@@ -1230,8 +922,7 @@ impl Diagnostic {
         }
     }
 
-    /// Origin axis: user input vs. pipeline-internal. See
-    /// [`DiagnosticSource`].
+    /// Whether this diagnostic concerns user input or a library defect.
     #[must_use]
     pub fn source(&self) -> DiagnosticSource {
         match self {
@@ -1281,21 +972,7 @@ impl Diagnostic {
         }
     }
 
-    /// Rebase this diagnostic's byte range by `by` bytes.
-    ///
-    /// Translates the `span` (and the miette `at` caret, which the
-    /// constructors always derive from `span`) by `by`. Used by the
-    /// incremental re-parse engine (#237) to lift a diagnostic produced
-    /// by lexing a document *segment* — whose offsets are segment-local —
-    /// back into whole-document coordinates by adding the segment's start
-    /// offset.
-    ///
-    /// The single consolidated `|`-pattern arm relies on every variant
-    /// sharing the `{ at, span, .. }` shape; the absence of a `_` arm
-    /// means a future variant (the enum is `#[non_exhaustive]`) forces a
-    /// compile error here rather than silently skipping the rebase —
-    /// matching the [`span`](Self::span) / [`severity`](Self::severity)
-    /// accessors' exhaustive style.
+    /// Shift both the byte span and rendering caret by `by` bytes, saturating at the `u32` bounds.
     #[must_use]
     pub fn shifted(mut self, by: i64) -> Self {
         let (at, span): (&mut miette::SourceSpan, &mut Span) = match &mut self {
@@ -1352,10 +1029,7 @@ impl Diagnostic {
         self
     }
 
-    /// Stable string identifier for this diagnostic. Returns one of
-    /// the canonical code strings for production variants, or the
-    /// `Internal` payload's [`InternalCheckCode::as_code`] for
-    /// pipeline-internal checks.
+    /// Stable string identifier for this diagnostic.
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
@@ -1380,37 +1054,15 @@ impl Diagnostic {
         }
     }
 
-    /// True when this diagnostic is an advisory notation-hygiene *lint*.
-    ///
-    /// A code in the `aozora::lint::*` namespace, surfaced by
-    /// `aozora lint` and the LSP as authoring guidance, as opposed to the
-    /// `aozora::lex::*` faults that report malformed input. The single
-    /// authority for the lint-vs-lex split, so callers never string-match the
-    /// prefix themselves.
+    /// Whether this is an advisory notation-hygiene lint.
     #[must_use]
     pub fn is_lint(&self) -> bool {
         self.code().starts_with(codes::LINT_NAMESPACE)
     }
 
-    /// The instance placeables for this diagnostic's localized body message.
+    /// Named arguments for this instance's localized body message.
     ///
-    /// The `(name, value)` pairs the `diag-<code>-body` Fluent message in the
-    /// localization catalog interpolates for the diagnostic in hand.
-    ///
-    /// Plain data, no localization: variants that carry data (the offending
-    /// codepoint, delimiter family, container tags, canonical spelling) yield
-    /// their live values so a host renders the exact detail; static-body
-    /// variants yield an empty vector. A consumer binds these into a Fluent
-    /// args set and calls `aozora_i18n::diag_body(lang, self.code(), &args)` —
-    /// `explain` from a representative sample, an editor from the live
-    /// diagnostic, both reading the prose from the one catalog.
-    ///
-    /// The keys mirror the `$…` placeables in the `.ftl` body messages
-    /// (`open` / `close` / `example` / `codepoint` / `char` / `open_kind` /
-    /// `close_kind` / `container` / `open_family` / `close_family` /
-    /// `canonical`). No `_` arm: like [`severity`](Self::severity) /
-    /// [`code`](Self::code), a future `#[non_exhaustive]` variant must decide
-    /// its placeables here rather than silently render a body with none.
+    /// Returns an empty vector for messages without placeables.
     #[must_use]
     pub fn body_args(&self) -> Vec<(&'static str, Cow<'static, str>)> {
         match self {
@@ -1449,10 +1101,6 @@ impl Diagnostic {
             Self::NonCanonicalDirective { canonical, .. } => {
                 vec![("canonical", canonical.clone())]
             }
-            // Static-body variants carry no placeables; their `diag-*-body`
-            // messages are plain prose. The four internal checks all reach
-            // here through the single `Internal` variant — each maps to its own
-            // distinct `diag-*-body` keyed by [`code`](Self::code).
             Self::AccentDecompositionApplied { .. }
             | Self::UnresolvedGaiji { .. }
             | Self::EmptyRubyReading { .. }
@@ -1467,14 +1115,7 @@ impl Diagnostic {
         }
     }
 
-    /// Whether an editor should mark this diagnostic's span as
-    /// *unnecessary* (greyed out, `DiagnosticTag::UNNECESSARY`).
-    ///
-    /// A stable semantic property of the diagnostic — only the source-PUA
-    /// collision, whose fix is to delete the redundant codepoint, is
-    /// unnecessary today. Kept here (not in an LSP adapter) so the
-    /// classification is single-sourced and `#[non_exhaustive]` forces a
-    /// future variant to decide, mirroring [`severity`](Self::severity).
+    /// Whether an editor should mark this span as unnecessary.
     #[must_use]
     pub fn is_unnecessary(&self) -> bool {
         match self {
@@ -1499,10 +1140,7 @@ impl Diagnostic {
         }
     }
 
-    /// Every stable diagnostic code [`Self::code`] can return, in
-    /// catalogue order: the seventeen source-level codes followed by the
-    /// four pipeline-internal check codes. Backs `aozora explain`'s
-    /// catalogue and the round-trip coverage test.
+    /// Every stable diagnostic code in catalogue order.
     pub const ALL_CODES: [&'static str; 21] = [
         codes::SOURCE_CONTAINS_PUA,
         codes::UNCLOSED_BRACKET,
@@ -1527,24 +1165,10 @@ impl Diagnostic {
         codes::REGISTRY_POSITION_MISMATCH,
     ];
 
-    /// Introspect the diagnostic identified by `code` — one of
-    /// [`Self::ALL_CODES`] (equivalently a canonical code string or an
-    /// [`InternalCheckCode::as_code`]). `None` for an unknown code.
-    ///
-    /// `severity` / `source` come from the inherent accessors; `help` /
-    /// `url` are read from the live [`miette::Diagnostic`] impl of a
-    /// representative instance, so they always agree with what `aozora check`
-    /// prints for the same diagnostic. `repro` / `fixed` are the
-    /// language-neutral example pair, and `body_args` the representative
-    /// instance's [`body_args`](Self::body_args). The localized title / body
-    /// prose is fetched separately from the localization catalog by
-    /// [`Self::code`].
+    /// Metadata for a stable diagnostic code, or `None` if it is unknown.
     #[must_use]
     pub fn explain(code: &str) -> Option<DiagnosticInfo> {
         let sample = Self::sample_for_code(code)?;
-        // `sample.code()` is the canonical form of `code` (the four
-        // internal codes map to their own strings), so `DOCS` is always
-        // populated for a code `sample_for_code` accepted.
         let doc = doc_for(sample.code())?;
         Some(DiagnosticInfo {
             code: sample.code(),
@@ -1564,10 +1188,6 @@ impl Diagnostic {
         })
     }
 
-    /// A representative instance of the variant a `code` names, for
-    /// introspection (reading miette help/url without a real parse).
-    /// Spans are placeholder-empty; the four internal codes all map to
-    /// the single [`Self::Internal`] variant, which shares one help/url.
     fn sample_for_code(code: &str) -> Option<Self> {
         let at = Span::new(0, 0);
         Some(match code {
@@ -1611,7 +1231,6 @@ impl Diagnostic {
     }
 }
 
-/// Split a [`Span`] into the `(offset, length)` pair miette wants.
 const fn span_to_miette_parts(span: Span) -> (usize, usize) {
     let offset = span.start as usize;
     let length = (span.end - span.start) as usize;
@@ -1640,8 +1259,6 @@ mod tests {
         let diag = Diagnostic::source_contains_pua(Span::new(5, 8), '\u{E001}');
         let moved = diag.shifted(100);
         assert_eq!(moved.span(), Span::new(105, 108));
-        // `at` is derived from `span`; confirm it tracks the shift so a
-        // miette render points at the rebased location.
         let Diagnostic::SourceContainsPua { at, .. } = moved else {
             panic!("variant must survive the shift");
         };
@@ -1767,9 +1384,6 @@ mod tests {
         }
     }
 
-    /// Codes are stable identifiers — pin every constant so accidental
-    /// rename of one breaks this test rather than silently breaking
-    /// downstream tooling that grep-matches on the string.
     #[test]
     fn code_constants_are_stable() {
         assert_eq!(
@@ -1839,9 +1453,6 @@ mod tests {
         );
     }
 
-    /// Severity / source axes are independent — pin the cross-product
-    /// for the four production variants so a future variant addition
-    /// has to think about both axes deliberately.
     #[test]
     fn severity_source_cross_product_is_pinned() {
         let pua = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E001}');
@@ -1928,9 +1539,6 @@ mod tests {
         assert_eq!(internal.source(), DiagnosticSource::Internal);
     }
 
-    /// Every catalogued code resolves to a representative instance with
-    /// non-empty help and an https URL — guards `explain` against a code
-    /// that has no sample (and pins the catalogue length).
     #[test]
     fn explain_covers_every_catalogued_code() {
         assert_eq!(
@@ -1959,9 +1567,6 @@ mod tests {
 
     #[test]
     fn severity_as_json_str_is_stable_per_variant() {
-        // The lowercase wire spelling emitted in the `severity` field —
-        // pin each variant so a body-stubbing regression is caught rather
-        // than silently drifting the JSON envelope.
         assert_eq!(Severity::Error.as_json_str(), "error");
         assert_eq!(Severity::Warning.as_json_str(), "warning");
         assert_eq!(Severity::Note.as_json_str(), "note");
@@ -1975,9 +1580,6 @@ mod tests {
 
     #[test]
     fn pair_example_is_the_canonical_form_per_family() {
-        // The example woven into the unclosed-bracket body — pin the
-        // per-family literal so it is a real, resolvable construct and
-        // never degrades to a stub string.
         assert_eq!(pair_example(PairKind::Ruby), "｜青空《あおぞら》");
         assert_eq!(pair_example(PairKind::AngleQuote), "≪重要≫");
         assert_eq!(pair_example(PairKind::Tortoise), "〔Crevez chiens〕");
@@ -1987,9 +1589,6 @@ mod tests {
 
     #[test]
     fn doc_for_returns_the_entry_matching_the_requested_code() {
-        // doc_for must return the DOCS entry whose `code` *equals* the
-        // query — not merely some entry — so pin the identity of the
-        // resolved doc rather than only its presence.
         for &code in &Diagnostic::ALL_CODES {
             assert_eq!(
                 doc_for(code).expect("every catalogued code has a doc").code,
@@ -2014,13 +1613,9 @@ mod tests {
 
     #[test]
     fn body_args_are_instance_specific_for_carrying_variants() {
-        // The unclosed-bracket body placeables name the offending delimiter
-        // family, so a Ruby opener and a Bracket opener yield different args —
-        // the localized body then interpolates the exact glyphs / example.
         let bracket = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Bracket).body_args();
         let ruby = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Ruby).body_args();
         assert_ne!(bracket, ruby);
-        // The `example` arg is the per-family canonical construct.
         assert!(
             bracket
                 .iter()
@@ -2032,15 +1627,12 @@ mod tests {
                 .any(|(k, v)| *k == "example" && v.contains('》')),
             "ruby example arg: {ruby:?}"
         );
-        // The `open` / `close` args carry the delimiter glyphs.
         assert!(bracket.iter().any(|(k, v)| *k == "open" && v == "［"));
         assert!(bracket.iter().any(|(k, v)| *k == "close" && v == "］"));
     }
 
     #[test]
     fn body_args_are_empty_for_static_body_variants() {
-        // A static-body variant (and every internal check) supplies no
-        // placeables — its `diag-*-body` message is plain prose.
         assert!(
             Diagnostic::empty_ruby_reading(Span::new(0, 1))
                 .body_args()
@@ -2055,8 +1647,6 @@ mod tests {
 
     #[test]
     fn source_pua_body_args_format_the_codepoint_as_hex() {
-        // The `codepoint` arg is the 4-digit uppercase hex the `U+{$codepoint}`
-        // placeable expects; `char` is the offending scalar itself.
         let args = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E002}').body_args();
         assert!(
             args.iter().any(|(k, v)| *k == "codepoint" && v == "E002"),
@@ -2080,7 +1670,6 @@ mod tests {
 
     #[test]
     fn explain_rejects_unknown_and_unprefixed_codes() {
-        // explain wants the full code; the CLI expands short forms.
         assert!(Diagnostic::explain(codes::UNCLOSED_BRACKET).is_some());
         assert!(Diagnostic::explain("unclosed_bracket").is_none());
         assert!(Diagnostic::explain("ruby").is_none());
@@ -2094,20 +1683,16 @@ mod tests {
         assert_eq!(resid.source, DiagnosticSource::Internal);
         assert_eq!(resid.code, codes::RESIDUAL_ANNOTATION_MARKER);
         assert_eq!(unreg.code, codes::UNREGISTERED_SENTINEL);
-        // All four internal checks are one Diagnostic::Internal variant,
-        // so they share the umbrella help/url.
         assert_eq!(resid.help, unreg.help);
         assert_eq!(resid.url, unreg.url);
     }
 
     #[test]
     fn is_lint_selects_only_the_lint_namespace() {
-        // The one lint code today is `aozora::lint::non_canonical_directive`.
         let lint = Diagnostic::non_canonical_directive(Span::new(0, 3), "ここで字下げ終わり");
         assert!(lint.is_lint(), "notation-hygiene lint must be a lint");
         assert!(lint.code().starts_with(codes::LINT_NAMESPACE));
 
-        // Lex faults and internal checks are not lints.
         let lex = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Bracket);
         assert!(!lex.is_lint(), "a lex fault is not a lint: {}", lex.code());
         let internal =

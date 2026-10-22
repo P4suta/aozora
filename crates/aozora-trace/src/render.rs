@@ -1,17 +1,6 @@
-//! Plain-text table rendering for analysis reports.
-//!
-//! Each analysis returns a typed report struct (e.g. [`crate::analysis::HotReport`]).
-//! Reports implement [`TableRenderable`] so the CLI can pretty-print
-//! them uniformly. We deliberately don't pull in `comfy-table` /
-//! `tabled` etc. — the tables are small and fixed-width, so rolling
-//! our own keeps the dep graph trivial.
-
-/// Implemented by every analysis report. Renders to stdout-friendly
-/// fixed-width text; every report also derives [`serde::Serialize`],
-/// so `xtask trace … --format json` can emit the same data as JSON.
+/// Plain-text table rendering for analysis reports.
 pub trait TableRenderable {
-    /// Render the report as a self-contained, fixed-width text block
-    /// (title, header, separator, rows), ready to print to stdout.
+    /// Render the report as a self-contained, fixed-width text block.
     fn render_table(&self) -> String;
 }
 
@@ -57,7 +46,6 @@ impl TableBuilder {
             out.push_str(&"=".repeat(self.title.chars().count()));
             out.push('\n');
         }
-        // Compute final column widths: max of header / declared / actual cell widths.
         let mut widths: Vec<usize> = self
             .columns
             .iter()
@@ -70,19 +58,16 @@ impl TableBuilder {
                 }
             }
         }
-        // Header row.
         for (i, c) in self.columns.iter().enumerate() {
             push_padded(&mut out, &c.header, widths[i], &c.align);
             out.push_str("  ");
         }
         out.push('\n');
-        // Separator.
         for &w in &widths {
             out.push_str(&"-".repeat(w));
             out.push_str("  ");
         }
         out.push('\n');
-        // Body.
         for row in &self.rows {
             for (i, cell) in row.cells.iter().enumerate() {
                 let align = self.columns.get(i).map_or(&Align::Left, |c| &c.align);

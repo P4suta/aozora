@@ -1,9 +1,4 @@
-//! Walks `AOZORA_CORPUS_ROOT` and verifies every document parses
-//! cleanly and round-trips through `parse ∘ serialize` (the I3
-//! fixed-point invariant).
-//!
-//! `AOZORA_REQUIRE_CORPUS` turns an absent or empty corpus into a
-//! release-gate failure.
+//! Verify corpus parse and serialization round trips.
 
 use std::borrow::Cow;
 use std::env;
@@ -103,8 +98,6 @@ fn sweep_item(item: CorpusItem) -> SweepOutcome {
     }
 }
 
-/// A compact `…before│after…` window around the first byte where two
-/// serializations diverge — enough to identify the offending construct.
 fn first_diff_hint(a: &str, b: &str) -> String {
     let at = a
         .bytes()

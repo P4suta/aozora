@@ -1,39 +1,21 @@
-//! Error types for corpus source operations.
-//!
-//! Kept in its own module so each `CorpusSource` impl (see
-//! `in_memory.rs`, `filesystem.rs`, `vendored.rs`) can extend
-//! [`CorpusError`] without touching the public-facing `lib.rs`.
-
 use std::io;
 use std::path::PathBuf;
 
 /// Errors that may arise while iterating a corpus source.
-///
-/// Marked `#[non_exhaustive]` so additional variants (missing root,
-/// malformed file layout, etc.) can be added in follow-up milestones
-/// without breaking downstream `match` sites.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CorpusError {
-    /// An I/O call failed on a specific path. The underlying
-    /// [`io::Error`] is preserved as `source` so callers can inspect
-    /// [`io::ErrorKind`] when they care (e.g. to distinguish `NotFound`
-    /// from `PermissionDenied`).
+    /// An I/O call failed on a specific path.
     #[error("failed to read corpus item at {path}: {source}")]
     Io {
         /// Path of the corpus item whose I/O call failed.
         path: PathBuf,
-        /// Underlying OS error; inspect its [`io::ErrorKind`] to
-        /// distinguish causes such as `NotFound` vs `PermissionDenied`.
+        /// Underlying OS error.
         #[source]
         source: io::Error,
     },
 
-    /// Constructor was given a path that does not exist or is not a
-    /// directory. Construction is rejected eagerly rather than deferring
-    /// to iteration time so the error surfaces where the mistake was
-    /// made (the caller's configuration code, not deep inside a sweep
-    /// loop).
+    /// Constructor was given a path that does not exist or is not a directory.
     #[error("corpus root is not a directory: {path}")]
     RootNotDirectory {
         /// The configured root path that was missing or not a directory.
@@ -91,8 +73,6 @@ mod tests {
         let err = CorpusError::RootNotDirectory {
             path: PathBuf::from("/irrelevant"),
         };
-        // Structural variant — the offending path is self-contained, there's
-        // no underlying cause to forward.
         assert!(err.source().is_none());
     }
 }
