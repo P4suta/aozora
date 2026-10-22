@@ -1,4 +1,4 @@
-//! Testable protocol core for the Extism real-work JSONL worker.
+//! Serves the Extism worker protocol as line-delimited JSON.
 
 use std::io::{BufRead, Write};
 
@@ -51,15 +51,14 @@ fn render<E: Engine>(engine: &mut E, input: &Request) -> anyhow::Result<Value> {
     }))
 }
 
-/// Serve newline-delimited requests until `reader` reaches EOF.
+/// Serves newline-delimited requests until `reader` reaches the end of input.
 ///
-/// Each input line produces exactly one flushed JSON response line, including
-/// malformed requests and engine errors.
+/// Each input line produces exactly one flushed JSON response line.
+/// Malformed requests and engine errors produce error responses.
 ///
 /// # Errors
 ///
-/// Returns an error when reading the request stream or writing the response
-/// stream fails.
+/// Returns an error when reading the request stream or writing the response stream fails.
 pub fn serve<E: Engine, R: BufRead, W: Write>(
     engine: &mut E,
     reader: R,

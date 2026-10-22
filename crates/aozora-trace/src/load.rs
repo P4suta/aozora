@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
@@ -18,9 +18,9 @@ pub enum TraceLoadError {
         path: PathBuf,
         /// Underlying I/O error.
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
-    /// The file was read but is not valid JSON.
+    /// Reading, decoding, or parsing the JSON stream failed.
     #[error("json parse error in {path}: {source}")]
     Json {
         /// The trace path whose contents failed to parse.
@@ -29,7 +29,7 @@ pub enum TraceLoadError {
         #[source]
         source: serde_json::Error,
     },
-    /// The JSON parsed but a required gecko table/column was missing or had the wrong shape (e.g. mismatched column lengths).
+    /// A required Gecko table or column has an invalid shape or value.
     #[error("gecko schema: missing or malformed `{field}`")]
     BadSchema {
         /// Name of the missing/malformed field, or a short phrase describing the structural problem.
@@ -39,13 +39,19 @@ pub enum TraceLoadError {
 
 impl Trace {
     /// Load a samply trace.
-    /// Accepts either `.json.gz` (the default samply output) or plain `.json`.
+    /// Accepts `.json.gz` or plain `.json`.
+    ///
+    /// # Errors
+    /// Returns an error if reading, decoding, or validating the Gecko profile fails.
     pub fn load(path: &Path) -> Result<Self, TraceLoadError> {
         let json = read_json(path)?;
         Self::from_json(&json, path.to_path_buf())
     }
 
     /// Parse an in-memory JSON value.
+    ///
+    /// # Errors
+    /// Returns an error for malformed tables, invalid indices, cyclic stacks, or overflowing weights of samples.
     pub fn from_json(json: &Value, source_path: PathBuf) -> Result<Self, TraceLoadError> {
         let libs = libs_from(json)?;
         let threads = threads_from(json)?;

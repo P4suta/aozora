@@ -201,6 +201,10 @@ fn level_slug(level: Level) -> &'static str {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn write_results(root: &Path, summary: &Summary, rel: &str) -> Result<(), String> {
     let results_path = root.join(rel);
     if let Some(parent) = results_path.parent() {
@@ -242,6 +246,10 @@ fn run_case(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_summary(summary: &Summary) {
     eprintln!(
         "xtask conformance: {} / {} passed (impl={})",
@@ -281,6 +289,10 @@ fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
     Ok((root.to_sexp(), root.has_error()))
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn run_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let fixtures_dir = root.join(FIXTURE_REL);
@@ -366,6 +378,10 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
     require_error_free(&summary, "fixtures")
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_ts_summary(summary: &Summary, drifts: &[String], unit: &str) {
     eprintln!(
         "xtask conformance (tree-sitter): {} / {} {unit} parse without ERROR nodes",
@@ -403,6 +419,10 @@ struct TsVectorSnapshot {
     vectors: Vec<TsVectorEntry>,
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);
@@ -571,6 +591,10 @@ struct ActualDiagnostic {
     span: SpanCmp,
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn run_vectors() -> Result<(), String> {
     let root = workspace_root()?;
     let vectors_dir = root.join(SPEC_VECTORS_REL);

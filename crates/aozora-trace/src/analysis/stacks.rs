@@ -1,16 +1,15 @@
-//! Print full call stacks containing functions matching a regex.
-//!
-//! Use case: "I see `aho_corasick::packed::teddy::*` in the hot
-//! list — *who's calling it*?". A `--filter teddy` query returns
-//! the top-K distinct call stacks that include the matching frame
-//! anywhere in the chain.
+//! Finds call stacks whose frame labels match a regular expression through [`matching_stacks`].
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use regex::Regex;
 
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
+
+const PERCENT_SCALE: f64 = 100.0;
+const DEPTH_COLUMN_WIDTH: usize = 5;
 
 /// One distinct call stack matching the filter.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -24,23 +23,26 @@ pub struct MatchedStack {
     pub pct: f64,
 }
 
-/// Result of [`matching_stacks`]: the call stacks containing a frame
-/// that matched the filter regex.
+/// Call stacks containing a frame that matches the filter.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MatchedStacksReport {
-    /// The filter regex source that was matched against frame labels.
+    /// Regular expression used to filter frame labels.
     pub filter: String,
-    /// Total sample weight across the trace (matched or not).
+    /// Total weight of samples across the trace.
     pub total_samples: u64,
-    /// Sample weight whose stack contained at least one matching frame.
+    /// Weight of samples with at least one matching frame.
     pub matched_samples: u64,
     /// The top distinct matching stacks, sorted by descending samples.
     pub stacks: Vec<MatchedStack>,
 }
 
-/// Find call stacks where any frame matches `regex`. Aggregates
-/// identical stacks and returns the top `limit` by sample count.
+/// Find call stacks where any frame matches `regex`.
+/// Groups identical stacks and returns at most `limit` by descending weight of samples.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "sample shares are rendered as approximate percentages"
+)]
 #[must_use]
 pub fn matching_stacks(trace: &Trace, regex: &Regex, limit: usize) -> MatchedStacksReport {
     let mut grouped: HashMap<Vec<String>, u64> = HashMap::new();
@@ -70,11 +72,11 @@ pub fn matching_stacks(trace: &Trace, regex: &Regex, limit: usize) -> MatchedSta
             pct: if total == 0 {
                 0.0
             } else {
-                (samples as f64 / total as f64) * 100.0
+                (samples as f64 / total as f64) * PERCENT_SCALE
             },
         })
         .collect();
-    stacks.sort_by_key(|s| std::cmp::Reverse(s.samples));
+    stacks.sort_by_key(|s| Reverse(s.samples));
     stacks.truncate(limit);
     MatchedStacksReport {
         filter: regex.as_str().to_owned(),
@@ -85,6 +87,10 @@ pub fn matching_stacks(trace: &Trace, regex: &Regex, limit: usize) -> MatchedSta
 }
 
 impl TableRenderable for MatchedStacksReport {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "sample shares are rendered as approximate percentages"
+    )]
     fn render_table(&self) -> String {
         let mut out = String::new();
         let title = format!(
@@ -95,7 +101,7 @@ impl TableRenderable for MatchedStacksReport {
             if self.total_samples == 0 {
                 0.0
             } else {
-                self.matched_samples as f64 / self.total_samples as f64 * 100.0
+                self.matched_samples as f64 / self.total_samples as f64 * PERCENT_SCALE
             }
         );
         out.push_str(&title);
@@ -109,7 +115,7 @@ impl TableRenderable for MatchedStacksReport {
                     Column {
                         header: "depth".into(),
                         align: Align::Right,
-                        width: 5,
+                        width: DEPTH_COLUMN_WIDTH,
                     },
                     Column {
                         header: "frame".into(),

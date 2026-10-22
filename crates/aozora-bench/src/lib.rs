@@ -1,19 +1,4 @@
-//! Bench harness for the aozora parser.
-//!
-//! This crate hosts criterion benchmarks shared across the workspace.
-//! PGO profile collection lives in `scripts/pgo-build.sh`, which runs
-//! `cargo pgo build` on `aozora-cli` and exercises the instrumented
-//! binary against `$AOZORA_CORPUS_ROOT` to gather real-world parse
-//! samples — it does not run anything from this crate.
-//!
-//! ## Why a separate crate?
-//!
-//! - The benches need both `aozora` (the public API) and the
-//!   internal `aozora-corpus` walker, neither of which fit in any
-//!   one of the existing crates without inverting deps.
-//! - Keeping bench harnesses together means we can run
-//!   `cargo bench -p aozora-bench` and have one place to point CI's
-//!   regression-detection workflow at.
+//! Provides corpus loading and synthetic inputs for parser benchmarks.
 
 #![forbid(unsafe_code)]
 
@@ -25,16 +10,18 @@ use aozora::decode_auto_into;
 use aozora_corpus::{Archive, ArchivePayload, CorpusItem, FilesystemCorpus, with_load_pool};
 use rayon::prelude::*;
 
-/// Size band a corpus document falls into, by post-decode UTF-8 byte count.
+const INITIAL_DECODE_BUFFER_BYTES: usize = 128 * 1024;
+
+/// Document size category based on decoded UTF-8 byte length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SizeBand {
-    /// `< 50 KiB`
+    /// Less than 50 kibibytes.
     Small,
-    /// `50 KiB ..= 500 KiB`
+    /// At least 50 and less than 500 kibibytes.
     Medium,
-    /// `500 KiB ..= 2 MiB`
+    /// At least 500 kibibytes and less than 2 mebibytes.
     Large,
-    /// `> 2 MiB`
+    /// At least 2 mebibytes.
     Pathological,
 }
 
@@ -50,16 +37,16 @@ impl SizeBand {
         }
     }
 
-    /// Bucket a UTF-8 byte length into a band. Boundaries are inclusive
-    /// at the lower edge: 50 KiB → Medium, 500 KiB → Large, 2 MiB →
-    /// Pathological. The expected `bytes` is the post-decode UTF-8 length.
+    /// Classifies a decoded UTF-8 byte length using inclusive lower bounds.
     #[must_use]
     pub fn from_bytes(bytes: usize) -> Self {
         const KIB: usize = 1024;
         const MIB: usize = 1024 * 1024;
-        if bytes < 50 * KIB {
+        const MEDIUM_BAND_START: usize = 50 * KIB;
+        const LARGE_BAND_START: usize = 500 * KIB;
+        if bytes < MEDIUM_BAND_START {
             Self::Small
-        } else if bytes < 500 * KIB {
+        } else if bytes < LARGE_BAND_START {
             Self::Medium
         } else if bytes < 2 * MIB {
             Self::Large
@@ -68,32 +55,25 @@ impl SizeBand {
         }
     }
 
-    /// Iteration order matching the human-friendly small → pathological
-    /// progression. Used by every probe that prints per-band rows so
-    /// the report layout stays stable across runs.
+    /// Returns size categories in ascending order.
     #[must_use]
     pub fn ordered() -> [Self; 4] {
         [Self::Small, Self::Medium, Self::Large, Self::Pathological]
     }
 }
 
-/// Corpus items pre-bucketed into size bands. Each band's `Vec` holds
-/// the (label, decoded UTF-8 text) pairs that fell into that band.
-///
-/// Built by [`corpus_size_bands`] from a freshly drained corpus. Probes
-/// iterate in [`SizeBand::ordered`] order so reports are deterministic.
+/// Decoded document labels and text grouped by size.
 #[derive(Debug, Default)]
 pub struct SizeBandedCorpus {
-    /// `< 50 KiB` bucket.
+    /// Documents in [`SizeBand::Small`].
     pub small: Vec<(String, String)>,
-    /// `50 KiB ..= 500 KiB` bucket.
+    /// Documents in [`SizeBand::Medium`].
     pub medium: Vec<(String, String)>,
-    /// `500 KiB ..= 2 MiB` bucket.
+    /// Documents in [`SizeBand::Large`].
     pub large: Vec<(String, String)>,
-    /// `> 2 MiB` bucket.
+    /// Documents in [`SizeBand::Pathological`].
     pub pathological: Vec<(String, String)>,
-    /// SJIS decode failures encountered while bucketing. Probes report
-    /// this so the user can sanity-check the corpus root.
+    /// Number of decode failures.
     pub decode_errors: usize,
     /// Directory-walk or file-read failures encountered while loading.
     pub io_errors: usize,
@@ -118,27 +98,13 @@ impl SizeBandedCorpus {
     }
 }
 
-/// Decode every corpus item to UTF-8 (auto-detecting the encoding) and
-/// bucket the successful decodes by post-decode byte length.
-///
-/// Decode failures are counted in
-/// [`SizeBandedCorpus::decode_errors`] but never raised; this matches
-/// the philosophy of the other probes ("exercise as much as possible,
-/// surface the error counts at the end").
-///
-/// Uses a single function-local decode buffer and the
-/// [`decode_auto_into`] entry point so per-call growth-realloc is
-/// avoided. Each successful decode hands its text to the band entry
-/// via `mem::take`; the buffer's previous capacity is dropped in
-/// exchange for the next decode's `reserve` to allocate exactly the
-/// next doc's needed size.
+/// Decodes corpus items and groups successful results by UTF-8 byte length.
+/// Counts decode failures without stopping the load.
 #[must_use]
 pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
     let mut out = SizeBandedCorpus::default();
     let mut buf = String::with_capacity(128 * 1024);
     for item in items {
-        // CorpusItem is `#[non_exhaustive]`; bind the two fields by
-        // name without the destructuring sugar.
         let label = item.label;
         let bytes = item.bytes;
         buf.clear();
@@ -150,13 +116,7 @@ pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
     out
 }
 
-/// Bucket pre-decoded `(label, text)` pairs by post-decode byte length.
-///
-/// Used by per-phase load-split benchmarks to time the decode
-/// step in isolation from the bucketing step. The two-step shape lets
-/// callers measure `decode_secs` as just-the-decode work and
-/// `bucket_secs` as just-the-bucketing work, without one polluting the
-/// other.
+/// Groups decoded document labels and text by UTF-8 byte length.
 #[must_use]
 pub fn corpus_size_bands_from_decoded(items: Vec<(String, String)>) -> SizeBandedCorpus {
     let mut out = SizeBandedCorpus::default();
@@ -176,54 +136,25 @@ fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
     }
 }
 
-/// Parallel I/O + decode + bucket (rayon fast path).
-///
-/// The fast-path counterpart to [`corpus_size_bands`]: each rayon
-/// worker reads, decodes, and buckets its share of the corpus into a
-/// per-thread [`SizeBandedCorpus`] accumulator; rayon's
-/// `fold().reduce()` shape merges those shards into a single result
-/// after the parallel pass completes. No intermediate
-/// `Vec<Result<...>>` allocation — the per-thread accumulator IS the
-/// destination, so each band entry lands in its final home in one
-/// step instead of being moved twice.
-///
-/// The merge step preserves all decoded entries; intra-band order is
-/// **not** stable across runs (rayon's work-stealing reorders shards).
-/// Callers that need deterministic ordering should sort each band by
-/// label after this returns.
-///
-/// Decode failures land in `decode_errors` exactly as
-/// [`corpus_size_bands`] reports them. Walkdir and file-read failures
-/// land in `io_errors` so callers cannot mistake a partial corpus for
-/// a complete measurement.
+/// Reads, decodes, and groups corpus files in parallel.
+/// Counts decode and I/O failures without stopping the load.
+/// Ordering within a size category can vary between runs.
 #[must_use]
 pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
     parallel_size_bands_limited(corpus, None)
 }
 
-/// Parallel I/O, decode, and bucketing for at most `limit` corpus entries.
-///
-/// `None` processes the full corpus. Errors encountered while walking count
-/// toward the limit in the same way as the sequential loader.
+/// Loads at most `limit` corpus entries in parallel, or all entries for `None`.
+/// Traversal errors count toward the limit.
 #[must_use]
 pub fn parallel_size_bands_limited(
     corpus: &FilesystemCorpus,
     limit: Option<usize>,
 ) -> SizeBandedCorpus {
-    // covers the corpus median doc in one allocation; pathological
-    // (>2 MB UTF-8) docs grow the buffer once per worker — the same
-    // amortisation pattern `WORKER_ARENA` uses in the parse path.
-    // `mem::take` hands the filled buffer to the band entry; the
-    // thread-local gets an empty `String` for the next iteration to
-    // re-`reserve` to exact size (no growth-realloc inside the
-    // decoder loop).
     thread_local! {
-        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(128 * 1024));
+        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(INITIAL_DECODE_BUFFER_BYTES));
     }
 
-    // Step 1: serial walkdir to a Vec<PathBuf>. Walkdir is `!Sync`;
-    // its cost (~0.3 s on the 17 k-file corpus) is small relative to
-    // the parallel read+decode work that follows.
     let mut paths = Vec::new();
     let mut walk_errors = 0;
     for path in corpus.walk_paths().take(limit.unwrap_or(usize::MAX)) {
@@ -233,14 +164,6 @@ pub fn parallel_size_bands_limited(
         }
     }
 
-    // Step 2 + Step 3: parallel fold + reduce on the shared
-    // physical-core pool. Each rayon worker reads /
-    // decodes / buckets its slice of paths into its own
-    // SizeBandedCorpus accumulator; reduce merges the per-thread
-    // shards. The pool is sized to physical cores (not logical /
-    // hyperthreaded) so memory-bound decode work doesn't
-    // over-subscribe the cores; warm-thread reuse keeps DECODE_BUF
-    // hot across consecutive sweeps.
     let mut banded = with_load_pool(|| {
         paths
             .par_iter()
@@ -279,31 +202,13 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
     a
 }
 
-/// Bucket a packed binary archive into [`SizeBandedCorpus`].
-///
-/// Three archive flavours are handled uniformly:
-///
-/// - `RAW SJIS`: per-entry payload is raw SJIS; decode via the
-///   `decode_sjis_into` buffer-reuse path inside the parallel fold.
-/// - `RAW UTF-8`: per-entry payload is already UTF-8; skip decode
-///   entirely, just `String::from_utf8` the bytes (which is O(n)
-///   validation; for trusted archives this could go to
-///   `String::from_utf8_unchecked` but the workspace forbids `unsafe`
-///   here — the validation cost is small relative to the load wall
-///   and worth keeping safe).
-/// - `ZSTD …`: the archive iter handles the per-entry zstd
-///   decompression; the bench just consumes whatever bytes the iter
-///   yields and runs the same decode-or-skip choice as above.
-///
-/// All flavours fan out across the physical-core pool
-/// ([`crate::with_load_pool`]) for the same reasons
-/// `parallel_size_bands` does.
+/// Loads and groups decoded archive entries in parallel.
 #[must_use]
 pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
     archive_size_bands_limited(archive, None)
 }
 
-/// Bucket at most `limit` packed archive entries.
+/// Loads and groups at most `limit` archive entries, or all entries for `None`.
 #[must_use]
 pub fn archive_size_bands_limited(archive: &Archive, limit: Option<usize>) -> SizeBandedCorpus {
     use std::cell::RefCell;
@@ -312,25 +217,14 @@ pub fn archive_size_bands_limited(archive: &Archive, limit: Option<usize>) -> Si
     let utf8 = archive.is_utf8();
     let entry_count = archive.entries().len().min(limit.unwrap_or(usize::MAX));
 
-    // Per-worker reusable decode buffer (only used for the SJIS
-    // archive variants; UTF-8 archives skip the decode path).
     thread_local! {
-        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(128 * 1024));
+        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(INITIAL_DECODE_BUFFER_BYTES));
     }
 
     with_load_pool(|| {
         (0..entry_count)
             .into_par_iter()
             .fold(SizeBandedCorpus::default, |mut acc, i| {
-                // Use the random-access `payload_at` so raw archives
-                // skip the per-entry `to_vec()` allocation entirely
-                // (the payload `&[u8]` slice is read directly from the
-                // archive's in-memory buffer). zstd archives still
-                // allocate per decompression — the
-                // `ArchivePayload::Decompressed` variant carries the
-                // owned Vec. `payload_at(i)` is O(1) — using
-                // `iter_borrowed().nth(i)` here would have been O(n²)
-                // across the parallel loop.
                 let entry_meta = &archive.entries()[i];
                 let Ok(payload): Result<ArchivePayload<'_>, _> = archive.payload_at(i) else {
                     acc.decode_errors += 1;
@@ -339,19 +233,12 @@ pub fn archive_size_bands_limited(archive: &Archive, limit: Option<usize>) -> Si
                 let bytes = payload.as_bytes();
 
                 let text = if utf8 {
-                    // Pre-decoded UTF-8: skip decode entirely; copy
-                    // the slice into a fresh String (one allocation;
-                    // unavoidable because the band Vec stores owned
-                    // Strings).
                     let Ok(s) = str::from_utf8(bytes) else {
                         acc.decode_errors += 1;
                         return acc;
                     };
                     s.to_owned()
                 } else {
-                    // Raw SJIS: decode via the buffer-reuse path,
-                    // sourcing from the borrowed slice (no
-                    // intermediate Vec).
                     let outcome = DECODE_BUF.with(|cell| {
                         let mut buf = cell.borrow_mut();
                         buf.clear();
@@ -373,20 +260,12 @@ pub fn archive_size_bands_limited(archive: &Archive, limit: Option<usize>) -> Si
     })
 }
 
-/// Logarithmic-bucket histogram over an `&[u64]` of nanosecond durations.
-///
-/// `min_ns` and `max_ns` set the inclusive lower / exclusive upper
-/// edges of the histogram range; samples outside fall in the first /
-/// last bucket respectively. Returns `(low, high, count)` triples in
-/// ascending bucket order. Bucket boundaries are computed in `ln`-space
-/// so each bucket spans an equal multiplicative ratio. With 10 buckets
-/// across `1µs..1s` each bucket covers a ratio of
-/// `(1e9/1e3)^(1/10) ≈ 4×`.
+/// Returns logarithmic duration buckets as ascending `(low, high, count)` triples.
+/// Uses an inclusive `min_ns` and exclusive `max_ns`.
+/// Outliers use the first or last bucket.
 ///
 /// # Panics
-///
-/// Panics if `buckets == 0` or if `min_ns == 0` or `min_ns >= max_ns`
-/// — the bucket-bound math requires a strictly positive range.
+/// Panics if `buckets` or `min_ns` is zero, or if `min_ns >= max_ns`.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -435,11 +314,8 @@ pub fn log_histogram_ns(
         .collect()
 }
 
-/// Render a single histogram bar row of the form `<label>  <bar>  <count>`.
-///
-/// The bar is `█` repeated with width proportional to `count / max_count`,
-/// capped at `max_width` cells. Empty buckets render as a single space
-/// so columns stay aligned.
+/// Renders a histogram row with a bar proportional to `count / max_count`, capped at `max_width`.
+/// An empty bucket uses a space.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -462,16 +338,9 @@ pub fn render_bar_row(label: &str, count: usize, max_count: usize, max_width: us
     format!("{label}  {bar:max_width$}  {count}")
 }
 
-/// Build a synthetic Aozora-shaped buffer of approximately
-/// `target_bytes` size.
-///
-/// Mixes plain hiragana, kanji, ruby spans, and annotations so the
-/// parser exercises every classifier path. Used by
-/// `benches/synthetic_corpus.rs` to give a portable benchmark that
-/// doesn't depend on a local corpus checkout.
+/// Generates Aozora source containing at least `target_bytes` bytes.
 #[must_use]
 pub fn build_synthetic_aozora(target_bytes: usize) -> String {
-    // One repeating unit covers each major construct exactly once.
     let unit = "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］\
                 なる珍しき木が立つ。［＃ここから2字下げ］その下で人々は語らひ。\
                 ［＃ここで字下げ終わり］\n\n";
@@ -484,23 +353,9 @@ pub fn build_synthetic_aozora(target_bytes: usize) -> String {
     s
 }
 
-/// Build an annotation-dense Aozora buffer of roughly `target_bytes`,
-/// approximating the corpus's classify-density outlier (doc #5667,
-/// `明治人物月旦`), whose 170 ms parse is ~98% classify.
-///
-/// The repeating unit packs ruby, gaiji, a bouten annotation, and indent
-/// directives tightly so the classify stage — the pair matcher and the
-/// annotation-body dispatcher — does far more work per byte than a plain
-/// prose buffer. Used by the `perf_gate` bench as the pathological input
-/// whose instruction count the perf gate protects against regressing.
-///
-/// Unlike [`build_synthetic_aozora`], the result is deliberately dense
-/// rather than diagnostic-free — the point is to stress the classifier,
-/// not to model clean input.
+/// Generates notation-dense Aozora source containing at least `target_bytes` bytes.
 #[must_use]
 pub fn build_pathological_aozora(target_bytes: usize) -> String {
-    // One unit: two ruby spans, two gaiji, a bouten annotation, and a
-    // nested indent block — every classify path exercised at once.
     let unit = "明治の｜人物《じんぶつ》月旦、\
                 ※［＃「木＋世」、第3水準1-85-28］なる\
                 ｜青梅《おうめ》街道を、［＃「人物」に傍点］\
@@ -543,8 +398,6 @@ mod tests {
     fn build_pathological_returns_at_least_target_bytes_and_parses() {
         let s = build_pathological_aozora(8192);
         assert!(s.len() >= 8192, "expected >= 8192 bytes, got {}", s.len());
-        // The pathological buffer must still parse without panicking — it
-        // is a perf stressor, not a fuzz input.
         let doc = aozora::parse(s).expect("source fits parser span limit");
         let tree = doc.snapshot();
         black_box(tree);
@@ -567,19 +420,11 @@ mod tests {
 
     #[test]
     fn log_histogram_ns_distributes_samples_across_buckets() {
-        // 1µs..1s, 6 buckets — ratio per bucket = (1e6)^(1/6) ≈ 10×.
-        let samples: Vec<u64> = vec![
-            1_500,         // bucket 0 (≈ 1µs..10µs)
-            10_000,        // bucket 0 or 1
-            1_000_000,     // bucket 2 or 3
-            500_000_000,   // bucket 5
-            2_000_000_000, // overflow → bucket 5
-        ];
+        let samples: Vec<u64> = vec![1_500, 10_000, 1_000_000, 500_000_000, 2_000_000_000];
         let h = log_histogram_ns(&samples, 6, 1_000, 1_000_000_000);
         assert_eq!(h.len(), 6);
         let total: usize = h.iter().map(|(_, _, c)| c).sum();
         assert_eq!(total, samples.len());
-        // Edges must be ascending and the very last edge >= 1s.
         for window in h.windows(2) {
             assert!(window[0].1 <= window[1].0 + 1, "edges must be ascending");
         }
@@ -589,7 +434,6 @@ mod tests {
     #[test]
     fn render_bar_row_scales_proportionally_and_pads() {
         let row = render_bar_row("[a..b]", 50, 100, 20);
-        // Width should be ~10 chars (50/100 * 20).
         let bar_chars = row.matches('█').count();
         assert!(
             (8..=12).contains(&bar_chars),
@@ -608,7 +452,6 @@ mod tests {
 
     #[test]
     fn corpus_size_bands_buckets_decoded_items() {
-        // Build synthetic SJIS-decodable items by encoding ASCII.
         let small = CorpusItem::new("small", b"hello".to_vec());
         let medium = CorpusItem::new("medium", vec![b'a'; 100 * 1024]);
         let banded = corpus_size_bands(vec![small, medium]);

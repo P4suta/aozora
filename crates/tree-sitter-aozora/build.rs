@@ -1,12 +1,3 @@
-// Build script — compile the tree-sitter generated parser.c into a
-// static library that bindings/rust/lib.rs links against.
-//
-// `parser.c` is committed to the repo (regenerated via
-// `tree-sitter generate` from grammar.js — the pinned tree-sitter CLI
-// embeds its own JS engine, so no node is needed). The regen is
-// drift-gated by `xtask conformance grammar --check`. Downstream
-// consumers only need a C toolchain.
-
 fn main() {
     let src_dir = std::path::PathBuf::from("src");
 

@@ -9,7 +9,6 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 
-// Allow clients to override allocation functions
 #ifdef TREE_SITTER_REUSE_ALLOCATOR
 
 extern void *(*ts_current_malloc)(size_t size);
@@ -51,4 +50,4 @@ extern void (*ts_current_free)(void *ptr);
 }
 #endif
 
-#endif // TREE_SITTER_ALLOC_H_
+#endif

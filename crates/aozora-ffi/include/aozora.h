@@ -22,41 +22,29 @@
 #define AOZORA_SCHEMA_VERSION 3
 
 /**
- * Opaque handle to a parsed Aozora document. Allocate via
- * [`aozora_document_new`]; free via [`aozora_document_free`].
- *
- * Wraps an [`aozora::Document`] and its immutable parsed snapshot. The
- * C ABI treats it as a single-owner handle — embedders may move it
- * across threads but must not call into one handle concurrently from
- * multiple threads without external synchronisation.
+ * An opaque parsed document handle.
+ * Create it with [`aozora_document_new`] and release it once with [`aozora_document_free`].
+ * A handle can move between threads, but callers must serialize access and destruction.
  */
 typedef struct AozoraDocument AozoraDocument;
 
 /**
- * `(ptr, len, cap)` triple representing an owned `Vec<u8>` returned
- * to the caller. The caller MUST round-trip it through
- * [`aozora_bytes_free`] to release the memory.
- *
- * Layout matches `Vec<u8>::from_raw_parts(ptr, len, cap)` so the
- * destructor can reconstruct the vec for drop.
+ * An owned byte buffer returned by the library.
+ * Pass the unchanged `ptr`, `len`, and `cap` to [`aozora_bytes_free`] exactly once.
+ * The payload has no null terminator.
  */
 typedef struct {
   /**
-   * Pointer to the start of the owned allocation. Null only on the
-   * caller-zeroed sentinel value (which [`aozora_bytes_free`] treats
-   * as a no-op); on any value returned by an `aozora_*` function it
-   * is non-null and valid for `cap` bytes.
+   * Allocation pointer, non-null for buffers returned by the library.
+   * A null pointer acts as an empty sentinel for [`aozora_bytes_free`].
    */
   uint8_t *ptr;
   /**
-   * Number of initialised, readable bytes — the length of the
-   * returned payload (HTML or JSON). May be less than `cap`.
+   * Number of initialized, readable bytes, no greater than `cap`.
    */
   uintptr_t len;
   /**
-   * Total capacity of the allocation, in bytes. Must be passed back
-   * unchanged to [`aozora_bytes_free`]: it reconstructs the `Vec`
-   * with `(ptr, len, cap)`, so a wrong `cap` corrupts the allocator.
+   * Allocation capacity in bytes, which must remain unchanged until release.
    */
   uintptr_t cap;
 } AozoraBytes;
@@ -66,287 +54,174 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Return the parser build version as an owned UTF-8 byte buffer.
- *
- * The caller MUST release the returned value with [`aozora_bytes_free`].
+ * Returns the parser version as an owned UTF-8 buffer through `out_version`.
+ * Returns [`AozoraStatus::NullInput`] for a null output pointer, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `out_version` must point to a writable [`AozoraBytes`] slot.
+ * A non-null `out_version` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_version(AozoraBytes *out_version);
 
 /**
- * Return the structured wire schema version implemented by this library.
+ * Returns the structured wire schema version without accessing caller memory.
  */
 uint32_t aozora_schema_version(void);
 
 /**
- * Construct a [`Document`](AozoraDocument) from a UTF-8 byte slice.
- *
- * On success, writes the document handle to `*out_doc` and returns
- * [`AozoraStatus::Ok`]. On failure, writes `null` to `*out_doc` and
- * returns the matching error status.
- *
- * Inputs whose byte length exceeds [`u32::MAX`] are rejected with
- * [`AozoraStatus::SourceTooLarge`] *before* the parser core runs (the
- * core's span offsets are `u32` and it asserts that bound; under
- * `panic = "abort"` hitting the assert would abort the whole host
- * process). Guarding at construction means no oversize document can
- * exist, so the later `aozora_document_*` accessors never reach the
- * assert either. See the crate-level "Panic / abort contract" docs.
+ * Parses a UTF-8 byte slice and writes an owned handle to `out_doc` on success.
+ * Returns [`AozoraStatus::NullInput`] for null pointers, [`AozoraStatus::InvalidUtf8`] for invalid encoding, or [`AozoraStatus::SourceTooLarge`] for a length exceeding [`u32::MAX`].
+ * A failure sets a non-null `out_doc` to null.
+ * Release a successful handle with [`aozora_document_free`].
  *
  * # Safety
- *
- * - `src_ptr` must point to `src_len` valid UTF-8 bytes.
- * - `out_doc` must point to a writable `*mut AozoraDocument` slot.
- * - The caller must eventually call [`aozora_document_free`] on the
- *   returned handle.
+ * For accepted source lengths, a non-null `src_ptr` must reference `src_len` readable bytes in one live allocation, with length at most `isize::MAX`.
+ * A non-null `out_doc` must reference a writable, aligned pointer slot.
  */
-int aozora_document_new(const uint8_t *src_ptr, uintptr_t src_len, AozoraDocument **out_doc);
+int aozora_document_new(const uint8_t *src_ptr,
+                        uintptr_t src_len,
+                        AozoraDocument **out_doc);
 
 /**
- * Render the document to HTML, returning the result as an owned
- * byte buffer.
- *
- * On success, writes the bytes to `*out_html` and returns
- * [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`]
- * on the returned [`AozoraBytes`] to release the memory.
+ * Writes rendered HTML to `out_html`.
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_html` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_html` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_to_html(const AozoraDocument *doc, AozoraBytes *out_html);
 
 /**
- * Render the document's diagnostics as a JSON byte buffer.
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. Empty document → the empty envelope
- * `{"schemaVersion":…,"data":[]}` (version is
- * [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
- * [`aozora_bytes_free`] on the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`] and shared bit-for-bit
- * with the WASM and PyO3 drivers.
+ * Writes diagnostics as a JSON envelope to `out_json`.
+ * The wire format follows [`aozora::json::diagnostics`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_diagnostics_json(const AozoraDocument *doc, AozoraBytes *out_json);
 
 /**
- * Render the document's diagnostics as a plain-text byte buffer.
- *
- * One block per diagnostic — `<severity> [<code>] @ <start>..<end>:
- * <message>` plus the offending source slice. This is the `miette`-free
- * portable rendering ([`aozora::diagnostics_text`]); a clean parse
- * yields an empty buffer. For the machine-readable view use
- * [`aozora_document_diagnostics_json`].
- *
- * On success, writes the bytes to `*out_text` and returns
- * [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
- * the returned [`AozoraBytes`].
+ * Writes a plain-text diagnostic report to `out_text`.
+ * A clean parse produces an empty buffer.
+ * The report follows [`aozora::diagnostics_text`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_text` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_text` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_diagnostics_text(const AozoraDocument *doc, AozoraBytes *out_text);
 
 /**
- * Render the document's source-keyed Aozora nodes as a JSON byte
- * buffer.
- *
- * Each entry has the shape `{ kind, span: { start, end } }` in source
- * coordinates, sorted by `span.start`. Useful for editor integrations
- * (semantic tokens, document symbols, Lezer-Tree builders).
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. Empty parse → the empty envelope
- * `{"schemaVersion":…,"data":[]}` (version is
- * [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
- * [`aozora_bytes_free`] on the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`] and shared bit-for-bit
- * with the WASM and PyO3 drivers.
+ * Writes nodes as a JSON envelope to `out_json`.
+ * Entries use original-source byte spans in source order, following [`aozora::json::nodes`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_nodes_json(const AozoraDocument *doc, AozoraBytes *out_json);
 
 /**
- * Render the document's matched open/close pair links as a JSON byte
- * buffer.
- *
- * Each entry has the shape
- * `{ kind, open: { start, end }, close: { start, end } }` in
- * sanitized-source coordinates. Useful for LSP requests like
- * `textDocument/linkedEditingRange` and
- * `textDocument/documentHighlight`.
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. Empty parse → the empty envelope
- * `{"schemaVersion":…,"data":[]}` (version is
- * [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
- * [`aozora_bytes_free`] on the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`] and shared bit-for-bit
- * with the WASM and PyO3 drivers.
+ * Writes matched delimiters as a JSON envelope to `out_json`.
+ * Entries use original-source byte spans, following [`aozora::json::pairs`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_pairs_json(const AozoraDocument *doc, AozoraBytes *out_json);
 
 /**
- * Re-emit the document as Aozora source text (round-trip
- * serialization), returning the result as an owned byte buffer.
- *
- * Parses and walks the tree back to canonical source — the inverse of
- * [`aozora_document_to_html`]. This is the `to_source` surface shared
- * bit-for-bit with the WASM (`toSource`), PyO3 (`to_source`), and
- * Extism/Go drivers.
- *
- * On success, writes the bytes to `*out_source` and returns
- * [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
- * the returned [`AozoraBytes`] to release the memory.
+ * Writes canonical Aozora source to `out_source`.
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_source` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_source` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_to_source(const AozoraDocument *doc, AozoraBytes *out_source);
 
 /**
- * Render the document's matched container open/close pairs as a JSON
- * byte buffer.
- *
- * Each entry has the shape
- * `{ kind, open: { start, end }, close: { start, end } }` in
- * sanitized-source coordinates, covering block-level enclosures
- * (indent / jisage / caption blocks) rather than the inline pairs of
- * [`aozora_document_pairs_json`].
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. Empty parse → the empty envelope
- * `{"schemaVersion":…,"data":[]}` (version is
- * [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
- * [`aozora_bytes_free`] on the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`] and shared bit-for-bit
- * with the WASM, PyO3, and Extism/Go drivers.
+ * Writes matched container delimiters as a JSON envelope to `out_json`.
+ * Entries use original-source byte spans, following [`aozora::json::container_pairs`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_container_pairs_json(const AozoraDocument *doc, AozoraBytes *out_json);
 
 /**
- * Render the document's resolved gaiji references (`※［＃…］`) as a
- * JSON byte buffer.
- *
- * Each entry records the source span of a gaiji directive alongside its
- * resolved canonical form (JIS X 0213 men-ku-ten, Unicode scalar, …).
- * The scan runs over the document's source string directly.
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. A source with no gaiji → the empty envelope
- * `{"schemaVersion":…,"data":[]}` (version is
- * [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
- * [`aozora_bytes_free`] on the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`]. Its records also drive
- * the WASM `gaiji` values and the Python, Extism, and Go projections.
+ * Writes gaiji resolutions as a JSON envelope to `out_json`.
+ * Entries follow [`aozora::json::gaiji`].
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_document_gaiji_json(const AozoraDocument *doc, AozoraBytes *out_json);
 
 /**
- * Write the document's source byte length to `*out_len`.
- *
- * This is the length of the UTF-8 source buffer the handle owns — the
- * same quantity the WASM (`sourceByteLen`) and PyO3 (`source_byte_len`)
- * drivers return. Hosts use it to size buffers and to convert the `u32`
- * source coordinates in the JSON projections back into their own string
- * indices.
- *
- * On success, writes the length to `*out_len` and returns
- * [`AozoraStatus::Ok`].
+ * Writes the owned source's UTF-8 byte length to `out_len`.
+ * Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
  *
  * # Safety
- *
- * - `doc` must be a non-null handle produced by
- *   [`aozora_document_new`] and not yet freed.
- * - `out_len` must point to a writable `usize` slot.
+ * `doc` must be null or an unfreed handle from [`aozora_document_new`].
+ * Callers must serialize access and destruction.
+ * A non-null `out_len` must reference a writable, aligned `usize` slot.
  */
 int aozora_document_source_byte_len(const AozoraDocument *doc, uintptr_t *out_len);
 
 /**
- * Render the spec's canonical slug catalogue as a JSON byte buffer.
- *
- * This is document-independent — it projects the static slug table from
- * [`aozora::json::slugs`], the same authority behind the WASM
- * `slugs` and PyO3 `slugs_json` exports. Editor front ends use
- * it to drive directive completion.
- *
- * On success, writes the bytes to `*out_json` and returns
- * [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
- * the returned [`AozoraBytes`].
- *
- * Wire format is defined in [`aozora::json`] and shared bit-for-bit
- * with PyO3 and Extism/Go.
+ * Writes the canonical slug catalogue as a JSON envelope to `out_json`.
+ * The wire format follows [`aozora::json::slugs`].
+ * Returns [`AozoraStatus::NullInput`] for a null output pointer, or [`AozoraStatus::Ok`] on success.
+ * Release the returned buffer with [`aozora_bytes_free`].
  *
  * # Safety
- *
- * - `out_json` must point to a writable [`AozoraBytes`] slot.
+ * A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
  */
 int aozora_slugs_json(AozoraBytes *out_json);
 
 /**
- * Free a document handle returned by [`aozora_document_new`].
+ * Releases a document handle, doing nothing for null.
  *
  * # Safety
- *
- * - `doc` must be either null (then this is a no-op) or a handle
- *   returned by [`aozora_document_new`] that has not already been
- *   freed. Double-free is undefined behaviour.
+ * A non-null `doc` must be an unfreed handle returned by [`aozora_document_new`].
+ * No other call can access the handle during or after release.
  */
 void aozora_document_free(AozoraDocument *doc);
 
 /**
- * Free a byte buffer returned by an `aozora_*` function.
+ * Releases a byte buffer, doing nothing for a null allocation pointer.
  *
  * # Safety
- *
- * - `bytes` must be a value previously returned by one of the
- *   `aozora_*` functions in this crate. Reusing or aliasing the
- *   inner pointer after this call is undefined behaviour.
+ * A non-null buffer must be an unchanged, unfreed value returned by this library.
+ * No reference to its allocation can remain in use during or after release.
  */
 void aozora_bytes_free(AozoraBytes bytes);
 

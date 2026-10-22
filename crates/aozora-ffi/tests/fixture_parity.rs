@@ -1,21 +1,4 @@
-//! Cross-surface parity gate — C ABI channel.
-//!
-//! One golden authority (`crates/aozora-conformance/fixtures/render`),
-//! N thin walkers. This walker drives the crate's `extern "C"` surface
-//! in-process over every render fixture and asserts each `aozora_*_json`
-//! / `aozora_document_to_html` output is byte-identical to the golden the
-//! in-process `render_gate` pins.
-//!
-//! Surface coverage: the C ABI is at full parity with the Python / WASM /
-//! Extism-Go front doors — `to_html`, `to_source`, `diagnostics_json`,
-//! `nodes_json`, `pairs_json`, and `container_pairs_json` all ship as
-//! `aozora_*` exports. This gate pins every golden-backed surface the ABI
-//! ships against the same authority the sibling `test_fixture_parity.py` /
-//! `parity.mjs` / Go walkers use.
-//!
-//! Framing: every C-ABI accessor hands back the raw `aozora::json` bytes
-//! (or `to_html()` bytes) with no trailing newline, so the comparison is
-//! byte-exact against the golden file.
+//! Compares C binding outputs with the shared render fixture goldens.
 
 use core::ffi::c_int;
 use core::ptr;
@@ -28,7 +11,6 @@ use aozora_ffi::{
     aozora_document_to_html, aozora_document_to_source,
 };
 
-/// A JSON / HTML accessor in the C ABI: `(doc, out_bytes) -> status`.
 type Accessor = unsafe extern "C" fn(*const AozoraDocument, *mut AozoraBytes) -> c_int;
 
 fn load() -> Vec<RenderFixture> {
@@ -37,17 +19,12 @@ fn load() -> Vec<RenderFixture> {
     fixtures
 }
 
-/// Parse `source` through the C ABI, invoke `accessor`, and return its
-/// bytes as a `String` — mirroring the exact call/free dance an embedder
-/// performs. Asserts every status code is `Ok`.
 #[expect(
     unsafe_code,
     reason = "exercises the C ABI call and free contract against golden fixtures"
 )]
 fn render(source: &str, accessor: Accessor) -> String {
-    // SAFETY: the argument slice is a live `&str`; `out_doc` points to a
-    // stack slot we own; on success we free the handle and its byte
-    // buffer exactly once each. This is the documented C-ABI contract.
+    // SAFETY: the source is live, output slots are writable, and this block frees successful handles and buffers exactly once.
     unsafe {
         let mut doc: *mut AozoraDocument = ptr::null_mut();
         let status = aozora_document_new(source.as_ptr(), source.len(), &mut doc);

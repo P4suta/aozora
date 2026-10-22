@@ -1,17 +1,4 @@
-//! End-to-end ABI smoke test for the Extism plugin.
-//!
-//! The library unit tests prove the `logic` functions are byte-identical
-//! to `aozora::json`, but they call that logic in-process — they never
-//! cross the Extism plugin boundary. This test does: it loads the
-//! actually-built `dist/aozora.wasm` through the Extism **host** SDK
-//! (wasmtime) and asserts every export returns bytes identical to
-//! calling `aozora::json` directly. That extends the cross-binding
-//! guarantee (already asserted for FFI / WASM / `PyO3`) to the wasm
-//! transport, mirroring what `smoke-ffi` does for the C ABI.
-//!
-//! Gated behind the `host-smoke` feature (which pulls wasmtime) so the
-//! default `just test` / `just ci` path never compiles it. Run via
-//! `just smoke-extism`, which builds the artifact first.
+//! Compares Extism plugin exports with the shared wire records using the built artifact.
 #![cfg(feature = "host-smoke")]
 
 use std::env;
@@ -21,13 +8,8 @@ use std::path::PathBuf;
 use aozora::json;
 use extism::{Manifest, Plugin, Wasm};
 
-/// The artifact `just extism-build` writes. Read at runtime (not
-/// `include_bytes!`) so a normal compile never depends on the build
-/// having run.
 const DEFAULT_WASM_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/dist/aozora.wasm");
 
-/// Same corpus as the library unit tests: plain text, a ruby span, a
-/// PUA-collision diagnostic, an indent container, and a gaiji reference.
 const CORPUS: [&str; 5] = [
     "plain",
     "｜青梅《おうめ》",
@@ -36,6 +18,11 @@ const CORPUS: [&str; 5] = [
     "※［＃「弓＋鰐のつくり」、第4水準2-84-40］",
 ];
 
+#[expect(
+    clippy::panic,
+    clippy::expect_used,
+    reason = "test setup requires a readable and valid plugin artifact"
+)]
 fn load_plugin() -> Plugin {
     let path = env::var_os("AOZORA_EXTISM_ARTIFACT")
         .map_or_else(|| PathBuf::from(DEFAULT_WASM_PATH), PathBuf::from);
@@ -91,9 +78,6 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
     }
 }
 
-/// The input-independent exports (`slugs_json`, `version`,
-/// `schema_version`) sit outside the per-input loop — hosts call them
-/// with empty input. Each must be byte-identical to its shared authority.
 #[test]
 fn static_exports_match_their_authority() {
     let mut plugin = load_plugin();
@@ -104,8 +88,6 @@ fn static_exports_match_their_authority() {
     let schema: &str = plugin.call("schema_version", "").expect("schema_version");
     assert_eq!(schema, json::SCHEMA_VERSION.to_string());
 
-    // The plugin was compiled in this same checkout, so its baked
-    // `AOZORA_VERSION_STRING` shares this test binary's base triple.
     let version: &str = plugin.call("version", "").expect("version");
     assert!(
         version.starts_with(env!("CARGO_PKG_VERSION")),

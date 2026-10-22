@@ -37,7 +37,7 @@ struct SizeCheckArgs {
         default_value = "target/release-ready-build/aozora"
     )]
     cli: PathBuf,
-    /// Browser WASM artifact path.
+    /// Browser WebAssembly artifact path.
     #[arg(
         long,
         env = "AOZORA_WASM_ARTIFACT",
@@ -95,6 +95,10 @@ pub(crate) fn dispatch(args: &ArtifactsArgs) -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn package_crates(allow_dirty: bool) -> Result<(), String> {
     let root = workspace_root()?;
     let metadata = cargo_metadata(&root)?;
@@ -122,6 +126,11 @@ fn package_crates(allow_dirty: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn size_check(args: &SizeCheckArgs) -> Result<(), String> {
     let root = workspace_root()?;
     let baseline_path = root.join("crates/aozora-bench/artifact-size-baseline.tsv");

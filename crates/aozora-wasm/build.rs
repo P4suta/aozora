@@ -1,22 +1,4 @@
-//! Resolve the channel-aware build version once, at compile time, and inject it
-//! via `rustc-env` so the wasm-bindgen `version()` export can read it via
-//! `env!("AOZORA_VERSION_STRING")`.
-//!
-//! Precedence (the aozora three-way fallback):
-//!   1. `AOZORA_BUILD_VERSION` (CI-authoritative — `nightly.yml` / `release.yml`
-//!      set it verbatim from `xtask version --channel …`).
-//!   2. In a workspace checkout (the repo `.git` exists) →
-//!      `{CARGO_PKG_VERSION}-dev+g{sha}[.dirty]`, so a hand-built binary can never
-//!      be mistaken for a release. The sha is best-effort: if the `git` binary is
-//!      absent (e.g. a slim container) the stamp degrades to a bare `-dev`.
-//!   3. Otherwise — a packaged build with no `.git` (`cargo install` from
-//!      crates.io, or a source tarball) → the clean `{CARGO_PKG_VERSION}`. A
-//!      crates.io install *is* the stable channel, so it must report the bare
-//!      triple, never `-dev`.
-//!
-//! `rerun-if-changed` is scoped to the git refs that actually move the answer, so
-//! the daily edit→build loop on one commit never re-runs this script — keeping the
-//! binary's incremental builds fast.
+//! Sets the JavaScript binding's build version through `AOZORA_VERSION_STRING`.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -25,8 +7,6 @@ use std::process::Command;
 fn main() {
     let git_dir = workspace_git_dir();
 
-    // Only HEAD/index movement changes the stamp; pure source edits on one commit
-    // leave these untouched, so the script stays cached during the inner loop.
     if let Some(git) = git_dir.as_deref() {
         println!("cargo:rerun-if-changed={}", git.join("HEAD").display());
         println!("cargo:rerun-if-changed={}", git.join("index").display());
@@ -37,9 +17,6 @@ fn main() {
     println!("cargo:rustc-env=AOZORA_VERSION_STRING={version}");
 }
 
-/// The workspace `.git` directory, if this is a repo checkout. `CARGO_MANIFEST_DIR`
-/// is this crate (`crates/aozora-wasm`); the workspace root is two levels up.
-/// A packaged crate (crates.io / sdist tarball) has no such directory.
 fn workspace_git_dir() -> Option<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let git = manifest.parent()?.parent()?.join(".git");
@@ -54,14 +31,11 @@ fn resolve_version(is_checkout: bool) -> String {
         }
     }
 
-    // The base triple is the workspace version (release-plz-managed once adopted).
     let base = env!("CARGO_PKG_VERSION");
     if !is_checkout {
-        // Packaged build (no `.git`): a crates.io install / source tarball = stable.
         return base.to_owned();
     }
 
-    // Workspace checkout = a dev build. Best-effort sha + dirty marker.
     git_short_sha().map_or_else(
         || format!("{base}-dev"),
         |sha| {
@@ -84,9 +58,6 @@ fn git_short_sha() -> Option<String> {
 }
 
 fn git_is_dirty() -> bool {
-    // Best-effort: evaluated only when HEAD/index moved (rerun gating above), so a
-    // build, then unstaged edit, then rebuild may not flip the flag — the sha still
-    // pins the base commit. `git status --porcelain` prints one line per change.
     Command::new("git")
         .args(["status", "--porcelain"])
         .output()

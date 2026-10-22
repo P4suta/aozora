@@ -1,58 +1,65 @@
-//! Extism plugin exports. Compiled only when targeting `wasm32`; each
-//! function is a thin wrapper that delegates to [`logic`](super::logic) and
-//! maps the span-limit error onto the Extism error channel.
-//!
-//! This module lives in its own file (rather than inline in `lib.rs`) so the
-//! mutation sweep can exclude it by glob: on a host (`x86_64` / `aarch64`)
-//! build the whole module is `cfg`-dead, so cargo-mutants would otherwise
-//! enumerate every wrapper and report each mutant as a vacuous survivor. The
-//! real, host-testable logic stays in [`super::logic`] and is swept normally.
-//! See `mutants.toml`'s `exclude_globs`.
+//! Exposes parsing and metadata functions through the Extism plugin protocol.
 use super::logic;
 use extism_pdk::{Error, FnResult, plugin_fn};
 
 /// Parse the input source and return semantic HTML5.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn to_html(input: String) -> FnResult<String> {
     Ok(logic::render_html(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and re-emit it as Aozora source text
-/// (round-trip serialization).
+/// Parse the input source and return canonical Aozora source text.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn to_source(input: String) -> FnResult<String> {
     Ok(logic::render_source(input).map_err(Error::msg)?)
 }
 
 /// Parse the input source and return the diagnostics wire envelope.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn diagnostics_json(input: String) -> FnResult<String> {
     Ok(logic::render_diagnostics_json(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and return the source-keyed nodes wire
-/// envelope.
+/// Parse the input source and return the source-keyed nodes wire envelope.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn nodes_json(input: String) -> FnResult<String> {
     Ok(logic::render_nodes_json(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and return the matched open/close pairs
-/// wire envelope.
+/// Parse the input source and return the matched open/close pairs wire envelope.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn pairs_json(input: String) -> FnResult<String> {
     Ok(logic::render_pairs_json(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and return the container open/close pairs
-/// wire envelope.
+/// Parse the input source and return the container open/close pairs wire envelope.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn container_pairs_json(input: String) -> FnResult<String> {
     Ok(logic::render_container_pairs_json(input).map_err(Error::msg)?)
 }
 
-/// Parse the input source and return the resolved `※［＃…］` gaiji
-/// references as a wire envelope.
+/// Parse the input source and return the resolved `※［＃…］` gaiji references as a wire envelope.
+///
+/// # Errors
+/// Returns an error if the source exceeds [`u32::MAX`] bytes.
 #[plugin_fn]
 pub fn gaiji_json(input: String) -> FnResult<String> {
     Ok(logic::render_gaiji_json(&input).map_err(Error::msg)?)
@@ -65,7 +72,7 @@ pub fn gaiji_json(input: String) -> FnResult<String> {
 mod metadata {
     use super::{FnResult, logic, plugin_fn};
 
-    /// Return the static spec slug catalogue as a wire envelope.
+    /// Return the static slug catalogue as a wire envelope.
     #[plugin_fn]
     pub fn slugs_json(_input: String) -> FnResult<String> {
         Ok(logic::slugs_json())

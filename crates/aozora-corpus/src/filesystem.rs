@@ -8,8 +8,8 @@ use crate::{CorpusError, CorpusItem, CorpusSource};
 
 /// Filesystem-backed corpus source.
 ///
-/// Iteration reads `.txt` files lazily in filesystem order without following symbolic links.
-/// Per-file I/O failures are yielded inline as [`CorpusError::Io`].
+/// Iteration reads `.txt` files in filesystem order without following symbolic links.
+/// Each entry contains file bytes or [`CorpusError::Io`].
 #[derive(Debug, Clone)]
 pub struct FilesystemCorpus {
     root: PathBuf,
@@ -22,7 +22,7 @@ impl FilesystemCorpus {
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not exist or is not a directory, or [`CorpusError::Io`] if its canonical path cannot be resolved.
+    /// Returns [`CorpusError::RootNotDirectory`] for a missing or non-directory root, or [`CorpusError::Io`] for path resolution failures.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
         let metadata = match fs::metadata(&root) {
@@ -55,8 +55,7 @@ impl FilesystemCorpus {
         &self.root
     }
 
-    /// Enumerate `.txt` paths under the root without reading their bytes.
-    /// Paths follow filesystem order; sort them for deterministic output.
+    /// Lists `.txt` paths under the root in filesystem order without reading their bytes.
     pub fn walk_paths(&self) -> Box<dyn Iterator<Item = Result<PathBuf, CorpusError>> + '_> {
         let walker = WalkDir::new(&self.root)
             .follow_links(false)
@@ -81,7 +80,7 @@ impl FilesystemCorpus {
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::Io`] if `path` is outside the corpus root, cannot be resolved, or cannot be read.
+    /// Returns [`CorpusError::Io`] for paths outside the corpus root or failures to resolve or read `path`.
     pub fn read_path(&self, path: &Path) -> Result<CorpusItem, CorpusError> {
         read_item(&self.root, &self.canonical_root, path)
     }

@@ -3,37 +3,7 @@
     reason = "type generation uses validated static regexes and schema structures"
 )]
 
-//! TypeScript types artefact dump / drift gate.
-//!
-//! Generates `crates/aozora-wasm/types/aozora_types.d.ts` for downstream
-//! TypeScript consumers:
-//!
-//! ```text
-//! import type { NodeKind, Diagnostic } from "aozora-wasm/aozora_types";
-//! ```
-//!
-//! Two halves, anchored two different ways:
-//!
-//! * **Enums** (`NodeKind`, `PairKind`, …) are string-literal unions
-//!   projected from the live `::ALL` constants — the JSON Schema erases
-//!   them to a plain `string`, so they must come from Rust. Adding a
-//!   variant flows into the output once the `ALL` array is updated.
-//! * **Payload interfaces** (`Span`, `Diagnostic`, …) are hand-written:
-//!   they carry `JSDoc` the schema has no field for, and `TextEdit` is an
-//!   edit *input* with no wire schema at all. They are NOT free-floating —
-//!   `xtask types check` cross-checks each interface's field set and
-//!   optionality against the committed wire JSON Schema, which
-//!   `xtask schema check` in turn ties to the live wire structs. A
-//!   wire-struct field change therefore propagates schema → this parity
-//!   check → a forced `.d.ts` edit.
-//!
-//! The source of truth lives outside `pkg/` because `wasm-pack`
-//! wipes that directory on rebuild. A future packaging step copies
-//! this file into `pkg/` before `npm publish`.
-//!
-//! Drift-gated by `xtask types check`: a stale artefact (the regen step
-//! was forgotten) and an interface that disagrees with the schema both
-//! fail CI.
+//! Generates binding types and checks their consistency with wire schemas.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -54,6 +24,7 @@ use crate::schema::SCHEMA_FILES;
 
 const TYPES_REL_PATH: &str = "crates/aozora-wasm/types/aozora_types.d.ts";
 const C_HEADER_REL_PATH: &str = "crates/aozora-ffi/include/aozora.h";
+const JSON_SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
 
 pub(crate) fn dispatch(args: &TypesArgs) -> Result<(), String> {
     match args.op {
@@ -75,9 +46,6 @@ fn workspace_root() -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-/// Render a Rust slice of enum variants into a TypeScript
-/// string-literal union: `"a" | "b" | "c"`. Variants are projected
-/// to their wire string via the supplied closure.
 fn ts_string_union<T: Copy>(values: &[T], to_wire: impl Fn(T) -> &'static str) -> String {
     values
         .iter()
@@ -86,9 +54,6 @@ fn ts_string_union<T: Copy>(values: &[T], to_wire: impl Fn(T) -> &'static str) -
         .join(" | ")
 }
 
-/// Append `export type {name} = {union};` followed by a blank line.
-/// Centralised here so `render_enums` stays free of `writeln!`-into-String
-/// boilerplate (and the associated `let_underscore_must_use` clippy noise).
 fn push_export_type(out: &mut String, name: &str, union: &str) {
     out.push_str("export type ");
     out.push_str(name);
@@ -158,11 +123,6 @@ fn render_enums(out: &mut String) {
     );
 }
 
-/// Render the wire payload interfaces (`Span`, `Diagnostic`, …). Hand-written
-/// rather than projected from the schema so they can carry `JSDoc`;
-/// [`check_payload_schema_parity`] guards that they stay field-for-field
-/// consistent with the wire JSON Schema. `TextEdit` is an edit *input* with
-/// no wire-output schema, so it lives here without a parity entry.
 fn render_wire_payloads(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");
     out.push_str("// Wire envelope payload types\n");
@@ -221,6 +181,10 @@ fn render_envelopes(out: &mut String) {
     out.push_str("export type SlugsEnvelope           = JsonEnvelope<Slug>;\n");
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn dump() -> Result<(), String> {
     let root = workspace_root()?;
     let path = root.join(TYPES_REL_PATH);
@@ -234,6 +198,10 @@ fn dump() -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let path = root.join(TYPES_REL_PATH);
@@ -247,9 +215,6 @@ fn check() -> Result<(), String> {
              run `xtask types ts` to regenerate, then commit"
         ));
     }
-    // Anchor the hand-written payload interfaces to the wire JSON Schema, so a
-    // wire-struct field change cannot slip past the byte-identical drift check
-    // (both sides share the same hand-written strings).
     if let Err(err) = check_payload_schema_parity(&root, &actual) {
         errors.push(err);
     }
@@ -261,19 +226,11 @@ fn check() -> Result<(), String> {
     }
 }
 
-/// One payload type's field shape from the wire JSON Schema.
 struct SchemaFields {
-    /// All property names.
     properties: BTreeSet<String>,
-    /// The subset marked `required`; everything else is optional.
     required: BTreeSet<String>,
 }
 
-/// Field shapes for every payload type the committed wire schemas define,
-/// keyed by type title (`Diagnostic`, `Node`, `Span`, …). Built from the same
-/// `SCHEMA_FILES` the host-language types are generated from; `xtask schema
-/// check` ties those to the live wire structs, so this is the anchor the
-/// hand-written `.d.ts` interfaces are checked against.
 fn schema_field_shapes(root: &Path) -> Result<BTreeMap<String, SchemaFields>, String> {
     let mut shapes = BTreeMap::new();
     for (rel, _) in SCHEMA_FILES {
@@ -282,7 +239,6 @@ fn schema_field_shapes(root: &Path) -> Result<BTreeMap<String, SchemaFields>, St
             fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
         let schema: Value = serde_json::from_str(&text)
             .map_err(|err| format!("parse {}: {err}", path.display()))?;
-        // The per-entry item type (Diagnostic / Node / …) — named by its title.
         if let Some(items) = schema
             .get("properties")
             .and_then(|p| p.get("data"))
@@ -291,8 +247,6 @@ fn schema_field_shapes(root: &Path) -> Result<BTreeMap<String, SchemaFields>, St
         {
             insert_object_shape(title, items, &mut shapes);
         }
-        // Shared `$defs` (Span, …) are named by their key, not an inner title;
-        // identical across files, so first wins.
         if let Some(defs) = schema.get("$defs").and_then(Value::as_object) {
             for (key, def) in defs {
                 insert_object_shape(key, def, &mut shapes);
@@ -302,9 +256,6 @@ fn schema_field_shapes(root: &Path) -> Result<BTreeMap<String, SchemaFields>, St
     Ok(shapes)
 }
 
-/// Record `obj`'s `properties` + `required` under `name`, if it is an object
-/// schema with properties. First insertion wins (shared `$defs` repeat
-/// identically across files).
 fn insert_object_shape(name: &str, obj: &Value, shapes: &mut BTreeMap<String, SchemaFields>) {
     let Some(props) = obj.get("properties").and_then(Value::as_object) else {
         return;
@@ -327,8 +278,6 @@ fn insert_object_shape(name: &str, obj: &Value, shapes: &mut BTreeMap<String, Sc
     });
 }
 
-/// The fields of one generated `export interface`: name → is-optional
-/// (`field?:`). `None` if the interface is absent from the artefact.
 fn dts_interface_fields(dts: &str, name: &str) -> Option<BTreeMap<String, bool>> {
     let header = format!("export interface {name} {{");
     let after = &dts[dts.find(&header)? + header.len()..];
@@ -336,7 +285,6 @@ fn dts_interface_fields(dts: &str, name: &str) -> Option<BTreeMap<String, bool>>
     let mut fields = BTreeMap::new();
     for line in body.lines() {
         let line = line.trim();
-        // Skip blank lines and JSDoc (`/** … */`, ` * …`).
         if line.is_empty() || line.starts_with('/') || line.starts_with('*') {
             continue;
         }
@@ -354,9 +302,6 @@ fn dts_interface_fields(dts: &str, name: &str) -> Option<BTreeMap<String, bool>>
     Some(fields)
 }
 
-/// Interfaces that mirror a wire schema type, and the schema title each must
-/// match. `TextEdit` is deliberately absent — an edit *input* with no
-/// wire-output schema — so it is exempt from this parity check.
 const SCHEMA_MIRRORED_INTERFACES: &[(&str, &str)] = &[
     ("Span", "Span"),
     ("Diagnostic", "Diagnostic"),
@@ -367,12 +312,6 @@ const SCHEMA_MIRRORED_INTERFACES: &[(&str, &str)] = &[
     ("Slug", "Slug"),
 ];
 
-/// Cross-check every schema-backed `.d.ts` payload interface against the wire
-/// JSON Schema: same field names, and `?` iff the field is not
-/// schema-`required`. This is what the byte-identical drift check alone cannot
-/// do — `render()` and the committed artefact share the same hand-written
-/// strings, so a wire field added in Rust (which reaches the schema via
-/// `xtask schema check`) would otherwise never surface as a `.d.ts` gap.
 fn check_payload_schema_parity(root: &Path, dts: &str) -> Result<(), String> {
     let shapes = schema_field_shapes(root)?;
     let mut problems = Vec::new();
@@ -402,8 +341,6 @@ fn check_payload_schema_parity(root: &Path, dts: &str) -> Result<(), String> {
             if !shape.properties.contains(field) {
                 continue;
             }
-            // Mismatch iff the two notions of "optional" disagree: a field is
-            // consistent when `optional` (TS `?`) equals "not schema-required".
             if optional == shape.required.contains(field) {
                 problems.push(format!(
                     "interface `{interface}` field `{field}` is {} but the schema marks it {}",
@@ -433,39 +370,16 @@ fn check_payload_schema_parity(root: &Path, dts: &str) -> Result<(), String> {
     }
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Per-language wire types via quicktype (`xtask types langs`)
-// ────────────────────────────────────────────────────────────────────
-//
-// The TypeScript `.d.ts` above is hand-rolled from the live Rust enums
-// (it needs the string-literal unions for `NodeKind` etc. that the JSON
-// Schema erases to plain `string`). Every *other* host-SDK language is
-// generated mechanically by `quicktype` from the committed JSON
-// Schema — one generator, all languages — so adding a language is a
-// single row in `LANG_TYPES`, not a new codegen backend.
-
-/// One target language for `quicktype`-generated wire types.
 struct LangType {
-    /// Display name (and the key used in drift messages).
     name: &'static str,
-    /// `quicktype --lang` identifier.
     quicktype_lang: &'static str,
-    /// Output path, relative to the workspace root. Committed + drift-gated.
     out: &'static str,
-    /// Line-comment prefix for the generated-file header.
     comment: &'static str,
-    /// Text inserted between the header and the generated body — e.g. a
-    /// Go `package` clause (quicktype's `--just-types` omits it).
     prelude: &'static str,
-    /// Extra `quicktype` flags.
     extra: &'static [&'static str],
-    /// When `true`, pipe the output through `gofmt` so the committed
-    /// artifact matches what the host package's own `gofmt` gate expects.
     gofmt: bool,
 }
 
-/// The languages we generate wire types for. Adding a host SDK is one
-/// row here plus a `crates/aozora-<lang>/` package that consumes the file.
 const LANG_TYPES: &[LangType] = &[
     LangType {
         name: "go",
@@ -487,6 +401,10 @@ const LANG_TYPES: &[LangType] = &[
     },
 ];
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn langs_dump() -> Result<(), String> {
     let root = workspace_root()?;
     let combined = write_combined_schema(&root)?;
@@ -512,6 +430,10 @@ fn langs_dump() -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn langs_check() -> Result<(), String> {
     let root = workspace_root()?;
     let combined = write_combined_schema(&root)?;
@@ -545,19 +467,7 @@ fn langs_check() -> Result<(), String> {
     }
 }
 
-/// Build one combined JSON Schema from the four committed per-envelope
-/// schemas and write it to a temp file `quicktype` can consume. Returns
-/// the temp path.
-///
-/// Why combine: feeding the four schema files to `quicktype` separately
-/// makes it invent distinct names for the structurally-identical inner
-/// types (`PurpleSpan`, `FluffySpan`, …). One document with a shared
-/// `$defs` yields a single `Span`. Two transforms make
-/// it digestible: every `$def` gets a `title` equal to its key (so
-/// `quicktype` names types from the key, not the referencing property),
-/// and `schemaVersion`'s integer `const` is dropped (`quicktype` chokes
-/// on a numeric `const` — `s.codePointAt is not a function`); the precise
-/// committed schemas keep the `const`.
+/// A shared schema gives `quicktype` stable names for common types.
 fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
     let mut defs = Map::new();
     let mut props = Map::new();
@@ -575,14 +485,11 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{}: schema missing root title", path.display()))?
             .to_owned();
-        // Shared span type, hoisted to root in the
-        // committed schema — merge, first definition wins (they're identical).
         if let Some(file_defs) = obj.get("$defs").and_then(Value::as_object) {
             for (key, value) in file_defs {
                 defs.entry(key.clone()).or_insert_with(|| value.clone());
             }
         }
-        // The per-entry item type (Diagnostic / Node / …).
         let mut items = obj
             .get("properties")
             .and_then(|p| p.get("data"))
@@ -599,8 +506,6 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             item_obj.remove("$defs");
         }
         defs.insert(item_title.clone(), items);
-        // The envelope type, referencing the item. `schemaVersion` is a
-        // plain integer here (no `const`) for quicktype's sake.
         defs.insert(
             env_title.clone(),
             serde_json::json!({
@@ -618,15 +523,13 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             serde_json::json!({ "$ref": format!("#/$defs/{env_title}") }),
         );
     }
-    // Force quicktype to name every type from its `$defs` key by giving
-    // each definition a matching `title`.
     for (key, value) in &mut defs {
         if let Some(value_obj) = value.as_object_mut() {
             value_obj.insert("title".to_owned(), Value::String(key.clone()));
         }
     }
     let combined = serde_json::json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$schema": JSON_SCHEMA_DIALECT,
         "title": "AozoraJson",
         "type": "object",
         "additionalProperties": false,
@@ -640,8 +543,6 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
     Ok(combined_path)
 }
 
-/// Run quicktype (+ gofmt for Go) over the combined schema and return the
-/// finalized, header-stamped, trailing-whitespace-trimmed source.
 fn generate_lang(lt: &LangType, combined_schema: &Path) -> Result<String, String> {
     let mut cmd = Command::new("quicktype");
     cmd.arg("--src-lang")
@@ -665,8 +566,6 @@ fn generate_lang(lt: &LangType, combined_schema: &Path) -> Result<String, String
     }
     let body = String::from_utf8(output.stdout)
         .map_err(|err| format!("quicktype output for `{}` not UTF-8: {err}", lt.name))?;
-    // Assemble the complete file (header + prelude + body) first; gofmt
-    // needs a whole Go file (with the `package` clause), not a fragment.
     let assembled = finalize(lt, &body);
     if lt.gofmt {
         gofmt(&assembled)
@@ -733,8 +632,6 @@ fn generate_c_header(root: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|err| format!("C header is not UTF-8: {err}"))
 }
 
-/// Pipe `src` through `gofmt -` so the committed Go artifact matches the
-/// host package's own `gofmt` gate byte-for-byte.
 fn gofmt(src: &str) -> Result<String, String> {
     use std::io::Write as _;
     use std::process::Stdio;
@@ -763,9 +660,6 @@ fn gofmt(src: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|err| format!("gofmt output not UTF-8: {err}"))
 }
 
-/// Prepend the generated-file header + optional prelude, and strip
-/// trailing whitespace per line (quicktype's aligned comments otherwise
-/// leave trailing spaces that would churn the drift gate).
 fn finalize(lt: &LangType, body: &str) -> String {
     let mut out = String::new();
     out.push_str(lt.comment);
@@ -852,7 +746,6 @@ mod tests {
     fn render_enums_projects_node_kind_via_camel_case() {
         let mut out = String::new();
         render_enums(&mut out);
-        // `as_json_tag` projects Ruby → "ruby"; the union must carry it.
         assert!(
             out.contains("\"ruby\""),
             "NodeKind union must contain camelCase ruby: {out}"
@@ -882,10 +775,6 @@ mod tests {
             out.contains("interface JsonEnvelope<T>"),
             "generic envelope"
         );
-        // The wire field is camelCase (the `Envelope` struct carries
-        // `#[serde(rename_all = "camelCase")]`), so the generated `.d.ts`
-        // must spell `schemaVersion`, not the Rust field name — a snake_case
-        // spelling here once shipped a `.d.ts` that disagreed with runtime.
         assert!(
             out.contains(&format!("schemaVersion: {SCHEMA_VERSION};"))
                 && !out.contains("schema_version"),
@@ -907,7 +796,6 @@ mod tests {
     #[test]
     fn render_full_artefact_is_well_formed() {
         let dts = render();
-        // Header first, enums + payloads + envelopes all present.
         assert!(dts.starts_with("// AUTO-GENERATED"), "header leads: {dts}");
         assert!(dts.contains("export type NodeKind ="), "enums section");
         assert!(dts.contains("interface Span"), "payload section");
@@ -947,8 +835,6 @@ mod tests {
 
     #[test]
     fn live_payload_interfaces_match_the_schema() {
-        // The integration guard: the hand-written interfaces the artefact
-        // ships must agree, field-for-field, with the committed wire schema.
         let root = workspace_root().expect("workspace root");
         check_payload_schema_parity(&root, &render())
             .expect("hand-written .d.ts interfaces must match the wire schema");
@@ -957,7 +843,6 @@ mod tests {
     #[test]
     fn parity_flags_an_interface_missing_a_wire_field() {
         let root = workspace_root().expect("workspace root");
-        // Drop `severity` (unique to Diagnostic) from an otherwise-live artefact.
         let doctored = render().replace("  severity: Severity;\n", "");
         let err = check_payload_schema_parity(&root, &doctored)
             .expect_err("a dropped wire field must be flagged");
@@ -970,7 +855,6 @@ mod tests {
     #[test]
     fn parity_flags_a_wrong_optionality() {
         let root = workspace_root().expect("workspace root");
-        // Make required `kind` optional in the Node interface.
         let doctored = render().replace(
             "export interface Node {\n  kind: NodeKind;",
             "export interface Node {\n  kind?: NodeKind;",
@@ -996,7 +880,6 @@ mod tests {
     fn finalize_trims_trailing_whitespace_per_line() {
         let lt = &LANG_TYPES[0];
         let out = finalize(lt, "a   \nb\t\n");
-        // Every line of the assembled output must be free of trailing space.
         for line in out.lines() {
             assert_eq!(
                 line.trim_end(),

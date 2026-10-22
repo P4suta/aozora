@@ -1,53 +1,4 @@
-//! `xtask ci profile` — data-driven CI wall-clock profiler.
-//!
-//! Rust CI on GitHub Actions has well-known long-tail behaviour:
-//! tool installation, cache misses, and external checks can each consume time
-//! without the workflow log surfacing where the time went. The
-//! `xtask ci profile` subcommand pulls the per-job and per-step wall
-//! times of a given workflow run and ranks them, so optimisation
-//! decisions are driven by the actual numbers rather than guesses.
-//!
-//! ## Usage
-//!
-//! ```text
-//! # Latest ci.yml run on main
-//! cargo run -p aozora-xtask --release -- ci profile
-//!
-//! # A specific run
-//! cargo run -p aozora-xtask --release -- ci profile --run-id 25144476719
-//!
-//! # A different workflow
-//! cargo run -p aozora-xtask --release -- ci profile --workflow docs
-//!
-//! # Multiple recent runs (median per job)
-//! cargo run -p aozora-xtask --release -- ci profile --limit 5
-//! ```
-//!
-//! ## Wire shape
-//!
-//! Talks to GitHub via the locally-installed `gh` CLI (the same auth
-//! every other xtask path already relies on — see CLAUDE.md note that
-//! `gh` is logged in via SSH as `P4suta`). No `reqwest`/`octocrab`
-//! dependency, no PAT plumbing, no rate-limit retry loop to maintain.
-//!
-//! Two `gh api` calls per profile:
-//!   - `repos/{owner}/{repo}/actions/runs?branch=…&per_page=…`
-//!   - `repos/{owner}/{repo}/actions/runs/{id}/jobs?per_page=100`
-//!
-//! Both go through `gh api --paginate`, so multi-page job lists are
-//! transparently merged.
-//!
-//! ## Why not octocrab / a `reqwest` dance
-//!
-//! - `gh` ships in the dev environment already and is the same client
-//!   the user authenticates with for every PR / issue / release op.
-//!   Re-authenticating from a Rust binary would need a PAT in the env,
-//!   which is friction for zero gain.
-//! - octocrab adds ~80 dependencies to the xtask crate's compile
-//!   graph. The xtask binary stays sub-second to rebuild today; we'd
-//!   like to keep it that way.
-//! - The data shape is small (one workflow run = one JSON blob with
-//!   <100 step records). `serde_json` over the `gh` stdout is enough.
+//! Reports GitHub Actions job and step timings through the `gh` client.
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -67,27 +18,36 @@ const DEFAULT_OWNER: &str = "P4suta";
 const DEFAULT_REPO: &str = "aozora";
 const DEFAULT_WORKFLOW: &str = "ci";
 const DEFAULT_BRANCH: &str = "main";
+const JOB_TABLE_WIDTH: usize = 60;
+const STEP_TABLE_WIDTH: usize = 100;
+const JOB_NAME_WIDTH: usize = 36;
+const CONCLUSION_WIDTH: usize = 12;
+const STEP_JOB_NAME_WIDTH: usize = 28;
+const STEP_NAME_WIDTH: usize = 48;
+const STEP_CONCLUSION_WIDTH: usize = 10;
 
 #[derive(Args)]
 pub(crate) struct ProfileArgs {
-    /// Workflow file basename (without `.yml`). Default: `ci`.
+    /// Workflow file basename without `.yml`.
     #[arg(long, default_value = DEFAULT_WORKFLOW)]
     workflow: String,
 
-    /// Branch to inspect. Default: `main`.
+    /// Branch to inspect.
     #[arg(long, default_value = DEFAULT_BRANCH)]
     branch: String,
 
-    /// `OWNER/REPO`. Default: `P4suta/aozora`.
+    /// `OWNER/REPO`.
     #[arg(long, default_value_t = format!("{DEFAULT_OWNER}/{DEFAULT_REPO}"))]
     repo: String,
 
-    /// Specific run id. Overrides `--workflow` / `--branch` lookup.
+    /// Specific run identifier.
+    /// Overrides `--workflow` / `--branch` lookup.
     #[arg(long)]
     run_id: Option<u64>,
 
-    /// How many recent runs to summarise. Reports the median per job.
-    /// Ignored when `--run-id` is given.
+    /// How many recent runs to summarise.
+    /// Reports the median per job.
+    /// Uses a single run when `--run-id` is present.
     #[arg(long, default_value_t = 1)]
     limit: u32,
 
@@ -116,8 +76,10 @@ pub(crate) fn run(args: &ProfileArgs) -> Result<(), String> {
     }
 }
 
-// --- single-run report -------------------------------------------------
-
+#[expect(
+    clippy::print_stdout,
+    reason = "render the requested workflow timing report"
+)]
 fn single(repo: &str, run_id: u64, top_steps: usize) -> Result<(), String> {
     let jobs = fetch_jobs(repo, run_id)?;
     println!();
@@ -134,9 +96,10 @@ fn single(repo: &str, run_id: u64, top_steps: usize) -> Result<(), String> {
     Ok(())
 }
 
+#[expect(clippy::print_stdout, reason = "render the requested job timing table")]
 fn print_per_job(jobs: &[Job]) {
     println!("{:<36} {:<12} {:>10}", "JOB", "CONCLUSION", "WALL (s)");
-    println!("{}", "-".repeat(60));
+    println!("{}", "-".repeat(JOB_TABLE_WIDTH));
     let mut sorted: Vec<_> = jobs.iter().collect();
     sorted.sort_by_key(|j| Reverse(j.duration_secs().unwrap_or(0)));
     for j in sorted {
@@ -144,10 +107,18 @@ fn print_per_job(jobs: &[Job]) {
             .duration_secs()
             .map_or_else(|| "  pending".to_owned(), |d| format!("{d:>10}"));
         let conc = j.conclusion.as_deref().unwrap_or("?");
-        println!("{:<36} {:<12} {dur}", trim(&j.name, 36), trim(conc, 12));
+        println!(
+            "{:<36} {:<12} {dur}",
+            trim(&j.name, JOB_NAME_WIDTH),
+            trim(conc, CONCLUSION_WIDTH)
+        );
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "render the requested step timing table"
+)]
 fn print_top_steps(jobs: &[Job], top_n: usize) {
     let mut all: Vec<(&str, &str, i64, &str)> = jobs
         .iter()
@@ -171,19 +142,21 @@ fn print_top_steps(jobs: &[Job], top_n: usize) {
         "{:<28} {:<48} {:<10} {:>10}",
         "JOB", "STEP", "CONCL", "WALL (s)"
     );
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(STEP_TABLE_WIDTH));
     for (job, step, dur, conc) in all.into_iter().take(top_n) {
         println!(
             "{:<28} {:<48} {:<10} {dur:>10}",
-            trim(job, 28),
-            trim(step, 48),
-            trim(conc, 10)
+            trim(job, STEP_JOB_NAME_WIDTH),
+            trim(step, STEP_NAME_WIDTH),
+            trim(conc, STEP_CONCLUSION_WIDTH)
         );
     }
 }
 
-// --- multi-run report --------------------------------------------------
-
+#[expect(
+    clippy::print_stdout,
+    reason = "render median workflow timings across runs"
+)]
 fn multi(repo: &str, runs: &[u64], top_steps: usize) -> Result<(), String> {
     println!();
     println!("ci profile  repo={repo}  runs={runs:?}  (median across runs per job)");
@@ -217,9 +190,9 @@ fn multi(repo: &str, runs: &[u64], top_steps: usize) -> Result<(), String> {
     rows.sort_by_key(|t| Reverse(t.1));
 
     println!("{:<36} {:>10} {:>10}", "JOB", "MEDIAN(s)", "SAMPLES");
-    println!("{}", "-".repeat(60));
+    println!("{}", "-".repeat(JOB_TABLE_WIDTH));
     for (n, m, c) in rows {
-        println!("{:<36} {m:>10} {c:>10}", trim(n, 36));
+        println!("{:<36} {m:>10} {c:>10}", trim(n, JOB_NAME_WIDTH));
     }
 
     let mut step_rows: Vec<(&str, &str, i64, usize)> = step_acc
@@ -233,9 +206,13 @@ fn multi(repo: &str, runs: &[u64], top_steps: usize) -> Result<(), String> {
         "{:<28} {:<48} {:>10} {:>8}",
         "JOB", "STEP", "MEDIAN(s)", "RUNS"
     );
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(STEP_TABLE_WIDTH));
     for (j, s, m, c) in step_rows.into_iter().take(top_steps) {
-        println!("{:<28} {:<48} {m:>10} {c:>8}", trim(j, 28), trim(s, 48));
+        println!(
+            "{:<28} {:<48} {m:>10} {c:>8}",
+            trim(j, STEP_JOB_NAME_WIDTH),
+            trim(s, STEP_NAME_WIDTH)
+        );
     }
     Ok(())
 }
@@ -250,19 +227,11 @@ fn median(xs: &[i64]) -> i64 {
     if s.len() % 2 == 1 {
         s[mid]
     } else {
-        // `i64::midpoint` (stable since 1.85) computes the rounded
-        // average without overflow even for adversarial inputs.
-        // No `as` casts, no manual saturating dance, no panic edge
-        // cases — the right way to write the operation.
         i64::midpoint(s[mid - 1], s[mid])
     }
 }
 
-// --- gh-cli wrappers ---------------------------------------------------
-
 fn list_runs(repo: &str, workflow: &str, branch: &str, limit: u32) -> Result<Vec<u64>, String> {
-    // `gh run list --workflow=<wf> --branch=<br> --limit=N
-    //  --status completed --json databaseId`
     let out = Command::new("gh")
         .args([
             "run",
@@ -345,8 +314,6 @@ fn fetch_jobs(repo: &str, run_id: u64) -> Result<Vec<Job>, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    // `gh api --paginate` concatenates per-page JSON objects.
-    // Parse each JsonObject sequentially so we accumulate all pages.
     let stream = serde_json::Deserializer::from_slice(&out.stdout).into_iter::<JobsResponse>();
     let mut all = Vec::new();
     for item in stream {
@@ -356,63 +323,73 @@ fn fetch_jobs(repo: &str, run_id: u64) -> Result<Vec<Job>, String> {
     Ok(all)
 }
 
-// --- timestamp helper --------------------------------------------------
-
-/// `started_at` and `completed_at` are RFC 3339 with `Z` suffix.
-/// We avoid pulling `chrono` for this — the only operation needed is
-/// "subtract one timestamp from another" and the format is fixed.
 fn secs(start: Option<&str>, end: Option<&str>) -> Option<i64> {
     let s = parse_rfc3339_z(start?)?;
     let e = parse_rfc3339_z(end?)?;
     Some(e - s)
 }
 
-/// Parse `YYYY-MM-DDTHH:MM:SSZ` into seconds-since-epoch (UTC).
-///
-/// Skips the `chrono` dependency: GitHub's Actions API always returns
-/// the canonical Z-suffixed form, and we only need a difference, not
-/// timezone-aware arithmetic. ~30 LOC of date math beats a 200 KB
-/// transitive dep.
 fn parse_rfc3339_z(s: &str) -> Option<i64> {
-    // Expected shape: 2026-04-30T11:36:50Z
-    if s.len() != 20 || s.as_bytes()[19] != b'Z' {
+    const TIMESTAMP_LENGTH: usize = 20;
+    const UTC_SUFFIX_OFFSET: usize = 19;
+    const YEAR_END: usize = 4;
+    const MONTH_START: usize = 5;
+    const MONTH_END: usize = 7;
+    const DAY_START: usize = 8;
+    const DAY_END: usize = 10;
+    const HOUR_START: usize = 11;
+    const HOUR_END: usize = 13;
+    const MINUTE_START: usize = 14;
+    const MINUTE_END: usize = 16;
+    const SECOND_START: usize = 17;
+    const SECONDS_PER_DAY: i64 = 86_400;
+    const SECONDS_PER_HOUR: i64 = 3600;
+    const SECONDS_PER_MINUTE: i64 = 60;
+    if s.len() != TIMESTAMP_LENGTH || s.as_bytes()[UTC_SUFFIX_OFFSET] != b'Z' {
         return None;
     }
     let bs = s.as_bytes();
     let n = |a: usize, b: usize| -> Option<i64> { str::from_utf8(&bs[a..b]).ok()?.parse().ok() };
-    let year = n(0, 4)?;
-    let month = n(5, 7)?;
-    let day = n(8, 10)?;
-    let hour = n(11, 13)?;
-    let min = n(14, 16)?;
-    let sec = n(17, 19)?;
-    Some(days_from_civil(year, month, day)? * 86_400 + hour * 3600 + min * 60 + sec)
+    let year = n(0, YEAR_END)?;
+    let month = n(MONTH_START, MONTH_END)?;
+    let day = n(DAY_START, DAY_END)?;
+    let hour = n(HOUR_START, HOUR_END)?;
+    let min = n(MINUTE_START, MINUTE_END)?;
+    let sec = n(SECOND_START, UTC_SUFFIX_OFFSET)?;
+    Some(
+        days_from_civil(year, month, day)? * SECONDS_PER_DAY
+            + hour * SECONDS_PER_HOUR
+            + min * SECONDS_PER_MINUTE
+            + sec,
+    )
 }
 
-/// Howard Hinnant's "days from civil" algorithm — proleptic Gregorian
-/// days since 1970-01-01. Closed-form, no leap-year branching beyond
-/// the algorithm itself, no tables. Public domain.
-/// <https://howardhinnant.github.io/date_algorithms.html#days_from_civil>
-///
-/// Returns `None` if the inputs cannot represent a real date in the
-/// algorithm's domain (year-of-era falls outside `0..=399`, month-of-year
-/// outside `0..=11`, or day outside `1..=31`). The caller surfaces that
-/// as a parse failure on the timestamp.
+/// Uses [Howard Hinnant's public-domain calendar algorithm](https://howardhinnant.github.io/date_algorithms.html#days_from_civil).
 fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+    const YEARS_PER_ERA: i64 = 400;
+    const MARCH_OFFSET: i64 = 3;
+    const JANUARY_OFFSET: i64 = 9;
+    const DAYS_PER_FIVE_MONTHS: u32 = 153;
+    const MONTHS_PER_DAY_CYCLE: u32 = 5;
+    const COMMON_YEAR_DAYS: u32 = 365;
+    const LEAP_YEAR_INTERVAL: u32 = 4;
+    const YEARS_PER_CENTURY: u32 = 100;
+    const DAYS_PER_ERA: i64 = 146_097;
+    const UNIX_EPOCH_CIVIL_DAYS: i64 = 719_468;
     let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    // yoe ∈ 0..=399 by construction (div_euclid pins the residue).
-    let yoe = u32::try_from(y - era * 400).ok()?;
-    // mp = "month with March=0, ..., February=11" (Hinnant's shifted month).
-    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let era = y.div_euclid(YEARS_PER_ERA);
+    let yoe = u32::try_from(y - era * YEARS_PER_ERA).ok()?;
+    let mp = if m > 2 {
+        m - MARCH_OFFSET
+    } else {
+        m + JANUARY_OFFSET
+    };
     let mp_u32 = u32::try_from(mp).ok()?;
     let d_u32 = u32::try_from(d).ok()?;
-    let doy = (153 * mp_u32 + 2) / 5 + d_u32 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    Some(era * 146_097 + i64::from(doe) - 719_468)
+    let doy = (DAYS_PER_FIVE_MONTHS * mp_u32 + 2) / MONTHS_PER_DAY_CYCLE + d_u32 - 1;
+    let doe = yoe * COMMON_YEAR_DAYS + yoe / LEAP_YEAR_INTERVAL - yoe / YEARS_PER_CENTURY + doy;
+    Some(era * DAYS_PER_ERA + i64::from(doe) - UNIX_EPOCH_CIVIL_DAYS)
 }
-
-// --- helpers -----------------------------------------------------------
 
 fn trim(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -430,8 +407,6 @@ mod tests {
 
     #[test]
     fn rfc3339_z_round_trip() {
-        // 2026-04-30T00:00:00Z = days_since_epoch(2026,4,30) * 86400
-        // days_from_civil(2026,4,30) computed below; sanity by diff.
         let a = parse_rfc3339_z("2026-04-30T11:32:25Z").unwrap();
         let b = parse_rfc3339_z("2026-04-30T11:36:50Z").unwrap();
         assert_eq!(b - a, 4 * 60 + 25);
@@ -446,7 +421,7 @@ mod tests {
 
     #[test]
     fn rfc3339_z_rejects_malformed() {
-        assert_eq!(parse_rfc3339_z("2026-04-30T11:32:25"), None); // no Z
+        assert_eq!(parse_rfc3339_z("2026-04-30T11:32:25"), None);
         assert_eq!(parse_rfc3339_z("not-a-date"), None);
         assert_eq!(parse_rfc3339_z(""), None);
     }
@@ -454,8 +429,6 @@ mod tests {
     #[test]
     fn median_odd_even() {
         assert_eq!(median(&[1, 2, 3]), 2);
-        // i64 division: (2 + 3) / 2 == 2 (truncated). One-second
-        // precision is enough for CI wall-time reporting.
         assert_eq!(median(&[1, 2, 3, 4]), 2);
     }
 
@@ -466,10 +439,7 @@ mod tests {
 
     #[test]
     fn days_from_civil_known_dates() {
-        // 1970-01-01 is the epoch.
         assert_eq!(days_from_civil(1970, 1, 1), Some(0));
-        // 2000-01-01 is 30*365 + 7 leaps = 10_950 + 7 = 10_957 days.
-        // (1972, 76, 80, 84, 88, 92, 96 — seven leap years 1970→2000.)
         assert_eq!(days_from_civil(2000, 1, 1), Some(10_957));
     }
 
@@ -485,7 +455,6 @@ mod tests {
 
     #[test]
     fn trim_handles_multibyte_chars() {
-        // Truncation counts chars, never bytes — must not split a codepoint.
         assert_eq!(trim("あいうえお", 3), "あい…");
     }
 
@@ -554,7 +523,6 @@ mod tests {
 
     #[test]
     fn print_per_job_runs_for_mixed_completion() {
-        // Smoke: prints to stdout, must not panic with pending + complete jobs.
         let jobs = vec![
             job(
                 "lint",
@@ -569,7 +537,6 @@ mod tests {
 
     #[test]
     fn print_top_steps_runs_and_filters_trivial() {
-        // A 1-second step is filtered (d > 1); a 5-second one is kept.
         let jobs = vec![job(
             "build",
             Some("2026-04-30T11:00:00Z"),

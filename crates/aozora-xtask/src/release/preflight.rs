@@ -1,14 +1,4 @@
-//! `xtask release preflight` — verify the rearm preconditions, fail closed.
-//!
-//! Two tiers. `--offline` runs only what the working tree can answer: the
-//! `check` source-integrity gate, plus the publication-freeze latch, which the
-//! rearm PR must already have removed (`release.md`). The default tier adds the
-//! deployed state CI-green can never prove — the `release-plz` environment
-//! secrets, the protected `release` environment, the server-side tag ruleset,
-//! and a completed-success `release-ready` run for the exact commit — then
-//! probes the three package registries to classify the first-publish residue.
-//! Every check fails on an empty subject, never silently; what no API can
-//! verify is printed as explicit acknowledgments against `releasing-secrets.md`.
+//! Checks local release preconditions and remote settings unless offline.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -26,15 +16,9 @@ const REGISTRY_USER_AGENT: &str =
 const CURL_OUTPUT_SINK: &str = "/dev/null";
 const REGISTRY_TIMEOUT_SECONDS: &str = "30";
 
-/// What to verify. Grouped into a struct rather than passed as loose flags so
-/// the online/offline split and the first-publish acknowledgment stay named.
 pub(super) struct Request<'a> {
-    /// Skip every network probe — run only the repo-local checks.
     pub offline: bool,
-    /// Acknowledge a known first-publish (a new crate / project the registry
-    /// cannot auto-create), so preflight does not hard-stop on it.
     pub first_publish: bool,
-    /// The commit being rearmed (defaults to HEAD when `None`).
     pub commit: Option<&'a str>,
 }
 
@@ -63,20 +47,12 @@ pub(super) fn run(request: &Request<'_>) -> Result<(), String> {
     }
 }
 
-// ── offline tier ─────────────────────────────────────────────────────────
-
-/// Fold the offline source-integrity gate in, surfacing any failure as a
-/// preflight violation rather than a separate early exit, so every unmet
-/// precondition is reported together.
 fn check_source_integrity(violations: &mut Vec<String>) {
     if let Err(err) = super::ruleset::check() {
         violations.push(err);
     }
 }
 
-/// The publication-freeze latch must be ABSENT at rearm — it is removed in the
-/// dedicated reviewed rearm PR (`release.md`, "Publication freeze"). A present
-/// latch is a hard stop: rearming through it would defeat the freeze.
 fn check_freeze_latch(root: &Path, violations: &mut Vec<String>) {
     if root.join(".github/RELEASE_FROZEN.md").exists() {
         violations.push(
@@ -87,14 +63,8 @@ fn check_freeze_latch(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
-// ── online tier ──────────────────────────────────────────────────────────
-
-/// The `owner/name` repo and 40-hex commit every deployed-state probe is scoped
-/// to. Resolved once; a failure here fails the whole online tier closed.
 struct Context {
-    /// `owner/name`, from `GITHUB_REPOSITORY` or `gh repo view`.
     repo: String,
-    /// The 40-hex commit being rearmed (request override or HEAD).
     commit: String,
 }
 
@@ -107,8 +77,6 @@ fn online_context(request: &Request<'_>, root: &Path) -> Result<Context, String>
     Ok(Context { repo, commit })
 }
 
-/// Prefer the Actions-provided `GITHUB_REPOSITORY`; fall back to `gh` so the
-/// same tool works from a maintainer's checkout.
 fn resolve_repo() -> Result<String, String> {
     if let Some(env_repo) = env::var_os("GITHUB_REPOSITORY") {
         let env_repo = env_repo.to_string_lossy().trim().to_owned();
@@ -131,9 +99,6 @@ fn resolve_repo() -> Result<String, String> {
     Ok(repo)
 }
 
-/// The rearm commit is the exact qualified 40-hex merge commit (`release.md`);
-/// anything shorter or non-hex is rejected so a probe cannot resolve the wrong
-/// commit.
 fn resolve_commit(request: &Request<'_>, root: &Path) -> Result<String, String> {
     let commit = match request.commit {
         Some(commit) => commit.to_owned(),
@@ -152,8 +117,6 @@ fn check_deployed_state(context: &Context, request: &Request<'_>, violations: &m
     check_release_ready_run(&context.repo, &context.commit, violations);
     check_registries(request.first_publish, violations);
 }
-
-// ── release-plz environment secrets (releasing-secrets.md §2/§3) ──────────
 
 fn check_release_plz_secrets(repo: &str, first_publish: bool, violations: &mut Vec<String>) {
     let json = match gh(&[
@@ -178,10 +141,6 @@ fn check_release_plz_secrets(repo: &str, first_publish: bool, violations: &mut V
     }
 }
 
-/// The App credentials must both be present, and `CARGO_REGISTRY_TOKEN` present
-/// iff a first publish is in flight (steady state is tokenless OIDC). Zero
-/// secrets is a failure, not a pass — an absent environment and a stripped one
-/// must not read alike.
 fn audit_release_plz_secrets(
     names: &BTreeSet<String>,
     first_publish: bool,
@@ -219,8 +178,6 @@ fn audit_release_plz_secrets(
     }
 }
 
-// ── release environment protection (releasing-secrets.md §1) ──────────────
-
 fn check_release_environment(repo: &str, violations: &mut Vec<String>) {
     match gh_api(&[&format!("repos/{repo}/environments/release")]) {
         Err(err) => violations.push(err),
@@ -252,8 +209,6 @@ fn audit_release_reviewers(body: &str, violations: &mut Vec<String>) {
     }
 }
 
-/// How many reviewers the environment's `required_reviewers` rules name in
-/// total; zero means the human approval gate is not enforced.
 fn required_reviewer_count(env: &Value) -> usize {
     env.get("protection_rules")
         .and_then(Value::as_array)
@@ -287,9 +242,6 @@ fn check_release_branch_policies(repo: &str, violations: &mut Vec<String>) {
     }
 }
 
-/// Both `main` (branch) and `v*` (tag) must be admitted. Zero admitted policies
-/// is a failure, not a pass — an empty policy set is as unprotected as a
-/// missing environment.
 fn audit_branch_policies(body: &Value, violations: &mut Vec<String>) {
     let policies = admitted_branch_policies(body);
     if policies.is_empty() {
@@ -309,7 +261,6 @@ fn audit_branch_policies(body: &Value, violations: &mut Vec<String>) {
     }
 }
 
-/// The `(name, type)` pairs a deployment-branch-policies listing admits.
 fn admitted_branch_policies(body: &Value) -> BTreeSet<(String, String)> {
     body.get("branch_policies")
         .and_then(Value::as_array)
@@ -322,8 +273,6 @@ fn admitted_branch_policies(body: &Value) -> BTreeSet<(String, String)> {
         })
         .collect()
 }
-
-// ── server-side tag ruleset (releasing-secrets.md §2) ─────────────────────
 
 fn check_tag_ruleset(repo: &str, violations: &mut Vec<String>) {
     let body = match gh_api(&[&format!("repos/{repo}/rulesets")]) {
@@ -379,14 +328,10 @@ fn tag_ruleset_details(
         .map(Value::Array)
 }
 
-/// Whether the immutable-tag ruleset is present and active server-side.
 enum TagRuleset {
-    /// The rulesets listing is empty — fail-on-zero: nothing to verify.
     NoRulesets,
     Missing,
-    /// Present, but its enforcement is not `active`.
     Inactive,
-    /// Present and active.
     Active,
 }
 
@@ -432,8 +377,6 @@ fn tag_ruleset_state(rulesets: &Value) -> TagRuleset {
     }
 }
 
-// ── release-ready proof for the commit (release.md; ADR-0042) ─────────────
-
 fn check_release_ready_run(repo: &str, commit: &str, violations: &mut Vec<String>) {
     let json = match gh(&[
         "run",
@@ -463,8 +406,6 @@ fn check_release_ready_run(repo: &str, commit: &str, violations: &mut Vec<String
     }
 }
 
-/// How many runs in a `gh run list --json status,conclusion` listing are both
-/// `completed` and `success`. Zero is the fail-on-zero case the caller rejects.
 fn successful_run_count(json: &str) -> Result<usize, String> {
     let value: Value =
         serde_json::from_str(json).map_err(|err| format!("parse release-ready runs: {err}"))?;
@@ -480,26 +421,15 @@ fn successful_run_count(json: &str) -> Result<usize, String> {
         .count())
 }
 
-// ── registry existence — first-publish residue (releasing-secrets.md §3-5) ─
-
-/// Whether a package is expected to already exist in steady state, which
-/// governs when its absence is a violation versus an acknowledged first publish.
 enum Presence {
-    /// Not yet on the registry; only a first publish creates it.
     New,
-    /// Expected to already exist; absence is always a failure.
     Existing,
 }
 
-/// One registry existence probe: a plain HTTPS GET whose 404 means "not yet".
 struct Registry<'a> {
-    /// Human label for the message.
     label: &'a str,
-    /// The URL whose HTTP status classifies existence.
     url: &'a str,
-    /// Steady-state expectation.
     presence: Presence,
-    /// How to resolve an unexpected absence.
     fix: &'a str,
 }
 
@@ -545,9 +475,6 @@ fn check_registry(registry: &Registry<'_>, first_publish: bool, violations: &mut
     }
 }
 
-/// A first publish excuses only a not-yet-created package; an existing package
-/// missing is always a failure, and a new one missing outside a first publish
-/// must never proceed silently.
 fn absence_is_violation(presence: &Presence, first_publish: bool) -> bool {
     match presence {
         Presence::Existing => true,
@@ -555,20 +482,13 @@ fn absence_is_violation(presence: &Presence, first_publish: bool) -> bool {
     }
 }
 
-/// Whether a registry package exists, from an HTTP status.
 #[derive(Debug)]
 enum RegistryState {
-    /// 200 — the package exists.
     Exists,
-    /// 404 — the package does not exist yet.
     Absent,
 }
 
 fn http_status(url: &str) -> Result<RegistryState, String> {
-    // crates.io's data-access policy REQUIRES a descriptive User-Agent and
-    // rejects the default `curl/x.y` one with 403 — which would otherwise fail
-    // every online preflight closed on a spurious "unexpected HTTP status".
-    // Identify the tool for all three registries.
     let output = Command::new("curl")
         .args([
             "-sS",
@@ -593,8 +513,6 @@ fn http_status(url: &str) -> Result<RegistryState, String> {
     classify_http_status(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Map an HTTP status body to existence. Only 200 and 404 are expected; any
-/// other status fails closed rather than being guessed at.
 fn classify_http_status(code: &str) -> Result<RegistryState, String> {
     match code.trim() {
         "200" => Ok(RegistryState::Exists),
@@ -605,8 +523,10 @@ fn classify_http_status(code: &str) -> Result<RegistryState, String> {
     }
 }
 
-// ── success reporting + irreducible residue ──────────────────────────────
-
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn report_success(request: &Request<'_>) {
     eprintln!("release preflight: every verifiable precondition holds");
     eprintln!("  - source-integrity gate intact (tag ruleset + native-SBOM path mirror)");
@@ -622,8 +542,10 @@ fn report_success(request: &Request<'_>) {
     print_residue();
 }
 
-/// The residue no API can verify — printed as named acknowledgments so it is
-/// impossible to conflate "verified" with "unverifiable".
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_residue() {
     eprintln!("MANUAL RESIDUE — verify by hand; no API confirms these (releasing-secrets.md):");
     eprintln!(
@@ -640,18 +562,11 @@ fn print_residue() {
     );
 }
 
-// ── process helpers ──────────────────────────────────────────────────────
-
-/// A `gh api` call that may legitimately 404 (an absent environment / ruleset),
-/// which must be classified rather than mistaken for a transport failure.
 enum GhApi {
-    /// The response body.
     Found(String),
-    /// The resource returned 404.
     Missing,
 }
 
-/// Run a `gh` subcommand, failing loud on any non-zero exit.
 fn gh(args: &[&str]) -> Result<String, String> {
     let output = Command::new("gh")
         .args(args)
@@ -666,8 +581,6 @@ fn gh(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Run `gh api <args>`, distinguishing a 404 (a verifiable "absent") from a
-/// real failure so an unprotected resource is caught, not swallowed.
 fn gh_api(args: &[&str]) -> Result<GhApi, String> {
     let output = Command::new("gh")
         .arg("api")
@@ -703,7 +616,6 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// The names in a `gh secret list --json name` listing.
 fn parse_names(json: &str) -> Result<BTreeSet<String>, String> {
     let value: Value =
         serde_json::from_str(json).map_err(|err| format!("parse secret list: {err}"))?;
@@ -898,12 +810,10 @@ mod tests {
         names.insert("RELEASE_PLZ_APP_CLIENT_ID".to_owned());
         names.insert("RELEASE_PLZ_APP_PRIVATE_KEY".to_owned());
 
-        // Steady state: both App creds, no token -> clean.
         let mut steady = Vec::new();
         audit_release_plz_secrets(&names, false, &mut steady);
         assert!(steady.is_empty(), "steady state must be clean: {steady:?}");
 
-        // A stray token outside a first publish is a violation.
         names.insert("CARGO_REGISTRY_TOKEN".to_owned());
         let mut stray = Vec::new();
         audit_release_plz_secrets(&names, false, &mut stray);
@@ -912,7 +822,6 @@ mod tests {
             "stray token must be flagged: {stray:?}"
         );
 
-        // First publish without the token is also a violation.
         names.remove("CARGO_REGISTRY_TOKEN");
         let mut bootstrap = Vec::new();
         audit_release_plz_secrets(&names, true, &mut bootstrap);

@@ -15,7 +15,7 @@ pub enum CorpusError {
         source: io::Error,
     },
 
-    /// Constructor was given a path that does not exist or is not a directory.
+    /// The root path is missing or names a file instead of a directory.
     #[error("corpus root is not a directory: {path}")]
     RootNotDirectory {
         /// The configured root path that was missing or not a directory.

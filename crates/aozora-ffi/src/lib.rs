@@ -1,59 +1,5 @@
-//! C ABI driver for the aozora parser.
-//!
-//! Designed for embedding in non-Rust hosts (Ruby / Node / Go / JVM
-//! via libffi / FFI / cgo / JNA). The API is **opaque-handle**: every
-//! parse produces a `*mut AozoraDocument`, accessed through a small
-//! set of `aozora_*` functions, freed by a single matching destructor.
-//! Structured data (registry / diagnostics) is exposed as JSON
-//! strings rather than C structs because (a) the AST shape is
-//! `#[non_exhaustive]` upstream and any C struct mirror would lock
-//! callers into a specific revision, and (b) every modern target
-//! language already has a JSON reader.
-//!
-//! ## ABI stability
-//!
-//! - Function names are `aozora_*` (no namespace tricks).
-//! - All inputs are `*const u8 + len` byte slices.
-//! - All outputs are `*mut AozoraDocument` opaque handles or
-//!   `aozora_string_t`-shaped `(ptr, len, cap)` triples that the
-//!   caller hands back to `aozora_string_free`.
-//! - All return codes are `int32_t`: `0` = success, negative =
-//!   error category, see [`AozoraStatus`].
-//!
-//! ## Memory ownership
-//!
-//! Every pointer returned by an `aozora_*` function MUST be released
-//! by the matching `aozora_*_free` call. Dropping a handle without
-//! calling free leaks the underlying allocation; freeing a handle
-//! and then dereferencing it is undefined behaviour (the standard
-//! C-API contract).
-//!
-//! ## Safety
-//!
-//! This crate must use `unsafe` to honour the C ABI; it is the only
-//! crate in the workspace where `unsafe_code = "forbid"` is locally
-//! relaxed. Each `unsafe` block carries a `// SAFETY:` justification.
-//!
-//! ## Panic / abort contract for embedders
-//!
-//! The workspace release profile is compiled with `panic = "abort"`.
-//! A Rust panic therefore does **not** unwind across the C ABI — it
-//! terminates the **entire host process** via `abort()`. There is no
-//! `catch_unwind` net here, and none is possible under `panic =
-//! "abort"`. Concretely:
-//!
-//! - Every `aozora_*` function validates its pointer / length / UTF-8
-//!   preconditions up front and reports problems through the
-//!   [`AozoraStatus`] return code. On those paths it never panics.
-//! - In particular, inputs whose byte length exceeds [`u32::MAX`]
-//!   (~4 GiB) are rejected at [`aozora_document_new`] with
-//!   [`AozoraStatus::SourceTooLarge`] *before* the parser core runs,
-//!   because the core asserts `len <= u32::MAX` (its span offsets are
-//!   `u32`) and would otherwise abort the host process.
-//! - Embedders MUST pre-validate untrusted input and MUST NOT rely on
-//!   catching a Rust panic to recover: by the time a panic reaches the
-//!   ABI the process is already being torn down. Treat a non-zero
-//!   status as the only supported error channel.
+//! Exposes C bindings through [`aozora_document_new`] and the document accessors.
+//! Release builds use `panic = "abort"`, so a Rust panic terminates the host process.
 
 use core::ffi::c_int;
 use core::slice;
@@ -61,74 +7,54 @@ use core::slice;
 /// Wire schema version carried by every structured JSON result.
 pub const AOZORA_SCHEMA_VERSION: u32 = aozora::json::SCHEMA_VERSION;
 
-/// Status code returned by every `aozora_*` function.
-///
-/// `0` is success; negative values are error categories. Positive
-/// values are reserved for future warning channels (e.g., "parse
-/// completed with diagnostics").
+/// Operation status, where zero means success and negative values mean errors.
+/// Positive values remain reserved for future warnings.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AozoraStatus {
     /// Operation succeeded.
     Ok = 0,
-    /// One of the input pointers was null.
+    /// An input pointer was null.
     NullInput = -1,
-    /// The input byte slice was not valid UTF-8.
+    /// The input contains invalid UTF-8.
     InvalidUtf8 = -2,
-    /// Allocation failed (out of memory).
+    /// Memory allocation failed.
     AllocFailed = -3,
-    /// Internal serialisation error (JSON output construction failed).
+    /// Output serialization failed.
     SerializeFailed = -4,
-    /// The input byte length exceeded [`u32::MAX`] (~4 GiB). The parser
-    /// core uses `u32` span offsets and asserts this bound; rejecting
-    /// here keeps the assert (and, under `panic = "abort"`, the whole
-    /// host process) from firing. See the crate-level "Panic / abort
-    /// contract" docs.
+    /// The source byte length exceeds [`u32::MAX`].
     SourceTooLarge = -5,
 }
 
-/// Opaque handle to a parsed Aozora document. Allocate via
-/// [`aozora_document_new`]; free via [`aozora_document_free`].
-///
-/// Wraps an [`aozora::Document`] and its immutable parsed snapshot. The
-/// C ABI treats it as a single-owner handle — embedders may move it
-/// across threads but must not call into one handle concurrently from
-/// multiple threads without external synchronisation.
+/// An opaque parsed document handle.
+/// Create it with [`aozora_document_new`] and release it once with [`aozora_document_free`].
+/// A handle can move between threads, but callers must serialize access and destruction.
 #[derive(Debug)]
 pub struct AozoraDocument {
     inner: aozora::Document,
 }
 
-/// `(ptr, len, cap)` triple representing an owned `Vec<u8>` returned
-/// to the caller. The caller MUST round-trip it through
-/// [`aozora_bytes_free`] to release the memory.
-///
-/// Layout matches `Vec<u8>::from_raw_parts(ptr, len, cap)` so the
-/// destructor can reconstruct the vec for drop.
+/// An owned byte buffer returned by the library.
+/// Pass the unchanged `ptr`, `len`, and `cap` to [`aozora_bytes_free`] exactly once.
+/// The payload has no null terminator.
 #[repr(C)]
 #[derive(Debug)]
 pub struct AozoraBytes {
-    /// Pointer to the start of the owned allocation. Null only on the
-    /// caller-zeroed sentinel value (which [`aozora_bytes_free`] treats
-    /// as a no-op); on any value returned by an `aozora_*` function it
-    /// is non-null and valid for `cap` bytes.
+    /// Allocation pointer, non-null for buffers returned by the library.
+    /// A null pointer acts as an empty sentinel for [`aozora_bytes_free`].
     pub ptr: *mut u8,
-    /// Number of initialised, readable bytes — the length of the
-    /// returned payload (HTML or JSON). May be less than `cap`.
+    /// Number of initialized, readable bytes, no greater than `cap`.
     pub len: usize,
-    /// Total capacity of the allocation, in bytes. Must be passed back
-    /// unchanged to [`aozora_bytes_free`]: it reconstructs the `Vec`
-    /// with `(ptr, len, cap)`, so a wrong `cap` corrupts the allocator.
+    /// Allocation capacity in bytes, which must remain unchanged until release.
     pub cap: usize,
 }
 
-/// Return the parser build version as an owned UTF-8 byte buffer.
-///
-/// The caller MUST release the returned value with [`aozora_bytes_free`].
+/// Returns the parser version as an owned UTF-8 buffer through `out_version`.
+/// Returns [`AozoraStatus::NullInput`] for a null output pointer, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `out_version` must point to a writable [`AozoraBytes`] slot.
+/// A non-null `out_version` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -139,12 +65,12 @@ pub unsafe extern "C" fn aozora_version(out_version: *mut AozoraBytes) -> c_int 
         return AozoraStatus::NullInput as c_int;
     }
     let bytes = into_owned_bytes(env!("CARGO_PKG_VERSION").as_bytes().to_vec());
-    // SAFETY: caller guarantees out_version is writable.
+    // SAFETY: the caller provides a writable, aligned `out_version` slot.
     unsafe { out_version.write(bytes) };
     AozoraStatus::Ok as c_int
 }
 
-/// Return the structured wire schema version implemented by this library.
+/// Returns the structured wire schema version without accessing caller memory.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -154,26 +80,14 @@ pub extern "C" fn aozora_schema_version() -> u32 {
     AOZORA_SCHEMA_VERSION
 }
 
-/// Construct a [`Document`](AozoraDocument) from a UTF-8 byte slice.
-///
-/// On success, writes the document handle to `*out_doc` and returns
-/// [`AozoraStatus::Ok`]. On failure, writes `null` to `*out_doc` and
-/// returns the matching error status.
-///
-/// Inputs whose byte length exceeds [`u32::MAX`] are rejected with
-/// [`AozoraStatus::SourceTooLarge`] *before* the parser core runs (the
-/// core's span offsets are `u32` and it asserts that bound; under
-/// `panic = "abort"` hitting the assert would abort the whole host
-/// process). Guarding at construction means no oversize document can
-/// exist, so the later `aozora_document_*` accessors never reach the
-/// assert either. See the crate-level "Panic / abort contract" docs.
+/// Parses a UTF-8 byte slice and writes an owned handle to `out_doc` on success.
+/// Returns [`AozoraStatus::NullInput`] for null pointers, [`AozoraStatus::InvalidUtf8`] for invalid encoding, or [`AozoraStatus::SourceTooLarge`] for a length exceeding [`u32::MAX`].
+/// A failure sets a non-null `out_doc` to null.
+/// Release a successful handle with [`aozora_document_free`].
 ///
 /// # Safety
-///
-/// - `src_ptr` must point to `src_len` valid UTF-8 bytes.
-/// - `out_doc` must point to a writable `*mut AozoraDocument` slot.
-/// - The caller must eventually call [`aozora_document_free`] on the
-///   returned handle.
+/// For accepted source lengths, a non-null `src_ptr` must reference `src_len` readable bytes in one live allocation, with length at most `isize::MAX`.
+/// A non-null `out_doc` must reference a writable, aligned pointer slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -187,24 +101,15 @@ pub unsafe extern "C" fn aozora_document_new(
     if out_doc.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: out_doc is non-null (checked above) and the caller
-    // guarantees it is writable.
+    // SAFETY: `out_doc` is non-null and the caller provides writable, aligned storage.
     unsafe { out_doc.write(core::ptr::null_mut()) };
     if src_ptr.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // Reject oversize input before touching the parser core: its span
-    // offsets are `u32` and it asserts `len <= u32::MAX`, which under
-    // `panic = "abort"` would abort the host process. We can fail fast
-    // on `src_len` alone — it is the source byte length and the parser
-    // never grows the buffer past it.
     if u32::try_from(src_len).is_err() {
         return AozoraStatus::SourceTooLarge as c_int;
     }
-    // SAFETY: caller guarantees src_ptr + src_len name a valid byte
-    // slice. src_ptr is non-null (checked above) and src_len <= u32::MAX
-    // (checked above) < isize::MAX, so the slice-length precondition of
-    // `from_raw_parts` is satisfied.
+    // SAFETY: the caller provides one live allocation of `src_len` readable bytes within `isize::MAX` at the checked non-null pointer.
     let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
     let Ok(source_str) = core::str::from_utf8(bytes) else {
         return AozoraStatus::InvalidUtf8 as c_int;
@@ -212,23 +117,19 @@ pub unsafe extern "C" fn aozora_document_new(
     let doc = Box::new(AozoraDocument {
         inner: aozora::parse(source_str.to_owned()).expect("source fits parser span limit"),
     });
-    // SAFETY: caller guarantees out_doc is writable.
+    // SAFETY: the caller provides a writable, aligned `out_doc` slot.
     unsafe { out_doc.write(Box::into_raw(doc)) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document to HTML, returning the result as an owned
-/// byte buffer.
-///
-/// On success, writes the bytes to `*out_html` and returns
-/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`]
-/// on the returned [`AozoraBytes`] to release the memory.
+/// Writes rendered HTML to `out_html`.
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_html` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_html` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -241,31 +142,24 @@ pub unsafe extern "C" fn aozora_document_to_html(
     if doc.is_null() || out_html.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let html = doc_ref.inner.snapshot().to_html();
     let bytes = into_owned_bytes(html.into_bytes());
-    // SAFETY: caller guarantees out_html is writable.
+    // SAFETY: the caller provides a writable, aligned `out_html` slot.
     unsafe { out_html.write(bytes) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's diagnostics as a JSON byte buffer.
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty document → the empty envelope
-/// `{"schemaVersion":…,"data":[]}` (version is
-/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
-/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM and PyO3 drivers.
+/// Writes diagnostics as a JSON envelope to `out_json`.
+/// The wire format follows [`aozora::json::diagnostics`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -278,33 +172,26 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     if doc.is_null() || out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.snapshot();
     let json = aozora::json::diagnostics(tree.diagnostics());
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's diagnostics as a plain-text byte buffer.
-///
-/// One block per diagnostic — `<severity> [<code>] @ <start>..<end>:
-/// <message>` plus the offending source slice. This is the `miette`-free
-/// portable rendering ([`aozora::diagnostics_text`]); a clean parse
-/// yields an empty buffer. For the machine-readable view use
-/// [`aozora_document_diagnostics_json`].
-///
-/// On success, writes the bytes to `*out_text` and returns
-/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
-/// the returned [`AozoraBytes`].
+/// Writes a plain-text diagnostic report to `out_text`.
+/// A clean parse produces an empty buffer.
+/// The report follows [`aozora::diagnostics_text`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_text` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_text` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -317,37 +204,25 @@ pub unsafe extern "C" fn aozora_document_diagnostics_text(
     if doc.is_null() || out_text.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.snapshot();
     let text = aozora::diagnostics_text(doc_ref.inner.source(), tree.diagnostics());
     let owned = into_owned_bytes(text.into_bytes());
-    // SAFETY: caller guarantees out_text is writable.
+    // SAFETY: the caller provides a writable, aligned `out_text` slot.
     unsafe { out_text.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's source-keyed Aozora nodes as a JSON byte
-/// buffer.
-///
-/// Each entry has the shape `{ kind, span: { start, end } }` in source
-/// coordinates, sorted by `span.start`. Useful for editor integrations
-/// (semantic tokens, document symbols, Lezer-Tree builders).
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
-/// `{"schemaVersion":…,"data":[]}` (version is
-/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
-/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM and PyO3 drivers.
+/// Writes nodes as a JSON envelope to `out_json`.
+/// Entries use original-source byte spans in source order, following [`aozora::json::nodes`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -360,39 +235,25 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
     if doc.is_null() || out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.snapshot();
     let json = aozora::json::nodes(&tree);
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's matched open/close pair links as a JSON byte
-/// buffer.
-///
-/// Each entry has the shape
-/// `{ kind, open: { start, end }, close: { start, end } }` in
-/// sanitized-source coordinates. Useful for LSP requests like
-/// `textDocument/linkedEditingRange` and
-/// `textDocument/documentHighlight`.
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
-/// `{"schemaVersion":…,"data":[]}` (version is
-/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
-/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM and PyO3 drivers.
+/// Writes matched delimiters as a JSON envelope to `out_json`.
+/// Entries use original-source byte spans, following [`aozora::json::pairs`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -405,33 +266,24 @@ pub unsafe extern "C" fn aozora_document_pairs_json(
     if doc.is_null() || out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.snapshot();
     let json = aozora::json::pairs(&tree);
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Re-emit the document as Aozora source text (round-trip
-/// serialization), returning the result as an owned byte buffer.
-///
-/// Parses and walks the tree back to canonical source — the inverse of
-/// [`aozora_document_to_html`]. This is the `to_source` surface shared
-/// bit-for-bit with the WASM (`toSource`), PyO3 (`to_source`), and
-/// Extism/Go drivers.
-///
-/// On success, writes the bytes to `*out_source` and returns
-/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
-/// the returned [`AozoraBytes`] to release the memory.
+/// Writes canonical Aozora source to `out_source`.
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_source` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_source` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -444,38 +296,24 @@ pub unsafe extern "C" fn aozora_document_to_source(
     if doc.is_null() || out_source.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let source = doc_ref.inner.snapshot().to_source();
     let bytes = into_owned_bytes(source.into_bytes());
-    // SAFETY: caller guarantees out_source is writable.
+    // SAFETY: the caller provides a writable, aligned `out_source` slot.
     unsafe { out_source.write(bytes) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's matched container open/close pairs as a JSON
-/// byte buffer.
-///
-/// Each entry has the shape
-/// `{ kind, open: { start, end }, close: { start, end } }` in
-/// sanitized-source coordinates, covering block-level enclosures
-/// (indent / jisage / caption blocks) rather than the inline pairs of
-/// [`aozora_document_pairs_json`].
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty parse → the empty envelope
-/// `{"schemaVersion":…,"data":[]}` (version is
-/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
-/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with the WASM, PyO3, and Extism/Go drivers.
+/// Writes matched container delimiters as a JSON envelope to `out_json`.
+/// Entries use original-source byte spans, following [`aozora::json::container_pairs`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -488,37 +326,25 @@ pub unsafe extern "C" fn aozora_document_container_pairs_json(
     if doc.is_null() || out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.snapshot();
     let json = aozora::json::container_pairs(&tree);
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the document's resolved gaiji references (`※［＃…］`) as a
-/// JSON byte buffer.
-///
-/// Each entry records the source span of a gaiji directive alongside its
-/// resolved canonical form (JIS X 0213 men-ku-ten, Unicode scalar, …).
-/// The scan runs over the document's source string directly.
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. A source with no gaiji → the empty envelope
-/// `{"schemaVersion":…,"data":[]}` (version is
-/// [`aozora::json::SCHEMA_VERSION`]). The caller MUST call
-/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`]. Its records also drive
-/// the WASM `gaiji` values and the Python, Extism, and Go projections.
+/// Writes gaiji resolutions as a JSON envelope to `out_json`.
+/// Entries follow [`aozora::json::gaiji`].
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -531,31 +357,22 @@ pub unsafe extern "C" fn aozora_document_gaiji_json(
     if doc.is_null() || out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let json = aozora::json::gaiji(&doc_ref.inner.snapshot());
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Write the document's source byte length to `*out_len`.
-///
-/// This is the length of the UTF-8 source buffer the handle owns — the
-/// same quantity the WASM (`sourceByteLen`) and PyO3 (`source_byte_len`)
-/// drivers return. Hosts use it to size buffers and to convert the `u32`
-/// source coordinates in the JSON projections back into their own string
-/// indices.
-///
-/// On success, writes the length to `*out_len` and returns
-/// [`AozoraStatus::Ok`].
+/// Writes the owned source's UTF-8 byte length to `out_len`.
+/// Returns [`AozoraStatus::NullInput`] for null pointers, or [`AozoraStatus::Ok`] on success.
 ///
 /// # Safety
-///
-/// - `doc` must be a non-null handle produced by
-///   [`aozora_document_new`] and not yet freed.
-/// - `out_len` must point to a writable `usize` slot.
+/// `doc` must be null or an unfreed handle from [`aozora_document_new`].
+/// Callers must serialize access and destruction.
+/// A non-null `out_len` must reference a writable, aligned `usize` slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -568,31 +385,21 @@ pub unsafe extern "C" fn aozora_document_source_byte_len(
     if doc.is_null() || out_len.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees doc is a valid handle.
+    // SAFETY: the caller provides a live document handle and serializes calls.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let len = doc_ref.inner.source().len();
-    // SAFETY: caller guarantees out_len is writable.
+    // SAFETY: the caller provides a writable, aligned `out_len` slot.
     unsafe { out_len.write(len) };
     AozoraStatus::Ok as c_int
 }
 
-/// Render the spec's canonical slug catalogue as a JSON byte buffer.
-///
-/// This is document-independent — it projects the static slug table from
-/// [`aozora::json::slugs`], the same authority behind the WASM
-/// `slugs` and PyO3 `slugs_json` exports. Editor front ends use
-/// it to drive directive completion.
-///
-/// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
-/// the returned [`AozoraBytes`].
-///
-/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
-/// with PyO3 and Extism/Go.
+/// Writes the canonical slug catalogue as a JSON envelope to `out_json`.
+/// The wire format follows [`aozora::json::slugs`].
+/// Returns [`AozoraStatus::NullInput`] for a null output pointer, or [`AozoraStatus::Ok`] on success.
+/// Release the returned buffer with [`aozora_bytes_free`].
 ///
 /// # Safety
-///
-/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+/// A non-null `out_json` must reference a writable, aligned [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -604,18 +411,16 @@ pub unsafe extern "C" fn aozora_slugs_json(out_json: *mut AozoraBytes) -> c_int 
     }
     let json = aozora::json::slugs();
     let owned = into_owned_bytes(json.into_bytes());
-    // SAFETY: caller guarantees out_json is writable.
+    // SAFETY: the caller provides a writable, aligned `out_json` slot.
     unsafe { out_json.write(owned) };
     AozoraStatus::Ok as c_int
 }
 
-/// Free a document handle returned by [`aozora_document_new`].
+/// Releases a document handle, doing nothing for null.
 ///
 /// # Safety
-///
-/// - `doc` must be either null (then this is a no-op) or a handle
-///   returned by [`aozora_document_new`] that has not already been
-///   freed. Double-free is undefined behaviour.
+/// A non-null `doc` must be an unfreed handle returned by [`aozora_document_new`].
+/// No other call can access the handle during or after release.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -623,19 +428,16 @@ pub unsafe extern "C" fn aozora_slugs_json(out_json: *mut AozoraBytes) -> c_int 
 )]
 pub unsafe extern "C" fn aozora_document_free(doc: *mut AozoraDocument) {
     if !doc.is_null() {
-        // SAFETY: caller guarantees doc is a valid handle from
-        // aozora_document_new and is not yet freed.
+        // SAFETY: the caller provides `doc` as an unfreed handle from `aozora_document_new`.
         drop(unsafe { Box::from_raw(doc) });
     }
 }
 
-/// Free a byte buffer returned by an `aozora_*` function.
+/// Releases a byte buffer, doing nothing for a null allocation pointer.
 ///
 /// # Safety
-///
-/// - `bytes` must be a value previously returned by one of the
-///   `aozora_*` functions in this crate. Reusing or aliasing the
-///   inner pointer after this call is undefined behaviour.
+/// A non-null buffer must be an unchanged, unfreed value returned by this library.
+/// No reference to its allocation can remain in use during or after release.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -643,21 +445,11 @@ pub unsafe extern "C" fn aozora_document_free(doc: *mut AozoraDocument) {
 )]
 pub unsafe extern "C" fn aozora_bytes_free(bytes: AozoraBytes) {
     if !bytes.ptr.is_null() {
-        // SAFETY: bytes was produced by `into_owned_bytes`, which
-        // invokes `Vec::into_raw_parts`-equivalent. Reconstructing
-        // the Vec with the same triple is the inverse operation.
+        // SAFETY: the caller supplies the unchanged, unfreed allocation triple produced by `into_owned_bytes`.
         drop(unsafe { Vec::from_raw_parts(bytes.ptr, bytes.len, bytes.cap) });
     }
 }
 
-/// Convert an owned `Vec<u8>` into the C-ABI [`AozoraBytes`] triple,
-/// transferring ownership to the caller.
-///
-/// Uses `core::mem::forget` (workspace lints normally disallow it)
-/// because that is precisely the FFI ownership-transfer dance: the
-/// caller takes responsibility for releasing the buffer via
-/// [`aozora_bytes_free`], which inverts the `forget` by calling
-/// `Vec::from_raw_parts`.
 #[expect(
     clippy::disallowed_methods,
     reason = "transferring ownership across the C ABI; aozora_bytes_free is the inverse"
@@ -695,8 +487,6 @@ mod tests {
         unsafe { aozora_bytes_free(version) };
     }
 
-    /// End-to-end smoke: parse, render to HTML, free. Exercises the
-    /// happy path of every public entry point.
     #[test]
     #[expect(
         unsafe_code,
@@ -739,7 +529,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: nodes JSON for plain input is the empty envelope.
     #[test]
     #[expect(
         unsafe_code,
@@ -767,7 +556,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: ruby span emits a `kind:"ruby"` entry in nodes JSON.
     #[test]
     #[expect(
         unsafe_code,
@@ -792,7 +580,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: ruby pair emits a `kind:"ruby"` entry in pairs JSON.
     #[test]
     #[expect(
         unsafe_code,
@@ -819,8 +606,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: `to_source` round-trips ruby back to canonical Aozora
-    /// source through the C ABI.
     #[test]
     #[expect(
         unsafe_code,
@@ -840,7 +625,6 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let got = unsafe { core::str::from_utf8(slice::from_raw_parts(out.ptr, out.len)) }
             .expect("source is utf8");
-        // Byte-identical to the library's own round-trip authority.
         let want = aozora::parse(src.to_owned())
             .expect("source fits parser span limit")
             .snapshot()
@@ -850,8 +634,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: container-pairs JSON is the empty envelope for inline-only
-    /// input and shares the wire authority.
     #[test]
     #[expect(
         unsafe_code,
@@ -881,8 +663,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: gaiji JSON resolves a `※［＃…］` reference and shares the
-    /// wire authority.
     #[test]
     #[expect(
         unsafe_code,
@@ -909,7 +689,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: source byte length reports the owned UTF-8 buffer length.
     #[test]
     #[expect(
         unsafe_code,
@@ -927,8 +706,6 @@ mod tests {
         unsafe { aozora_document_free(doc) };
     }
 
-    /// Smoke: the document-independent slug catalogue matches the wire
-    /// authority.
     #[test]
     #[expect(
         unsafe_code,
@@ -973,13 +750,6 @@ mod tests {
         assert!(doc.is_null());
     }
 
-    /// An oversize `src_len` (> `u32::MAX`) is rejected at construction
-    /// with [`AozoraStatus::SourceTooLarge`] and never reaches the
-    /// parser core's `u32`-span assert. The guard checks `src_len`
-    /// before dereferencing `src_ptr`, so we can pass a non-null
-    /// dangling pointer with a fabricated huge length: the function
-    /// returns before any read. This keeps the test from allocating
-    /// 4 GiB.
     #[test]
     #[cfg(target_pointer_width = "64")]
     #[expect(
@@ -987,7 +757,6 @@ mod tests {
         reason = "exercises the C ABI ownership and pointer contract"
     )]
     fn oversize_length_returns_source_too_large_status() {
-        // Non-null but never dereferenced (guard returns first).
         let dangling = core::ptr::NonNull::<u8>::dangling().as_ptr().cast_const();
         let oversize = u32::MAX as usize + 1;
         let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
@@ -1029,15 +798,6 @@ mod tests {
         unsafe { aozora_document_free(core::ptr::null_mut()) };
     }
 
-    /// The [`AozoraStatus`] discriminants are a C ABI stability contract:
-    /// embedders hard-code these exact integers (`-1` = null input, `-5` =
-    /// oversize, …), so their numeric values must never drift silently. The
-    /// behavioural tests above all compare a returned code against
-    /// `AozoraStatus::Variant as c_int`, which *cannot* catch a change to the
-    /// discriminant itself — the function's return value and the expected
-    /// value move together, so the equality still holds. Pin every variant to
-    /// its literal wire value here so a drift (or an accidental sign flip)
-    /// fails the suite.
     #[test]
     fn status_discriminants_are_abi_stable() {
         assert_eq!(AozoraStatus::Ok as i32, 0);

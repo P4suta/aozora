@@ -1,3 +1,5 @@
+use std::fs;
+use std::io;
 use std::path::Path;
 
 use regex::Regex;
@@ -205,7 +207,7 @@ pub enum CategoryError {
         error: regex::Error,
     },
     #[error("io: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
 }
 
 /// User-supplied category definitions.
@@ -217,13 +219,12 @@ pub struct RollupConfig {
     pub categories: Vec<CategorySpec>,
 }
 
-/// One named category: a label plus the regex patterns that map a function name into it.
+/// A named category with regular expressions for matching function names.
 #[derive(Debug, Clone)]
 pub struct CategorySpec {
     /// Category label shown in the rollup report.
     pub name: String,
-    /// Regex patterns (matched against function names) that fall into this category.
-    /// Any match assigns the function here.
+    /// Regular expressions that assign matching function names to this category.
     pub patterns: Vec<String>,
 }
 
@@ -242,8 +243,7 @@ impl RollupConfig {
         }
     }
 
-    /// Parse from TOML.
-    /// Schema:
+    /// Parses ordered category definitions from TOML.
     ///
     /// ```toml
     /// [[categories]]
@@ -254,6 +254,9 @@ impl RollupConfig {
     /// name = "..."
     /// patterns = [...]
     /// ```
+    ///
+    /// # Errors
+    /// Returns an error for invalid TOML, missing category fields, or non-string patterns.
     pub fn from_toml(text: &str) -> Result<Self, CategoryError> {
         let parsed: toml::Value =
             toml::from_str(text).map_err(|e| CategoryError::Toml(e.to_string()))?;
@@ -289,12 +292,18 @@ impl RollupConfig {
     }
 
     /// Read category definitions from a TOML file.
+    ///
+    /// # Errors
+    /// Returns an error if reading or parsing the file fails.
     pub fn from_toml_file(path: &Path) -> Result<Self, CategoryError> {
-        let text = std::fs::read_to_string(path)?;
+        let text = fs::read_to_string(path)?;
         Self::from_toml(&text)
     }
 
     /// Compile patterns into a runtime [`Categorizer`].
+    ///
+    /// # Errors
+    /// Returns an error for invalid regular expressions.
     pub fn compile(&self) -> Result<Categorizer, CategoryError> {
         let mut compiled = Vec::with_capacity(self.categories.len());
         for cat in &self.categories {
@@ -318,7 +327,7 @@ impl RollupConfig {
     }
 }
 
-/// Compiled categoriser; the first matching category wins.
+/// Compiled categorizer that selects the first matching category.
 #[derive(Debug)]
 pub struct Categorizer {
     categories: Vec<CompiledCategory>,

@@ -1,13 +1,3 @@
-// Cross-surface parity gate — wasm (Node) channel.
-//
-// One golden authority (crates/aozora-conformance/fixtures/render), N thin
-// walkers. This walker loads the wasm-pack `--target nodejs` build and
-// asserts text outputs byte-for-byte and typed projections semantically
-// against the same golden data the Rust gate pins.
-//
-// Usage:  node parity.mjs <path-to-wasm-nodejs-pkg>
-// Driven by `just parity-wasm` locally and by ci.yml.
-// `wasm-build` job (host runner).
 
 import { createRequire } from "node:module";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -23,12 +13,9 @@ if (!pkgArg) {
   process.exit(2);
 }
 
-// wasm-pack `--target nodejs` emits a CommonJS module that instantiates
-// the wasm synchronously at require-time — no async init needed.
 const require = createRequire(import.meta.url);
 const { Document } = require(resolve(pkgArg));
 
-// parity.mjs lives at crates/aozora-wasm/tests/js/ — three levels up is
 // crates/, then the shared golden corpus.
 const fixturesRoot = resolve(
   here,
@@ -90,7 +77,6 @@ for (const name of dirs) {
       console.error(`  actual: ${JSON.stringify(actual).slice(0, 320)}`);
     }
   }
-  // Free the wasm-side handle eagerly (nodejs target still exposes free()).
   if (typeof doc.free === "function") doc.free();
 }
 

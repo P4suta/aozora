@@ -1,22 +1,4 @@
-//! Sidecar symbol cache.
-//!
-//! Symbolication via `addr2line` parses DWARF info from the binary
-//! every time. On a multi-MB ELF that's seconds; for an interactive
-//! analysis loop ("hot frames, then rollup, then compare") it
-//! becomes the dominant cost.
-//!
-//! [`SymbolCache`] persists the resolved (`library_name`, address) →
-//! function-name mapping to a `<trace>.symbols.json` sidecar next
-//! to the trace file. Re-running an analysis hits the cache in
-//! milliseconds.
-//!
-//! ## Invalidation
-//!
-//! The cache stores the trace's source path and the binary
-//! binary identity per library. A `load`-then-validate cycle
-//! refuses to use a cache whose identifiers don't match the current
-//! trace's libs — this catches "binary was rebuilt, addresses
-//! shifted, the cache is now lying" silently.
+//! Persists resolved symbols through [`SymbolCache`] and validates library identities when applying them.
 
 use std::collections::HashMap;
 use std::fs;
@@ -27,21 +9,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::Trace;
 
-/// On-disk cache form. Keyed by library name; the stored identity
-/// is validated on apply (a mismatched build-id is rejected),
-/// catching a rebuilt-binary stale cache.
+#[cfg(unix)]
+const CACHE_FILE_MODE: u32 = 0o666;
+
+/// Resolved symbols keyed by library name and binary identity.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SymbolCache {
-    /// Map: library `name` → (binary identity, addr → resolved function name).
+    /// Cached symbols keyed by library name.
     pub libs: HashMap<String, CachedLibrary>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CachedLibrary {
     pub debug_id: String,
-    /// Addresses are stored as decimal-encoded strings to keep the
-    /// JSON portable across platforms (some `serde_json` defaults
-    /// reject `u64` keys in maps).
+    /// Resolved names keyed by decimal addresses.
     pub by_address: HashMap<String, String>,
 }
 
@@ -54,13 +35,10 @@ pub enum CacheError {
 }
 
 impl SymbolCache {
-    /// Conventional sidecar path: `<trace>.symbols.json` next to the
-    /// trace file regardless of the trace's `.gz` extension.
+    /// Conventional sidecar path: `<trace>.symbols.json` next to the trace file regardless of the trace's `.gz` extension.
     #[must_use]
     pub fn sidecar_path_for(trace_path: &Path) -> PathBuf {
         let mut p = trace_path.to_path_buf();
-        // Strip a single trailing `.gz` so `foo.json.gz` becomes
-        // `foo.json`, then append `.symbols.json`.
         if p.extension().and_then(|e| e.to_str()) == Some("gz") {
             p.set_extension("");
         }
@@ -71,8 +49,10 @@ impl SymbolCache {
         p
     }
 
-    /// Load from sidecar path, returning `Ok(None)` when the file
-    /// doesn't exist (a clean "no cache yet" condition).
+    /// Loads a sidecar, returning `Ok(None)` for a missing file.
+    ///
+    /// # Errors
+    /// Returns an error if reading or parsing the file fails.
     pub fn load(path: &Path) -> Result<Option<Self>, CacheError> {
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
@@ -83,7 +63,10 @@ impl SymbolCache {
         Ok(Some(cache))
     }
 
-    /// Persist atomically. A crashed write leaves the previous cache untouched.
+    /// Persists the cache with an atomic file replacement.
+    ///
+    /// # Errors
+    /// Returns an error if serialization, writing, replacement, or directory synchronization fails.
     pub fn write(&self, path: &Path) -> Result<(), CacheError> {
         let bytes = serde_json::to_vec_pretty(self)?;
         let parent = path
@@ -99,7 +82,7 @@ impl SymbolCache {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            builder.permissions(fs::Permissions::from_mode(0o666))
+            builder.permissions(fs::Permissions::from_mode(CACHE_FILE_MODE))
         };
         let mut temporary = builder.tempfile_in(parent)?;
         if let Some(permissions) = permissions {
@@ -112,13 +95,10 @@ impl SymbolCache {
         Ok(())
     }
 
-    /// Apply this cache to the trace, populating `Thread.resolved`
-    /// for every frame whose (library, address) is present. Returns
-    /// the number of frames resolved.
+    /// Fills unresolved frames with cached symbols whose library identities match the trace.
+    /// Returns the number of frames resolved.
     pub fn apply(&self, trace: &mut Trace) -> usize {
         let mut count = 0;
-        // Build a quick "lib_idx → cached library entry" mapping
-        // restricted to libs whose binary identity matches.
         let mut lib_lookup: Vec<Option<&CachedLibrary>> = Vec::with_capacity(trace.libs.len());
         for lib in &trace.libs {
             let identity = if lib.code_id.is_empty() {
@@ -152,7 +132,7 @@ impl SymbolCache {
         count
     }
 
-    /// Add a (`library_name`, `debug_id`, address → name) record. Idempotent.
+    /// Records a resolved address, clearing old symbols when the library identity changes.
     pub fn record(&mut self, lib: LibIdent<'_>, address: u64, name: String) {
         let entry = self
             .libs
@@ -195,17 +175,10 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 }
 
 /// Library identity passed to [`SymbolCache::record`].
-///
-/// Bundles the `(name, binary identity)` pair so the cache write API takes
-/// one logical argument instead of two parallel string slices —
-/// clearer at call sites *and* keeps clippy's `too_many_arguments`
-/// lint happy.
 #[derive(Debug, Clone, Copy)]
 pub struct LibIdent<'a> {
-    /// Library name — the cache map key (matches `Library.name`).
+    /// Library name matching [`crate::Library::name`].
     pub name: &'a str,
-    /// The library's code-id, or debug-id fallback, stored so a later
-    /// [`SymbolCache::apply`] can reject a cache entry whose binary
-    /// has since been rebuilt.
+    /// The library's code-id, or debug-id fallback, stored so a later [`SymbolCache::apply`] can reject a cache entry whose binary has since been rebuilt.
     pub debug_id: &'a str,
 }

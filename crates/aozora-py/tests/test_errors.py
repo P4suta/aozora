@@ -1,12 +1,9 @@
-"""Fallible entry points surface ``ValueError`` (mapped from DecodeError)."""
+"""Checks decoding errors through ``ValueError``."""
 
 import pytest
 
 import aozora
 
-# 0x81 is a Shift_JIS lead byte; 0xFF is not a valid trail → malformed.
-# Also invalid UTF-8, so decode_auto (UTF-8-first) falls through to the
-# strict Shift_JIS path and errors there too.
 INVALID_BYTES = b"\x81\xff"
 
 

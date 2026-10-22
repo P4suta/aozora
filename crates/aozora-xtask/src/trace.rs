@@ -9,8 +9,7 @@ use aozora_trace::{
 
 #[derive(Args)]
 pub(crate) struct TraceArgs {
-    /// Output format for the report-producing subcommands (`cache` writes a sidecar and ignores it).
-    /// `human` is the fixed-width tables; `json` is the typed report serialized as pretty JSON.
+    /// Report format for commands other than `cache`.
     #[arg(long, value_enum, global = true, default_value_t = TraceFormat::Human)]
     pub(crate) format: TraceFormat,
     #[command(subcommand)]
@@ -19,7 +18,7 @@ pub(crate) struct TraceArgs {
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub(crate) enum TraceFormat {
-    /// Fixed-width human tables (folded-stack text for `flame`).
+    /// Text tables, or folded stacks for `flame`.
     #[default]
     Human,
     /// Pretty-printed JSON of the typed report.
@@ -28,23 +27,23 @@ pub(crate) enum TraceFormat {
 
 #[derive(Subcommand)]
 pub(crate) enum TraceCmd {
-    /// Pre-symbolicate `<trace>` against `<binary>` and write a sidecar `<trace>.symbols.json` next to it.
+    /// Resolve trace symbols with a binary and write a sidecar cache.
     Cache {
         trace: PathBuf,
-        /// Path to the binary whose DWARF info will resolve the addresses.
+        /// Binary containing debug information for address resolution.
         binary: PathBuf,
         /// Library name in the trace's `libs` array that the binary corresponds to.
         /// Defaults to the binary file stem.
         #[arg(long)]
         lib_name: Option<String>,
     },
-    /// Show hot frames with inclusive and self sample percentages.
+    /// Show inclusive and leaf percentages for hot frames.
     Hot {
         trace: PathBuf,
         /// Number of rows to print.
         #[arg(long, default_value_t = 25)]
         top: usize,
-        /// Inclusive aggregation (count every function on the stack, dedup per sample) instead of leaf-only.
+        /// Count distinct frames throughout each stack instead of leaves alone.
         #[arg(long)]
         inclusive: bool,
         /// Optional binary for fresh symbolication when the cache is missing or stale.
@@ -56,8 +55,7 @@ pub(crate) enum TraceCmd {
     /// Rollup function names into named categories.
     Rollup {
         trace: PathBuf,
-        /// Optional TOML file with `[[categories]]` entries.
-        /// When omitted, the built-in `aozora` defaults are used.
+        /// Category definitions in TOML, defaulting to built-in categories.
         #[arg(long)]
         config: Option<PathBuf>,
         /// Optional binary for fresh symbolication when the cache is missing.
@@ -67,10 +65,10 @@ pub(crate) enum TraceCmd {
     /// Print top-K call stacks where any frame matches `pattern`.
     Stacks {
         trace: PathBuf,
-        /// Regex applied to each frame label.
+        /// Regular expression to match frame labels.
         #[arg(long)]
         pattern: String,
-        /// Maximum number of distinct stacks to print.
+        /// Limit on the number of distinct stacks to print.
         #[arg(long, default_value_t = 5)]
         limit: usize,
         #[arg(long)]
@@ -82,12 +80,11 @@ pub(crate) enum TraceCmd {
         after: PathBuf,
         #[arg(long, default_value_t = 25)]
         top: usize,
-        /// Binary for both traces (assumes both ran the same one).
+        /// Binary shared by both recorded traces.
         #[arg(long)]
         binary: Option<PathBuf>,
     },
-    /// Emit folded-stack format suitable for `flamegraph.pl`:
-    ///   `xtask trace flame /tmp/x.json.gz | flamegraph.pl > x.svg`
+    /// Emit folded stacks for `flamegraph.pl`.
     Flame {
         trace: PathBuf,
         #[arg(long)]
@@ -95,6 +92,10 @@ pub(crate) enum TraceCmd {
     },
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 pub(crate) fn dispatch(args: TraceArgs) -> Result<(), String> {
     let format = args.format;
     match args.cmd {
@@ -150,6 +151,10 @@ pub(crate) fn dispatch(args: TraceArgs) -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn cmd_cache(trace_path: &Path, binary: &Path, lib_name: Option<&str>) -> Result<(), String> {
     let started = Instant::now();
     let mut trace = Trace::load(trace_path).map_err(|e| e.to_string())?;
@@ -253,6 +258,10 @@ fn cmd_flame(
     Ok(analysis::folded_stacks(&trace))
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn emit<R: TableRenderable + serde::Serialize>(
     report: &R,
     format: TraceFormat,
@@ -267,6 +276,10 @@ fn emit<R: TableRenderable + serde::Serialize>(
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn load_with_symbols(trace_path: &Path, binary: Option<&Path>) -> Result<Trace, String> {
     let mut trace = Trace::load(trace_path).map_err(|e| e.to_string())?;
     let cache_path = SymbolCache::sidecar_path_for(trace_path);

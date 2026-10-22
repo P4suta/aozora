@@ -352,6 +352,10 @@ struct BundleBuild {
     workers: WorkerFiles,
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn bundle(args: &BundleArgs) -> Result<(), String> {
     validate_commit(&args.commit, "commit")?;
     if args.version.is_empty() || args.schema_version == 0 {

@@ -1,48 +1,4 @@
-//! Per-size-class throughput report.
-//!
-//! Splits the corpus into four bands by post-decode UTF-8 byte length:
-//!
-//! - **Small**       `< 50 KiB`
-//! - **Medium**      `50 KiB ..= 500 KiB`
-//! - **Large**       `500 KiB ..= 2 MiB`
-//! - **Pathological** `> 2 MiB`
-//!
-//! For each band, reports doc count, total bytes, single-thread parse
-//! throughput (MB/s), p50 / p90 / p99 / max latency (ns), and per-byte
-//! cost (ns/byte). The `phase_breakdown` probe lumps every doc together
-//! and so over-weights the very few pathological documents that
-//! dominate aggregate wall-clock; this probe makes the per-class
-//! distribution visible.
-//!
-//! Reads `AOZORA_CORPUS_ROOT`. Optional `AOZORA_PROFILE_LIMIT=N` caps
-//! the sweep. Optional `AOZORA_PROFILE_REPEAT=K` runs the parser
-//! sweep K times back-to-back (load is paid once); useful when
-//! profiling under `samply` because the longer parser-bound run
-//! drowns out the corpus-decode fixed cost.
-//!
-//! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput_by_class -p aozora-bench
-//! ```
-//!
-//! Output is split into **load wall** (Shift-JIS decode + bucketing)
-//! and **parse wall** (the actual `lex` work). Earlier
-//! versions reported a single "wall" that conflated both — when read
-//! by a sampling profiler this caused the corpus-load syscalls
-//! (`read` / `__nss_database_lookup` / `__memmove_avx_unaligned`) to
-//! dominate the trace and bury the parser hot path.
-//!
-//! ## Parallel mode
-//!
-//! Set `AOZORA_PROFILE_PARALLEL=1` to fan per-doc parses across rayon's
-//! work-stealing pool. Each task constructs its own [`Arena`], so
-//! arenas remain `Send` (one per task) without breaking `bumpalo`'s
-//! `!Sync` contract. Output gains a `[parallel: N threads]` header,
-//! the parse wall reflects concurrent wall-clock (not the sum of
-//! per-doc times), and a `scaling` line reports the effective speedup
-//! vs the same per-doc work executed serially. Sequential remains the
-//! default — per-doc latency numbers stay reproducible / variance-stable
-//! and the sampling profiler attaches cleanly to a single-thread call
-//! stack.
+//! Reports corpus loading and parsing throughput by document size.
 
 mod support;
 
@@ -63,36 +19,12 @@ use aozora_bench::{
 use aozora_corpus::{Archive, FilesystemCorpus};
 use rayon::prelude::*;
 
-// One Arena per worker thread, reused across the docs that worker
-// processes. `Bump::reset()` between docs drops the prior parse's
-// allocations without releasing the chunks — saving the per-doc
-// `mmap` syscall a per-task `Arena::new()` would pay.
-//
-// Pre-size the thread-local arena at thread startup so the first
-// few docs each worker sees don't pay the chunk-grow doubling tax
-// (bumpalo's default initial chunk is
-// 512 bytes; the corpus median doc needs ~50 KB of arena space, so
-// without a hint the first ~7 docs each worker sees do
-// 512 → 1 K → 2 K → 4 K → 8 K → 16 K → 32 K → 64 K growth). 256 KB
-// covers >95 % of corpus docs in one chunk; the >2 MB outliers
-// extend once and stay extended across resets, so the cost is paid
-// once per worker per outlier-class instead of once per parse.
-//
-// `RefCell` matches `Arena`'s `!Sync` contract exactly (the rayon
-// pool gives each worker its own thread-local cell, so the cell is
-// never observed from a second thread). The borrow scope must close
-// before the closure returns — which it does, because the closure
-// drops `_out` immediately after timing.
-
 thread_local! {
     static WORKER_ARENA: RefCell<()> = const { RefCell::new(()) };
 }
 
 const NS_PER_S: f64 = 1_000_000_000.0;
 
-/// Whether to fan per-doc parses across rayon's work-stealing pool.
-/// Opt-in via `AOZORA_PROFILE_PARALLEL=1` so the default sampling /
-/// profiling workflow stays single-threaded and reproducible.
 fn parallel_mode() -> bool {
     matches!(
         env::var("AOZORA_PROFILE_PARALLEL").ok().as_deref(),
@@ -104,6 +36,11 @@ fn main() -> ExitCode {
     run().err().unwrap_or(ExitCode::SUCCESS)
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::expect_used,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn run() -> Result<(), ExitCode> {
     let archive_path = env::var_os("AOZORA_CORPUS_ARCHIVE");
     let root = env::var_os("AOZORA_CORPUS_ROOT");
@@ -128,12 +65,6 @@ fn run() -> Result<(), ExitCode> {
         "throughput_by_class: starting (limit = {limit:?}, repeat = {repeat}, parallel = {parallel})"
     );
 
-    // If AOZORA_CORPUS_ARCHIVE is set, load from a packed binary
-    // archive (single fs::read of the whole archive + parallel iter
-    // over its index) instead of walking 17 k small files. Skips
-    // walkdir + per-file syscalls entirely; for the pre-decoded
-    // UTF-8 + zstd variant also skips the per-doc decode.
-    // AOZORA_CORPUS_ROOT remains the fallback when ARCHIVE is unset.
     let load = if let Some(archive_path) = archive_path.as_ref() {
         LoadPhase::run_archive(Path::new(archive_path), limit)
     } else {
@@ -143,8 +74,6 @@ fn run() -> Result<(), ExitCode> {
             return Err(ExitCode::from(2));
         };
 
-        // The serial path splits I/O + decode + bucketing into four timers so each sub-phase's wall is visible.
-        // The parallel path fans out via rayon (`parallel_size_bands`) and overlaps read/decode, so the per-phase serial split is suppressed there — the per-phase timers no longer attribute meaningfully under concurrent dispatch.
         if parallel {
             LoadPhase::run_parallel(&corpus, limit)
         } else {
@@ -164,7 +93,6 @@ fn run() -> Result<(), ExitCode> {
     let parse_start = Instant::now();
     let mut report = measure_all(&load.banded, parallel);
     for _ in 1..repeat {
-        // Discard repeats — only the per-doc latencies of the final pass are kept; earlier passes serve to warm caches and (importantly) to give a sampling profiler more parser-bound wall time to attach to.
         report = measure_all(&load.banded, parallel);
     }
     let parse_secs = parse_start.elapsed().as_secs_f64();
@@ -182,6 +110,10 @@ fn run() -> Result<(), ExitCode> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn print_load_report(load: &LoadPhase) {
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={}, io_err={})",
@@ -231,18 +163,12 @@ fn print_load_report(load: &LoadPhase) {
     }
 }
 
-/// Load-phase result — total wall time plus, in sequential mode, the
-/// per-sub-phase split from [`LoadPhase::run`]. Parallel mode sets
-/// `split = None` because rayon overlaps the read/decode sub-phases
-/// and the per-phase serial timers no longer attribute meaningfully.
 struct LoadPhase {
     banded: SizeBandedCorpus,
     total_secs: f64,
     split: Option<LoadSplit>,
 }
 
-/// Per-sub-phase numbers — only populated by [`LoadPhase::run`]
-/// (sequential mode).
 struct LoadSplit {
     walkdir_secs: f64,
     read_secs: f64,
@@ -257,7 +183,6 @@ impl LoadPhase {
     fn run(corpus: &FilesystemCorpus, limit: Option<usize>) -> Self {
         let total_start = Instant::now();
 
-        // 1. walkdir — enumerate file paths only (no read).
         let walk_start = Instant::now();
         let mut paths = Vec::new();
         let mut io_errors = 0;
@@ -270,7 +195,6 @@ impl LoadPhase {
         let walkdir_secs = walk_start.elapsed().as_secs_f64();
         let path_count = paths.len();
 
-        // 2. read — pull bytes for every path.
         let read_start = Instant::now();
         let mut items = Vec::with_capacity(paths.len());
         for path in &paths {
@@ -282,7 +206,6 @@ impl LoadPhase {
         let read_secs = read_start.elapsed().as_secs_f64();
         let sjis_bytes_total: u64 = items.iter().map(|it| it.bytes.len() as u64).sum();
 
-        // 3. decode — SJIS → UTF-8, drop failures (counted in step 4).
         let decode_start = Instant::now();
         let mut decoded: Vec<(String, String)> = Vec::with_capacity(items.len());
         let mut decode_errors: usize = 0;
@@ -297,7 +220,6 @@ impl LoadPhase {
         let decode_secs = decode_start.elapsed().as_secs_f64();
         let utf8_bytes_total: u64 = decoded.iter().map(|(_, t)| t.len() as u64).sum();
 
-        // 4. bucket — assign each (label, text) to its size band.
         let bucket_start = Instant::now();
         let mut banded = corpus_size_bands_from_decoded(decoded);
         banded.decode_errors = decode_errors;
@@ -332,9 +254,11 @@ impl LoadPhase {
         }
     }
 
-    /// Load from a packed binary archive. One `fs::read` of
-    /// the archive file, then parallel iter (decompress / decode /
-    /// bucket) on the physical-core pool.
+    #[expect(
+        clippy::panic,
+        clippy::print_stderr,
+        reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+    )]
     fn run_archive(path: &Path, limit: Option<usize>) -> Self {
         let total_start = Instant::now();
         let archive =
@@ -362,9 +286,7 @@ impl LoadPhase {
 
 #[derive(Debug, Default)]
 struct BandReport {
-    /// Per-doc total parse latency (`lex`) in ns.
     latencies_ns: Vec<u64>,
-    /// Per-doc input size (post-decode UTF-8 bytes).
     sizes_bytes: Vec<u64>,
 }
 
@@ -375,6 +297,10 @@ impl BandReport {
     fn total_ns(&self) -> u64 {
         self.latencies_ns.iter().sum()
     }
+    #[expect(
+        clippy::expect_used,
+        reason = "benchmark inputs must meet parser and numeric preconditions"
+    )]
     fn quantile(sorted: &[u64], p: f64) -> u64 {
         if sorted.is_empty() {
             return 0;
@@ -402,24 +328,11 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
     report
 }
 
-/// Measure one size-band. Each closure invocation borrows the
-/// current worker thread's reusable [`Arena`] from [`WORKER_ARENA`]
-/// and resets it before parsing — drops the prior parse's
-/// allocations without paying the per-doc `mmap` syscall a fresh
-/// `Arena::new()` would cost. Under `parallel`, rayon's work-stealing
-/// pool gives each worker its own thread-local cell, so the
-/// `RefCell` is never observed from a second thread (matches
-/// `Arena`'s `!Sync` contract).
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
-    // Pre-size the per-thread arena to `source.len() * 4` before each
-    // parse. The factor covers the owned AST on the measured corpus.
-    // When the worker's arena is already at least that large
-    // (steady state after the first big doc), `reset_with_hint`
-    // degrades to plain `reset()` — no syscall. The growth path
-    // moves the chunk-extend `mmap` from inside the parse hot loop
-    // to before it, removing a source of intra-parse latency variance
-    // and pre-paying the `brk` cost that profiling identified as a
-    // hot-path contributor.
     let measure = |text: &str| -> (u64, u64) {
         WORKER_ARENA.with(|_cell| {
             let t = Instant::now();
@@ -452,6 +365,11 @@ struct ReportTiming {
     parallel: bool,
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::expect_used,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTiming) {
     let ReportTiming {
         parse_secs,
@@ -531,10 +449,11 @@ fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTim
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn print_scaling(report: &AllReport, parse_secs: f64, repeat: usize) {
-    // Sum of per-doc latencies = the work that would have been done serially.
-    // Concurrent wall = the parse_secs we just measured (one parse pass = one rayon par_iter).
-    // Their ratio is the achieved scaling factor.
     let serial_work_ns: u64 = report
         .bands
         .iter()

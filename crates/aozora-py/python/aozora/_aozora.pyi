@@ -1,15 +1,4 @@
-# Type stub for the compiled extension submodule `aozora._aozora`.
-#
-# Hand-written: a `.so` cannot be introspected by type checkers, so the
-# native surface is declared here. The PUBLIC API users import from
-# `aozora` (the pure-Python wrapper in __init__.py, which is itself
-# fully annotated) — this stub only types the private submodule so mypy
-# can check the wrapper and power users who reach into `_aozora`
-# still get hints.
-#
-# Keep in sync with `crates/aozora-py/src/lib.rs`. The drift guard in
-# `tests/test_typing.py` asserts every symbol declared here exists on
-# the runtime module.
+"""Type declarations for the compiled Aozora extension."""
 
 class Document:
     def __init__(self, source: str) -> None: ...

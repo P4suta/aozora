@@ -3,6 +3,8 @@
 use std::env;
 use std::path::PathBuf;
 
+const PROFILE_ANCESTOR_DEPTH: usize = 3;
+
 fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR set by cargo");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
@@ -12,7 +14,7 @@ fn main() {
     println!("cargo:rerun-if-changed=include/aozora.h");
     std::fs::copy(&generated, &header_in_out).expect("copy generated aozora.h to OUT_DIR");
 
-    if let Some(profile_dir) = out_dir.ancestors().nth(3) {
+    if let Some(profile_dir) = out_dir.ancestors().nth(PROFILE_ANCESTOR_DEPTH) {
         let mirrored = profile_dir.join("aozora.h");
         std::fs::copy(&header_in_out, &mirrored).expect("copy generated aozora.h beside library");
     }

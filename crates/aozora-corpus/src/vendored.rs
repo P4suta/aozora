@@ -9,7 +9,7 @@ const FIXTURE_INPUT_FILENAME: &str = "input.sjis.txt";
 
 /// Corpus source reading `input.sjis.txt` from immediate subdirectories.
 ///
-/// Subdirectories without the input file are skipped.
+/// Skips subdirectories without the input file.
 #[derive(Debug, Clone)]
 pub struct VendoredCorpus {
     root: PathBuf,
@@ -21,7 +21,7 @@ impl VendoredCorpus {
     ///
     /// # Errors
     ///
-    /// Returns [`CorpusError::RootNotDirectory`] if `root` does not exist or is not a directory, or [`CorpusError::Io`] if the root metadata cannot be read.
+    /// Returns [`CorpusError::RootNotDirectory`] for a missing or non-directory root, or [`CorpusError::Io`] for metadata read failures.
     pub fn load(root: impl Into<PathBuf>) -> Result<Self, CorpusError> {
         let root = root.into();
         let metadata = match fs::metadata(&root) {

@@ -1,24 +1,4 @@
-//! tree-sitter grammar regeneration drift gate.
-//!
-//! `crates/tree-sitter-aozora/grammar.js` is the source of truth for the
-//! reference grammar.
-//! `tree-sitter generate` compiles it into the committed `src/parser.c` (+ `src/grammar.json` / `src/node-types.json`), which `build.rs` turns into the static parser used by the conformance harness.
-//! Those generated files are checked in so downstream consumers need only a C
-//! toolchain — but that also means an edit to `grammar.js` without a matching
-//! `tree-sitter generate` leaves the committed parser stale and silently
-//! wrong.
-//!
-//! `xtask conformance grammar --update` regenerates the artefacts from
-//! `grammar.js` via the pinned `tree-sitter` CLI; `--check` (the default,
-//! wired into `drift-gate`) exits non-zero when the on-disk artefacts have
-//! drifted from a fresh generate. mise pins the CLI to the same
-//! version as the `tree-sitter` runtime crate so the gate is reproducible.
-//!
-//! Mirrors the [`crate::schema`] / [`crate::types`] drift gates: `--update`
-//! writes the artefact, `--check` fails on drift and points back at the
-//! regenerate step. Unlike those, regeneration shells out to the external
-//! `tree-sitter` binary, so it runs into a throwaway scratch tree
-//! ([`ScratchDir`]) and `--check` never mutates the working copy.
+//! Checks and regenerates tree-sitter parser artifacts using a temporary copy of `grammar.js`.
 
 use std::env;
 use std::fs;
@@ -26,15 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-/// The reference-grammar crate, relative to the workspace root.
 const GRAMMAR_CRATE_REL: &str = "crates/tree-sitter-aozora";
 
-/// Generated artefacts under the grammar crate that `tree-sitter generate`
-/// derives from `grammar.js`. These three encode the grammar itself — the
-/// parse tables (`parser.c`) plus the JSON grammar / node-type manifests. The
-/// `src/tree_sitter/*.h` runtime headers the same command vendors are build
-/// scaffolding (part of the tree-sitter runtime ABI, not grammar-derived), so
-/// they are intentionally outside the drift set.
 const ARTEFACTS: &[&str] = &["src/parser.c", "src/grammar.json", "src/node-types.json"];
 
 pub(crate) fn dispatch(update: bool) -> Result<(), String> {
@@ -42,7 +15,6 @@ pub(crate) fn dispatch(update: bool) -> Result<(), String> {
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
-    // <workspace>/crates/aozora-xtask/Cargo.toml → workspace root is two up.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let root = Path::new(manifest_dir)
         .parent()
@@ -76,6 +48,10 @@ impl ScratchDir {
 }
 
 impl Drop for ScratchDir {
+    #[expect(
+        clippy::print_stderr,
+        reason = "report grammar restoration failures during cleanup"
+    )]
     fn drop(&mut self) {
         if let Err(err) = fs::remove_dir_all(&self.path) {
             eprintln!("remove scratch directory {}: {err}", self.path.display());
@@ -83,8 +59,6 @@ impl Drop for ScratchDir {
     }
 }
 
-/// Run `tree-sitter generate` on a throwaway copy of `grammar.js` inside a
-/// fresh [`ScratchDir`]. The generated files land under `<scratch>/src/`.
 fn scratch_generate(grammar_crate: &Path) -> Result<ScratchDir, String> {
     let scratch = ScratchDir::create()?;
     let grammar_js = grammar_crate.join("grammar.js");
@@ -113,6 +87,10 @@ fn scratch_generate(grammar_crate: &Path) -> Result<ScratchDir, String> {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let grammar_crate = root.join(GRAMMAR_CRATE_REL);
@@ -148,6 +126,10 @@ fn check() -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn regenerate() -> Result<(), String> {
     let root = workspace_root()?;
     let grammar_crate = root.join(GRAMMAR_CRATE_REL);
@@ -240,9 +222,6 @@ mod tests {
 
     #[test]
     fn committed_artefacts_exist_on_disk() {
-        // Guards against a path typo in ARTEFACTS / GRAMMAR_CRATE_REL: the
-        // gate can only be meaningful if these are the files that are
-        // actually checked in. Runs against the live workspace checkout.
         let grammar_crate = workspace_root()
             .expect("workspace root")
             .join(GRAMMAR_CRATE_REL);

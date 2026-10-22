@@ -1,11 +1,4 @@
-//! Synthetic, deterministic coverage for the pure-logic analysis
-//! modules (`hot` / `compare` / `rollup` / `stacks` / `libs` /
-//! `flame`), plus `categories`, `load`, and the sidecar `cache`.
-//!
-//! Every profile here is hand-built via the public [`Trace::from_json`]
-//! constructor over tiny gecko-format JSON, so the assertions pin the
-//! exact ranked / aggregated output with no I/O, no DWARF, and no
-//! reliance on a recorded trace file being present.
+//! Checks profile analyses, category selection, loading, and caching with synthetic traces.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,26 +12,17 @@ use aozora_trace::{
 use regex::Regex;
 use serde_json::{Value, json};
 
-/// Floating-point comparison tolerance for percentage assertions.
 const EPS: f64 = 1e-9;
 
 fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < EPS
 }
 
+#[expect(clippy::expect_used, reason = "test patterns must compile")]
 fn stack_filter(pattern: &str) -> Regex {
     Regex::new(pattern).expect("valid stack filter")
 }
 
-/// Build a single-threaded synthetic gecko profile.
-///
-/// - `strings`: the thread's string array (function names live here).
-/// - `funcs`: `(name_idx, resource_idx)` per func-table row.
-/// - `resources`: `lib_idx` per resource-table row (`None` ⇒ unattributed).
-/// - `frames`: `(address, func_idx)` per frame-table row.
-/// - `stacks`: `(prefix, frame_idx)` per stack-table row, leaf chain.
-/// - `samples`: `(stack_idx, weight)` per sample (`None` stack ⇒ idle).
-/// - `libs`: library names; each becomes a `Library` with that `name`.
 #[derive(Clone, Copy)]
 struct Profile<'a> {
     strings: &'a [&'a str],
@@ -50,6 +34,7 @@ struct Profile<'a> {
     libs: &'a [&'a str],
 }
 
+#[expect(clippy::expect_used, reason = "synthetic test profiles must load")]
 fn build_trace(profile: Profile<'_>) -> Trace {
     let Profile {
         strings,
@@ -92,32 +77,24 @@ fn build_trace(profile: Profile<'_>) -> Trace {
     Trace::from_json(&json, PathBuf::from("synthetic")).expect("synthetic load")
 }
 
-/// Two-frame stack: leaf `b` called by root `a`, both in lib 0.
-/// Three samples land on `b`'s leaf, one is idle (no stack).
 fn simple_trace() -> Trace {
     build_trace(Profile {
         strings: &["a", "b"],
         funcs: &[(0, Some(0)), (1, Some(0))],
         resources: &[Some(0)],
         frames: &[(0x10, 0), (0x20, 1)],
-        // stack 0 = a(root); stack 1 = b with prefix a.
         stacks: &[(None, 0), (Some(0), 1)],
-        // 3 samples on leaf b, 1 idle.
         samples: &[(Some(1), 1), (Some(1), 1), (Some(1), 1), (None, 1)],
         libs: &["mybin"],
     })
 }
-
-// ---- hot_leaves / hot_inclusive ------------------------------------
 
 #[test]
 fn hot_leaves_counts_only_the_leaf_frame() {
     let trace = simple_trace();
     let report = analysis::hot_leaves(&trace, 10);
     assert!(matches!(report.mode, HotMode::Leaf), "expected Leaf mode");
-    // 4 samples total (3 on b + 1 idle), all weight 1.
     assert_eq!(report.total_samples, 4, "total weight across samples");
-    // Only `b` is ever a leaf; `a` is never the leaf.
     assert_eq!(report.rows.len(), 1, "exactly one leaf function");
     let row = &report.rows[0];
     assert_eq!(row.label, "b", "leaf label");
@@ -137,7 +114,6 @@ fn hot_inclusive_counts_every_distinct_frame_on_stack() {
     );
     let by_label: HashMap<&str, &analysis::HotRow> =
         report.rows.iter().map(|r| (r.label.as_str(), r)).collect();
-    // Both a and b appear on the 3 sampled stacks.
     let a = by_label.get("a").expect("a present inclusively");
     let b = by_label.get("b").expect("b present inclusively");
     assert_eq!(a.incl_samples, 3, "a is on 3 stacks");
@@ -149,32 +125,23 @@ fn hot_inclusive_counts_every_distinct_frame_on_stack() {
 
 #[test]
 fn hot_leaves_truncates_to_n_and_sorts_desc_with_label_tiebreak() {
-    // Three leaves with counts 5, 3, 3. The two 3-count rows tie and
-    // must order alphabetically (label ascending) as the tiebreak.
     let trace = build_trace(Profile {
         strings: &["zebra", "alpha", "mid"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (None, 1), (None, 2)],
-        samples: &[
-            (Some(0), 5), // zebra: 5
-            (Some(1), 3), // alpha: 3
-            (Some(2), 3), // mid:   3
-        ],
+        samples: &[(Some(0), 5), (Some(1), 3), (Some(2), 3)],
         libs: &["bin"],
     });
     let report = analysis::hot_leaves(&trace, 2);
     assert_eq!(report.rows.len(), 2, "truncated to n=2");
     assert_eq!(report.rows[0].label, "zebra", "highest count first");
-    // Of the tied (alpha=3, mid=3) only alpha survives truncation —
-    // it sorts first alphabetically.
     assert_eq!(report.rows[1].label, "alpha", "tie broken by label asc");
 }
 
 #[test]
 fn hot_leaves_weights_samples() {
-    // A single leaf hit by samples whose weights sum to 10.
     let trace = build_trace(Profile {
         strings: &["leaf"],
         funcs: &[(0, Some(0))],
@@ -204,19 +171,14 @@ fn hot_leaves_empty_trace_is_zeroed() {
     let report = analysis::hot_leaves(&trace, 5);
     assert_eq!(report.total_samples, 0, "no samples");
     assert!(report.rows.is_empty(), "no rows for empty sample stream");
-    // Rendering an empty report must still succeed.
     assert!(
         !report.render_table().is_empty(),
         "empty report still renders a header"
     );
 }
 
-// ---- RowKind classification ----------------------------------------
-
 #[test]
 fn row_kind_unresolved_for_hex_label() {
-    // A leaf whose label resolves to a hex address (empty string in
-    // the string table ⇒ frame_label falls back to 0x<addr>).
     let trace = build_trace(Profile {
         strings: &[""],
         funcs: &[(0, Some(0))],
@@ -238,7 +200,6 @@ fn row_kind_unresolved_for_hex_label() {
 
 #[test]
 fn row_kind_leaf_hot_for_pure_leaf() {
-    // Single leaf = self == incl == 100% ⇒ LeafHot.
     let trace = simple_trace();
     let report = analysis::hot_leaves(&trace, 5);
     assert_eq!(report.rows[0].kind, RowKind::LeafHot, "self≈incl ⇒ LeafHot");
@@ -247,11 +208,9 @@ fn row_kind_leaf_hot_for_pure_leaf() {
 
 #[test]
 fn row_kind_trampoline_high_incl_near_zero_self() {
-    // Root frame `root` is on every one of 200 stacks (≈100% incl)
-    // but is never itself the leaf (0% self) ⇒ Trampoline.
     let mut samples: Vec<(Option<usize>, u64)> = Vec::new();
     for _ in 0..200 {
-        samples.push((Some(1), 1)); // leaf stack
+        samples.push((Some(1), 1));
     }
     let trace = build_trace(Profile {
         strings: &["root", "worker"],
@@ -276,32 +235,24 @@ fn row_kind_trampoline_high_incl_near_zero_self() {
 
 #[test]
 fn row_kind_hot_and_wrapper_by_leaf_ratio() {
-    // Frame `mid` appears on 10 stacks inclusively; it is the leaf on
-    // 6 of them (ratio 0.6 ⇒ Hot) in one trace, and on 2 of them
-    // (ratio 0.2 ⇒ Wrapper) in another.
-    //
-    // Layout: root -> mid -> deep. Some samples land on `mid` (leaf),
-    // some on `deep` (leaf); `mid` is inclusive on all.
     let make = |mid_leaf: u64, deep_leaf: u64| -> Trace {
         let mut samples: Vec<(Option<usize>, u64)> = Vec::new();
         for _ in 0..mid_leaf {
-            samples.push((Some(1), 1)); // leaf = mid
+            samples.push((Some(1), 1));
         }
         for _ in 0..deep_leaf {
-            samples.push((Some(2), 1)); // leaf = deep
+            samples.push((Some(2), 1));
         }
         build_trace(Profile {
             strings: &["root", "mid", "deep"],
             funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
             resources: &[Some(0)],
             frames: &[(1, 0), (2, 1), (3, 2)],
-            // stack0=root, stack1=mid(prefix root), stack2=deep(prefix mid)
             stacks: &[(None, 0), (Some(0), 1), (Some(1), 2)],
             samples: &samples,
             libs: &["bin"],
         })
     };
-    // 6 mid-leaf + 4 deep-leaf ⇒ mid: incl 10, self 6 ⇒ ratio 0.6 ⇒ Hot.
     let hot = analysis::hot_inclusive(&make(6, 4), 10);
     let mid_hot = hot.rows.iter().find(|r| r.label == "mid").expect("mid");
     assert_eq!(mid_hot.incl_samples, 10, "mid inclusive on all 10");
@@ -309,7 +260,6 @@ fn row_kind_hot_and_wrapper_by_leaf_ratio() {
     assert_eq!(mid_hot.kind, RowKind::Hot, "ratio 0.6 ⇒ Hot");
     assert_eq!(RowKind::Hot.tag(), "HW", "hot tag");
 
-    // 2 mid-leaf + 8 deep-leaf ⇒ mid: incl 10, self 2 ⇒ ratio 0.2 ⇒ Wrapper.
     let wrap = analysis::hot_inclusive(&make(2, 8), 10);
     let mid_wrap = wrap.rows.iter().find(|r| r.label == "mid").expect("mid");
     assert_eq!(mid_wrap.self_samples, 2, "mid leaf on 2");
@@ -328,8 +278,7 @@ fn hot_report_render_contains_legend_and_columns() {
     assert!(incl.contains("HOT INCLUSIVE"), "inclusive-mode title");
 }
 
-// ---- rollup --------------------------------------------------------
-
+#[expect(clippy::expect_used, reason = "test categories must parse and compile")]
 fn two_pattern_categorizer() -> Categorizer {
     let toml = r#"
 [[categories]]
@@ -348,30 +297,22 @@ patterns = ["malloc", "alloc::vec"]
 
 #[test]
 fn rollup_buckets_leaves_into_categories_in_declaration_order() {
-    // Leaves: aho_corasick::find (scan), malloc (alloc), my_own (unknown).
     let trace = build_trace(Profile {
         strings: &["aho_corasick::find", "malloc", "my_own"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (None, 1), (None, 2)],
-        samples: &[
-            (Some(0), 4), // scan
-            (Some(1), 3), // alloc
-            (Some(2), 1), // unknown
-        ],
+        samples: &[(Some(0), 4), (Some(1), 3), (Some(2), 1)],
         libs: &["bin"],
     });
     let report = analysis::rollup(&trace, &two_pattern_categorizer());
     assert_eq!(report.total_samples, 8, "4+3+1");
-    // Declared categories come first in declaration order, even when
-    // a category had hits ordered later.
     assert_eq!(report.rows[0].category, "scan", "first declared category");
     assert_eq!(report.rows[1].category, "alloc", "second declared");
     assert_eq!(report.rows[0].samples, 4, "scan samples");
     assert_eq!(report.rows[0].distinct_funcs, 1, "one scan function");
     assert!(close(report.rows[0].pct, 50.0), "4/8 = 50%");
-    // `unknown` (leftover) is appended after declared categories.
     let unknown = report
         .rows
         .iter()
@@ -382,7 +323,6 @@ fn rollup_buckets_leaves_into_categories_in_declaration_order() {
 
 #[test]
 fn rollup_emits_zero_sample_categories_for_stable_order() {
-    // No leaf matches `alloc`; it must still be emitted with 0 samples.
     let trace = build_trace(Profile {
         strings: &["aho_corasick::x"],
         funcs: &[(0, Some(0))],
@@ -405,7 +345,6 @@ fn rollup_emits_zero_sample_categories_for_stable_order() {
 
 #[test]
 fn rollup_distinct_funcs_counts_unique_labels() {
-    // Two distinct scan functions both bucket into `scan`.
     let trace = build_trace(Profile {
         strings: &["aho_corasick::a", "aozora::scan::b"],
         funcs: &[(0, Some(0)), (1, Some(0))],
@@ -438,7 +377,6 @@ fn rollup_empty_trace_total_zero_and_renders() {
     });
     let report = analysis::rollup(&trace, &two_pattern_categorizer());
     assert_eq!(report.total_samples, 0, "no samples");
-    // Declared categories are still present, all zero.
     assert!(
         report.rows.iter().all(|r| r.samples == 0),
         "all categories zero"
@@ -446,13 +384,9 @@ fn rollup_empty_trace_total_zero_and_renders() {
     assert!(report.render_table().contains("Category rollup"), "title");
 }
 
-// ---- categories (classify) -----------------------------------------
-
 #[test]
 fn categorizer_first_match_wins_in_declaration_order() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
-    // AVX2 movemask is declared under scan ABOVE the generic
-    // core_* buckets — first-match-wins must attribute it to phase1.
     assert_eq!(
         cat.classify("core::core_arch::x86::avx2::_mm256_movemask_epi8"),
         "scan",
@@ -463,7 +397,6 @@ fn categorizer_first_match_wins_in_declaration_order() {
 #[test]
 fn categorizer_anchored_libc_patterns() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
-    // `^malloc$` is anchored: bare `malloc` matches, `my_malloc` does not.
     assert_eq!(cat.classify("malloc"), "alloc_libc_heap", "anchored malloc");
     assert_ne!(
         cat.classify("my_malloc_wrapper"),
@@ -519,17 +452,14 @@ fn categorizer_category_names_are_in_declaration_order() {
 
 #[test]
 fn rollup_config_from_toml_errors_on_bad_shapes() {
-    // Missing top-level [[categories]].
     let err = RollupConfig::from_toml("foo = 1").expect_err("must reject");
     assert!(
         err.to_string().contains("categories"),
         "error mentions categories: {err}"
     );
-    // Category missing `name`.
     let err = RollupConfig::from_toml("[[categories]]\npatterns=[\"x\"]")
         .expect_err("missing name rejected");
     assert!(err.to_string().contains("name"), "mentions name: {err}");
-    // Category missing `patterns`.
     let err = RollupConfig::from_toml("[[categories]]\nname=\"x\"")
         .expect_err("missing patterns rejected");
     assert!(
@@ -553,26 +483,19 @@ fn rollup_config_compile_rejects_bad_regex() {
     assert!(err.to_string().contains("regex"), "regex error: {err}");
 }
 
-// ---- libs ----------------------------------------------------------
-
 #[test]
 fn library_distribution_attributes_by_leaf_frame_library() {
-    // Leaf `b` in lib 0 (binA), leaf `c` in lib 1 (binB).
     let trace = build_trace(Profile {
         strings: &["a", "b", "c"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(1))],
         resources: &[Some(0), Some(1)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (Some(0), 1), (Some(0), 2)],
-        samples: &[
-            (Some(1), 6), // leaf b ⇒ binA
-            (Some(2), 2), // leaf c ⇒ binB
-        ],
+        samples: &[(Some(1), 6), (Some(2), 2)],
         libs: &["binA", "binB"],
     });
     let report = analysis::library_distribution(&trace);
     assert_eq!(report.total_samples, 8, "6+2");
-    // Sorted descending by samples ⇒ binA first.
     assert_eq!(report.rows[0].library, "binA", "binA dominates");
     assert_eq!(report.rows[0].samples, 6, "binA samples");
     assert!(close(report.rows[0].pct, 75.0), "6/8 = 75%");
@@ -582,17 +505,13 @@ fn library_distribution_attributes_by_leaf_frame_library() {
 
 #[test]
 fn library_distribution_buckets_idle_and_unresolvable_as_unattributed() {
-    // One sample idle (no stack), one leaf whose func has no resource.
     let trace = build_trace(Profile {
         strings: &["a", "orphan"],
-        funcs: &[(0, Some(0)), (1, None)], // orphan func: no resource ⇒ no lib
+        funcs: &[(0, Some(0)), (1, None)],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1)],
         stacks: &[(None, 0), (None, 1)],
-        samples: &[
-            (None, 1),    // idle ⇒ unattributed
-            (Some(1), 1), // leaf orphan ⇒ unattributed (no lib)
-        ],
+        samples: &[(None, 1), (Some(1), 1)],
         libs: &["bin"],
     });
     let report = analysis::library_distribution(&trace);
@@ -607,7 +526,6 @@ fn library_distribution_buckets_idle_and_unresolvable_as_unattributed() {
 
 #[test]
 fn library_distribution_ties_break_by_name() {
-    // Two libs with equal sample counts ⇒ alphabetical order.
     let trace = build_trace(Profile {
         strings: &["x", "y"],
         funcs: &[(0, Some(0)), (1, Some(1))],
@@ -626,24 +544,15 @@ fn library_distribution_ties_break_by_name() {
     );
 }
 
-// ---- stacks (matching_stacks) --------------------------------------
-
 #[test]
 fn matching_stacks_groups_identical_stacks_and_filters() {
-    // Two distinct stacks: [b,a] (matches "b") seen twice, and [c,a]
-    // (no "b") seen once. Filter = "b".
     let trace = build_trace(Profile {
         strings: &["a", "b", "c"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
-        // stack0=a, stack1=b(prefix a), stack2=c(prefix a)
         stacks: &[(None, 0), (Some(0), 1), (Some(0), 2)],
-        samples: &[
-            (Some(1), 1), // [b,a]
-            (Some(1), 1), // [b,a] again
-            (Some(2), 1), // [c,a] — no b
-        ],
+        samples: &[(Some(1), 1), (Some(1), 1), (Some(2), 1)],
         libs: &["bin"],
     });
     let re = stack_filter("^b$");
@@ -653,14 +562,12 @@ fn matching_stacks_groups_identical_stacks_and_filters() {
     assert_eq!(report.stacks.len(), 1, "identical b-stacks merged");
     let top = &report.stacks[0];
     assert_eq!(top.samples, 2, "merged sample count");
-    // Frames are leaf-first: b then a.
     assert_eq!(top.frames, vec!["b", "a"], "leaf-first frame order");
     assert!(close(top.pct, 2.0 / 3.0 * 100.0), "2/3 of total");
 }
 
 #[test]
 fn matching_stacks_matches_non_leaf_frame() {
-    // Stack [leaf, mid, root]; filter on `mid` (an interior frame).
     let trace = build_trace(Profile {
         strings: &["root", "mid", "leaf"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
@@ -688,28 +595,20 @@ fn matching_stacks_no_match_yields_empty() {
     assert_eq!(report.matched_samples, 0, "nothing matched");
     assert!(report.stacks.is_empty(), "no stacks");
     assert!(report.total_samples > 0, "but total still counted");
-    // Render must show the 0.00% line without panicking.
     assert!(report.render_table().contains("0.00%"), "zero-pct line");
 }
 
 #[test]
 fn matching_stacks_truncates_to_limit() {
-    // Three distinct matching stacks; limit to 2 keeps the heaviest.
     let trace = build_trace(Profile {
         strings: &["root", "p", "q", "r"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0)), (3, Some(0))],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2), (4, 3)],
-        // stacks p,q,r all child of root
         stacks: &[(None, 0), (Some(0), 1), (Some(0), 2), (Some(0), 3)],
-        samples: &[
-            (Some(1), 5), // [p,root]
-            (Some(2), 3), // [q,root]
-            (Some(3), 1), // [r,root]
-        ],
+        samples: &[(Some(1), 5), (Some(2), 3), (Some(3), 1)],
         libs: &["bin"],
     });
-    // Match everything (all frame labels are non-empty words).
     let re = stack_filter("root");
     let report = analysis::matching_stacks(&trace, &re, 2);
     assert_eq!(report.stacks.len(), 2, "truncated to limit 2");
@@ -721,15 +620,10 @@ fn matching_stacks_truncates_to_limit() {
     );
 }
 
-// ---- flame (folded_stacks / render_folded) -------------------------
-
 #[test]
 fn folded_stacks_are_root_first_and_deduplicated() {
-    // Stack [b(leaf), a(root)] hit twice ⇒ one folded row "a;b 2".
     let trace = simple_trace();
     let folded = analysis::folded_stacks(&trace);
-    // simple_trace has 3 samples on the same b-stack (the idle sample
-    // is dropped).
     assert_eq!(folded.len(), 1, "one distinct folded stack");
     assert_eq!(folded[0].stack, vec!["a", "b"], "root-first order");
     assert_eq!(folded[0].samples, 3, "summed weight");
@@ -745,10 +639,7 @@ fn folded_stacks_sorted_descending_by_weight() {
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (Some(0), 1), (Some(0), 2)],
-        samples: &[
-            (Some(1), 2), // [root, heavy]
-            (Some(2), 5), // [root, light]
-        ],
+        samples: &[(Some(1), 2), (Some(2), 5)],
         libs: &["bin"],
     });
     let folded = analysis::folded_stacks(&trace);
@@ -760,8 +651,6 @@ fn folded_stacks_sorted_descending_by_weight() {
 
 #[test]
 fn render_folded_sanitises_semicolons_in_labels() {
-    // A label containing `;` would corrupt the folded format; it must
-    // be rewritten to `:`.
     let trace = build_trace(Profile {
         strings: &["a;b"],
         funcs: &[(0, Some(0))],
@@ -792,13 +681,8 @@ fn render_folded_empty_is_empty_string() {
     assert_eq!(analysis::render_folded(&folded), "", "empty render");
 }
 
-// ---- compare -------------------------------------------------------
-
 #[test]
 fn compare_classifies_shifted_appeared_disappeared() {
-    // before: leaves f(8), g(2)  ⇒ f=80%, g=20%
-    // after:  leaves f(2), h(8)  ⇒ f=20%, h=80%
-    // ⇒ f shifted (-60), g disappeared (-20), h appeared (+80).
     let before = build_trace(Profile {
         strings: &["f", "g"],
         funcs: &[(0, Some(0)), (1, Some(0))],
@@ -823,10 +707,6 @@ fn compare_classifies_shifted_appeared_disappeared() {
     let by: HashMap<&str, &analysis::ComparisonRow> =
         report.rows.iter().map(|r| (r.label.as_str(), r)).collect();
 
-    // `ChangeStatus` is not re-exported from the crate, so status is
-    // asserted via the rendered text (see
-    // `compare_render_shows_status_and_signed_delta`). Here we pin the
-    // numeric percentages/deltas that *determine* the status.
     let f = by.get("f").expect("f present in both");
     assert!(close(f.before_pct, 80.0), "f before 80%");
     assert!(close(f.after_pct, 20.0), "f after 20%");
@@ -843,17 +723,13 @@ fn compare_classifies_shifted_appeared_disappeared() {
 
 #[test]
 fn compare_sorts_by_abs_delta_and_truncates() {
-    // before f=50,g=50 ; after f=90,g=10 ⇒ |Δf|=40 > |Δg|=40 (equal),
-    // build an asymmetric case so the order is unambiguous:
-    // before f=80,g=20 ; after f=90,g=10 ⇒ |Δf|=10, |Δg|=10 still tie.
-    // Use three funcs for a clear ranking.
     let before = build_trace(Profile {
         strings: &["f", "g", "k"],
         funcs: &[(0, Some(0)), (1, Some(0)), (2, Some(0))],
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (None, 1), (None, 2)],
-        samples: &[(Some(0), 5), (Some(1), 4), (Some(2), 1)], // 50/40/10
+        samples: &[(Some(0), 5), (Some(1), 4), (Some(2), 1)],
         libs: &["bin"],
     });
     let after = build_trace(Profile {
@@ -862,14 +738,11 @@ fn compare_sorts_by_abs_delta_and_truncates() {
         resources: &[Some(0)],
         frames: &[(1, 0), (2, 1), (3, 2)],
         stacks: &[(None, 0), (None, 1), (None, 2)],
-        samples: &[(Some(0), 1), (Some(1), 4), (Some(2), 5)], // 10/40/50
+        samples: &[(Some(0), 1), (Some(1), 4), (Some(2), 5)],
         libs: &["bin"],
     });
     let report = analysis::compare(&before, &after, 1);
     assert_eq!(report.rows.len(), 1, "truncated to top=1");
-    // f: 50→10 (Δ -40), k: 10→50 (Δ +40), g: 40→40 (Δ 0).
-    // |Δf| == |Δk| == 40 — whichever wins, it must be one of them,
-    // and definitely not g (Δ 0).
     let top = &report.rows[0];
     assert!(
         top.label == "f" || top.label == "k",
@@ -903,7 +776,6 @@ fn compare_render_shows_status_and_signed_delta() {
     assert!(text.contains("Trace comparison"), "title");
     assert!(text.contains("appeared"), "g appeared");
     assert!(text.contains("disappeared"), "f disappeared");
-    // Signed delta formatting: appeared (+100.00) and disappeared (-100.00).
     assert!(text.contains("+100.00"), "positive delta has + sign");
     assert!(text.contains("-100.00"), "negative delta has - sign");
 }
@@ -916,8 +788,6 @@ fn compare_identical_traces_show_zero_delta() {
         report.rows.iter().all(|r| close(r.delta_pct, 0.0)),
         "identical traces ⇒ zero deltas"
     );
-    // Every row is present on both sides (before_pct > 0 and after_pct > 0),
-    // which is the precondition for the Shifted classification.
     assert!(
         report
             .rows
@@ -926,8 +796,6 @@ fn compare_identical_traces_show_zero_delta() {
         "every row present in both ⇒ shifted"
     );
 }
-
-// ---- load (synthetic gecko JSON) -----------------------------------
 
 #[test]
 fn load_missing_libs_field_errors() {
@@ -956,7 +824,6 @@ fn load_stack_table_column_length_mismatch_errors() {
         "threads": [{
             "name": "t",
             "stringArray": ["x"],
-            // prefix has 2 entries, frame has 1 ⇒ mismatch.
             "stackTable": { "prefix": [null, null], "frame": [0] },
             "frameTable": { "address": [0], "func": [0] },
             "funcTable": { "name": [0], "resource": [null] },
@@ -979,7 +846,6 @@ fn load_frame_table_column_length_mismatch_errors() {
             "name": "t",
             "stringArray": ["x"],
             "stackTable": { "prefix": [null], "frame": [0] },
-            // address 2 entries, func 1 ⇒ mismatch.
             "frameTable": { "address": [0, 1], "func": [0] },
             "funcTable": { "name": [0], "resource": [null] },
             "resourceTable": { "lib": [null] },
@@ -1002,7 +868,6 @@ fn load_func_table_column_length_mismatch_errors() {
             "stringArray": ["x"],
             "stackTable": { "prefix": [null], "frame": [0] },
             "frameTable": { "address": [0], "func": [0] },
-            // name 2 entries, resource 1 ⇒ mismatch.
             "funcTable": { "name": [0, 0], "resource": [null] },
             "resourceTable": { "lib": [null] },
             "samples": { "stack": [], "weight": [] },
@@ -1017,7 +882,6 @@ fn load_func_table_column_length_mismatch_errors() {
 
 #[test]
 fn load_defaults_weight_to_one_when_column_absent() {
-    // No `weight` column ⇒ every sample weighs 1.
     let json = json!({
         "libs": [{ "name": "bin", "path": "/bin", "codeId": "abc" }],
         "threads": [{
@@ -1036,7 +900,6 @@ fn load_defaults_weight_to_one_when_column_absent() {
     assert_eq!(trace.total_samples(), 3, "3 samples regardless of weight");
     let report = analysis::hot_leaves(&trace, 5);
     assert_eq!(report.total_samples, 3, "default weight 1 each");
-    // Library + thread metadata parsed.
     assert_eq!(trace.libs[0].name, "bin", "library name parsed");
     assert_eq!(trace.libs[0].code_id, "abc", "codeId parsed");
     assert_eq!(trace.threads[0].tid, "7", "tid parsed");
@@ -1045,8 +908,6 @@ fn load_defaults_weight_to_one_when_column_absent() {
 
 #[test]
 fn load_null_stack_index_is_idle_sample() {
-    // A sample with a null stack is idle — counted in total but landing
-    // nowhere.
     let json = json!({
         "libs": [],
         "threads": [{
@@ -1075,20 +936,16 @@ fn load_null_stack_index_is_idle_sample() {
 #[test]
 fn trace_is_fully_symbolicated_reflects_resolved_state() {
     let trace = simple_trace();
-    // Fresh load: nothing resolved.
     assert!(
         !trace.is_fully_symbolicated(),
         "fresh trace is unsymbolicated"
     );
-    // frame_label falls back to the raw string-table name.
     assert_eq!(trace.threads[0].frame_label(1), "b", "raw label fallback");
-    // frame_address reads the frame table.
     assert_eq!(trace.threads[0].frame_address(1), 0x20, "frame address");
 }
 
 #[test]
 fn load_samples_time_length_mismatch_errors() {
-    // `time` column shorter than the `stack` column ⇒ length mismatch.
     let json = json!({
         "libs": [],
         "threads": [{
@@ -1098,7 +955,6 @@ fn load_samples_time_length_mismatch_errors() {
             "frameTable": { "address": [0], "func": [0] },
             "funcTable": { "name": [0], "resource": [null] },
             "resourceTable": { "lib": [null] },
-            // 2 stacks but only 1 timestamp ⇒ mismatch.
             "samples": { "stack": [0, 0], "time": [1.0] },
         }],
     });
@@ -1109,8 +965,6 @@ fn load_samples_time_length_mismatch_errors() {
     );
 }
 
-/// Minimal valid gecko profile JSON as a string, for the on-disk
-/// loader tests below.
 const MINIMAL_TRACE_JSON: &str = r#"{
   "libs": [{ "name": "bin", "path": "/bin" }],
   "threads": [{
@@ -1156,7 +1010,7 @@ fn load_gzipped_json_file_from_disk() {
 #[test]
 fn load_nonexistent_file_is_io_error() {
     let path = env::temp_dir().join("aozora-trace-definitely-missing-trace.json");
-    drop(fs::remove_file(&path)); // ensure absent
+    drop(fs::remove_file(&path));
     let err = Trace::load(&path).expect_err("missing file must error");
     assert!(
         err.to_string().contains("io error"),
@@ -1191,15 +1045,13 @@ fn rollup_config_from_toml_file_reads_disk() {
     drop(fs::remove_file(&path));
 }
 
-// ---- cache (sidecar symbol cache) ----------------------------------
-
 #[test]
 fn cache_record_then_apply_resolves_matching_frames() {
     let mut trace = simple_trace();
     trace.libs[0].code_id = "AABBCC".to_owned();
     let lib_name = trace.libs[0].name.clone();
     let identity = trace.libs[0].code_id.clone();
-    let addr = trace.threads[0].frame_address(1); // leaf b address
+    let addr = trace.threads[0].frame_address(1);
 
     let mut cache = SymbolCache::default();
     cache.record(
@@ -1213,7 +1065,6 @@ fn cache_record_then_apply_resolves_matching_frames() {
     let resolved = cache.apply(&mut trace);
     assert_eq!(resolved, 1, "one frame resolved by address");
     assert!(trace.threads[0].resolved[1].is_some(), "frame 1 resolved");
-    // frame_label now prefers the resolved name.
     assert_eq!(
         trace.threads[0].frame_label(1),
         "demangled::b",
@@ -1313,7 +1164,7 @@ fn cache_write_load_round_trip() {
 #[test]
 fn cache_load_missing_file_is_none() {
     let path = env::temp_dir().join("aozora-trace-cache-definitely-absent.symbols.json");
-    drop(fs::remove_file(&path)); // ensure absent
+    drop(fs::remove_file(&path));
     let result = SymbolCache::load(&path).expect("load is Ok");
     assert!(result.is_none(), "absent file ⇒ Ok(None)");
 }
@@ -1401,7 +1252,6 @@ fn cache_sidecar_path_strips_gz_and_appends_symbols_json() {
         PathBuf::from("/tmp/trace.symbols.json"),
         "gz stripped, stem + .symbols.json"
     );
-    // Plain .json (no .gz) path.
     let p2 = SymbolCache::sidecar_path_for(Path::new("/tmp/trace.json"));
     assert_eq!(
         p2,
@@ -1409,12 +1259,6 @@ fn cache_sidecar_path_strips_gz_and_appends_symbols_json() {
         "plain json ⇒ stem + .symbols.json"
     );
 }
-
-// ---- JSON serialization (`xtask trace … --format json`) ------------
-//
-// Every report derives `Serialize`; the `--format json` path emits the
-// same typed data. These pin the wire shape: struct fields are
-// camelCase, unit enums are snake_case, and the output round-trips.
 
 #[test]
 fn hot_report_serializes_camelcase_fields_and_snakecase_enums() {
@@ -1548,7 +1392,6 @@ fn folded_stacks_serialize_as_stack_and_samples() {
 
 #[test]
 fn report_round_trips_through_pretty_json_string() {
-    // `emit` uses `to_string_pretty`; the output must re-parse.
     let s =
         serde_json::to_string_pretty(&analysis::hot_leaves(&simple_trace(), 5)).expect("pretty");
     let parsed: Value = serde_json::from_str(&s).expect("re-parses");

@@ -50,6 +50,10 @@ fn resolve_spec_repo(root: &Path, override_var: Option<OsString>) -> PathBuf {
     )
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let spec = spec_repo(&root);
@@ -98,6 +102,10 @@ fn check() -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn sync() -> Result<(), String> {
     let root = workspace_root()?;
     let spec = spec_repo(&root);

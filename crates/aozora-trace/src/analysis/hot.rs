@@ -1,51 +1,28 @@
-//! Top-N hot frames — leaf or inclusive.
-//!
-//! Two views are provided over the same sample stream:
-//!
-//! - **Leaf** (`hot_leaves`): per-sample, count *only* the leaf-most
-//!   frame. "Where the CPU is *literally* spending time right now."
-//!   Best for tight-loop / victim-function analysis.
-//! - **Inclusive** (`hot_inclusive`): per-sample, count *every*
-//!   frame on the call stack (deduplicated per sample to avoid
-//!   double-counting recursion). "Which functions are on the hot
-//!   path." Best for entry-point analysis.
-//!
-//! ## Self vs Inclusive — disambiguating trampolines from hot work
-//!
-//! In the raw inclusive view the top of the table is dominated by
-//! entry-point trampolines (`_start` → `__libc_start_main` →
-//! `FnOnce::call_once` → `<binary>::main` → …) which all clock
-//! ~99 % because every sample's stack passes through them. They
-//! aren't doing any real work.
-//!
-//! Filtering them OUT loses information. Instead this report
-//! shows BOTH columns:
-//!
-//! - `incl %` = inclusive percentage (frame appears anywhere on
-//!   the stack)
-//! - `self %` = leaf-frame percentage of the SAME function (where
-//!   the CPU was when the sample fired)
-//!
-//! A trampoline shows up as `99 % incl, ~0 % self`; an actual hot
-//! function shows up as `X % incl, X % self` (or close to it). The
-//! user can scan `self %` to find real targets while still seeing
-//! the call chain.
+//! Reports hot functions through [`hot_leaves`] and [`hot_inclusive`].
 
 use std::collections::{HashMap, HashSet};
 
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
+const TRAMPOLINE_MIN_INCLUSIVE_PCT: f64 = 95.0;
+const LEAF_HOT_MIN_RATIO: f64 = 0.9;
+const HOT_MIN_RATIO: f64 = 0.5;
+const PERCENT_SCALE: f64 = 100.0;
+const RANK_COLUMN_WIDTH: usize = 4;
+const KIND_COLUMN_WIDTH: usize = 4;
+const PERCENT_COLUMN_WIDTH: usize = 7;
+const SAMPLES_COLUMN_WIDTH: usize = 8;
+
 /// Aggregated top-N hot-frame report.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotReport {
-    /// Whether rows were aggregated leaf-only or inclusively.
+    /// Whether counts include only leaves or all frames.
     pub mode: HotMode,
-    /// Total sample weight across the whole trace — the denominator
-    /// behind every row's percentage.
+    /// Total weight of samples across the trace.
     pub total_samples: u64,
-    /// The top-N rows, sorted by descending inclusive sample count.
+    /// Functions sorted by descending inclusive weight of samples.
     pub rows: Vec<HotRow>,
 }
 
@@ -53,9 +30,9 @@ pub struct HotReport {
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HotMode {
-    /// Count only the leaf-most frame of each sample.
+    /// Count only leaf frames.
     Leaf,
-    /// Count every distinct frame on each sample's stack.
+    /// Count every distinct frame on sampled stacks.
     Inclusive,
 }
 
@@ -63,53 +40,39 @@ pub enum HotMode {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotRow {
-    /// Function label (symbolicated name, or a hex address if
-    /// unresolved).
+    /// Resolved function name or hexadecimal address.
     pub label: String,
-    /// How this row reads against the hot path — leaf-hot vs wrapper
-    /// vs trampoline vs unresolved. Derived by `classify_row_kind`
-    /// from the self/inclusive ratio and label shape, and rendered as
-    /// a two-letter tag via [`RowKind::tag`].
+    /// Classification by the shares of samples and the label's resolution status.
     pub kind: RowKind,
-    /// Inclusive: the frame appears anywhere on the stack.
+    /// Weight of samples with this function anywhere on the stack.
     pub incl_samples: u64,
     /// `incl_samples` as a percentage of [`HotReport::total_samples`].
     pub incl_pct: f64,
-    /// Self: the frame is the leaf of the stack (where the CPU was).
-    /// For `HotMode::Leaf` this equals `incl_*`.
+    /// Weight of samples with this function as the leaf frame.
+    /// Equals `incl_samples` for [`HotMode::Leaf`].
     pub self_samples: u64,
     /// `self_samples` as a percentage of [`HotReport::total_samples`].
     pub self_pct: f64,
 }
 
-/// Visual annotation for one row, derived from the `incl_pct` /
-/// `self_pct` ratio + label shape. Helps the eye distinguish
-/// "actual hot work" from "structural call-chain frame".
+/// Classification of a function's contribution to the sampled work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RowKind {
-    /// Pure leaf: self ≈ incl. The CPU was here when the sample
-    /// fired the majority of the time it was on the stack.
+    /// Leaf samples dominate the function's inclusive total.
     LeafHot,
-    /// Mostly leaf with some passes-through. Self covers more
-    /// than half of inclusive.
+    /// At least half of inclusive samples are leaf samples.
     Hot,
-    /// Frame is on many stacks but rarely the leaf. Typical
-    /// dispatcher / wrapper.
+    /// Most samples pass through the function to another frame.
     Wrapper,
-    /// Frame is at or near the very top of every stack but does no
-    /// own work. `_start` / `FnOnce::call_once` / `<binary>::main`.
+    /// An entry function with high inclusive weight and low leaf weight.
     Trampoline,
-    /// Hex-address label that addr2line + dynamic-symbol fallback
-    /// couldn't resolve. Carries the library origin if the
-    /// renderer attached it.
+    /// An address without a resolved function name.
     Unresolved,
 }
 
 impl RowKind {
-    /// Two-letter ASCII tag for the rendered table. Easy to scan
-    /// vertically: `LH` (leaf hot) / `HW` (hot work) / `WR`
-    /// (wrapper) / `EP` (entry / trampoline) / `??` (unresolved).
+    /// Returns the ASCII tag used in rendered tables.
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {
@@ -126,25 +89,24 @@ fn classify_row_kind(label: &str, self_pct: f64, incl_pct: f64) -> RowKind {
     if label.starts_with("0x") {
         return RowKind::Unresolved;
     }
-    if incl_pct >= 95.0 && self_pct < 1.0 {
+    if incl_pct >= TRAMPOLINE_MIN_INCLUSIVE_PCT && self_pct < 1.0 {
         return RowKind::Trampoline;
     }
     if incl_pct == 0.0 {
-        return RowKind::LeafHot; // shouldn't happen but defensive
+        return RowKind::LeafHot;
     }
     let leaf_ratio = self_pct / incl_pct;
-    if leaf_ratio >= 0.9 {
+    if leaf_ratio >= LEAF_HOT_MIN_RATIO {
         RowKind::LeafHot
-    } else if leaf_ratio >= 0.5 {
+    } else if leaf_ratio >= HOT_MIN_RATIO {
         RowKind::Hot
     } else {
         RowKind::Wrapper
     }
 }
 
-/// Top-N hot leaf frames. `n` rows, sorted descending by sample
-/// count. For leaf-mode `incl_*` and `self_*` columns are equal —
-/// every leaf-frame sample contributes to both.
+/// Returns at most `n` hot leaf functions, sorted by descending weight of samples.
+/// Inclusive and self counts are equal in this view.
 #[must_use]
 pub fn hot_leaves(trace: &Trace, n: usize) -> HotReport {
     let (leaf_counts, total) = collect_leaf_counts(trace);
@@ -175,12 +137,9 @@ pub fn hot_leaves(trace: &Trace, n: usize) -> HotReport {
     }
 }
 
-/// Top-N inclusive: each function gets a sample if it appears
-/// anywhere on a sampled stack.
-///
-/// The report ALSO carries each function's leaf-frame count as
-/// `self_*`, so the user can spot trampolines (high incl %, ~0 %
-/// self) at a glance without losing them from the table.
+/// Returns at most `n` functions, sorted by descending inclusive weight of samples.
+/// Each frame index counts once per sampled stack.
+/// Self counts include only leaf samples.
 #[must_use]
 pub fn hot_inclusive(trace: &Trace, n: usize) -> HotReport {
     let (leaf_counts, total) = collect_leaf_counts(trace);
@@ -254,11 +213,15 @@ fn collect_inclusive_counts(trace: &Trace) -> HashMap<String, u64> {
     counts
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "sample shares are rendered as approximate percentages"
+)]
 fn pct_of(samples: u64, total: u64) -> f64 {
     if total == 0 {
         0.0
     } else {
-        (samples as f64 / total as f64) * 100.0
+        (samples as f64 / total as f64) * PERCENT_SCALE
     }
 }
 
@@ -280,27 +243,27 @@ impl TableRenderable for HotReport {
                 Column {
                     header: "rank".into(),
                     align: Align::Right,
-                    width: 4,
+                    width: RANK_COLUMN_WIDTH,
                 },
                 Column {
                     header: "kind".into(),
                     align: Align::Left,
-                    width: 4,
+                    width: KIND_COLUMN_WIDTH,
                 },
                 Column {
                     header: "incl %".into(),
                     align: Align::Right,
-                    width: 7,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "self %".into(),
                     align: Align::Right,
-                    width: 7,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "samples".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: SAMPLES_COLUMN_WIDTH,
                 },
                 Column {
                     header: "function".into(),
@@ -319,8 +282,6 @@ impl TableRenderable for HotReport {
                 r.label.clone(),
             ]);
         }
-        // Append a tiny legend so the kind tags are self-explanatory
-        // without the user having to consult the docstring.
         let mut out = t.render();
         out.push('\n');
         out.push_str(

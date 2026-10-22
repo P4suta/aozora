@@ -11,30 +11,18 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Internal — host-side dev tooling only. Not published.
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-# JSON parse for the gecko-format trace.
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Trace files are gzipped (`.json.gz`).
 flate2 = { workspace = true }
-# DWARF symbolication. The `loader` feature pulls in `object` + `memmap2`
-# so a single `Loader::new(binary)` call handles both ELF parsing and
-# DWARF traversal — no shell-out to `addr2line(1)`.
 addr2line = { workspace = true, features = ["loader", "rustc-demangle"] }
 object = { workspace = true }
-# Function-name + library filtering on the analysis layer.
 regex = { workspace = true }
-# Optional category-config TOML.
 toml = { workspace = true }
-# Typed error variants per module.
 thiserror = { workspace = true }
 tempfile = { workspace = true }
-
-# dev-dependencies removed: proptest was unused per cargo-udeps
-# (post-v0.2.0 split moved property tests into aozora-lex / aozora-render).

@@ -11,6 +11,7 @@ use aozora_trace::{
 const TRACE_PATH: &str = "/tmp/aozora-corpus-20260426-185221.json.gz";
 const BINARY_PATH: &str = "target/release/examples/throughput_by_class";
 
+#[expect(clippy::print_stderr, reason = "report missing optional smoke inputs")]
 fn skip_if_no_trace() -> Option<()> {
     if !Path::new(TRACE_PATH).exists() || !Path::new(BINARY_PATH).exists() {
         eprintln!("skipping: {TRACE_PATH} or {BINARY_PATH} missing");

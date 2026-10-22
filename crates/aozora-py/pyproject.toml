@@ -1,17 +1,3 @@
-# maturin-driven Python wheel build for aozora-py.
-#
-# Local build:    maturin build --release -F extension-module
-# Local install:  maturin develop -F extension-module
-# Host smoke:     just smoke-py   (requires maturin in the active Python environment)
-# CI:             .github/workflows/publish-pypi.yml (workflow_dispatch)
-#
-# Distribution name `aozora`; users `pip install aozora` then
-# `import aozora`. Mixed layout: the pure-Python package under
-# `python/aozora/` (the public `Document` + parsed helpers) wraps
-# the compiled extension, nested as the private submodule
-# `aozora._aozora` (see `module-name` + `[lib] name` in
-# Cargo.toml). Ships as a single `cp311-abi3` wheel per platform via
-# pyo3's `abi3-py311` feature.
 
 [build-system]
 requires = ["maturin>=1.9,<2.0"]
@@ -58,12 +44,7 @@ Changelog = "https://github.com/P4suta/aozora/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
-# Enables the aozora-py `extension-module` feature, which pulls pyo3
-# (built with `abi3-py311` — see Cargo.toml). maturin auto-detects
-# abi3 from the cargo feature and tags the wheel `cp311-abi3`.
 features = ["extension-module"]
-# Mixed layout: the public pure-Python package + stubs live here; the
-# compiled extension is placed at `aozora/_aozora`.
 python-source = "python"
 module-name = "aozora._aozora"
 strip = true
