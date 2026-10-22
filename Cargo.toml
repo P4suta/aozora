@@ -35,7 +35,7 @@ edition = "2024"
 # `file_lock`; our own code needs 1.88 (let-chains). Policy and the
 # re-measurement recipe: docs/contrib/msrv.md.
 rust-version = "1.89.0"
-license = "Apache-2.0 OR MIT"
+license = "MIT OR Apache-2.0"
 description = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
 repository = "https://github.com/P4suta/aozora"
 homepage = "https://p4suta.github.io/aozora/"
