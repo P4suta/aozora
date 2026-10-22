@@ -240,7 +240,7 @@ fn fmt_write_preserves_explicit_shift_jis_encoding() {
     let path = f.path().to_str().unwrap();
     let (status, stdout, stderr) = run(&["fmt", "--write", "-E", "sjis", path], None);
     assert!(status.success(), "fmt --write must succeed: {stderr:?}");
-    assert!(stdout.is_empty());
+    assert_eq!(stdout, "");
     let (expected, _, had_errors) = encoding_rs::SHIFT_JIS.encode("日本《にほん》");
     assert!(!had_errors);
     assert_eq!(fs::read(path).expect("read back"), expected.as_ref());
@@ -262,7 +262,7 @@ fn fmt_list_reports_only_dirty_stdin() {
         clean_status.success(),
         "canonical stdin succeeds: {clean_stderr:?}"
     );
-    assert!(clean_stdout.is_empty());
+    assert_eq!(clean_stdout, "");
 }
 
 #[test]
@@ -382,7 +382,7 @@ fn pandoc_child_stdout_broken_pipe_is_silent_success() {
         "closed downstream stdout must be success: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, Vec::<u8>::new());
 }
 
 #[test]

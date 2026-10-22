@@ -388,8 +388,9 @@ mod tests {
     #[test]
     fn empty_selection_yields_no_actions() {
         let zero = Range::new(Position::new(0, 0), Position::new(0, 0));
-        assert!(
-            wrap_selection_actions("hello", &LineIndex::new("hello"), &fake_uri(), zero).is_empty()
+        assert_eq!(
+            wrap_selection_actions("hello", &LineIndex::new("hello"), &fake_uri(), zero),
+            Vec::<CodeActionOrCommand>::new()
         );
     }
 
@@ -523,7 +524,10 @@ mod tests {
     #[test]
     fn residual_annotation_marker_offers_no_quick_fix() {
         let diag = diag_with_payload(DiagnosticPayload::ResidualAnnotationMarker);
-        assert!(quick_fix_actions(&fake_uri(), slice::from_ref(&diag)).is_empty());
+        assert_eq!(
+            quick_fix_actions(&fake_uri(), slice::from_ref(&diag)),
+            Vec::<CodeActionOrCommand>::new()
+        );
     }
 
     #[test]
@@ -547,7 +551,10 @@ mod tests {
             range: Range::new(Position::new(0, 0), Position::new(0, 1)),
             ..Diagnostic::default()
         };
-        assert!(quick_fix_actions(&fake_uri(), slice::from_ref(&diag)).is_empty());
+        assert_eq!(
+            quick_fix_actions(&fake_uri(), slice::from_ref(&diag)),
+            Vec::<CodeActionOrCommand>::new()
+        );
     }
 
     #[test]
@@ -557,7 +564,10 @@ mod tests {
             data: Some(serde_json::json!({ "kind": "not-a-known-payload" })),
             ..Diagnostic::default()
         };
-        assert!(quick_fix_actions(&fake_uri(), slice::from_ref(&diag)).is_empty());
+        assert_eq!(
+            quick_fix_actions(&fake_uri(), slice::from_ref(&diag)),
+            Vec::<CodeActionOrCommand>::new()
+        );
     }
 
     #[test]

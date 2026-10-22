@@ -477,7 +477,10 @@ mod tests {
 
     #[test]
     fn empty_source_emits_nothing() {
-        assert!(snippet_completions("", pos_at("", 0)).is_empty());
+        assert_eq!(
+            snippet_completions("", pos_at("", 0)),
+            Vec::<CompletionItem>::new()
+        );
     }
 
     #[test]
@@ -486,7 +489,7 @@ mod tests {
         // don't break the trigger detection.
         let src = "本文の途中で#";
         let items = snippet_completions(src, pos_at(src, src.len()));
-        assert!(!items.is_empty());
+        assert_ne!(items, Vec::<CompletionItem>::new());
         assert_eq!(items[0].label, "［＃］");
     }
 

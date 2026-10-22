@@ -57,6 +57,8 @@ use crate::syntax::Span;
 
 use super::token::{Token, TriggerKind};
 
+const NEWLINE_CAPACITY_BYTES_PER_LINE: usize = 64;
+
 /// Streaming tokeniser over sanitized source text.
 ///
 /// The input is expected to already be sanitize-stage output (BOM-stripped,
@@ -112,7 +114,8 @@ impl<'s> Tokenizer<'s> {
         // memchr_iter is internally vectorised (AVX2 on x86_64, NEON on
         // aarch64) — the same machine code memchr3 uses for trigger
         // candidates, here narrowed to the single newline byte.
-        let mut newline_offsets: Vec<u32> = Vec::with_capacity(bytes.len() / 64);
+        let mut newline_offsets: Vec<u32> =
+            Vec::with_capacity(bytes.len() / NEWLINE_CAPACITY_BYTES_PER_LINE);
         for n in memchr::memchr_iter(b'\n', bytes) {
             // source.len() <= u32::MAX is asserted at function entry.
             newline_offsets.push(u32::try_from(n).unwrap_or(u32::MAX));
@@ -264,7 +267,7 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_tokens() {
-        assert!(collect("").is_empty());
+        assert_eq!(collect(""), Vec::<Token>::new());
     }
 
     #[test]

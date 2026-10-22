@@ -17,7 +17,7 @@ setup:
     mapfile -t tools < <(mise config get -f mise.toml tools \
       | sed '/^\[\[/,$d' \
       | sed -nE 's/^"?([^" =]+)"?[[:space:]]*=.*/\1/p')
-    tools+=(rust@1.97.0 rust@nightly-2026-07-15)
+    tools+=(rust@1.99.1 rust@nightly-2026-07-15)
     mise install --locked "${tools[@]}"
     stable_toolchain=$(awk -F'"' '/^channel/ { print $2; exit }' rust-toolchain.toml)
     rustup component add --toolchain "$stable_toolchain" clippy rustfmt rust-src llvm-tools-preview
@@ -45,7 +45,7 @@ doctor:
     mapfile -t tools < <(mise config get -f mise.toml tools \
       | sed '/^\[\[/,$d' \
       | sed -nE 's/^"?([^" =]+)"?[[:space:]]*=.*/\1/p')
-    tools+=(rust@1.97.0 rust@nightly-2026-07-15)
+    tools+=(rust@1.99.1 rust@nightly-2026-07-15)
     mise install --locked --dry-run "${tools[@]}" >/dev/null 2>&1 \
       && ok "mise.lock matches mise.toml" \
       || bad "mise.lock is stale or missing" "run 'mise lock' and commit the result"

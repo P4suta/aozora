@@ -589,21 +589,8 @@ version = "6.2.0"
 backend = "pipx:reuse"
 
 [[tools.rust]]
-version = "1.97.0"
-backend = "core:rust"
-
-[[tools.rust]]
 version = "nightly-2026-07-15"
 backend = "core:rust"
-
-[[tools.rust]]
-version = "1.97.0"
-backend = "core:rust"
-
-[tools.rust.options]
-components = "clippy,llvm-tools-preview,rust-src,rustfmt"
-profile = "minimal"
-targets = "wasm32-unknown-unknown,wasm32-wasip1"
 
 [[tools.rust]]
 version = "nightly-2026-07-15"
@@ -612,6 +599,15 @@ backend = "core:rust"
 [tools.rust.options]
 components = "miri,rust-src"
 profile = "minimal"
+
+[[tools.rust]]
+version = "1.99.1"
+backend = "core:rust"
+
+[tools.rust.options]
+components = "clippy,llvm-tools-preview,rust-src,rustfmt"
+profile = "minimal"
+targets = "wasm32-unknown-unknown,wasm32-wasip1"
 
 [[tools.shellcheck]]
 version = "0.11.0"

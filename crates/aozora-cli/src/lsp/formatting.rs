@@ -23,7 +23,7 @@ mod tests {
 
     #[test]
     fn canonical_input_produces_no_edits() {
-        assert!(format_edits("日本《にほん》").is_empty());
+        assert_eq!(format_edits("日本《にほん》"), Vec::<TextEdit>::new());
     }
 
     #[test]
@@ -39,6 +39,6 @@ mod tests {
 
     #[test]
     fn empty_source_produces_no_edits() {
-        assert!(format_edits("").is_empty());
+        assert_eq!(format_edits(""), Vec::<TextEdit>::new());
     }
 }

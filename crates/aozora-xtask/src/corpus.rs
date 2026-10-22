@@ -24,34 +24,17 @@
 //! Reported as `(reused / new / removed)` so the operator can tell
 //! at a glance how much work the pack actually did.
 
-#![allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::fn_params_excessive_bools,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_lossless,
-    clippy::absolute_paths,
-    clippy::str_to_string,
-    reason = "xtask CLI module — pack/stat flows mirror the on-disk archive format and the bench harness's per-phase output. Casts (u32 → f64 for KB / MB display, i64 → u64 for mtime → SystemTime, etc.) are intrinsic to the format-display work; replacing them with try_from would clutter the column-aligned output without any safety win at the value ranges involved (corpus byte counts < 4 GB, mtimes well within signed 64-bit range)."
-)]
-#![allow(
-    clippy::naive_bytecount,
-    reason = "the audit's line_of counts '\\n' in a one-shot prefix; pulling in the bytecount crate for an offline measurement tool is not worth a new dependency."
-)]
-
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
+use std::f64::consts::E;
 use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use std::{env, fs};
+use zstd::stream::copy_encode;
 
 use clap::{Args, Subcommand};
+use num_traits::ToPrimitive;
 use rayon::prelude::*;
 
 use aozora::AOZORA_CLASSES;
@@ -64,6 +47,56 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::panic::{self, AssertUnwindSafe};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const COMPRESSION_CAPACITY_RATIO: usize = 4;
+const YEAR_HISTOGRAM_WIDTH: usize = 40;
+const PATHOLOGICAL_BAND: usize = 3;
+const BYTES_PER_KIB_FLOAT: f64 = 1024.0;
+const BYTES_PER_MIB: f64 = 1_048_576.0;
+const VERBATIM_FAILURE_LIMIT: usize = 10;
+const REPORTED_PROBLEM_LIMIT: usize = 5;
+const HEADER_RULE_MIN_WIDTH: usize = 10;
+const SNIPPET_PREFIX_CHARS: usize = 6;
+const SNIPPET_SUFFIX_CHARS: usize = 8;
+const ANN_BASE_TEXT_VARIANT: usize = 3;
+const ANN_WARICHU_OPEN: usize = 4;
+const ANN_WARICHU_CLOSE: usize = 5;
+const ANN_EMPTY: usize = 6;
+const ANN_EDITOR_NOTE: usize = 7;
+const ANN_RUBY_ATTACHED: usize = 8;
+const ANN_RUBY_RETARGET: usize = 9;
+const ANN_RUBY_PAIR_OPEN: usize = 10;
+const ANN_RUBY_PAIR_CLOSE: usize = 11;
+const ANN_MARGIN_NOTE_PAIR_OPEN: usize = 12;
+const ANN_MARGIN_NOTE_PAIR_CLOSE: usize = 13;
+const GAIJI_FORM_ABSENT: usize = 5;
+const JIS_ADDRESS_PARTS: usize = 3;
+const GAIJI_FORM_PAGE_LINE: usize = 3;
+const GAIJI_FORM_NAMED: usize = 4;
+const SHAPE_DISPLAY_WIDTH: usize = 60;
+const BODY_DISPLAY_WIDTH: usize = 56;
+const PERCENT_SCALE: f64 = 100.0;
+const FALLBACK_SLUG_HASH_WIDTH: usize = 10;
+const COVERAGE_PER_BYTE_SCALE: f64 = 1e12;
+const COVERAGE_GAIN_SCALE: f64 = 1_000_000.0;
+const DIVERSITY_PER_BYTE_SCALE: f64 = 1e9;
+const BYTES_PER_KIB: usize = 1024;
+#[cfg(unix)]
+const OUTPUT_FILE_PERMISSIONS: u32 = 0o666;
+const NANOS_PER_SECOND: i64 = 1_000_000_000;
+const CORRECTNESS_SAMPLE_LIMIT: usize = 5;
+
+fn float_count(value: impl ToPrimitive + Copy) -> Result<f64, String> {
+    value
+        .to_f64()
+        .ok_or_else(|| "counter exceeds the floating-point range".to_owned())
+}
+
+fn selection_score(value: f64) -> Result<i64, String> {
+    value
+        .to_i64()
+        .ok_or_else(|| "selection score exceeds the integer range".to_owned())
+}
 
 #[derive(Args)]
 pub(crate) struct CorpusArgs {
@@ -305,7 +338,15 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             utf8,
             zstd,
             zstd_level,
-        } => pack(src, out, *utf8, *zstd, *zstd_level),
+        } => pack(
+            src,
+            out,
+            PackOptions {
+                utf8: *utf8,
+                zstd: *zstd,
+                zstd_level: *zstd_level,
+            },
+        ),
         CorpusTarget::Stat { archive, top } => stat(archive, *top),
         CorpusTarget::Uncache { path } => uncache(path),
         CorpusTarget::Audit {
@@ -328,12 +369,14 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             require_family,
         } => select_works(
             root.as_deref(),
-            *target,
             out,
-            vendored,
-            *max_unknown_ratio,
-            *max_total_source_bytes,
-            require_family,
+            SelectionOptions {
+                target: *target,
+                vendored,
+                max_unknown_ratio: *max_unknown_ratio,
+                max_total_source_bytes: *max_total_source_bytes,
+                require_family,
+            },
         ),
         CorpusTarget::VendorWorks {
             root,
@@ -348,7 +391,19 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
     }
 }
 
-fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Result<(), String> {
+#[derive(Clone, Copy)]
+struct PackOptions {
+    utf8: bool,
+    zstd: bool,
+    zstd_level: i32,
+}
+
+fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
+    let PackOptions {
+        utf8,
+        zstd,
+        zstd_level,
+    } = options;
     let flags =
         (if zstd { archive::FLAG_ZSTD } else { 0 }) | (if utf8 { archive::FLAG_UTF8 } else { 0 });
 
@@ -376,29 +431,7 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
 
     // Step 2: load previous archive (incremental cache lookup) if
     // present and the flags match.
-    let prev: Option<PrevArchive> = match Archive::open(out) {
-        Ok(arc) if arc.flags() == flags => {
-            eprintln!(
-                "  prev    : reusing {} entries from existing archive (matching flags)",
-                arc.len()
-            );
-            Some(PrevArchive::from(arc))
-        }
-        Ok(arc) => {
-            eprintln!(
-                "  prev    : found existing archive but flags differ ({} vs {flags}); rebuilding from scratch",
-                arc.flags()
-            );
-            None
-        }
-        Err(aozora_corpus::ArchiveError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("  prev    : no existing archive at output path; building from scratch");
-            None
-        }
-        Err(error) => {
-            return Err(format!("open previous archive {}: {error}", out.display()));
-        }
-    };
+    let prev = previous_archive(out, flags)?;
 
     // Step 3: per-source-file decision (reuse vs re-pack), in
     // parallel via rayon. The decision body is pure-CPU + filesystem
@@ -438,14 +471,107 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
     //     `(label, payload_bytes, decoded_len, mtime_ns, source_blake3)`
     //     tuples ready for sequential append.
     let encode_start = Instant::now();
-    let prepared = sorted
+    let prepared = prepare_entries(sorted, prev.as_ref(), flags, zstd_level)?;
+    eprintln!(
+        "  encode  : {:>5} entries encoded in {:>5.2} s ({} compression)",
+        prepared.len(),
+        encode_start.elapsed().as_secs_f64(),
+        if zstd {
+            format!("zstd-{zstd_level}")
+        } else {
+            "none".to_owned()
+        },
+    );
+
+    // 4c.
+    // Sequential append into the builder + write to disk.
+    let assemble_start = Instant::now();
+    let bytes_written = write_prepared(prepared, flags, zstd_level, out)?;
+    eprintln!(
+        "  assemble: {:>6.2} MB written in {:>5.2} s",
+        float_count(bytes_written)? / BYTES_PER_MIB,
+        assemble_start.elapsed().as_secs_f64()
+    );
+    eprintln!(
+        "  totals  : {reused} reused / {fresh} fresh / {removed} removed; total wall {:.2} s",
+        total_start.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+fn write_prepared(
+    prepared: Vec<PreparedEntry>,
+    flags: u32,
+    zstd_level: i32,
+    out: &Path,
+) -> Result<u64, String> {
+    let mut builder = ArchiveBuilder::new(flags);
+    builder.zstd_level(zstd_level);
+    for entry in prepared {
+        match entry {
+            PreparedEntry::Prebuilt { meta, payload } => {
+                let label = meta.label.clone();
+                builder
+                    .push_prebuilt(meta, &payload)
+                    .map_err(|error| format!("assemble {label}: {error}"))?;
+            }
+            PreparedEntry::Encoded {
+                label,
+                payload,
+                decoded_len,
+                mtime_ns,
+                source_blake3,
+            } => {
+                builder
+                    .push_already_encoded(&label, &payload, decoded_len, mtime_ns, source_blake3)
+                    .map_err(|error| format!("assemble {label}: {error}"))?;
+            }
+        }
+    }
+    builder
+        .finish(out)
+        .map_err(|e| format!("write archive: {e}"))
+}
+
+fn previous_archive(out: &Path, flags: u32) -> Result<Option<PrevArchive>, String> {
+    Ok(match Archive::open(out) {
+        Ok(arc) if arc.flags() == flags => {
+            eprintln!(
+                "  prev    : reusing {} entries from existing archive (matching flags)",
+                arc.len()
+            );
+            Some(PrevArchive::from(arc))
+        }
+        Ok(arc) => {
+            eprintln!(
+                "  prev    : found existing archive but flags differ ({} vs {flags}); rebuilding from scratch",
+                arc.flags()
+            );
+            None
+        }
+        Err(aozora_corpus::ArchiveError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+            eprintln!("  prev    : no existing archive at output path; building from scratch");
+            None
+        }
+        Err(error) => {
+            return Err(format!("open previous archive {}: {error}", out.display()));
+        }
+    })
+}
+
+fn prepare_entries(
+    sorted: Vec<EntryDecision>,
+    prev: Option<&PrevArchive>,
+    flags: u32,
+    zstd_level: i32,
+) -> Result<Vec<PreparedEntry>, String> {
+    sorted
         .into_par_iter()
         .map(|decision| {
             let label = decision.label;
             match decision.action {
                 EntryAction::Reuse => {
                     let prev_arc = prev
-                        .as_ref()
                         .ok_or_else(|| format!("prepare {label}: previous archive is missing"))?;
                     let (meta, payload) = prev_arc.entry_payload(&label).ok_or_else(|| {
                         format!("prepare {label}: previous archive entry is missing")
@@ -478,56 +604,7 @@ fn pack(src: &Path, out: &Path, utf8: bool, zstd: bool, zstd_level: i32) -> Resu
         })
         .collect::<Vec<Result<PreparedEntry, String>>>()
         .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-    eprintln!(
-        "  encode  : {:>5} entries encoded in {:>5.2} s ({} compression)",
-        prepared.len(),
-        encode_start.elapsed().as_secs_f64(),
-        if zstd {
-            format!("zstd-{zstd_level}")
-        } else {
-            "none".to_string()
-        },
-    );
-
-    // 4c. Sequential append into the builder + write to disk.
-    let assemble_start = Instant::now();
-    let mut builder = ArchiveBuilder::new(flags);
-    builder.zstd_level(zstd_level);
-    for entry in prepared {
-        match entry {
-            PreparedEntry::Prebuilt { meta, payload } => {
-                let label = meta.label.clone();
-                builder
-                    .push_prebuilt(meta, &payload)
-                    .map_err(|error| format!("assemble {label}: {error}"))?;
-            }
-            PreparedEntry::Encoded {
-                label,
-                payload,
-                decoded_len,
-                mtime_ns,
-                source_blake3,
-            } => {
-                builder
-                    .push_already_encoded(&label, &payload, decoded_len, mtime_ns, source_blake3)
-                    .map_err(|error| format!("assemble {label}: {error}"))?;
-            }
-        }
-    }
-    let bytes_written = builder
-        .finish(out)
-        .map_err(|e| format!("write archive: {e}"))?;
-    eprintln!(
-        "  assemble: {:>6.2} MB written in {:>5.2} s",
-        bytes_written as f64 / 1_048_576.0,
-        assemble_start.elapsed().as_secs_f64()
-    );
-    eprintln!(
-        "  totals  : {reused} reused / {fresh} fresh / {removed} removed; total wall {:.2} s",
-        total_start.elapsed().as_secs_f64()
-    );
-    Ok(())
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn decoded_len(label: &str, len: usize) -> Result<u32, String> {
@@ -537,7 +614,7 @@ fn decoded_len(label: &str, len: usize) -> Result<u32, String> {
 
 fn encode_zstd(label: &str, payload: &[u8], level: i32) -> Result<Vec<u8>, String> {
     encode_zstd_with(label, payload, level, |source, destination, level| {
-        zstd::stream::copy_encode(source, destination, level)
+        copy_encode(source, destination, level)
     })
 }
 
@@ -547,7 +624,7 @@ fn encode_zstd_with(
     level: i32,
     encode: impl FnOnce(&[u8], &mut Vec<u8>, i32) -> io::Result<()>,
 ) -> Result<Vec<u8>, String> {
-    let mut compressed = Vec::with_capacity(payload.len() / 4);
+    let mut compressed = Vec::with_capacity(payload.len() / COMPRESSION_CAPACITY_RATIO);
     encode(payload, &mut compressed, level)
         .map_err(|error| format!("encode {label}: zstd: {error}"))?;
     Ok(compressed)
@@ -582,15 +659,15 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
     println!("  entries      : {}", arc.len());
     println!(
         "  file size    : {:.2} MB (header + index + payload)",
-        bytes_on_disk as f64 / 1_048_576.0
+        float_count(bytes_on_disk)? / BYTES_PER_MIB
     );
     println!(
         "  payload sum  : {:.2} MB decoded / {:.2} MB on-disk",
-        total_decoded as f64 / 1_048_576.0,
-        total_payload as f64 / 1_048_576.0
+        float_count(total_decoded)? / BYTES_PER_MIB,
+        float_count(total_payload)? / BYTES_PER_MIB
     );
     if total_payload > 0 && total_decoded > total_payload {
-        let ratio = total_decoded as f64 / total_payload as f64;
+        let ratio = float_count(total_decoded)? / float_count(total_payload)?;
         println!("  zstd ratio   : {ratio:.2}× decoded ÷ on-disk (overall)");
     }
 
@@ -609,9 +686,9 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         (0usize, "<50KB"),
         (1, "50KB-500KB"),
         (2, "500KB-2MB"),
-        (3, ">2MB"),
+        (PATHOLOGICAL_BAND, ">2MB"),
     ] {
-        print_band_row(label, &bucketed[slot], arc.is_zstd());
+        print_band_row(label, &bucketed[slot], arc.is_zstd())?;
     }
 
     // mtime distribution — by year. Useful sanity check that the
@@ -624,15 +701,18 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         if entry.source_mtime_ns <= 0 {
             continue;
         }
-        let secs = (entry.source_mtime_ns / 1_000_000_000).clamp(0, i64::MAX / 2) as u64;
-        let st = UNIX_EPOCH + Duration::from_secs(secs);
-        let year = year_of(st);
+        let secs = u64::try_from(entry.source_mtime_ns / NANOS_PER_SECOND)
+            .map_err(|error| format!("source timestamp: {error}"))?;
+        let year = year_of(UNIX_EPOCH + Duration::from_secs(secs))?;
         *by_year.entry(year).or_insert(0) += 1;
     }
     let mut years: Vec<_> = by_year.into_iter().collect();
     years.sort_by_key(|&(y, _)| y);
     for (year, count) in years {
-        println!("    {year:>4}  {count:>5}  {}", bar(count, arc.len(), 40));
+        println!(
+            "    {year:>4}  {count:>5}  {}",
+            bar(count, arc.len(), YEAR_HISTOGRAM_WIDTH)
+        );
     }
 
     // Top-K largest entries by decoded bytes — useful for spotting
@@ -643,8 +723,8 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         let mut sorted: Vec<&EntryMeta> = arc.entries().iter().collect();
         sorted.sort_by_key(|e| Reverse(e.decoded_len));
         for entry in sorted.iter().take(top) {
-            let on_disk_kb = entry.payload_len as f64 / 1024.0;
-            let decoded_kb = entry.decoded_len as f64 / 1024.0;
+            let on_disk_kb = f64::from(entry.payload_len) / BYTES_PER_KIB_FLOAT;
+            let decoded_kb = f64::from(entry.decoded_len) / BYTES_PER_KIB_FLOAT;
             let ratio = if entry.payload_len > 0 {
                 decoded_kb / on_disk_kb
             } else {
@@ -672,7 +752,7 @@ fn band_slot(decoded_len: u32) -> usize {
     } else if decoded_len < LARGE_MAX {
         2
     } else {
-        3
+        PATHOLOGICAL_BAND
     }
 }
 
@@ -690,7 +770,7 @@ fn print_band_header(zstd: bool) {
     }
 }
 
-fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) {
+fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) -> Result<(), String> {
     if entries.is_empty() {
         if zstd {
             println!(
@@ -703,30 +783,30 @@ fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) {
                 0, "—", "—", "—", "—"
             );
         }
-        return;
+        return Ok(());
     }
     let count = entries.len();
     let total_dec: u64 = entries.iter().map(|e| u64::from(e.decoded_len)).sum();
     let total_on: u64 = entries.iter().map(|e| u64::from(e.payload_len)).sum();
-    let mean_dec = total_dec as f64 / count as f64;
+    let mean_dec = float_count(total_dec)? / float_count(count)?;
     let max_dec = entries.iter().map(|e| e.decoded_len).max().unwrap_or(0);
     let mut sorted: Vec<u32> = entries.iter().map(|e| e.decoded_len).collect();
     sorted.sort_unstable();
     let median_dec = sorted[count / 2];
 
-    let mb = |b: u64| b as f64 / 1_048_576.0;
-    let kb = |b: f64| b / 1024.0;
+    let mb = |b: u64| float_count(b).map(|value| value / BYTES_PER_MIB);
+    let kb = |b: f64| b / BYTES_PER_KIB_FLOAT;
 
     if zstd {
         let ratio = if total_on > 0 {
-            total_dec as f64 / total_on as f64
+            float_count(total_dec)? / float_count(total_on)?
         } else {
             1.0
         };
         println!(
             "    {label:<11}  {count:>6}  {:>10.2}  {:>10.2}  {:>9.1}K  {:>9.1}K  {:>9.1}K  {ratio:>6.2}×",
-            mb(total_dec),
-            mb(total_on),
+            mb(total_dec)?,
+            mb(total_on)?,
             kb(mean_dec),
             kb(f64::from(median_dec)),
             kb(f64::from(max_dec)),
@@ -734,27 +814,34 @@ fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) {
     } else {
         println!(
             "    {label:<11}  {count:>6}  {:>10.2}  {:>9.1}K  {:>9.1}K  {:>9.1}K",
-            mb(total_dec),
+            mb(total_dec)?,
             kb(mean_dec),
             kb(f64::from(median_dec)),
             kb(f64::from(max_dec)),
         );
     }
+    Ok(())
 }
 
 /// Plain "year of UNIX epoch second" — works for the 1970-2099 range
 /// (the only range Aozora corpus mtimes will ever land in). Avoids
 /// pulling chrono just for this readout.
-fn year_of(t: SystemTime) -> i32 {
+fn year_of(t: SystemTime) -> Result<i32, String> {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    const CIVIL_EPOCH_DAYS: i128 = 719_468;
+    const DAYS_PER_ERA: i128 = 146_097;
+    const DAYS_PER_FOUR_YEARS: i128 = 1_460;
+    const DAYS_PER_CENTURY: i128 = 36_524;
+    const LAST_DAY_OF_ERA: i128 = 146_096;
+    const DAYS_PER_YEAR: i128 = 365;
+    const YEARS_PER_ERA: i128 = 400;
     let secs = t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let days = secs / 86_400;
-    // Compute year via the same formula civil_from_days uses;
-    // accuracy ±1 day at year boundaries, fine for histogram bucketing.
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    (yoe as i64 + era * 400) as i32
+    let z = i128::from(secs / SECONDS_PER_DAY) + CIVIL_EPOCH_DAYS;
+    let era = z.div_euclid(DAYS_PER_ERA);
+    let doe = z - era * DAYS_PER_ERA;
+    let yoe = (doe - doe / DAYS_PER_FOUR_YEARS + doe / DAYS_PER_CENTURY - doe / LAST_DAY_OF_ERA)
+        / DAYS_PER_YEAR;
+    i32::try_from(yoe + era * YEARS_PER_ERA).map_err(|error| format!("source year: {error}"))
 }
 
 fn bar(count: usize, total: usize, width: usize) -> String {
@@ -817,7 +904,7 @@ fn uncache(path: &Path) -> Result<(), String> {
     };
     eprintln!(
         "xtask corpus uncache: evicted {count} file(s), {:.2} MB total in {:.2} s",
-        bytes as f64 / 1_048_576.0,
+        float_count(bytes)? / BYTES_PER_MIB,
         total_start.elapsed().as_secs_f64()
     );
     Ok(())
@@ -831,7 +918,7 @@ fn uncache(_path: &Path) -> Result<(), String> {
     Err("xtask corpus uncache evicts the page cache via \
          posix_fadvise(POSIX_FADV_DONTNEED), which is Linux-only; \
          it is unsupported on this platform"
-        .to_string())
+        .to_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -1296,11 +1383,11 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
         failures.sort();
         let list = failures
             .iter()
-            .take(10)
+            .take(VERBATIM_FAILURE_LIMIT)
             .map(String::as_str)
             .collect::<Vec<_>>()
             .join("\n  ");
-        let more = failures.len().saturating_sub(10);
+        let more = failures.len().saturating_sub(VERBATIM_FAILURE_LIMIT);
         let tail = if more > 0 {
             format!("\n  … and {more} more")
         } else {
@@ -1389,7 +1476,8 @@ struct CatAgg {
 
 impl CatAgg {
     /// Fold one document's hits of category `cat` into the aggregate.
-    fn record(&mut self, cat: LeakCat, label: &str, hits: &[LeakHit], top: usize) {
+    fn record(&mut self, cat: LeakCat, hits: &[LeakHit], sample: (&str, usize)) {
+        let (label, top) = sample;
         let n = hits.iter().filter(|h| h.cat == cat).count();
         if n == 0 {
             return;
@@ -1603,7 +1691,8 @@ fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
 }
 
 /// Fold one document's correctness hits of category `cat` into `agg`.
-fn record_corr(agg: &mut CatAgg, cat: CorrCat, label: &str, hits: &[CorrHit], top: usize) {
+fn record_corr(agg: &mut CatAgg, cat: CorrCat, hits: &[CorrHit], sample: (&str, usize)) {
+    let (label, top) = sample;
     let n = hits.iter().filter(|h| h.cat == cat).count();
     if n == 0 {
         return;
@@ -1643,9 +1732,24 @@ fn tally_render_correctness(
             }
             Ok(DocCorrOutcome::Defective { label, hits }) => {
                 scanned += 1;
-                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, 5);
-                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, 5);
-                record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 5);
+                record_corr(
+                    &mut unbalanced,
+                    CorrCat::Unbalanced,
+                    &hits,
+                    (&label, CORRECTNESS_SAMPLE_LIMIT),
+                );
+                record_corr(
+                    &mut bad_ruby,
+                    CorrCat::BadRuby,
+                    &hits,
+                    (&label, CORRECTNESS_SAMPLE_LIMIT),
+                );
+                record_corr(
+                    &mut undeclared,
+                    CorrCat::UndeclaredClass,
+                    &hits,
+                    (&label, CORRECTNESS_SAMPLE_LIMIT),
+                );
             }
             Err(_) => walk_errors += 1,
         }
@@ -1766,9 +1870,9 @@ fn tally_render_leaks(
             }
             Ok(DocRenderOutcome::Leaked { label, hits }) => {
                 scanned += 1;
-                ruby.record(LeakCat::Ruby, &label, &hits, 0);
-                bar.record(LeakCat::Bar, &label, &hits, 0);
-                directive.record(LeakCat::Directive, &label, &hits, 0);
+                ruby.record(LeakCat::Ruby, &hits, (&label, 0));
+                bar.record(LeakCat::Bar, &hits, (&label, 0));
+                directive.record(LeakCat::Directive, &hits, (&label, 0));
             }
         }
     }
@@ -1827,7 +1931,7 @@ fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
             parse_rejected.len(),
             parse_rejected
                 .iter()
-                .take(5)
+                .take(REPORTED_PROBLEM_LIMIT)
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -1840,7 +1944,7 @@ fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
             panicked.len(),
             panicked
                 .iter()
-                .take(5)
+                .take(REPORTED_PROBLEM_LIMIT)
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -1990,7 +2094,7 @@ fn aozora_body(src: &str) -> String {
     let lines: Vec<&str> = src.lines().collect();
     let is_delim = |l: &str| {
         let t = l.trim_end();
-        t.len() >= 10 && t.chars().all(|c| c == '-')
+        t.len() >= HEADER_RULE_MIN_WIDTH && t.chars().all(|c| c == '-')
     };
     let delims: Vec<usize> = lines
         .iter()
@@ -2031,15 +2135,15 @@ fn html_unescape_min(s: &str) -> String {
 
 /// A short visible-text window around a leak, for triage.
 fn snippet_around(chars: &[char], idx: usize) -> String {
-    let start = idx.saturating_sub(6);
-    let end = (idx + 8).min(chars.len());
+    let start = idx.saturating_sub(SNIPPET_PREFIX_CHARS);
+    let end = (idx + SNIPPET_SUFFIX_CHARS).min(chars.len());
     chars[start..end].iter().collect()
 }
 
 fn resolve_corpus(root: Option<&Path>) -> Result<FilesystemCorpus, String> {
     let path: PathBuf = match root {
         Some(p) => p.to_path_buf(),
-        None => std::env::var_os("AOZORA_CORPUS_ROOT")
+        None => env::var_os("AOZORA_CORPUS_ROOT")
             .map(PathBuf::from)
             .ok_or("pass --root or set $AOZORA_CORPUS_ROOT")?,
     };
@@ -2099,17 +2203,17 @@ fn analyze(text: &str) -> Result<FileStat, aozora::ParseError> {
             DirectiveClass::NonCanonical => 0,
             DirectiveClass::Editorial => 1,
             DirectiveClass::Sic => 2,
-            DirectiveClass::BaseTextVariant => 3,
-            DirectiveClass::WarichuOpen => 4,
-            DirectiveClass::WarichuClose => 5,
-            DirectiveClass::Empty => 6,
-            DirectiveClass::EditorNote => 7,
-            DirectiveClass::RubyAttached => 8,
-            DirectiveClass::RubyRetarget => 9,
-            DirectiveClass::RubyPairOpen => 10,
-            DirectiveClass::RubyPairClose => 11,
-            DirectiveClass::MarginNotePairOpen => 12,
-            DirectiveClass::MarginNotePairClose => 13,
+            DirectiveClass::BaseTextVariant => ANN_BASE_TEXT_VARIANT,
+            DirectiveClass::WarichuOpen => ANN_WARICHU_OPEN,
+            DirectiveClass::WarichuClose => ANN_WARICHU_CLOSE,
+            DirectiveClass::Empty => ANN_EMPTY,
+            DirectiveClass::EditorNote => ANN_EDITOR_NOTE,
+            DirectiveClass::RubyAttached => ANN_RUBY_ATTACHED,
+            DirectiveClass::RubyRetarget => ANN_RUBY_RETARGET,
+            DirectiveClass::RubyPairOpen => ANN_RUBY_PAIR_OPEN,
+            DirectiveClass::RubyPairClose => ANN_RUBY_PAIR_CLOSE,
+            DirectiveClass::MarginNotePairOpen => ANN_MARGIN_NOTE_PAIR_OPEN,
+            DirectiveClass::MarginNotePairClose => ANN_MARGIN_NOTE_PAIR_CLOSE,
             _ => continue,
         };
         s.annotation_kinds[bucket] += 1;
@@ -2136,11 +2240,8 @@ fn analyze(text: &str) -> Result<FileStat, aozora::ParseError> {
 #[cfg(test)]
 fn line_of(text: &str, byte_off: u32) -> u32 {
     let off = (byte_off as usize).min(text.len());
-    let newlines = text.as_bytes()[..off]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count();
-    (newlines + 1) as u32
+    memchr::memchr_iter(b'\n', &text.as_bytes()[..off])
+        .fold(1_u32, |line, _| line.saturating_add(1))
 }
 
 fn is_digit_char(c: char) -> bool {
@@ -2149,7 +2250,9 @@ fn is_digit_char(c: char) -> bool {
 
 /// Classify a 外字 mencode reference into one of [`GAIJI_FORM_LABELS`].
 fn gaiji_bucket(mencode: Option<&str>) -> usize {
-    let Some(s) = mencode else { return 5 }; // absent
+    let Some(s) = mencode else {
+        return GAIJI_FORM_ABSENT;
+    }; // absent
     if s.contains("U+") {
         return 2; // unicode
     }
@@ -2165,9 +2268,9 @@ fn gaiji_bucket(mencode: Option<&str>) -> usize {
         .iter()
         .all(|p| !p.is_empty() && p.chars().all(is_digit_char));
     match (parts.len(), numeric) {
-        (3, true) => 1, // jisTriple
-        (2, true) => 3, // pageLine
-        _ => 4,         // named
+        (JIS_ADDRESS_PARTS, true) => 1,    // jisTriple
+        (2, true) => GAIJI_FORM_PAGE_LINE, // pageLine
+        _ => GAIJI_FORM_NAMED,             // named
     }
 }
 
@@ -2216,6 +2319,102 @@ fn kv_sorted(rows: impl IntoIterator<Item = (String, u64)>) -> Vec<Kv> {
     v
 }
 
+struct UnknownRows {
+    total: u64,
+    distinct: usize,
+    shapes: Vec<ShapeRow>,
+    bodies: Vec<UnknownRow>,
+}
+
+fn merge_unknown_rows(unknown_map: HashMap<String, (u64, String)>) -> UnknownRows {
+    let unknown_total: u64 = unknown_map.values().map(|(c, _)| *c).sum();
+    let unknown_distinct = unknown_map.len();
+
+    // Fold the distinct bodies into family shapes.
+    let mut shape_map: HashMap<String, (u64, usize)> = HashMap::new();
+    for (body, (count, _)) in &unknown_map {
+        let entry = shape_map.entry(normalize_shape(body)).or_insert((0, 0));
+        entry.0 += *count;
+        entry.1 += 1;
+    }
+    let mut unknown_shapes: Vec<ShapeRow> = shape_map
+        .into_iter()
+        .map(|(shape, (count, distinct))| ShapeRow {
+            shape,
+            count,
+            distinct,
+        })
+        .collect();
+    unknown_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.shape.cmp(&b.shape)));
+
+    let mut unknown_bodies: Vec<UnknownRow> = unknown_map
+        .into_iter()
+        .map(|(body, (count, example))| {
+            let shape = normalize_shape(&body);
+            UnknownRow {
+                body,
+                count,
+                example,
+                shape,
+            }
+        })
+        .collect();
+    unknown_bodies.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.body.cmp(&b.body)));
+
+    UnknownRows {
+        total: unknown_total,
+        distinct: unknown_distinct,
+        shapes: unknown_shapes,
+        bodies: unknown_bodies,
+    }
+}
+
+fn labelled_counts<S: AsRef<str>>(
+    labels: impl IntoIterator<Item = S>,
+    counts: impl IntoIterator<Item = u64>,
+) -> Vec<Kv> {
+    kv_sorted(
+        labels
+            .into_iter()
+            .zip(counts)
+            .map(|(label, count)| (label.as_ref().to_owned(), count)),
+    )
+}
+
+#[derive(Default)]
+struct AuditTally {
+    files_total: usize,
+    files_analyzed: usize,
+    decode_errors: usize,
+    parse_errors: usize,
+    walk_errors: usize,
+    panics: Vec<String>,
+}
+
+impl AuditTally {
+    fn admit(&mut self, result: Result<FileStat, aozora_corpus::CorpusError>) -> Option<FileStat> {
+        let Ok(stat) = result else {
+            self.walk_errors += 1;
+            return None;
+        };
+        self.files_total += 1;
+        if stat.decode_error {
+            self.decode_errors += 1;
+            return None;
+        }
+        if stat.parse_error {
+            self.parse_errors += 1;
+            return None;
+        }
+        if stat.panicked {
+            self.panics.push(stat.label);
+            return None;
+        }
+        self.files_analyzed += 1;
+        Some(stat)
+    }
+}
+
 fn merge(
     results: Vec<Result<FileStat, aozora_corpus::CorpusError>>,
     corpus_root: String,
@@ -2230,32 +2429,12 @@ fn merge(
     // body → (count, smallest-example).
     let mut unknown_map: HashMap<String, (u64, String)> = HashMap::new();
 
-    let mut files_total = 0usize;
-    let mut files_analyzed = 0usize;
-    let mut decode_errors = 0usize;
-    let mut parse_errors = 0usize;
-    let mut walk_errors = 0usize;
-    let mut panics: Vec<String> = Vec::new();
+    let mut tally = AuditTally::default();
 
     for r in results {
-        let Ok(s) = r else {
-            walk_errors += 1;
+        let Some(s) = tally.admit(r) else {
             continue;
         };
-        files_total += 1;
-        if s.decode_error {
-            decode_errors += 1;
-            continue;
-        }
-        if s.parse_error {
-            parse_errors += 1;
-            continue;
-        }
-        if s.panicked {
-            panics.push(s.label);
-            continue;
-        }
-        files_analyzed += 1;
 
         let FileStat {
             label,
@@ -2295,73 +2474,32 @@ fn merge(
         }
     }
 
-    let unknown_total: u64 = unknown_map.values().map(|(c, _)| *c).sum();
-    let unknown_distinct = unknown_map.len();
+    let UnknownRows {
+        total: unknown_total,
+        distinct: unknown_distinct,
+        shapes: unknown_shapes,
+        bodies: unknown_bodies,
+    } = merge_unknown_rows(unknown_map);
 
-    // Fold the distinct bodies into family shapes.
-    let mut shape_map: HashMap<String, (u64, usize)> = HashMap::new();
-    for (body, (count, _)) in &unknown_map {
-        let entry = shape_map.entry(normalize_shape(body)).or_insert((0, 0));
-        entry.0 += *count;
-        entry.1 += 1;
-    }
-    let mut unknown_shapes: Vec<ShapeRow> = shape_map
-        .into_iter()
-        .map(|(shape, (count, distinct))| ShapeRow {
-            shape,
-            count,
-            distinct,
-        })
-        .collect();
-    unknown_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.shape.cmp(&b.shape)));
-
-    let mut unknown_bodies: Vec<UnknownRow> = unknown_map
-        .into_iter()
-        .map(|(body, (count, example))| {
-            let shape = normalize_shape(&body);
-            UnknownRow {
-                body,
-                count,
-                example,
-                shape,
-            }
-        })
-        .collect();
-    unknown_bodies.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.body.cmp(&b.body)));
-
-    panics.sort();
+    tally.panics.sort();
+    let node_labels = NodeKind::ALL.iter().map(|kind| kind.as_json_tag());
 
     AuditReport {
         corpus_root,
-        files_total,
-        files_analyzed,
-        decode_errors,
-        parse_errors,
-        walk_errors,
-        panic_count: panics.len(),
-        panics,
+        files_total: tally.files_total,
+        files_analyzed: tally.files_analyzed,
+        decode_errors: tally.decode_errors,
+        parse_errors: tally.parse_errors,
+        walk_errors: tally.walk_errors,
+        panic_count: tally.panics.len(),
+        panics: tally.panics,
         elapsed_secs,
-        node_kinds: kv_sorted(
-            NodeKind::ALL
-                .iter()
-                .zip(node_kinds)
-                .map(|(k, c)| (k.as_json_tag().to_owned(), c)),
-        ),
-        annotation_kinds: kv_sorted(
-            ANN_KIND_LABELS
-                .iter()
-                .zip(ann)
-                .map(|(l, c)| ((*l).to_owned(), c)),
-        ),
+        node_kinds: labelled_counts(node_labels, node_kinds),
+        annotation_kinds: labelled_counts(ANN_KIND_LABELS, ann),
         gaiji: GaijiSummary {
             total: gaiji_total,
             unresolved: gaiji_unresolved,
-            forms: kv_sorted(
-                GAIJI_FORM_LABELS
-                    .iter()
-                    .zip(gforms)
-                    .map(|(l, c)| ((*l).to_owned(), c)),
-            ),
+            forms: labelled_counts(GAIJI_FORM_LABELS, gforms),
         },
         diagnostics: kv_sorted(diag_map.into_iter().map(|(k, c)| (k.to_owned(), c))),
         unknown_total,
@@ -2425,7 +2563,7 @@ fn print_human_summary(r: &AuditReport, top: usize) {
             "  {:>8} {:>6}d  {}",
             row.count,
             row.distinct,
-            truncate_for_display(&row.shape, 60)
+            truncate_for_display(&row.shape, SHAPE_DISPLAY_WIDTH)
         );
     }
     eprintln!();
@@ -2434,7 +2572,7 @@ fn print_human_summary(r: &AuditReport, top: usize) {
         eprintln!(
             "  {:>8}  {}  [{}]",
             row.count,
-            truncate_for_display(&row.body, 56),
+            truncate_for_display(&row.body, BODY_DISPLAY_WIDTH),
             row.example
         );
     }
@@ -2566,7 +2704,7 @@ fn classify_report(
     bodies: &[UnknownRow],
     files_analyzed: usize,
     unknown_total: u64,
-) -> ClassifyReport {
+) -> Result<ClassifyReport, String> {
     let (mut t1, mut t2, mut residue) = (0_u64, 0_u64, 0_u64);
     let mut residue_map: BTreeMap<String, (u64, String, String)> = BTreeMap::new();
     for row in bodies {
@@ -2594,16 +2732,16 @@ fn classify_report(
         .collect();
     residue_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.shape.cmp(&b.shape)));
 
-    ClassifyReport {
+    Ok(ClassifyReport {
         files_analyzed,
         unknown_total,
         tier1_occurrences: t1,
         tier2_occurrences: t2,
         residue_occurrences: residue,
-        resolved_ratio: (t1 + t2) as f64 / unknown_total.max(1) as f64,
+        resolved_ratio: float_count(t1 + t2)? / float_count(unknown_total.max(1))?,
         residue_distinct_shapes: residue_shapes.len(),
         residue_shapes,
-    }
+    })
 }
 
 /// `corpus classify-unknown`: bucket the Unknown residue against the catalogues.
@@ -2613,7 +2751,7 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
         &audit.unknown_bodies,
         audit.files_analyzed,
         audit.unknown_total,
-    );
+    )?;
 
     eprintln!(
         "xtask corpus classify-unknown: {} files, {} Unknown occurrences\n  \
@@ -2625,7 +2763,7 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
         report.tier2_occurrences,
         report.residue_occurrences,
         report.residue_distinct_shapes,
-        report.resolved_ratio * 100.0,
+        report.resolved_ratio * PERCENT_SCALE,
     );
     for r in report.residue_shapes.iter().take(top) {
         eprintln!(
@@ -2727,7 +2865,12 @@ fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
 fn slug_from_label(label: &str) -> String {
     let stem = label.rsplit('/').next().unwrap_or(label);
     card_id_from_stem(stem).map_or_else(
-        || format!("w{}", &blake3::hash(label.as_bytes()).to_hex()[..10]),
+        || {
+            format!(
+                "w{}",
+                &blake3::hash(label.as_bytes()).to_hex()[..FALLBACK_SLUG_HASH_WIDTH]
+            )
+        },
         |digits| format!("w{digits}"),
     )
 }
@@ -2775,13 +2918,13 @@ struct WorkProfile {
 
 /// Decode, lex, and render one work into a fingerprint. Both the AST walk
 /// (families) and the render (cleanliness) are `catch_unwind`-guarded.
-fn profile_one(item: CorpusItem) -> WorkProfile {
+fn profile_one(item: CorpusItem) -> Result<WorkProfile, String> {
     let label = item.label;
     let orthography = orthography_of(&label);
     let text = match decode_auto(&item.bytes) {
         Ok(t) => t.into_owned(),
         Err(_) => {
-            return WorkProfile {
+            return Ok(WorkProfile {
                 label,
                 len: 0,
                 band: 0,
@@ -2791,7 +2934,7 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
                 content_hash: blake3::hash(b""),
                 clean: false,
                 decodable: false,
-            };
+            });
         }
     };
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -2804,17 +2947,18 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
         .ok()
         .and_then(Result::ok);
     let (families, unknown_ratio) = stat.as_ref().map_or_else(
-        || (Vec::new(), 1.0),
+        || Ok((Vec::new(), 1.0)),
         |s| {
             let ann_total: u64 = s.annotation_kinds.iter().sum();
             let ratio = if ann_total == 0 {
                 0.0
             } else {
-                ((s.annotation_kinds[0] + s.annotation_kinds[1]) as f64) / (ann_total as f64)
+                float_count(s.annotation_kinds[0] + s.annotation_kinds[1])?
+                    / float_count(ann_total)?
             };
-            (family_ids(s), ratio)
+            Ok::<_, String>((family_ids(s), ratio))
         },
-    );
+    )?;
     let clean = stat.is_some()
         && panic::catch_unwind(AssertUnwindSafe(|| {
             aozora::parse(body).is_ok_and(|document| {
@@ -2831,7 +2975,7 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
         }))
         .unwrap_or(false);
 
-    WorkProfile {
+    Ok(WorkProfile {
         label,
         len,
         band,
@@ -2841,7 +2985,7 @@ fn profile_one(item: CorpusItem) -> WorkProfile {
         content_hash,
         clean,
         decodable: stat.is_some(),
-    }
+    })
 }
 
 /// Seed family coverage and the dedup hash-set from the already-vendored works.
@@ -2896,18 +3040,8 @@ struct WorkRow {
 }
 
 /// Deterministic greedy weighted set-cover selection of golden-work candidates.
-fn select_works(
-    root: Option<&Path>,
-    target: usize,
-    out: &Path,
-    vendored: &Path,
-    max_unknown_ratio: f64,
-    max_total_source_bytes: usize,
-    require_family: &[String],
-) -> Result<(), String> {
-    validate_unknown_ratio(max_unknown_ratio)?;
-    // Resolve --require-family names up front — a typo fails before the walk.
-    let required: Vec<(String, usize)> = require_family
+fn required_families(require_family: &[String]) -> Result<Vec<(String, usize)>, String> {
+    require_family
         .iter()
         .map(|name| {
             family_id_by_name(name)
@@ -2916,35 +3050,180 @@ fn select_works(
                     format!("unknown family '{name}' (run `family-coverage` for the 43 names)")
                 })
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+}
 
-    let corpus = resolve_corpus(root)?;
-    eprintln!(
-        "xtask corpus select-works: walking {} …",
-        corpus.root().display()
-    );
-    let start = Instant::now();
+#[derive(Clone, Copy)]
+struct SelectionOptions<'a> {
+    target: usize,
+    vendored: &'a Path,
+    max_unknown_ratio: f64,
+    max_total_source_bytes: usize,
+    require_family: &'a [String],
+}
 
-    let profile_results = with_suppressed_panic_hook(|| par_load_decoded(&corpus, profile_one));
-    let mut profiles = collect_corpus_results(profile_results, "profile corpus")?;
+struct WorkSelection<'a> {
+    covered: HashSet<usize>,
+    selected_sets: Vec<Vec<usize>>,
+    chosen: Vec<(&'a WorkProfile, Vec<usize>)>,
+    used: Vec<bool>,
+    spent: usize,
+    max_total_source_bytes: usize,
+}
 
-    // Determinism: `par_load_decoded` is unordered — sort by label first.
-    profiles.sort_by(|a, b| a.label.cmp(&b.label));
+impl<'a> WorkSelection<'a> {
+    fn require(
+        &mut self,
+        candidates: &[&'a WorkProfile],
+        required: &[(String, usize)],
+    ) -> Result<(), String> {
+        let max_total_source_bytes = self.max_total_source_bytes;
+        let mut unsatisfiable: Vec<&'static str> = Vec::new();
+        for (name, id) in required {
+            if self.covered.contains(id) {
+                continue;
+            }
+            let pick = candidates
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| !self.used[*i] && c.families.contains(id))
+                .min_by(|(_, a), (_, b)| a.len.cmp(&b.len).then_with(|| a.label.cmp(&b.label)))
+                .map(|(i, _)| i);
+            match pick {
+                Some(i) => {
+                    let c = candidates[i];
+                    self.spent = add_within_budget(self.spent, c.len, max_total_source_bytes).map_err(|()| {
+                    format!(
+                        "required family {name} cannot fit the {max_total_source_bytes}-byte source budget"
+                    )
+                })?;
+                    self.used[i] = true;
+                    let new_families: Vec<usize> = c
+                        .families
+                        .iter()
+                        .copied()
+                        .filter(|f| !self.covered.contains(f))
+                        .collect();
+                    for &f in &c.families {
+                        self.covered.insert(f);
+                    }
+                    self.selected_sets.push(c.families.clone());
+                    self.chosen.push((c, new_families));
+                    eprintln!(
+                        "select-works: require-family {name} → {} ({} B)",
+                        c.label, c.len
+                    );
+                }
+                None => unsatisfiable.push(family_name(*id)),
+            }
+        }
+        if !unsatisfiable.is_empty() {
+            eprintln!(
+                "select-works: WARNING — no clean corpus work exercises {}; craft a \
+             fixtures/render/ fixture for each instead",
+                unsatisfiable.join(", ")
+            );
+        }
 
-    let (seed_covered, vendored_hashes) = load_vendored(vendored)?;
+        Ok(())
+    }
 
-    // Rarity weights from global family frequency over decodable works.
+    fn extend(
+        &mut self,
+        candidates: &[&'a WorkProfile],
+        weights: &[f64],
+        target: usize,
+    ) -> Result<(), String> {
+        let max_total_source_bytes = self.max_total_source_bytes;
+        while self.chosen.len() < target {
+            let mut best: Option<usize> = None;
+            let mut best_key = (i64::MIN, i64::MIN, i64::MIN);
+            for (i, c) in candidates.iter().enumerate() {
+                if self.used[i]
+                    || add_within_budget(self.spent, c.len, max_total_source_bytes).is_err()
+                {
+                    continue;
+                }
+                let gain: f64 = c
+                    .families
+                    .iter()
+                    .filter(|f| !self.covered.contains(*f))
+                    .map(|&f| weights[f])
+                    .sum();
+                let key = if gain > 0.0 {
+                    // (phase=1, weighted gain per byte, weighted gain)
+                    (
+                        1i64,
+                        selection_score(gain / float_count(c.len)? * COVERAGE_PER_BYTE_SCALE)?,
+                        selection_score(gain * COVERAGE_GAIN_SCALE)?,
+                    )
+                } else {
+                    // Redundancy guard: skip a work whose family-set ⊆ one already self.chosen.
+                    if self
+                        .selected_sets
+                        .iter()
+                        .any(|s| c.families.iter().all(|f| s.contains(f)))
+                    {
+                        continue;
+                    }
+                    // (phase=0, distinct families PER BYTE → small diverse works win)
+                    (
+                        0i64,
+                        selection_score(
+                            float_count(c.families.len())? / float_count(c.len)?
+                                * DIVERSITY_PER_BYTE_SCALE,
+                        )?,
+                        0i64,
+                    )
+                };
+                if best.is_none() || key > best_key {
+                    best = Some(i);
+                    best_key = key;
+                }
+            }
+            let Some(i) = best else { break };
+            self.used[i] = true;
+            self.spent = add_within_budget(self.spent, candidates[i].len, max_total_source_bytes)
+                .map_err(|()| {
+                "selected source byte total exceeded its hard budget".to_owned()
+            })?;
+            let new_families: Vec<usize> = candidates[i]
+                .families
+                .iter()
+                .copied()
+                .filter(|f| !self.covered.contains(f))
+                .collect();
+            for &f in &candidates[i].families {
+                self.covered.insert(f);
+            }
+            self.selected_sets.push(candidates[i].families.clone());
+            self.chosen.push((candidates[i], new_families));
+        }
+        Ok(())
+    }
+}
+
+fn family_weights(profiles: &[WorkProfile]) -> Result<Vec<f64>, String> {
     let mut global = [0u64; FAM_TOTAL];
-    for p in &profiles {
+    for p in profiles {
         if p.decodable {
             for &f in &p.families {
                 global[f] += 1;
             }
         }
     }
-    let weight = |f: usize| -> f64 { 1.0 / ((global[f] as f64) + std::f64::consts::E).ln() };
+    global
+        .into_iter()
+        .map(|count| float_count(count).map(|count| 1.0 / (count + E).ln()))
+        .collect::<Result<Vec<_>, _>>()
+}
 
-    let candidates: Vec<&WorkProfile> = profiles
+fn eligible_profiles<'a>(
+    profiles: &'a [WorkProfile],
+    vendored_hashes: &HashSet<[u8; 32]>,
+    max_unknown_ratio: f64,
+) -> Vec<&'a WorkProfile> {
+    profiles
         .iter()
         .filter(|p| {
             p.decodable
@@ -2954,7 +3233,42 @@ fn select_works(
                 && !p.families.is_empty()
                 && !vendored_hashes.contains(p.content_hash.as_bytes())
         })
-        .collect();
+        .collect()
+}
+
+fn select_works(
+    root: Option<&Path>,
+    out: &Path,
+    options: SelectionOptions<'_>,
+) -> Result<(), String> {
+    let SelectionOptions {
+        target,
+        vendored,
+        max_unknown_ratio,
+        max_total_source_bytes,
+        require_family,
+    } = options;
+    validate_unknown_ratio(max_unknown_ratio)?;
+    // Resolve --require-family names up front — a typo fails before the walk.
+    let required = required_families(require_family)?;
+
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus select-works: walking {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+
+    let profile_results = with_suppressed_panic_hook(|| par_load_decoded(&corpus, profile_one));
+    let mut profiles = collect_corpus_results(profile_results, "profile corpus")?
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    profiles.sort_by(|a, b| a.label.cmp(&b.label));
+
+    let (seed_covered, vendored_hashes) = load_vendored(vendored)?;
+
+    let weights = family_weights(&profiles)?;
+    let candidates = eligible_profiles(&profiles, &vendored_hashes, max_unknown_ratio);
 
     // Greedy under a hard byte budget. Coverage phase (gain > 0): rank by
     // weighted coverage PER BYTE, so a small work covering a rare family beats a
@@ -2963,119 +3277,22 @@ fn select_works(
     // saturated): keep adding combination-diverse works (family-set not a subset
     // of one already chosen), smallest first. Integer keys → deterministic ties;
     // candidates are label-sorted so equal keys break label-ascending.
-    let mut covered = seed_covered;
-    let mut selected_sets: Vec<Vec<usize>> = Vec::new();
-    let mut chosen: Vec<(&WorkProfile, Vec<usize>)> = Vec::new();
-    let mut used = vec![false; candidates.len()];
-    let mut spent: usize = 0;
-
-    // Force-include the smallest clean work per --require-family, ahead of the
-    // greedy pass. Skips a family already covered (by seed or a prior force-pick)
-    // so overlapping requirements coalesce; a family no candidate exercises is
-    // reported unsatisfiable (it needs a crafted render fixture, not a work).
-    let mut unsatisfiable: Vec<&'static str> = Vec::new();
-    for (name, id) in &required {
-        if covered.contains(id) {
-            continue;
-        }
-        let pick = candidates
-            .iter()
-            .enumerate()
-            .filter(|(i, c)| !used[*i] && c.families.contains(id))
-            .min_by(|(_, a), (_, b)| a.len.cmp(&b.len).then_with(|| a.label.cmp(&b.label)))
-            .map(|(i, _)| i);
-        match pick {
-            Some(i) => {
-                let c = candidates[i];
-                spent = add_within_budget(spent, c.len, max_total_source_bytes).map_err(|()| {
-                    format!(
-                        "required family {name} cannot fit the {max_total_source_bytes}-byte source budget"
-                    )
-                })?;
-                used[i] = true;
-                let new_families: Vec<usize> = c
-                    .families
-                    .iter()
-                    .copied()
-                    .filter(|f| !covered.contains(f))
-                    .collect();
-                for &f in &c.families {
-                    covered.insert(f);
-                }
-                selected_sets.push(c.families.clone());
-                chosen.push((c, new_families));
-                eprintln!(
-                    "select-works: require-family {name} → {} ({} B)",
-                    c.label, c.len
-                );
-            }
-            None => unsatisfiable.push(family_name(*id)),
-        }
-    }
-    if !unsatisfiable.is_empty() {
-        eprintln!(
-            "select-works: WARNING — no clean corpus work exercises {}; craft a \
-             fixtures/render/ fixture for each instead",
-            unsatisfiable.join(", ")
-        );
-    }
-
-    while chosen.len() < target {
-        let mut best: Option<usize> = None;
-        let mut best_key = (i64::MIN, i64::MIN, i64::MIN);
-        for (i, c) in candidates.iter().enumerate() {
-            if used[i] || add_within_budget(spent, c.len, max_total_source_bytes).is_err() {
-                continue;
-            }
-            let gain: f64 = c
-                .families
-                .iter()
-                .filter(|f| !covered.contains(*f))
-                .map(|&f| weight(f))
-                .sum();
-            let key = if gain > 0.0 {
-                // (phase=1, weighted gain per byte, weighted gain)
-                (
-                    1i64,
-                    (gain / c.len as f64 * 1e12) as i64,
-                    (gain * 1_000_000.0) as i64,
-                )
-            } else {
-                // Redundancy guard: skip a work whose family-set ⊆ one already chosen.
-                if selected_sets
-                    .iter()
-                    .any(|s| c.families.iter().all(|f| s.contains(f)))
-                {
-                    continue;
-                }
-                // (phase=0, distinct families PER BYTE → small diverse works win)
-                (
-                    0i64,
-                    (c.families.len() as f64 / c.len as f64 * 1e9) as i64,
-                    0i64,
-                )
-            };
-            if best.is_none() || key > best_key {
-                best = Some(i);
-                best_key = key;
-            }
-        }
-        let Some(i) = best else { break };
-        used[i] = true;
-        spent = add_within_budget(spent, candidates[i].len, max_total_source_bytes)
-            .map_err(|()| "selected source byte total exceeded its hard budget".to_owned())?;
-        let new_families: Vec<usize> = candidates[i]
-            .families
-            .iter()
-            .copied()
-            .filter(|f| !covered.contains(f))
-            .collect();
-        for &f in &candidates[i].families {
-            covered.insert(f);
-        }
-        selected_sets.push(candidates[i].families.clone());
-        chosen.push((candidates[i], new_families));
-    }
+    let mut selection = WorkSelection {
+        covered: seed_covered,
+        selected_sets: Vec::new(),
+        chosen: Vec::new(),
+        used: vec![false; candidates.len()],
+        spent: 0,
+        max_total_source_bytes,
+    };
+    selection.require(&candidates, &required)?;
+    selection.extend(&candidates, &weights, target)?;
+    let WorkSelection {
+        covered,
+        chosen,
+        spent,
+        ..
+    } = selection;
     let covered_total = covered.len();
 
     let rows: Vec<WorkRow> = chosen
@@ -3113,7 +3330,7 @@ fn select_works(
          in {:.1}s → {} (review, then vendor-works)",
         candidates.len(),
         manifest.work.len(),
-        spent / 1024,
+        spent / BYTES_PER_KIB,
         covered_total,
         FAM_TOTAL,
         start.elapsed().as_secs_f64(),
@@ -3308,7 +3525,7 @@ fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(fs::Permissions::from_mode(0o666))
+        builder.permissions(fs::Permissions::from_mode(OUTPUT_FILE_PERMISSIONS))
     };
     let mut temporary = builder.tempfile_in(parent)?;
     if let Some(permissions) = permissions {
@@ -3333,6 +3550,22 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_reports_preserve_counts_and_reject_invalid_scores() {
+        assert_eq!(
+            float_count(u64::MAX).expect("finite count").to_bits(),
+            0x43f0_0000_0000_0000
+        );
+        assert_eq!(selection_score(3.75), Ok(3));
+        assert_eq!(selection_score(-3.75), Ok(-3));
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
+            assert!(
+                selection_score(invalid).is_err(),
+                "invalid score: {invalid}"
+            );
+        }
+    }
 
     #[test]
     fn work_selection_ratio_is_bounded() {
@@ -3383,8 +3616,16 @@ mod tests {
         previous.finish(&output).expect("previous archive");
         let previous_bytes = fs::read(&output).expect("read previous archive");
 
-        let error = pack(&source, &output, true, false, 1)
-            .expect_err("undecodable source must fail UTF-8 packing");
+        let error = pack(
+            &source,
+            &output,
+            PackOptions {
+                utf8: true,
+                zstd: false,
+                zstd_level: 1,
+            },
+        )
+        .expect_err("undecodable source must fail UTF-8 packing");
 
         assert!(error.contains("bad.txt"), "{error}");
         assert_eq!(fs::read(&output).expect("preserved output"), previous_bytes);
@@ -3399,8 +3640,16 @@ mod tests {
         let output = root.path().join("corpus.aozc");
         fs::write(&output, b"malformed archive").expect("malformed output");
 
-        let error = pack(&source, &output, false, false, 1)
-            .expect_err("malformed previous archive must not be replaced");
+        let error = pack(
+            &source,
+            &output,
+            PackOptions {
+                utf8: false,
+                zstd: false,
+                zstd_level: 1,
+            },
+        )
+        .expect_err("malformed previous archive must not be replaced");
 
         assert!(error.contains("previous archive"), "{error}");
         assert_eq!(
@@ -3645,11 +3894,23 @@ mod tests {
         // `year_of` carries ±1 day slop at year boundaries (documented), so
         // pin it to mid-year instants where the bucketing is unambiguous.
         // 2000-07-01 12:00:01 UTC = 962_452_801.
-        assert_eq!(year_of(at_epoch_secs(962_452_801)), 2000, "mid-2000");
+        assert_eq!(
+            year_of(at_epoch_secs(962_452_801)).expect("source year"),
+            2000,
+            "mid-2000"
+        );
         // 2026-06-15 00:00:01 UTC = 1_781_481_601.
-        assert_eq!(year_of(at_epoch_secs(1_781_481_601)), 2026, "mid-2026");
+        assert_eq!(
+            year_of(at_epoch_secs(1_781_481_601)).expect("source year"),
+            2026,
+            "mid-2026"
+        );
         // 1995-06-01 00:00:01 UTC = 802_044_001 (a typical corpus mtime era).
-        assert_eq!(year_of(at_epoch_secs(802_044_001)), 1995, "mid-1995");
+        assert_eq!(
+            year_of(at_epoch_secs(802_044_001)).expect("source year"),
+            1995,
+            "mid-1995"
+        );
     }
 
     #[test]
@@ -3657,7 +3918,7 @@ mod tests {
         // `duration_since(UNIX_EPOCH)` fails for pre-epoch times → maps to 0s,
         // landing on the 1969/1970 boundary; the contract is "doesn't panic".
         let before = UNIX_EPOCH - Duration::from_secs(100);
-        let y = year_of(before);
+        let y = year_of(before).expect("source year");
         assert!((1969..=1970).contains(&y), "pre-epoch lands near 1970: {y}");
     }
 
@@ -3883,7 +4144,7 @@ mod tests {
     fn analyze_editorial_annotation_has_an_explicit_bucket() {
         let stat = analyze("前置き\n［＃まったく未知の指示］").expect("parse");
         assert_eq!(stat.annotation_kinds[1], 1);
-        assert!(stat.unknown.is_empty());
+        assert_eq!(stat.unknown, Vec::<(String, u32)>::new());
     }
 
     // ---- audit_one (CorpusItem → FileStat) ----------------------------
@@ -4048,8 +4309,8 @@ mod tests {
         let empty: Vec<&EntryMeta> = Vec::new();
         print_band_header(false);
         print_band_header(true);
-        print_band_row("<50KB", &empty, false);
-        print_band_row("<50KB", &empty, true);
+        print_band_row("<50KB", &empty, false).expect("band row");
+        print_band_row("<50KB", &empty, true).expect("band row");
 
         let meta = EntryMeta {
             payload_offset: 0,
@@ -4060,8 +4321,8 @@ mod tests {
             label: "x".to_owned(),
         };
         let entries = vec![&meta];
-        print_band_row("<50KB", &entries, false);
-        print_band_row("<50KB", &entries, true);
+        print_band_row("<50KB", &entries, false).expect("band row");
+        print_band_row("<50KB", &entries, true).expect("band row");
     }
 
     fn stat(files: usize, occurrences: usize) -> MarkerStat {
@@ -4095,8 +4356,8 @@ mod tests {
         assert_eq!(cur.directive, stat(0, 0));
         assert_eq!(scanned, 3, "2 leaked + 1 clean; decode-skip not scanned");
         assert_eq!(decode_errors, 1);
-        assert!(parse_rejected.is_empty());
-        assert!(panicked.is_empty());
+        assert_eq!(parse_rejected, Vec::<String>::new());
+        assert_eq!(panicked, Vec::<String>::new());
         assert_eq!(walk_errors, 0);
     }
 
@@ -4137,7 +4398,8 @@ mod tests {
                       ただの本文です。\n\n\
                       底本：「本」出版社\n";
 
-        let profile = profile_one(CorpusItem::new("work.txt", source.as_bytes().to_vec()));
+        let profile =
+            profile_one(CorpusItem::new("work.txt", source.as_bytes().to_vec())).expect("profile");
 
         assert!(profile.decodable);
         assert!(profile.clean);
@@ -4305,7 +4567,7 @@ mod tests {
             ), // Tier2
             row("［＃初出時「甲」］", 2, "d:4", "［＃初出時「」］"),   // residue
         ];
-        let r = classify_report(&bodies, 100, 17);
+        let r = classify_report(&bodies, 100, 17).expect("classification report");
 
         assert_eq!(r.tier1_occurrences, 5);
         assert_eq!(r.tier2_occurrences, 3);

@@ -1370,7 +1370,7 @@ mod e2e {
                     .cloned()
             })
             .await;
-        assert!(published_diagnostics(&cleared).is_empty());
+        assert_eq!(published_diagnostics(&cleared), Vec::<Value>::new());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

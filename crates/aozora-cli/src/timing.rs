@@ -114,7 +114,8 @@ impl Timer {
 
 /// Whole milliseconds as an `f64`, for the aligned human report.
 fn ms(d: Duration) -> f64 {
-    d.as_secs_f64() * 1000.0
+    const MILLIS_PER_SECOND: f64 = 1000.0;
+    d.as_secs_f64() * MILLIS_PER_SECOND
 }
 
 /// Nanoseconds clamped to `u64` — `serde_json::Number` has no `u128`
@@ -129,10 +130,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "exact f64 pin — the expected values are exactly representable and every mutation (constant swap or * -> + / /) yields a value far from them"
-    )]
     fn ms_is_secs_times_1000() {
         // 1500 ms -> 1.5 s -> 1.5 * 1000.0 == 1500.0 exactly.
         // Kills body->0.0/1.0/-1.0 (all differ from 1500.0) and
@@ -141,10 +138,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "exact f64 pin — the expected values are exactly representable and every mutation yields a value far from them"
-    )]
     fn ms_scales_with_input() {
         // A second fixed point pins the operator: 250 ms -> 250.0.
         assert_eq!(ms(Duration::from_millis(250)), 250.0);

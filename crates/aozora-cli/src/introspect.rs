@@ -436,6 +436,7 @@ const NODE_PAGES: &[(&str, &str)] = &[
 /// `center` with a summary. Seven kinds are in that position. A tag the
 /// tool advertises must explain to something.
 fn explain_kind(tag: &str) -> Option<String> {
+    const NOTATION_SPEC_URL: &str = "https://p4suta.github.io/aozora-notation-spec/";
     if let Some((_, body)) = NODE_PAGES.iter().find(|(t, _)| *t == tag) {
         return Some((*body).to_owned());
     }
@@ -443,7 +444,7 @@ fn explain_kind(tag: &str) -> Option<String> {
     Some(format!(
         "# {tag}\n\n{}\n\nNo detailed page for this kind yet. \
          `aozora spec kinds` lists every tag, and the notation itself is at \
-         https://p4suta.github.io/aozora-notation-spec/\n",
+         {NOTATION_SPEC_URL}\n",
         describe_node(*kind)
     ))
 }
@@ -562,7 +563,8 @@ fn known_targets() -> Vec<&'static str> {
 /// while a one- or two-character slip is caught. Ties resolve to the earliest
 /// entry in [`known_targets`]'s fixed order.
 fn nearest_target(target: &str) -> Option<&'static str> {
-    let threshold = target.chars().count().max(3) / 3;
+    const TYPO_DISTANCE_DIVISOR: usize = 3;
+    let threshold = target.chars().count().max(TYPO_DISTANCE_DIVISOR) / TYPO_DISTANCE_DIVISOR;
     let mut best: Option<(usize, &'static str)> = None;
     for candidate in known_targets() {
         let distance = levenshtein(target, candidate);
@@ -773,11 +775,6 @@ mod tests {
         }
     }
 
-    /// Each page opens with `Inspect tag: `x``, which is the command the
-    /// reader is meant to type next. It must be the key that reaches the
-    /// page. Three pages named their old filename-derived key, so the page
-    /// you reached by `aozora explain directive` told you to run
-    /// `aozora explain annotation`, which is rejected.
     #[test]
     fn each_page_states_the_tag_that_reaches_it() {
         for (key, body) in NODE_PAGES {

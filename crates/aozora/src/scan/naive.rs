@@ -43,11 +43,12 @@ impl NaiveScanner {
                   called as NaiveScanner.method(), the zero-sized-handle convention callers use"
     )]
     pub(crate) fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
+        const TRIGGER_BYTE_LEN: usize = 3;
         let bytes = source.as_bytes();
-        if bytes.len() < 3 {
+        if bytes.len() < TRIGGER_BYTE_LEN {
             return;
         }
-        for i in 0..=bytes.len() - 3 {
+        for i in 0..=bytes.len() - TRIGGER_BYTE_LEN {
             let window: [u8; 3] = [bytes[i], bytes[i + 1], bytes[i + 2]];
             if classify_trigger_bytes(window).is_some() {
                 let offset = u32::try_from(i).expect("source longer than u32::MAX is unsupported");
@@ -64,12 +65,12 @@ mod tests {
 
     #[test]
     fn empty_input_yields_nothing() {
-        assert!(NaiveScanner.scan_offsets("").is_empty());
+        assert_eq!(NaiveScanner.scan_offsets(""), Vec::<u32>::new());
     }
 
     #[test]
     fn input_too_short_yields_nothing() {
-        assert!(NaiveScanner.scan_offsets("ab").is_empty());
+        assert_eq!(NaiveScanner.scan_offsets("ab"), Vec::<u32>::new());
     }
 
     #[test]
@@ -88,6 +89,6 @@ mod tests {
     fn skips_non_trigger_chars_with_same_leading_byte() {
         // hiragana 'あこ…' all start with 0xE3 but classify as None.
         let s = "あこんにちは、世界！";
-        assert!(NaiveScanner.scan_offsets(s).is_empty());
+        assert_eq!(NaiveScanner.scan_offsets(s), Vec::<u32>::new());
     }
 }

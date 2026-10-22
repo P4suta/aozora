@@ -187,6 +187,7 @@ comfy-table = { version = "7.2", default-features = false }
 
 # Physical-core sizing avoids bandwidth contention between SMT siblings during corpus loading.
 num_cpus = "1.16"
+num-traits = "0.2.19"
 
 # Corpus sweeps need dictionary compression and frame-level random access.
 zstd = "0.13"

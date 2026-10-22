@@ -63,9 +63,9 @@ fn full_workflow_t2_trace() {
     let folded_text = analysis::render_folded(&folded);
     assert!(folded_text.contains(';') || !folded.is_empty());
 
-    assert!(!hot.render_table().is_empty());
-    assert!(!libs.render_table().is_empty());
-    assert!(!roll.render_table().is_empty());
+    assert_ne!(hot.render_table(), "");
+    assert_ne!(libs.render_table(), "");
+    assert_ne!(roll.render_table(), "");
 }
 
 #[test]

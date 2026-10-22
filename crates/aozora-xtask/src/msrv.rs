@@ -302,6 +302,7 @@ static MAINTAINED_DOC_VERSION: LazyLock<Regex> = LazyLock::new(|| {
 /// A plain substring, not a regex — shields.io's hand-written form is
 /// `/badge/rust-<ver>`, the derived one `/crates/msrv/aozora`.
 const STATIC_MSRV_BADGE: &str = "img.shields.io/badge/rust-";
+const DERIVED_MSRV_BADGE: &str = "https://img.shields.io/crates/msrv/aozora";
 
 const READMES: &[&str] = &["README.md", "crates/aozora/README.md"];
 const MSRV_PAGE: &str = "docs/contrib/msrv.md";
@@ -420,7 +421,7 @@ fn check_badges(root: &Path, violations: &mut Vec<String>) -> Result<(), String>
     if !offenders.is_empty() {
         violations.push(format!(
             "{} README(s) carry a hand-written MSRV badge:\n    {}\n\
-             -> use `https://img.shields.io/crates/msrv/aozora`, which reads the published \
+             -> use `{DERIVED_MSRV_BADGE}`, which reads the published \
              crate's rust-version and cannot go stale",
             offenders.len(),
             offenders.join("\n    "),
@@ -603,7 +604,7 @@ mod tests {
             "must catch the hand-written badge"
         );
         assert!(
-            !"https://img.shields.io/crates/msrv/aozora".contains(STATIC_MSRV_BADGE),
+            !DERIVED_MSRV_BADGE.contains(STATIC_MSRV_BADGE),
             "the derived badge is the fix, not a violation"
         );
     }
@@ -615,9 +616,9 @@ mod tests {
             what: "development Rust pin",
             pattern: WORKFLOW_DEV_RUST_PIN,
         };
-        let expected = parse_version("1.97.0").expect("current toolchain");
+        let expected = parse_version("1.99.1").expect("current toolchain");
         let found = scrape_text(
-            "install_args: rust@1.97.0 just\ntoolchain: \"1.96.0\"\ntoolchain: 1.97.0\ntoolchain: ${{ steps.msrv.outputs.version }}\n",
+            "install_args: rust@1.99.1 just\ntoolchain: \"1.96.0\"\ntoolchain: 1.99.1\ntoolchain: ${{ steps.msrv.outputs.version }}\n",
             &pin,
         )
         .expect("workflow pins");

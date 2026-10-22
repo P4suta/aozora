@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn empty_source_yields_no_symbols() {
-        assert!(syms("").is_empty());
+        assert_eq!(syms(""), Vec::<DocumentSymbol>::new());
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         let src = "「   」は大見出し\n";
         let s = syms(src);
         assert_eq!(s.len(), 1);
-        assert!(!s[0].name.trim().is_empty());
+        assert_ne!(s[0].name.trim(), "");
         assert_eq!(s[0].name, UNTITLED_EN);
     }
 

@@ -184,7 +184,7 @@ mod tests {
         for input in [invalid_protocol, invalid_operation, missing_id] {
             let mut engine = FakeEngine::default();
             render(&mut engine, &input).expect_err("invalid request must fail");
-            assert!(engine.calls.is_empty());
+            assert_eq!(engine.calls, Vec::<(String, String)>::new());
         }
     }
 

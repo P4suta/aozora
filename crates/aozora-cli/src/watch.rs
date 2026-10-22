@@ -293,6 +293,6 @@ mod tests {
     fn write_banner_is_silent_off_a_terminal() {
         let mut out = Vec::new();
         write_banner(&mut out, false, Path::new("doc.txt"), &lang("en")).unwrap();
-        assert!(out.is_empty());
+        assert_eq!(out, Vec::<u8>::new());
     }
 }

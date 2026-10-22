@@ -120,12 +120,12 @@ jobs:
           path: .corpus
           fetch-depth: 1
       - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev valgrind
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.97.0 just taplo github:crate-ci/typos cargo:cargo-nextest
+            rust@1.99.1 just taplo github:crate-ci/typos cargo:cargo-nextest
             cargo:cargo-llvm-cov cargo:cargo-deny cargo:cargo-audit
             cargo:cargo-shear cargo:cargo-semver-checks tree-sitter
             npm:quicktype node go
@@ -218,11 +218,11 @@ jobs:
           - "aozora-extism:0/1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 just cargo:cargo-mutants cargo:cargo-nextest
+          install_args: rust@1.99.1 just cargo:cargo-mutants cargo:cargo-nextest
       - name: Mutation sweep
         env:
           ASSIGNMENT: ${{ matrix.assignment }}
@@ -257,7 +257,7 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
@@ -283,7 +283,7 @@ jobs:
         mode: [asan, tsan]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
@@ -301,11 +301,11 @@ jobs:
         runner: [macos-latest, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 cargo:cargo-nextest
+          install_args: rust@1.99.1 cargo:cargo-nextest
       - run: cargo nextest run --workspace --exclude aozora-bench --exclude aozora-extism --all-targets --all-features --no-fail-fast
       - run: cargo nextest run -p aozora-extism --all-targets --no-fail-fast
 
@@ -342,7 +342,7 @@ jobs:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: "1.97.0"
+          toolchain: "1.99.1"
           targets: ${{ matrix.target }}
           components: llvm-tools-preview
       - if: runner.os == 'Windows'
@@ -635,7 +635,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: "1.97.0"
+          toolchain: "1.99.1"
           targets: ${{ matrix.cargo_target }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -745,12 +745,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.97.0 just bun node go cargo:wasm-pack npm:binaryen
+            rust@1.99.1 just bun node go cargo:wasm-pack npm:binaryen
             cargo:cargo-cyclonedx
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -962,7 +962,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      RUSTUP_TOOLCHAIN: "1.97.0"
+      RUSTUP_TOOLCHAIN: "1.99.1"
     defaults:
       run:
         shell: bash
@@ -980,7 +980,7 @@ jobs:
           echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: "1.97.0"
+          toolchain: "1.99.1"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -1093,11 +1093,11 @@ jobs:
         with:
           name: release-python-${{ github.sha }}-${{ matrix.python-os }}
           path: .real-work-inputs/python
-      - uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.97.0 go
+          install_args: rust@1.99.1 go
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -1142,7 +1142,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
-          toolchain: "1.97.0"
+          toolchain: "1.99.1"
       - name: Pack immutable corpus
         run: >-
           cargo run --locked -p aozora-xtask -- real-work corpus

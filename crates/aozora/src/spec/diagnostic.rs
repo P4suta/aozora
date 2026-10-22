@@ -1633,15 +1633,14 @@ mod tests {
 
     #[test]
     fn body_args_are_empty_for_static_body_variants() {
-        assert!(
-            Diagnostic::empty_ruby_reading(Span::new(0, 1))
-                .body_args()
-                .is_empty()
+        assert_eq!(
+            Diagnostic::empty_ruby_reading(Span::new(0, 1)).body_args(),
+            Vec::<(&str, Cow<'_, str>)>::new()
         );
-        assert!(
+        assert_eq!(
             Diagnostic::internal(Span::new(0, 0), InternalCheckCode::ResidualAnnotationMarker)
-                .body_args()
-                .is_empty()
+                .body_args(),
+            Vec::<(&str, Cow<'_, str>)>::new()
         );
     }
 

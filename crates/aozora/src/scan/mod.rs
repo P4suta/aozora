@@ -137,6 +137,6 @@ mod tests {
     fn skips_kana_sharing_the_e3_lead_byte() {
         // The whole motivation: あいうえお all start with 0xE3 but are
         // not triggers. The scanner must emit nothing for pure kana.
-        assert!(scan_offsets("あいうえおこんにちは").is_empty());
+        assert_eq!(scan_offsets("あいうえおこんにちは"), Vec::<u32>::new());
     }
 }

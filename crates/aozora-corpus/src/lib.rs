@@ -90,7 +90,7 @@ mod tests {
         let owned: String = "owned".to_owned();
         let item = CorpusItem::new(owned, Vec::new());
         assert_eq!(item.label, "owned");
-        assert!(item.bytes.is_empty());
+        assert_eq!(item.bytes, Vec::<u8>::new());
     }
 
     #[test]

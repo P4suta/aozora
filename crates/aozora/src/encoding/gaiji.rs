@@ -57,6 +57,12 @@
 
 use core::fmt;
 
+const DECIMAL_RADIX: u32 = 10;
+const DECIMAL_PLACE_VALUE: usize = 10;
+const UNICODE_HEX_RADIX: u32 = 16;
+const MAX_CODEPOINT_HEX_DIGITS: usize = 6;
+const MAX_JIS_COORDINATE: u8 = 94;
+
 use crate::encoding::jisx0213_table::{
     DESCRIPTION_TO_CHAR, JISX0213_MENCODE_TO_CHAR, JISX0213_MENCODE_TO_STR, ROMAN_NUMERAL_LOWER,
     ROMAN_NUMERAL_UPPER,
@@ -193,9 +199,11 @@ fn roman_numeral_glyph(description: &str) -> Option<&'static str> {
     let mut n: usize = 0;
     for ch in digits.chars() {
         let d = ch
-            .to_digit(10)
+            .to_digit(DECIMAL_RADIX)
             .or_else(|| ('０'..='９').contains(&ch).then(|| ch as u32 - '０' as u32))?;
-        n = n.checked_mul(10)?.checked_add(d as usize)?;
+        n = n
+            .checked_mul(DECIMAL_PLACE_VALUE)?
+            .checked_add(d as usize)?;
     }
     let table = if lower {
         &ROMAN_NUMERAL_LOWER
@@ -215,10 +223,10 @@ fn parse_u_plus(mencode: &str) -> Option<char> {
     let hex = mencode.strip_prefix("U+")?;
     // Reject empty / oversized; `u32::from_str_radix` would accept
     // 10-digit inputs but those can't fit a Unicode scalar.
-    if hex.is_empty() || hex.len() > 6 {
+    if hex.is_empty() || hex.len() > MAX_CODEPOINT_HEX_DIGITS {
         return None;
     }
-    let code = u32::from_str_radix(hex, 16).ok()?;
+    let code = u32::from_str_radix(hex, UNICODE_HEX_RADIX).ok()?;
     char::from_u32(code)
 }
 
@@ -552,7 +560,10 @@ pub(crate) fn parse_menkuten(token: &str) -> Option<MenKuTen> {
     let ku: u8 = parts.next()?.parse().ok()?;
     let ten: u8 = parts.next()?.parse().ok()?;
     let mkt = MenKuTen { plane, ku, ten };
-    if !(1..=2).contains(&plane) || !(1..=94).contains(&ku) || !(1..=94).contains(&ten) {
+    if !(1..=2).contains(&plane)
+        || !(1..=MAX_JIS_COORDINATE).contains(&ku)
+        || !(1..=MAX_JIS_COORDINATE).contains(&ten)
+    {
         return None;
     }
     // Guard the byte-exact round-trip: a leading-zero or otherwise
@@ -642,7 +653,9 @@ impl<'src> GaijiCanonical<'src> {
 #[must_use]
 pub(crate) fn is_mencode_shaped(s: &str) -> bool {
     if let Some(hex) = s.strip_prefix("U+") {
-        return !hex.is_empty() && hex.len() <= 6 && hex.chars().all(|c| c.is_ascii_hexdigit());
+        return !hex.is_empty()
+            && hex.len() <= MAX_CODEPOINT_HEX_DIGITS
+            && hex.chars().all(|c| c.is_ascii_hexdigit());
     }
     // Optional `第N水準` prefix: skip past the digits + `水準` token if
     // present, then validate the remainder as `N-N-N`.
@@ -1059,7 +1072,10 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_empty_for_plain_text() {
-        assert!(gaiji_resolutions("plain text, no gaiji").is_empty());
+        assert_eq!(
+            gaiji_resolutions("plain text, no gaiji"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]
@@ -1128,11 +1144,20 @@ mod tests {
     fn gaiji_resolutions_excludes_plain_directives() {
         // A bracket-hash directive is NOT a gaiji — the standalone gate
         // (recognize_gaiji_body) declines it, so it never enters the view.
-        assert!(gaiji_resolutions("本文［＃改ページ］続き").is_empty());
-        assert!(gaiji_resolutions("［＃ここから2字下げ］字下げ").is_empty());
+        assert_eq!(
+            gaiji_resolutions("本文［＃改ページ］続き"),
+            Vec::<GaijiResolution>::new()
+        );
+        assert_eq!(
+            gaiji_resolutions("［＃ここから2字下げ］字下げ"),
+            Vec::<GaijiResolution>::new()
+        );
         // A forward-reference bouten directive (balanced quotes, no mencode)
         // is likewise declined.
-        assert!(gaiji_resolutions("東京［＃「東京」に傍点］へ").is_empty());
+        assert_eq!(
+            gaiji_resolutions("東京［＃「東京」に傍点］へ"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]
@@ -1187,7 +1212,10 @@ mod tests {
         let resolutions = gaiji_resolutions(src);
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0].span().slice(src), "※［＃「々」］");
-        assert!(gaiji_resolutions("［＃外側［＃内側").is_empty());
+        assert_eq!(
+            gaiji_resolutions("［＃外側［＃内側"),
+            Vec::<GaijiResolution>::new()
+        );
     }
 
     #[test]
