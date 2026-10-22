@@ -3,67 +3,7 @@
     reason = "document commands validate source inputs before constructing parser spans"
 )]
 
-//! `aozora` command-line frontend.
-//!
-//! Subcommands fall into two groups:
-//!
-//! Document-level (consume input, produce output):
-//! - `aozora check FILE [--strict]` — run the lexer over `FILE` and
-//!   report diagnostics. Exit 0 when no diagnostics; exit 1 otherwise
-//!   if `--strict`, else exit 0 with diagnostics on stderr.
-//! - `aozora lint FILE [--fix]` — report the advisory
-//!   notation-hygiene lints (`aozora::lint::*`) — non-canonical
-//!   directive near-misses. `--fix` rewrites the flagged near-misses
-//!   in place (the Tier1 autofix; same transform as `fmt --fix
-//!   --write`).
-//! - `aozora fmt FILE [--check | --write]` — round-trip
-//!   `parse ∘ to_source`. `--check` exits non-zero if the formatted
-//!   output differs from `FILE`; `--write` overwrites `FILE`. Default
-//!   is print-to-stdout.
-//! - `aozora render FILE` — render `FILE` to HTML on stdout.
-//! - `aozora inspect <kind> FILE` — emit the parsed document's JSON
-//!   for one `aozora::json` envelope (`nodes` / `pairs` /
-//!   `container-pairs` / `diagnostics` / `gaiji`). The data
-//!   counterpart to `aozora spec schema <kind>`, byte-identical to
-//!   every binding's `*_json()` output.
-//! - `aozora pandoc FILE [--to FMT]` — project the parsed
-//!   document to a Pandoc AST. Without `--to`, prints Pandoc JSON
-//!   to stdout (consumable by `pandoc -f json -t FMT`); with
-//!   `--to`, spawns `pandoc` and pipes the JSON through it.
-//!
-//! Introspection (no input required, prints typed contracts):
-//! - `aozora explain <target>` — embedded handbook chapter for a
-//!   `NodeKind` tag or notation concept, or the help / severity / URL
-//!   for a diagnostic code.
-//! - `aozora spec kinds` — table of every `NodeKind` / `PairKind` /
-//!   `Severity` / `DiagnosticSource` / `Sentinel` /
-//!   `InternalCheckCode` variant with its wire tag and a one-line
-//!   summary.
-//! - `aozora spec schema {config|diagnostics|nodes|pairs|container-pairs}` —
-//!   pretty-prints the JSON Schema for the configuration file or a
-//!   document envelope. Document schemas are sourced from
-//!   `aozora::json::schema_*` (`schema` feature on the `aozora` crate).
-//! - `aozora spec slugs` — the static ［＃…］ slug catalogue (no input).
-//!
-//! Onboarding (set up / inspect a working environment):
-//! - `aozora init [DIR]` — scaffold a project: a commented
-//!   `.aozora.toml`, a sample `hon.aozora`, and a `.gitignore`.
-//! - `aozora doctor` — end-user runtime self-check: the discovered
-//!   config, the effective settings and their sources, PATH tools,
-//!   and terminal colour capabilities.
-//!
-//! Tooling:
-//! - `aozora lsp [--stdio]` — run the aozora language server in-process,
-//!   speaking LSP over stdio. `--stdio` is accepted (and ignored) for
-//!   editor compatibility.
-//! - `aozora completions <shell>` — print a shell completion script
-//!   (bash / zsh / fish / powershell / elvish / nushell), generated
-//!   from the live command tree.
-//!
-//! All document-level subcommands accept `-` (or no path argument)
-//! to read from stdin. Encoding is auto-detected by default (UTF-8 if
-//! the bytes are valid UTF-8, otherwise Shift_JIS); pass
-//! `--encoding {utf8,sjis}` (or `-E …`) to force a specific decoder.
+//! Parses commands and dispatches document, interactive, and reference operations.
 
 #![forbid(unsafe_code)]
 
@@ -98,13 +38,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 use std::thread;
 
-use aozora::pandoc::to_pandoc;
-use aozora::{DiagnosticSource, DirectiveNormalization, RenderOptions, SerializeOptions, json};
-// The formatter crate owns both the source-encoding value-enum (so every
-// subcommand shares one decoder) and the colour-policy enum; re-exported
-// crate-wide so `config` can name them.
 pub(crate) use crate::fmt::{ColorChoice, Encoding};
 use crate::i18n::LanguageIdentifier;
+use aozora::pandoc::to_pandoc;
+use aozora::{DiagnosticSource, DirectiveNormalization, RenderOptions, SerializeOptions, json};
 
 use anyhow::{Context, Result};
 use clap::builder::PossibleValue;
@@ -122,29 +59,12 @@ use crate::repl::ReplArgs;
 use crate::timing::Timer;
 use crate::tui::TuiArgs;
 
-/// Help / usage styling: bold-green headers and usage line (the single
-/// accent), cyan literals (flag names and their values), plain placeholders.
-/// clap only emits these ANSI codes when its `color` feature decides colour is
-/// on, so `NO_COLOR` / `CLICOLOR` / a piped stream drop them automatically. The
-/// `spec kinds` / `spec schema` tables are comfy-table, not clap, so they stay
-/// monochrome regardless.
 const HELP_STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().bold())
     .usage(AnsiColor::Green.on_default().bold())
     .literal(AnsiColor::Cyan.on_default())
     .placeholder(Style::new());
 
-/// Top-level `--help` layout. clap can only file every subcommand under one
-/// flat `Commands:` heading, so the daily verbs and the occasionally-consulted
-/// reference material (`spec`, `explain`) all read as one undifferentiated
-/// wall. This template files them into task-oriented groups instead —
-/// Documents / Interactive / Introspection / Setup & tooling — with a terse
-/// one-line index blurb each (each subcommand's own `--help` still carries the
-/// full prose). `{usage-heading}` keeps clap's styled `Usage:`; the group and
-/// `Options:` headings render through clap's plain-text arg writer, so the
-/// whole block degrades to monochrome on a pipe. A `#[test]` asserts every
-/// visible subcommand appears here, so a newly added command cannot silently
-/// go missing from the grouped index.
 const HELP_TEMPLATE: &str = "\
 {about-with-newline}
 {usage-heading} {usage}
@@ -198,33 +118,37 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
-    /// When to colourise diagnostics: `auto` (colour on a terminal,
-    /// honouring `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or
-    /// `never`. Falls back to the `color` key in `.aozora.toml`, then `auto`.
-    /// Global — accepted after any subcommand.
-    /// Governs `check`'s graphical diagnostics and `fmt --diff`; `spec kinds`
-    /// tables are always monochrome.
+    /// Choose `auto`, `always`, or `never` for diagnostic color.
+    /// `auto` uses terminal detection and honours `NO_COLOR`, `CLICOLOR`, and `CLICOLOR_FORCE`.
+    /// Defaults to `.aozora.toml`'s `color`, then `auto`.
+    /// Applies to graphical diagnostics and `fmt --diff`.
+    /// `spec kinds` tables stay monochrome.
+    /// Accepts placement after any subcommand.
     #[arg(long, global = true, value_name = "WHEN", value_enum)]
     color: Option<ColorChoice>,
 
-    /// Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv`
-    /// trace. Logs go to stderr only, so stdout — and the JSON / short
-    /// diagnostic streams — stay byte-identical. `AOZORA_LOG` overrides this;
-    /// cancels against `--quiet` (one axis). Global.
+    /// Increase stderr log verbosity with `-v` for info, `-vv` for debug, or `-vvv` for trace.
+    /// Preserves stdout and diagnostic output.
+    /// `AOZORA_LOG` overrides this setting.
+    /// One `-v` cancels `--quiet`.
+    /// Accepts placement after any subcommand.
     #[arg(long, short = 'v', global = true, action = clap::ArgAction::Count)]
     verbose: u8,
 
-    /// Lower log verbosity to errors only — the opposite end of the
-    /// `--verbose` axis (a single `-v` cancels it). Affects only stderr
-    /// logging, never stdout. `AOZORA_LOG` overrides it. Global.
+    /// Restrict stderr logging to errors.
+    /// Preserves stdout.
+    /// One `-v` cancels this setting.
+    /// `AOZORA_LOG` overrides it.
+    /// Accepts placement after any subcommand.
     #[arg(long, short = 'q', global = true)]
     quiet: bool,
 
-    /// Language for human messages (the stdin guard, the `--watch` banner,
-    /// and `explain`), as a BCP-47 tag: `en` (the default), `ja`, or `zh`.
-    /// Highest priority in `--lang > AOZORA_LANG > .aozora.toml lang > LANG`;
-    /// unknown locales fall back to `en`. Never affects machine output
-    /// (json / short / codes / exit / schema) or `--encoding`. Global.
+    /// Choose the human message language with a `BCP-47` tag: `en`, `ja`, or `zh`.
+    /// Applies to the stdin guard, watch banner, and `explain`.
+    /// Resolves through `--lang > AOZORA_LANG > .aozora.toml lang > LANG`, then English.
+    /// Unknown locales use English.
+    /// Preserves JSON, short diagnostics, codes, exit status, schemas, and source encoding.
+    /// Accepts placement after any subcommand.
     #[arg(long, global = true, value_name = "LOCALE")]
     lang: Option<String>,
 }
@@ -233,10 +157,9 @@ struct Cli {
 enum Command {
     /// Run the lexer over a file and report diagnostics.
     Check(CheckArgs),
-    /// Report notation-hygiene lints (`aozora::lint::*`) — non-canonical
-    /// directive near-misses and their suggested canonical spelling. The
-    /// authoring-hygiene view (`check` reports every diagnostic); `--fix`
-    /// rewrites the flagged near-misses in place (the Tier1 autofix).
+    /// Report notation lints from `aozora::lint::*` with suggested canonical spellings for directive near-misses.
+    /// `check` reports every diagnostic.
+    /// `--fix` rewrites flagged near-misses in place with the Tier1 autofix.
     Lint(LintArgs),
     #[command(
         about = "Format documents: round-trip parse ∘ to_source to the canonical form. \
@@ -247,80 +170,64 @@ enum Command {
     Fmt(FmtCmd),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
-    /// Emit a parsed document's JSON for one `aozora::json`
-    /// envelope — `nodes` / `pairs` / `container-pairs` /
-    /// `diagnostics` / `gaiji`. The data counterpart to `spec schema`:
-    /// `spec schema <kind>` prints the JSON Schema, `inspect <kind>`
-    /// prints a document's data in that schema, byte-identical to every
-    /// binding's `*_json()` output.
+    /// Emit a document's JSON envelope for `nodes`, `pairs`, `container-pairs`, `diagnostics`, or `gaiji`.
+    /// `spec schema <kind>` prints the matching schema.
+    /// Output matches every binding's `*_json()` output byte for byte.
     Inspect(InspectArgs),
-    /// Print prose for a `NodeKind` tag or notation concept, or help /
-    /// severity / URL for a diagnostic code.
+    /// Print prose for a `NodeKind` tag or notation concept, or help / severity / URL for a diagnostic code.
     Explain(ExplainArgs),
-    /// Query the tool's own typed contracts — no document input. Groups the
-    /// introspection subcommands: `kinds` (the enum / wire-tag tables),
-    /// `schema <which>` (a JSON envelope's JSON Schema), and `slugs` (the
-    /// static ［＃…］ catalogue).
+    /// Query typed contracts without document input.
+    /// `kinds` lists enums and wire tags.
+    /// `schema <which>` emits JSON Schema.
+    /// `slugs` lists the static `［＃…］` catalogue.
     Spec(SpecArgs),
-    /// Project the parsed document to a Pandoc AST.
-    /// Without `--to`, prints Pandoc JSON to stdout (consumable
-    /// by `pandoc -f json -t <FORMAT>`); with `--to`, spawns
-    /// pandoc and pipes the JSON through it.
+    /// Project the parsed document to a Pandoc abstract syntax tree.
+    /// Without `--to`, print JSON to stdout for `pandoc -f json -t <FORMAT>`.
+    /// With `--to`, pipe the JSON through pandoc.
     Pandoc(PandocArgs),
-    /// Run an end-user runtime self-check: the discovered `.aozora.toml` and
-    /// the effective settings (with each value's source), whether `pandoc` is
-    /// on `PATH`, and the terminal's colour capabilities.
-    /// Exits 0 when all-green, 1 on a blocking problem (a malformed config).
-    /// The runtime counterpart to the contributor-facing `just doctor`.
+    /// Check discovered `.aozora.toml` configuration and effective settings with their sources.
+    /// Report `pandoc` availability on `PATH` and terminal color support.
+    /// Exit 0 when all checks pass or 1 for a blocking configuration problem.
+    /// Contributors can also use `just doctor` to check their development environment.
     Doctor,
-    /// Scaffold a new Aozora notation project into `[DIR]` (default the
-    /// working directory): a commented `.aozora.toml`, a sample `hon.aozora`
-    /// exercising ruby / 傍点 / 字下げ so `render` and `check` work
-    /// immediately, and a `.gitignore`. Existing files are kept untouched
-    /// unless `--force`; idempotent. `--no-sample` / `--no-gitignore` opt out.
+    /// Scaffold an Aozora notation project in `[DIR]`, defaulting to the working directory.
+    /// Create a commented `.aozora.toml`, a `.gitignore`, and `hon.aozora` with ruby, emphasis dots, and indentation for `render` and `check`.
+    /// Preserve existing files unless `--force` permits replacement, so repeated runs are safe.
+    /// Skip optional files with `--no-sample` and `--no-gitignore`.
     Init(InitArgs),
-    /// Start an interactive read-eval-print loop: type a line of notation and
-    /// see its parsed nodes, rendered HTML, Pandoc AST, and diagnostics
-    /// immediately (the terminal counterpart to the web playground). Reuses the
-    /// same parse / render / json engine as the document subcommands, so its
-    /// views can never disagree with them. `:mode` / `:lang` / `:encoding` /
-    /// `:load` / `:help` / `:quit` tune the session; line editing and history
-    /// come from rustyline on a terminal, and a piped stdin is scriptable.
+    /// Explore notation interactively with parsed nodes, HTML, Pandoc abstract syntax trees, and diagnostics for each line.
+    /// Use the same engine as the document subcommands and web playground.
+    /// Control the session with `:mode`, `:lang`, `:encoding`, `:load`, `:help`, and `:quit`.
+    /// Rustyline provides terminal line editing and history.
+    /// Piped stdin supports scripts.
     Repl(ReplArgs),
-    /// Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane
-    /// (rendered HTML / nodes / Pandoc), and a DIAGNOSTICS pane, all refreshed
-    /// on every keystroke (debounced) through the same parse / render / json
-    /// engine as the document subcommands. The editor-free counterpart to
-    /// `--watch`. `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the
-    /// preview view, `Ctrl-Q` quits. An optional `[FILE]` opens for editing.
+    /// Open a full-screen editor with source, preview, and diagnostic panes.
+    /// Preview HTML, nodes, or Pandoc through the document subcommands' engine.
+    /// Edits refresh all panes after a debounce delay, providing an alternative to `--watch`.
+    /// `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles preview, and `Ctrl-Q` quits.
+    /// Supply `[FILE]` to open a document.
     Tui(TuiArgs),
-    /// Run the aozora language server in-process, speaking LSP over stdio
-    /// until the client disconnects. `--stdio` is accepted (and ignored) for
-    /// editor compatibility; stdout carries the JSON-RPC wire protocol and logs
-    /// go to stderr.
+    /// Run the aozora language server in this process over stdio until the client disconnects.
+    /// Accept `--stdio` for editor compatibility.
+    /// Stdout carries `JSON-RPC` and stderr carries logs.
     Lsp(LspArgs),
-    /// Print a shell completion script (`bash` / `zsh` / `fish` /
-    /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
-    /// the live command tree, so it always matches the installed
-    /// binary; release tarballs also ship these under `completions/`.
+    /// Print a shell completion script for `bash`, `zsh`, `fish`, `powershell`, `elvish`, or `nushell` to stdout.
+    /// Generate scripts from the installed binary's command tree.
+    /// Release tarballs include them under `completions/`.
     Completions(CompletionsArgs),
-    /// Render a roff man page (the top-level page, or a named
-    /// subcommand's). Hidden: man pages ship in the release tarball
-    /// under `man/man1/` rather than being invoked by hand.
+    /// Render a roff man page for the root command or a named subcommand.
+    /// This hidden command generates the pages under `man/man1/` in release tarballs.
     #[command(hide = true)]
     Man(ManArgs),
-    /// Speak the release-lab JSONL protocol over stdin/stdout.
+    /// Speak the release-lab protocol with one JSON value per line over stdin and stdout.
     #[command(hide = true)]
     LabWorker,
 }
 
 /// Where to read a single document.
-///
-/// Shared by the FILE-taking document subcommands. `fmt` reads many paths, so
-/// it owns only the common document settings.
 #[derive(Debug, Parser)]
 struct InputArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
+    /// Read this path, or use `-` or no path to read stdin.
     #[arg(default_value = "-")]
     file: PathBuf,
 }
@@ -328,15 +235,15 @@ struct InputArgs {
 /// Settings shared by every document subcommand.
 #[derive(Debug, Parser)]
 struct DocumentArgs {
-    /// Source encoding. Falls back to `AOZORA_ENCODING`, then the
-    /// `encoding` key in `.aozora.toml`, then auto-detection.
+    /// Source encoding.
+    /// Falls back to `AOZORA_ENCODING`, then the `encoding` key in `.aozora.toml`, then automatic detection.
     #[arg(long, short = 'E', value_enum, env = "AOZORA_ENCODING")]
     encoding: Option<Encoding>,
 
     /// How to render diagnostics: `human`, `json`, or `short`.
     ///
-    /// Defaults to `human` on a terminal and `json` when piped. Falls back to
-    /// `AOZORA_FORMAT`, then `.aozora.toml`.
+    /// Defaults to `human` on a terminal and `json` when piped.
+    /// Falls back to `AOZORA_FORMAT`, then `.aozora.toml`.
     #[arg(long, value_enum, env = "AOZORA_FORMAT")]
     format: Option<DiagFormat>,
 
@@ -346,28 +253,21 @@ struct DocumentArgs {
     #[arg(long, short = 's', env = "AOZORA_STRICT")]
     strict: bool,
 
-    /// Read settings from this `.aozora.toml` instead of searching
-    /// upward from the working directory.
+    /// Read this `.aozora.toml` instead of searching upward from the working directory.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    /// Print per-phase timing (read / parse / output) to stderr. Writes
-    /// only to stderr, so stdout stays byte-identical — safe to leave on
-    /// inside a `render` / `inspect` pipeline. The report auto-selects its
-    /// view like `check`'s diagnostics: aligned `human` lines when stderr is
-    /// a terminal, a versioned `{schemaVersion,data:{phases,totalNanos}}` envelope
-    /// when it is piped.
+    /// Print read, parse, and output timings to stderr, preserving stdout for pipelines.
+    /// Use aligned human output on a terminal or a versioned `{schemaVersion,data:{phases,totalNanos}}` JSON envelope when piped.
     #[arg(long)]
     timing: bool,
 
-    /// Re-run on every change to the input file (foreground; Ctrl-C to
-    /// stop). Requires a file path — not available on stdin.
+    /// Run again whenever the input file changes, until `Ctrl-C`.
+    /// Requires a path rather than stdin.
     #[arg(long)]
     watch: bool,
 }
 
-/// The single-FILE document flags: input source + cross-cutting behaviour,
-/// flattened by check / render / inspect / pandoc.
 #[derive(Debug, Parser)]
 struct CommonArgs {
     #[command(flatten)]
@@ -377,15 +277,11 @@ struct CommonArgs {
 }
 
 impl CommonArgs {
-    /// Load the effective `.aozora.toml`: an explicit `--config`, else an
-    /// upward search from the working directory, else all-default.
     fn load_config(&self) -> Result<config::ConfigFile> {
         let cwd = env::current_dir().context("failed to read the working directory")?;
         config::ConfigFile::resolve(self.document.config.as_deref(), &cwd)
     }
 
-    /// Effective encoding: `-E/--encoding` (or `AOZORA_ENCODING`, both via
-    /// clap), else the config's `encoding`, else auto-detect.
     fn resolved_encoding(&self, cfg: &config::ConfigFile) -> Encoding {
         self.document.encoding.or(cfg.encoding).unwrap_or_default()
     }
@@ -490,19 +386,14 @@ struct LintArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Rewrite the flagged directive near-misses to their canonical spelling
-    /// in place — the zero-false-positive Tier1 autofix. This is the same
-    /// source transform as `aozora fmt --fix --write` (one shared engine), so
-    /// it also canonicalises ruby bars and whitespace, not only directives.
-    /// Needs a file path; it cannot rewrite stdin.
+    /// Rewrite flagged directive near-misses in place with the Tier1 autofix, which has no false positives.
+    /// Use the same transform as `aozora fmt --fix --write` to canonicalize directives, ruby bars, and whitespace.
+    /// Requires a path rather than stdin.
     #[arg(long)]
     fix: bool,
 }
 
-/// `aozora fmt` — the formatter's full surface (positional PATHs, `--check` /
-/// `--write` / `--diff` / `--list` / `--json` / `--fix` / `-E/--encoding`),
-/// backed by the shared `crate::fmt` engine, plus the CLI's cross-cutting
-/// `--config` / `--timing` / `--watch`.
+/// Format documents with shared configuration, timing, and watch settings.
 #[derive(Debug, Parser)]
 struct FmtCmd {
     #[command(flatten)]
@@ -517,43 +408,27 @@ struct RenderArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Render verified non-canonical directive near-misses as if they were
-    /// their canonical spelling (e.g. `［＃「梅」は小書き］` renders 梅 as
-    /// small-letter emphasis instead of an inert hidden directive span) — the
-    /// same near-misses `aozora::lint::non_canonical_directive` flags and
-    /// `aozora fmt --fix` rewrites. Opt-in and read-only: without this flag an
-    /// unrecognised directive stays a hidden `aozora-directive` span, and this
-    /// never rewrites the input source (a read-only projection applies
-    /// `--normalize`; a source rewrite uses `fmt --fix`). Consults the
-    /// zero-false-positive Tier1 catalogue only.
+    /// Render verified directive near-misses using their canonical spelling without changing the source.
+    /// For example, `［＃「梅」は小書き］` renders `梅` as small-letter emphasis.
+    /// Uses only the Tier1 catalogue with no false positives, matching `aozora::lint::non_canonical_directive` and `aozora fmt --fix`.
+    /// Without this flag, unrecognized directives remain hidden `aozora-directive` spans.
     #[arg(long)]
     normalize: bool,
 
-    /// Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses
-    /// (Tier2) — e.g. `［＃中文字、ゴシック体］` renders bold, and
-    /// `［＃ここから最後まで３字下げ］` an indent that runs to the document end.
-    /// Implies `--normalize`, is render-only, and never rewrites the source
-    /// (a Tier2 reduction applied in error can reach only this render
-    /// output). Looser than `--normalize`. See ADR-0026.
+    /// Also render the lossy Tier2 forms that Tier1 refuses.
+    /// For example, `［＃中文字、ゴシック体］` renders bold and `［＃ここから最後まで３字下げ］` indents through the document end.
+    /// Implies `--normalize` with looser reductions that affect only rendered output, preserving the source even for mistaken reductions.
+    /// See ADR-0026.
     #[arg(long)]
     degraded: bool,
 }
 
-/// `aozora inspect <kind>` — which JSON envelope to emit. The data
-/// counterpart to `SchemaKind`: `spec schema nodes` prints the contract,
-/// `inspect nodes` prints a document's data in that contract.
-///
-/// The nesting is the one structural split that matters: `Gaiji` reads
-/// raw source, so it is unreachable through a parse; every other kind
-/// projects the parse tree. Encoding that difference in the type is what
-/// lets the dispatch stay a two-arm match with no `unreachable!` stand-in.
 #[derive(Debug, Clone, Copy)]
 enum InspectKind {
     Gaiji,
     Tree(TreeKind),
 }
 
-/// The `inspect` kinds that project the parse tree.
 #[derive(Debug, Clone, Copy)]
 enum TreeKind {
     Diagnostics,
@@ -563,9 +438,6 @@ enum TreeKind {
 }
 
 impl TreeKind {
-    /// Render this projection of `tree` to its JSON string. Every arm
-    /// delegates to `aozora::json`, the single authority shared with the
-    /// Python / WASM / C bindings, so the bytes match every surface.
     fn render(self, snapshot: &aozora::Snapshot) -> String {
         match self {
             Self::Diagnostics => json::diagnostics(snapshot.diagnostics()),
@@ -576,9 +448,6 @@ impl TreeKind {
     }
 }
 
-// Hand-written rather than derived: `ValueEnum` cannot derive through the
-// `Tree(TreeKind)` tuple variant. The `value_variants` order is the order
-// `--help` lists the kinds.
 impl ValueEnum for InspectKind {
     fn value_variants<'a>() -> &'a [Self] {
         &[
@@ -627,19 +496,15 @@ struct PandocArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Pandoc output format (e.g. `html`, `epub`, `latex`, `docx`).
-    /// When set, the binary spawns `pandoc -f json -t <FORMAT>` and
-    /// pipes the generated JSON through it; otherwise the Pandoc
-    /// JSON itself goes to stdout.
+    /// Choose a Pandoc output format such as `html`, `epub`, `latex`, or `docx`.
+    /// Runs `pandoc -f json -t <FORMAT>` with the generated JSON.
+    /// Omit to print Pandoc JSON to stdout.
     #[arg(long, short = 't')]
     to: Option<String>,
 }
 
-/// `aozora spec <command>` — introspect the parser's own typed contracts.
-/// These read no document input; each prints a machine contract (the enum /
-/// wire-tag tables, a JSON envelope's JSON Schema, or the static slug
-/// catalogue). Grouping them under one noun keeps the reference material out
-/// of the daily-verb `--help`.
+/// Inspect typed contracts without document input.
+/// Print enum and wire-tag tables, JSON Schema, or the static slug catalogue.
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora spec kinds                # enum / wire-tag tables (json when piped)
@@ -653,14 +518,12 @@ struct SpecArgs {
 
 #[derive(Debug, Subcommand)]
 enum SpecCommand {
-    /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
-    /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode` variant with its
-    /// wire tag. `--format` selects human tables or the JSON envelope.
+    /// List each variant and wire tag for `NodeKind`, `PairKind`, `Severity`, `DiagnosticSource`, `Sentinel`, and `InternalCheckCode`.
+    /// `--format` selects human tables or the JSON envelope.
     Kinds(KindsArgs),
     /// Pretty-print the configuration or document-envelope JSON Schema.
     Schema(SchemaArgs),
-    /// Print the static ［＃…］ slug catalogue as the shared `aozora::json`
-    /// envelope — reads no document input.
+    /// Print the static `［＃…］` slug catalogue as the shared `aozora::json` envelope without document input.
     Slugs,
 }
 
@@ -668,32 +531,13 @@ fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().collect();
     let cli = Cli::parse_from(raw);
 
-    // Install the stderr tracing subscriber once, before any subcommand runs.
-    // `-v`/`-q` set the default level (default `warn`); `AOZORA_LOG` overrides.
-    // Writes only to stderr, so stdout and the machine diagnostic streams stay
-    // byte-identical at any verbosity. (`--help` / `--version` already exited
-    // during `parse_from`, so this never runs for them.)
     logging::init(cli.verbose, cli.quiet);
 
-    // Read the `.aozora.toml` layers once, up front: both decisions below are
-    // config-backed and both must be settled before any subcommand runs, so
-    // the file is resolved here rather than twice. Tolerant by design — see
-    // `early_config`.
     let cfg = early_config(&cli.command);
 
-    // Install the colour hook before any diagnostic `Report` is constructed:
-    // miette captures its handler at construction time (see `color::install`).
-    // Precedence: `--color > .aozora.toml color` (project over global), then
-    // `auto` — at which point `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and
-    // the stderr TTY decide. Colour has no `AOZORA_*` rung of its own; see
-    // `color`'s module docs.
     let color = color::resolve(cli.color, cfg.color);
     color::install(color);
 
-    // Resolve the human-message language once, up front, so every surface
-    // (stdin guard, watch banner, explain footer / labels) speaks the same
-    // language. Precedence: `--lang > AOZORA_LANG > .aozora.toml lang > LANG`,
-    // then English. The machine axis never consults it.
     let lang = resolve_lang(cli.lang.as_deref(), cfg.lang.as_deref());
 
     let result = match cli.command {
@@ -725,8 +569,7 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => code,
         Err(err) => match classify_err(&err) {
-            // A reader that closed our stdout pipe early (`aozora render … |
-            // head`) is a normal, silent success, not an error — see ADR-0029.
+            // ADR-0029 treats a closed output pipe as success.
             ErrDisposition::SilentSuccess => ExitCode::SUCCESS,
             ErrDisposition::Usage => {
                 let _drop = writeln!(io::stderr(), "aozora: {err:#}");
@@ -736,12 +579,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Resolve the human-message language from the full precedence chain
-/// `--lang > AOZORA_LANG > .aozora.toml lang > LANG`, then English.
-///
-/// `explicit` is the parsed `--lang`. `AOZORA_LANG` and `LANG` are read from
-/// the environment — `LANG` for *message* language only, never for encoding
-/// (ADR-0033). `config_lang` is the `lang` key from [`early_config`].
+/// ADR-0033 separates message language from source encoding.
 fn resolve_lang(explicit: Option<&str>, config_lang: Option<&str>) -> LanguageIdentifier {
     i18n::resolve(
         explicit,
@@ -751,18 +589,7 @@ fn resolve_lang(explicit: Option<&str>, config_lang: Option<&str>) -> LanguageId
     )
 }
 
-/// The effective `.aozora.toml` for `command`, read *tolerantly* — the file
-/// layer of the two settings `main` must decide before any subcommand runs:
-/// the colour hook (miette captures its handler at construction time) and the
-/// message language. Honours the subcommand's own `--config PATH`, so the early
-/// decisions read the very file the subcommand will.
-///
-/// Any error (an unreadable working directory, a malformed file) yields an
-/// all-default config, keeping both decisions infallible. Nothing is swallowed:
-/// the subcommand re-loads the same layers through
-/// [`CommonArgs::load_config`] and surfaces a malformed file as its own hard
-/// error there — colour and language simply must not be the surface that
-/// reports it, since the reporting itself depends on them.
+/// Uses defaults on configuration errors so diagnostic presentation can initialize before commands report those errors.
 fn early_config(command: &Command) -> config::ConfigFile {
     env::current_dir()
         .ok()
@@ -770,9 +597,6 @@ fn early_config(command: &Command) -> config::ConfigFile {
         .unwrap_or_default()
 }
 
-/// The `--config PATH` override carried by `command`, if it takes one. Only the
-/// document subcommands flatten `DocumentArgs`; the introspection / tooling
-/// subcommands read no config file, so they contribute no config layer.
 fn command_config_path(command: &Command) -> Option<&Path> {
     match command {
         Command::Check(a) => a.common.document.config.as_deref(),
@@ -794,18 +618,13 @@ fn command_config_path(command: &Command) -> Option<&Path> {
     }
 }
 
-/// How a top-level error maps to the process's disposition — the pure decision
-/// behind `main`'s final `match`, split out so both boundaries are unit-testable
-/// without a real broken pipe or a 4 GiB input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ErrDisposition {
-    /// Broken stdout pipe: exit 0 with nothing on stderr (ADR-0029).
+    /// ADR-0029 requires silent success for a closed output pipe.
     SilentSuccess,
-    /// Bad input, configuration, arguments, or runtime prerequisites.
     Usage,
 }
 
-/// Classify a top-level `err` into its [`ErrDisposition`].
 fn classify_err(err: &anyhow::Error) -> ErrDisposition {
     if output::is_broken_pipe(err) {
         ErrDisposition::SilentSuccess
@@ -814,8 +633,6 @@ fn classify_err(err: &anyhow::Error) -> ErrDisposition {
     }
 }
 
-/// Run `once`, or — with `--watch` — run it now and re-run on every
-/// change to the input file. `--watch` on stdin is a usage error (2).
 fn run_watched(
     common: &CommonArgs,
     lang: &LanguageIdentifier,
@@ -911,9 +728,6 @@ fn run_lint_once(args: &LintArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     .map(DocumentOutcome::exit_code)
 }
 
-/// The resolved lint settings threaded through `aozora lint --fix` alongside
-/// the input path: the decoder, the diagnostic output format, whether residue
-/// is fatal under `--strict`, and the language for rendered messages.
 #[derive(Clone, Copy)]
 struct LintFixSettings<'a> {
     encoding: Encoding,
@@ -921,9 +735,6 @@ struct LintFixSettings<'a> {
     lang: &'a LanguageIdentifier,
 }
 
-/// `aozora lint --fix`: apply the Tier1 autofix in place through the same
-/// guarded engine `fmt --fix --write` uses, then re-lint the result and report
-/// anything the autofix could not resolve.
 fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> {
     let LintFixSettings {
         encoding,
@@ -937,9 +748,6 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
     let fmt = fmt::read_and_format(path, opts, encoding)?;
     fmt::write_back(path, &fmt, opts)?;
 
-    // Re-lint the written form: the Tier1 autofix resolves every flagged
-    // near-miss, so this is normally empty, but reporting the residue keeps
-    // `--fix` honest if a body was flagged yet declined a canonical.
     let doc = aozora::parse(fmt.new).expect("source fits parser span limit");
     let tree = doc.snapshot();
     let residual = lint_diagnostics(&tree);
@@ -958,8 +766,6 @@ fn run_lint_fix(path: &Path, settings: LintFixSettings<'_>) -> Result<ExitCode> 
     .map(DocumentOutcome::exit_code)
 }
 
-/// Diagnostics surfaced by `lint`: notation-hygiene findings plus any internal
-/// parser failure that must retain the process-wide exit-3 contract.
 fn lint_diagnostics(snapshot: &aozora::Snapshot) -> Vec<aozora::Diagnostic> {
     snapshot
         .diagnostics()
@@ -979,8 +785,6 @@ fn run_fmt(
     quiet: bool,
     lang: &LanguageIdentifier,
 ) -> Result<ExitCode> {
-    // Anti-hang guard: fmt reading an interactive TTY with no file would block
-    // forever. `resolve` reports whether the paths degrade to stdin.
     if matches!(fmt::resolve(args.fmt.paths()), Ok(fmt::Input::Stdin))
         && let Some(code) = input::guard_stdin(Path::new("-"), "fmt", lang)
     {
@@ -989,15 +793,10 @@ fn run_fmt(
     fmt_watched(args, lang, || run_fmt_once(args, color, quiet, lang))
 }
 
-/// The concrete file paths among fmt's PATHs — every path that is not the `-`
-/// stdin marker. `--watch` needs exactly one; split out so the stdin filter is
-/// unit-testable.
 fn watch_target_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
     paths.iter().filter(|p| p.as_os_str() != "-").collect()
 }
 
-/// `--watch` for `fmt`: re-run on every change to the single input file.
-/// fmt takes many PATHs, so watch requires exactly one non-stdin path.
 fn fmt_watched(
     args: &FmtCmd,
     lang: &LanguageIdentifier,
@@ -1024,16 +823,11 @@ fn run_fmt_once(
     quiet: bool,
     lang: &LanguageIdentifier,
 ) -> Result<ExitCode> {
-    // Fold `.aozora.toml` into the effective encoding (flag/env > config >
-    // auto), then hand off to the shared formatter engine.
     let cwd = env::current_dir().context("failed to read the working directory")?;
     let cfg = config::ConfigFile::resolve(args.document.config.as_deref(), &cwd)?;
     let encoding = args.document.encoding.or(cfg.encoding).unwrap_or_default();
     let policy = args.document.diagnostic_policy(&cfg);
 
-    // The presentation policy: `--color` drives the `--diff` hunks, while
-    // `--quiet` and the resolved message language govern the TTY-gated
-    // directory-fmt progress bar and localized summary on stderr.
     let presentation = fmt::Presentation {
         color,
         quiet,
@@ -1077,8 +871,6 @@ fn run_render_once(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitC
         timer.report()?;
         return Ok(outcome.exit_code());
     }
-    // --degraded implies --normalize and adds Tier2; --normalize alone is
-    // Tier1; neither is the byte-identical default.
     let opts = RenderOptions::default().directives(if args.degraded {
         DirectiveNormalization::Degraded
     } else if args.normalize {
@@ -1096,8 +888,6 @@ fn run_render_once(args: &RenderArgs, lang: &LanguageIdentifier) -> Result<ExitC
 }
 
 fn run_inspect(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
-    // Every `inspect` kind reads a document (the static slug catalogue is a
-    // `spec slugs` view, not an `inspect` one), so the guard is unconditional.
     if let Some(code) = input::guard_stdin(&args.common.input.file, "inspect", lang) {
         return Ok(code);
     }
@@ -1117,7 +907,6 @@ fn run_inspect_once(args: &InspectArgs, lang: &LanguageIdentifier) -> Result<Exi
     Ok(outcome.exit_code())
 }
 
-/// Project the requested JSON envelope to its JSON string.
 fn inspect_json(
     args: &InspectArgs,
     lang: &LanguageIdentifier,
@@ -1145,8 +934,6 @@ fn inspect_json(
     Ok((json, outcome))
 }
 
-/// Dispatch `aozora spec <command>` to the introspection renderers. These read
-/// no document input — each prints a machine contract to stdout.
 fn run_spec(args: &SpecArgs) -> Result<ExitCode> {
     match &args.command {
         SpecCommand::Kinds(opts) => introspect::run_kinds(opts),
@@ -1189,9 +976,6 @@ fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitC
     timer.report()?;
 
     let Some(format) = args.to.as_deref() else {
-        // No --to: emit Pandoc JSON. Downstream invocations
-        // ( `aozora pandoc input.txt | pandoc -f json -t epub` )
-        // pick up the bytes verbatim.
         let mut stdout = output::stdout();
         stdout
             .write_all(json.as_bytes())
@@ -1199,7 +983,6 @@ fn run_pandoc_once(args: &PandocArgs, lang: &LanguageIdentifier) -> Result<ExitC
         return Ok(outcome.exit_code());
     };
 
-    // --to set: pipe through `pandoc -f json -t <format>`.
     debug!(format, "spawning `pandoc -f json -t <format>` subprocess");
     let mut child = Process::new("pandoc")
         .args(["-f", "json", "-t", format])
@@ -1269,11 +1052,6 @@ fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
         ?encoding,
         "reading and decoding input"
     );
-    // The formatter crate owns both the guarded readers and the decoder, so
-    // `check`/`render`/`inspect`/`pandoc` and `fmt` read and
-    // resolve bytes identically — including the oversize-input rejection
-    // (before the read for files, mid-read for stdin, and after decode for
-    // Shift_JIS → UTF-8 expansion).
     let raw = if path.as_os_str() == "-" {
         fmt::read_stdin()?
     } else {
@@ -1312,8 +1090,6 @@ mod tests {
         let mut stdout = output::guard(BrokenPipeWriter);
         anyhow::Error::new(stdout.write_all(b"x").unwrap_err())
     }
-
-    // --- classify_err: main's final error disposition ---
 
     #[test]
     fn classify_err_maps_broken_pipe_to_silent_success() {
@@ -1357,13 +1133,10 @@ mod tests {
         )));
     }
 
-    // --- watch_target_paths: fmt --watch stdin filter ---
-
     #[test]
     fn watch_target_paths_drops_stdin_marker() {
         let paths = vec![PathBuf::from("-"), PathBuf::from("a.txt")];
         let targets = watch_target_paths(&paths);
-        // With `==` instead of `!=` this would keep only "-" and drop "a.txt".
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].as_os_str(), "a.txt");
     }
@@ -1380,7 +1153,6 @@ mod tests {
     #[test]
     fn watch_target_paths_drops_a_lone_stdin_marker() {
         let paths = vec![PathBuf::from("-")];
-        // With `==` this would keep the single "-" entry.
         assert_eq!(watch_target_paths(&paths), Vec::<&PathBuf>::new());
     }
 
@@ -1396,13 +1168,8 @@ mod tests {
         assert_eq!(calls.get(), 1);
     }
 
-    // --- run_pandoc_once: real return differs from the default ---
-
     #[test]
     fn run_pandoc_once_propagates_read_errors() {
-        // A nonexistent input file makes the read fail before any output, so the
-        // real function returns Err — distinguishing it from the mutant body
-        // `Ok(Default::default())`, i.e. `Ok(ExitCode::SUCCESS)`.
         let args =
             PandocArgs::try_parse_from(["pandoc", "/nonexistent/aozora-pandoc-missing-9c1f2a.txt"])
                 .expect("pandoc args parse");
@@ -1483,13 +1250,8 @@ mod tests {
         );
     }
 
-    // --- command_config_path: threads --config into the early colour /
-    //     language resolution ---
-
     #[test]
     fn command_config_path_carries_a_document_subcommands_override() {
-        // A document subcommand's `--config PATH` must reach `early_config`; the
-        // whole-body `None` mutant would silently drop every explicit config.
         let cli = Cli::try_parse_from(["aozora", "check", "--config", "custom.toml", "-"])
             .expect("cli parses");
         assert_eq!(
@@ -1500,18 +1262,12 @@ mod tests {
 
     #[test]
     fn command_config_path_is_none_for_configless_subcommands() {
-        // The introspection subcommands flatten no `DocumentArgs`, so they carry
-        // no config layer — the `None` arm, not the whole-body mutant.
         let cli = Cli::try_parse_from(["aozora", "spec", "kinds"]).expect("cli parses");
         assert_eq!(command_config_path(&cli.command), None);
     }
 
     #[test]
     fn top_level_help_lists_every_visible_subcommand() {
-        // The grouped `--help` template (`HELP_TEMPLATE`) names each command by
-        // hand, so a newly added subcommand could silently go missing from the
-        // index. Assert every visible subcommand — all but the hidden `man` and
-        // clap's auto-generated `help` — appears in the rendered top-level help.
         use clap::CommandFactory;
         let mut cmd = Cli::command();
         let help = cmd.render_long_help().to_string();

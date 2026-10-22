@@ -3,48 +3,8 @@
     reason = "TUI initialization validates parser bounds and terminal state"
 )]
 
-//! `aozora tui` — a full-screen, live editor for the notation.
-//!
-//! The editor-free counterpart to `--watch`: instead of re-running a command
-//! when a file on disk changes, the TUI hosts the buffer itself in a
-//! three-pane layout — a source EDIT pane (left), a live PREVIEW pane (right),
-//! and a DIAGNOSTICS pane (bottom) — and re-parses / re-renders / re-diagnoses
-//! on every keystroke, debounced. It is the terminal-native sibling of the web
-//! playground with an editor attached.
-//!
-//! Like [`crate::repl`], it owns **no** parsing, rendering, or diagnostic
-//! logic. The preview is the exact engine surface the document subcommands
-//! emit — [`aozora::Snapshot::to_html`] (as `aozora render`), [`json::nodes`] (as
-//! `aozora inspect nodes`), and [`aozora::pandoc::to_pandoc`] (as `aozora
-//! pandoc`) — and the diagnostics pane is [`aozora::diagnostics_text`], the
-//! portable plain-text report. So the panes can never disagree with the rest
-//! of the CLI, and the TUI defines no machine surface of its own.
-//!
-//! Keys, all held with `Ctrl` so every unmodified keystroke reaches the
-//! editor:
-//!
-//! - `Ctrl-S` — save the buffer to the opened file (UTF-8).
-//! - `Ctrl-L` — cycle the chrome language (en → ja → zh).
-//! - `Ctrl-P` — cycle the preview view (html → nodes → pandoc).
-//! - `Ctrl-Q` — quit.
-//!
-//! The heart is the pure [`derive()`] function (`source + preview + lang →
-//! preview text + diagnostics`), the pure [`command_for`] keybind decoder, and
-//! the pure [`all_terminals`] tty guard; the state transitions
-//! ([`App::toggle_lang`], [`App::toggle_preview`], [`App::save`], the
-//! [`App::recompute_due`] debounce test) and the [`render`] layout are all
-//! exercised headlessly — over `ratatui`'s
-//! [`TestBackend`](ratatui::backend::TestBackend) and by direct state calls —
-//! so the whole surface is unit-tested without a terminal. Only the terminal
-//! I/O shells ([`run`]'s alternate-screen setup and the [`run_app`] /
-//! [`event_loop`] draw / input loop) need a real tty.
-//!
-//! The chrome (pane titles, the keybind legend, save / error status) is
-//! localized through the `i18n` catalog; the preview and diagnostic *bytes* are the
-//! machine axis and stay identical in every locale (ADR-0033). The edit buffer
-//! is Unicode text and `Ctrl-S` always writes UTF-8 — the engine still decodes
-//! a Shift_JIS file on open (`-E sjis`), but a Shift_JIS write-back is out of
-//! scope.
+//! Runs the terminal editor through [`run`].
+//! ADR-0033 keeps preview and diagnostic output independent of the interface language.
 
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -71,16 +31,16 @@ use tui_textarea::TextArea;
 
 use crate::Encoding;
 
-/// Coalesce a burst of keystrokes into a single re-parse: the preview and
-/// diagnostics recompute once the buffer has been quiet for this long.
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// How long [`event_loop`] blocks waiting for input before checking whether
-/// the debounce window has elapsed. Kept below [`DEBOUNCE`] so a pending
-/// recompute fires promptly even when the typist has stopped.
 const POLL: Duration = Duration::from_millis(50);
 
-/// `aozora tui` — start the full-screen live editor.
+const MIN_BODY_ROWS: u16 = 3;
+const EDITOR_HEIGHT_PERCENT: u16 = 60;
+const DIAGNOSTICS_HEIGHT_PERCENT: u16 = 40;
+const TOP_PANE_WIDTH_PERCENT: u16 = 50;
+
+/// Start the full-screen live editor.
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora tui                     # start with an empty buffer
@@ -94,38 +54,37 @@ Keys (while running):
 Every unmodified keystroke edits the source pane; the preview and diagnostics
 panes refresh automatically, debounced.")]
 pub(crate) struct TuiArgs {
-    /// Optional file to open in the editor. Omit to start with an empty
-    /// buffer; `Ctrl-S` then reports that there is no file to save.
+    /// Open this file in the editor.
+    /// Omit to start with an empty buffer, where `Ctrl-S` reports that no file is available.
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
 
-    /// Which projection the preview pane shows at startup: `html` (the
-    /// default, as `aozora render`), `nodes` (as `aozora inspect nodes`), or
-    /// `pandoc` (the Pandoc AST). Cycle it live with `Ctrl-P`.
+    /// Choose the initial preview: `html`, `nodes`, or `pandoc`.
+    /// Defaults to HTML, matching `aozora render`.
+    /// The other views match `aozora inspect nodes` and `aozora pandoc`.
+    /// Cycle views with `Ctrl-P`.
     #[arg(long, value_enum, default_value_t = Preview::default())]
     preview: Preview,
 
-    /// Source encoding for opening `[FILE]`: `auto` (default), `utf8`, or
-    /// `sjis`. The edit buffer is Unicode; `Ctrl-S` always saves UTF-8.
+    /// Choose the source encoding for `[FILE]`: `auto`, `utf8`, or `sjis`.
+    /// Defaults to `auto`.
+    /// The Unicode edit buffer always saves as UTF-8 with `Ctrl-S`.
     #[arg(long, short = 'E', value_enum, default_value_t = Encoding::default())]
     encoding: Encoding,
 }
 
-/// Which projection the PREVIEW pane shows. Each maps to the exact engine
-/// surface a document subcommand emits, so the pane bytes never diverge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 enum Preview {
-    /// Rendered HTML (as `aozora render`).
+    /// Render HTML as `aozora render` does.
     #[default]
     Html,
-    /// The parsed source nodes as JSON (as `aozora inspect nodes`).
+    /// Show source nodes as JSON, matching `aozora inspect nodes`.
     Nodes,
-    /// The Pandoc AST as JSON (as `aozora pandoc`, pretty-printed for the pane).
+    /// Show the Pandoc abstract syntax tree as formatted JSON, matching `aozora pandoc`.
     Pandoc,
 }
 
 impl Preview {
-    /// The next view in the `Ctrl-P` cycle (html → nodes → pandoc → html).
     const fn next(self) -> Self {
         match self {
             Self::Html => Self::Nodes,
@@ -134,8 +93,6 @@ impl Preview {
         }
     }
 
-    /// The canonical value-enum tag (`html` / `nodes` / `pandoc`) — the
-    /// spelling `--preview` accepts and the pane title / footer show.
     const fn tag(self) -> &'static str {
         match self {
             Self::Html => "html",
@@ -145,23 +102,13 @@ impl Preview {
     }
 }
 
-/// The recomputed panes: the preview text, the diagnostic report, and the
-/// diagnostic count (for the pane title). The pure product of [`derive()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Derived {
-    /// The PREVIEW pane body — the selected engine projection of the source.
     preview: String,
-    /// The DIAGNOSTICS pane body — the plain-text report, or the localized
-    /// "no diagnostics" placeholder for a clean parse.
     diagnostics: String,
-    /// How many diagnostics fired (shown in the pane title; `0` is clean).
     diag_count: usize,
 }
 
-/// Re-parse `source` and project it through `preview`, alongside its
-/// diagnostics. Pure — the same parse tree every other subcommand produces, so
-/// the HTML matches `aozora render`, the nodes match `aozora inspect nodes`,
-/// and the report matches `aozora`'s portable diagnostic text exactly.
 fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived {
     let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();
@@ -176,8 +123,6 @@ fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived 
         }
     };
 
-    // The always-shown diagnostics: the engine's portable plain-text report
-    // (English machine axis); an empty report becomes the localized placeholder.
     let diags = tree.diagnostics();
     let report = aozora::diagnostics_text(source, diags);
     let diagnostics = if report.trim().is_empty() {
@@ -193,39 +138,22 @@ fn derive(source: &str, preview: Preview, lang: &LanguageIdentifier) -> Derived 
     }
 }
 
-/// The transient footer status: the default keybind legend, or a save
-/// acknowledgement / error that replaces it until the next language / preview
-/// toggle clears it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Status {
-    /// No transient message — the footer shows only the keybind legend.
     Legend,
-    /// A success note (e.g. `saved book.txt`), already localized.
     Info(String),
-    /// An error note (e.g. no file to save), already localized.
     Error(String),
 }
 
-/// An app-level command decoded from a key event. Anything that is not a
-/// command is [`Command::Edit`] — the key is forwarded to the text editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
-    /// Write the buffer to the opened file (`Ctrl-S`).
     Save,
-    /// Advance the chrome language (`Ctrl-L`).
     ToggleLang,
-    /// Advance the preview view (`Ctrl-P`).
     TogglePreview,
-    /// Leave the editor (`Ctrl-Q`).
     Quit,
-    /// Not a command — hand the key to the source editor.
     Edit,
 }
 
-/// Decode a key event into an app [`Command`]. Only `Ctrl`-modified letters are
-/// commands, so every unmodified keystroke (including plain letters and the
-/// editor's own `Ctrl` shortcuts we do not claim) falls through to
-/// [`Command::Edit`]. Pure — the whole keymap is unit-tested here.
 fn command_for(key: KeyEvent) -> Command {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
@@ -239,42 +167,25 @@ fn command_for(key: KeyEvent) -> Command {
     Command::Edit
 }
 
-/// The mutable editor session: the source buffer, the active preview view and
-/// chrome language, the opened file, the cached [`Derived`] panes, and the
-/// debounce / dirty bookkeeping. Everything a command mutates lives here, kept
-/// free of terminal I/O so the transitions are unit-testable.
 struct App {
-    /// The source EDIT pane's buffer (owns cursor / selection / undo).
     editor: TextArea<'static>,
-    /// The active preview projection.
     preview: Preview,
-    /// The chrome language (pane titles, legend, status).
     lang: LanguageIdentifier,
-    /// The opened file, or `None` for an unbacked buffer.
     path: Option<PathBuf>,
-    /// Whether the buffer has unsaved edits since the last save / open.
     modified: bool,
-    /// The cached preview + diagnostics, recomputed on the debounce.
     derived: Derived,
-    /// The transient footer status.
     status: Status,
-    /// When an edit last happened and a recompute is still pending, or `None`
-    /// once the panes are up to date.
+    /// Time of the last edit awaiting a preview refresh.
     pending: Option<Instant>,
 }
 
 impl App {
-    /// Build a session over an in-memory `source` — the seam the tests and
-    /// [`App::new`] share, with no file I/O. The initial panes are derived up
-    /// front so the first frame is already live.
     fn from_source(
         source: &str,
         path: Option<PathBuf>,
         preview: Preview,
         lang: LanguageIdentifier,
     ) -> Self {
-        // Split on '\n' (not `str::lines`) so a trailing newline survives as a
-        // final empty line — `source()` then round-trips the buffer faithfully.
         let lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
         let derived = derive(source, preview, &lang);
         Self {
@@ -289,9 +200,6 @@ impl App {
         }
     }
 
-    /// Build a session from parsed args: read and decode `[FILE]` through the
-    /// shared formatter reader / decoder (the exact byte path `aozora render
-    /// FILE` uses), or start empty.
     fn new(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<Self> {
         let (source, path) = match &args.file {
             Some(path) => {
@@ -305,50 +213,37 @@ impl App {
         Ok(Self::from_source(&source, path, args.preview, lang.clone()))
     }
 
-    /// The current buffer as one source string (lines rejoined with `\n`).
     fn source(&self) -> String {
         self.editor.lines().join("\n")
     }
 
-    /// Re-derive the panes from the live buffer and clear the pending flag.
     fn recompute(&mut self) {
         self.derived = derive(&self.source(), self.preview, &self.lang);
         self.pending = None;
     }
 
-    /// Record that the buffer changed: mark it dirty and open the debounce
-    /// window so [`recompute_due`](Self::recompute_due) fires once it lapses.
     fn mark_edited(&mut self) {
         self.modified = true;
         self.pending = Some(Instant::now());
     }
 
-    /// Whether a pending edit's debounce window has elapsed by `now` — the pure
-    /// debounce decision the event loop polls. `false` when nothing is pending.
     fn recompute_due(&self, now: Instant, window: Duration) -> bool {
         self.pending
             .is_some_and(|since| now.saturating_duration_since(since) >= window)
     }
 
-    /// Advance the preview view (`Ctrl-P`), clear any status, and re-derive so
-    /// the pane switches immediately.
     fn toggle_preview(&mut self) {
         self.preview = self.preview.next();
         self.status = Status::Legend;
         self.recompute();
     }
 
-    /// Advance the chrome language (`Ctrl-L`), clear any status, and re-derive
-    /// so the localized placeholders / titles switch immediately.
     fn toggle_lang(&mut self) {
         self.lang = next_lang(&self.lang);
         self.status = Status::Legend;
         self.recompute();
     }
 
-    /// Save the buffer to the opened file as UTF-8 (`Ctrl-S`). With no file the
-    /// status reports there is nothing to save; a write error is shown inline
-    /// and is never fatal. Sets the footer status either way.
     fn save(&mut self) {
         let Some(path) = self.path.clone() else {
             self.status = Status::Error(i18n::t(&self.lang, "tui-no-file"));
@@ -372,9 +267,6 @@ impl App {
     }
 }
 
-/// The next language in the `Ctrl-L` cycle (en → ja → zh → en). The tags are
-/// the CLI's available locales; an unrecognised current language restarts the
-/// cycle at `ja` (treating it as English's successor).
 fn next_lang(current: &LanguageIdentifier) -> LanguageIdentifier {
     const CYCLE: [&str; 3] = ["en", "ja", "zh"];
     let cur = current.to_string();
@@ -384,14 +276,10 @@ fn next_lang(current: &LanguageIdentifier) -> LanguageIdentifier {
         .expect("built-in locale tag parses")
 }
 
-/// Write the editor buffer to `path` as UTF-8. Split out so the byte write is
-/// unit-testable over a tempfile.
 fn write_source(path: &Path, source: &str) -> io::Result<()> {
     atomic_write::replace(path, source.as_bytes())
 }
 
-/// The SOURCE pane title: `source`, plus the file path and a `modified` marker
-/// when present. Localized.
 fn source_title(app: &App) -> String {
     let mut title = i18n::t(&app.lang, "tui-title-source");
     if let Some(path) = &app.path {
@@ -403,7 +291,6 @@ fn source_title(app: &App) -> String {
     title
 }
 
-/// The PREVIEW pane title: `preview · <view>` (the view tag stays literal).
 fn preview_title(app: &App) -> String {
     format!(
         "{} · {}",
@@ -412,8 +299,6 @@ fn preview_title(app: &App) -> String {
     )
 }
 
-/// The DIAGNOSTICS pane title: `diagnostics`, with `· <n>` appended when any
-/// fired. Localized.
 fn diagnostics_title(app: &App) -> String {
     let base = i18n::t(&app.lang, "tui-title-diagnostics");
     if app.derived.diag_count == 0 {
@@ -423,8 +308,6 @@ fn diagnostics_title(app: &App) -> String {
     }
 }
 
-/// The keybind legend shown in the footer, with the current language and
-/// preview view woven in. Localized action words, literal key glyphs / tags.
 fn footer_legend(preview: Preview, lang: &LanguageIdentifier) -> String {
     let save = i18n::t(lang, "tui-key-save");
     let lang_word = i18n::t(lang, "tui-key-lang");
@@ -435,8 +318,6 @@ fn footer_legend(preview: Preview, lang: &LanguageIdentifier) -> String {
     format!("^S {save}   ^L {lang_word}·{cur_lang}   ^P {preview_word}·{cur_preview}   ^Q {quit}")
 }
 
-/// The footer line: the dim keybind legend, plus the transient status (green
-/// for a save, red for an error) when one is set.
 fn footer_line(app: &App) -> Line<'static> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let mut spans = vec![Span::styled(footer_legend(app.preview, &app.lang), dim)];
@@ -454,27 +335,26 @@ fn footer_line(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Lay out and draw the three panes and the footer into `frame`. Pure over
-/// `app` — no terminal state — so it renders identically onto `ratatui`'s
-/// `TestBackend` in the unit tests as onto a real terminal.
 fn render(app: &App, frame: &mut Frame<'_>) {
-    // Rows: the pane body, then a one-line footer.
     let [body, footer_area] =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
-    // The body: the top panes over the diagnostics pane.
-    let [top, diag_area] =
-        Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(body);
-    // The top: source (left) beside preview (right).
-    let [src_area, prev_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(top);
+        Layout::vertical([Constraint::Min(MIN_BODY_ROWS), Constraint::Length(1)])
+            .areas(frame.area());
+    let [top, diag_area] = Layout::vertical([
+        Constraint::Percentage(EDITOR_HEIGHT_PERCENT),
+        Constraint::Percentage(DIAGNOSTICS_HEIGHT_PERCENT),
+    ])
+    .areas(body);
+    let [src_area, prev_area] = Layout::horizontal([
+        Constraint::Percentage(TOP_PANE_WIDTH_PERCENT),
+        Constraint::Percentage(TOP_PANE_WIDTH_PERCENT),
+    ])
+    .areas(top);
 
-    // Source EDIT pane.
     let src_block = Block::bordered().title(source_title(app));
     let src_inner = src_block.inner(src_area);
     frame.render_widget(src_block, src_area);
     frame.render_widget(&app.editor, src_inner);
 
-    // Live PREVIEW pane.
     let prev_block = Block::bordered().title(preview_title(app));
     let prev_inner = prev_block.inner(prev_area);
     frame.render_widget(prev_block, prev_area);
@@ -483,7 +363,6 @@ fn render(app: &App, frame: &mut Frame<'_>) {
         prev_inner,
     );
 
-    // DIAGNOSTICS pane.
     let diag_block = Block::bordered().title(diagnostics_title(app));
     let diag_inner = diag_block.inner(diag_area);
     frame.render_widget(diag_block, diag_area);
@@ -492,26 +371,14 @@ fn render(app: &App, frame: &mut Frame<'_>) {
         diag_inner,
     );
 
-    // Footer: keybind legend + transient status.
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
 }
 
-/// Whether the TUI can run: it reads key events from stdin and draws the panes
-/// to stdout, so it needs **every** stream it drives to be a real terminal — a
-/// pipe on any end (`… | aozora tui` or `aozora tui | …`) means it cannot
-/// operate. Pure over the per-stream tty flags (`[stdin, stdout]` in [`run`]),
-/// so the "all, not any" rule is unit-tested rather than resting on the
-/// untestable real-tty guard.
 fn all_terminals(stream_ttys: [bool; 2]) -> bool {
     stream_ttys.iter().all(|&is_tty| is_tty)
 }
 
-/// Start the editor: refuse a non-terminal (the TUI needs a tty for rendering
-/// and key input — a piped invocation gets an actionable error, not a hang),
-/// open the optional file, then run the loop. Always exits 0 on a clean quit.
-///
-/// The pseudo-terminal integration test exercises the live terminal path;
-/// [`all_terminals`] separately pins the guard decision.
+/// Rejects redirected input or output before opening the editor.
 pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     if !all_terminals([io::stdin().is_terminal(), io::stdout().is_terminal()]) {
         anyhow::bail!("{}", i18n::t(lang, "tui-no-tty"));
@@ -520,9 +387,6 @@ pub(crate) fn run(args: &TuiArgs, lang: &LanguageIdentifier) -> Result<ExitCode>
     run_app(app)
 }
 
-/// Enter raw mode + the alternate screen, run [`event_loop`], then restore the
-/// terminal on every exit path (clean quit, error, or panic-unwind of the
-/// loop).
 fn run_app(mut app: App) -> Result<ExitCode> {
     let mut session = TerminalSession::enter()?;
     let outcome = event_loop(&mut session.terminal, &mut app);
@@ -632,9 +496,6 @@ fn merge_errors(primary: anyhow::Error, cleanup: Option<anyhow::Error>) -> anyho
     }
 }
 
-/// The draw / input loop: redraw when something changed, poll for a key, run
-/// its [`Command`] (or forward it to the editor), and fire the debounced
-/// recompute once the buffer goes quiet. Returns on `Ctrl-Q`.
 fn event_loop(
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -692,18 +553,13 @@ mod tests {
         App::from_source(source, None, preview, lang(tag))
     }
 
-    /// A key event for `Ctrl` + a letter.
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    /// Every cell's symbol concatenated row-major — enough to assert that an
-    /// ASCII substring (a pane title, a keybind glyph) is on screen.
     fn buffer_text(buffer: &Buffer) -> String {
         buffer.content.iter().map(Cell::symbol).collect()
     }
-
-    // --- Preview: the cycle and its tags ---
 
     #[test]
     fn preview_next_cycles_html_nodes_pandoc() {
@@ -719,16 +575,12 @@ mod tests {
         assert_eq!(Preview::Pandoc.tag(), "pandoc");
     }
 
-    // --- next_lang: the language cycle ---
-
     #[test]
     fn next_lang_cycles_en_ja_zh() {
         assert_eq!(next_lang(&lang("en")), lang("ja"));
         assert_eq!(next_lang(&lang("ja")), lang("zh"));
         assert_eq!(next_lang(&lang("zh")), lang("en"));
     }
-
-    // --- derive: each view reuses the exact engine bytes ---
 
     #[test]
     fn derive_html_matches_the_render_engine() {
@@ -757,8 +609,6 @@ mod tests {
 
     #[test]
     fn derive_pandoc_projects_the_ast() {
-        // The pandoc view carries the AST (pretty-printed): a Pandoc document
-        // is a JSON object with the `pandoc-api-version` key.
         let d = derive("青空《あおぞら》", Preview::Pandoc, &lang("en"));
         assert!(
             d.preview.contains("pandoc-api-version"),
@@ -776,8 +626,6 @@ mod tests {
 
     #[test]
     fn derive_surfaces_a_diagnostic_from_the_engine() {
-        // A private-use sentinel reliably fires a diagnostic (the same fixture
-        // the engine's diagnostics_text test uses).
         let d = derive("bad \u{E001} char", Preview::Html, &lang("en"));
         assert!(d.diag_count > 0, "diagnostic expected");
         assert!(
@@ -789,8 +637,6 @@ mod tests {
 
     #[test]
     fn derive_diagnostics_stay_english_under_a_localized_chrome() {
-        // The chrome placeholder localizes; the diagnostic report bytes (the
-        // machine axis) do not — identical to the English run.
         let ja = derive("bad \u{E001} char", Preview::Html, &lang("ja"));
         let en = derive("bad \u{E001} char", Preview::Html, &lang("en"));
         assert_eq!(
@@ -798,8 +644,6 @@ mod tests {
             "report is language-invariant"
         );
     }
-
-    // --- command_for: the keymap ---
 
     #[test]
     fn command_for_maps_the_ctrl_keys() {
@@ -811,7 +655,6 @@ mod tests {
 
     #[test]
     fn command_for_forwards_everything_else_to_the_editor() {
-        // A plain letter is an edit, and an unclaimed Ctrl combo is too.
         assert_eq!(
             command_for(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
             Command::Edit
@@ -823,13 +666,8 @@ mod tests {
         );
     }
 
-    // --- all_terminals: the tty guard ---
-
     #[test]
     fn all_terminals_needs_every_stream() {
-        // Every stream the TUI drives must be a real tty; a pipe on any end (or
-        // both) is not interactive — the "all, not any" rule the `run` guard
-        // rests on. Order is `[stdin, stdout]`.
         assert!(all_terminals([true, true]), "both ttys → interactive");
         assert!(
             !all_terminals([true, false]),
@@ -924,8 +762,6 @@ mod tests {
         assert!(both.to_string().contains("second"));
     }
 
-    // --- App transitions ---
-
     #[test]
     fn from_source_derives_the_initial_panes() {
         let a = app("青空《あおぞら》", Preview::Html, "en");
@@ -936,7 +772,6 @@ mod tests {
 
     #[test]
     fn source_round_trips_a_trailing_newline() {
-        // Splitting on '\n' (not `lines`) keeps a final empty line.
         let a = app("a\n", Preview::Html, "en");
         assert_eq!(a.source(), "a\n");
     }
@@ -968,7 +803,6 @@ mod tests {
         );
         a.toggle_lang();
         assert_eq!(a.lang, lang("ja"), "language advanced");
-        // The clean-parse placeholder localizes with the language.
         assert_ne!(
             a.derived.diagnostics, "(no diagnostics)",
             "placeholder localized"
@@ -988,10 +822,8 @@ mod tests {
     fn recompute_due_respects_the_debounce_window() {
         let mut a = app("x", Preview::Html, "en");
         let base = Instant::now();
-        // Nothing pending → never due.
         assert!(!a.recompute_due(base, DEBOUNCE));
         a.pending = Some(base);
-        // Before the window elapses → not due; at/after the window → due.
         assert!(!a.recompute_due(base, DEBOUNCE), "0 elapsed < window");
         assert!(a.recompute_due(base + DEBOUNCE, DEBOUNCE), "window elapsed");
     }
@@ -1003,8 +835,6 @@ mod tests {
         a.recompute();
         assert!(a.pending.is_none(), "recompute clears the pending flag");
     }
-
-    // --- save: the file write and its statuses ---
 
     #[test]
     fn save_writes_the_buffer_and_acknowledges() {
@@ -1019,8 +849,6 @@ mod tests {
         );
         a.modified = true;
         a.save();
-        // The bytes reached disk, the dirty flag cleared, and the status names
-        // the saved path.
         let written = fs::read_to_string(&path).expect("read back");
         assert_eq!(written, "青空《あおぞら》", "buffer written to disk");
         assert!(!a.modified, "save clears the dirty flag");
@@ -1042,8 +870,6 @@ mod tests {
             "no-file is an error status"
         );
     }
-
-    // --- titles / legend ---
 
     #[test]
     fn source_title_shows_the_path_and_modified_marker() {
@@ -1096,8 +922,6 @@ mod tests {
         );
     }
 
-    // --- render: the headless TestBackend draw ---
-
     #[test]
     fn render_draws_the_three_panes_and_footer() {
         let a = app("青空《あおぞら》", Preview::Html, "en");
@@ -1111,7 +935,6 @@ mod tests {
             text.contains("^S") && text.contains("^Q"),
             "footer legend drawn"
         );
-        // A clean parse shows the localized "no diagnostics" placeholder.
         assert!(
             text.contains("no diagnostics"),
             "clean-parse placeholder drawn"
@@ -1124,7 +947,6 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
         term.draw(|frame| render(&a, frame)).expect("draw");
         let text = buffer_text(term.backend().buffer());
-        // The engine's diagnostic code reaches the diagnostics pane.
         assert!(
             text.contains("aozora"),
             "diagnostic drawn in the pane: {text}"

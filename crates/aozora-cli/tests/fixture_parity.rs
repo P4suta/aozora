@@ -16,6 +16,10 @@ fn load() -> Vec<RenderFixture> {
     fixtures
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and output decoding failures must fail with context"
+)]
 fn run(argv: &[&str], source_path: &str) -> String {
     let mut cmdline: Vec<&str> = argv.to_vec();
     cmdline.push(source_path);
@@ -33,6 +37,10 @@ fn run(argv: &[&str], source_path: &str) -> String {
     String::from_utf8(out.stdout).expect("aozora stdout is valid UTF-8")
 }
 
+#[expect(
+    clippy::panic,
+    reason = "a missing conformance golden must fail the parity test"
+)]
 fn walk(
     surface: &str,
     argv: &[&str],

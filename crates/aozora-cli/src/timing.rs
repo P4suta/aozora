@@ -1,22 +1,5 @@
-//! Phase timing for the document subcommands (`--timing`).
-//!
-//! CLI-side instrumentation only: the parser stays a pure, hook-free
-//! function (ADR-0001). We wrap the coarse stages a document subcommand
-//! runs — `read` (I/O + decode), `parse`, and the command's `output` step
-//! (render / inspect / pandoc) — in [`std::time::Instant`] and print the
-//! result to **stderr**, so a `render` / `inspect` pipeline's stdout stays
-//! byte-identical with or without `--timing`. `fmt` is the exception: it
-//! delegates to the shared `crate::fmt::format_source_with` core, which
-//! fuses parse and serialize, so it reports `read` + a single `format`
-//! stage instead of a separate `parse`.
-//!
-//! Finer, per-lex-phase numbers (sanitize / tokenize / pair / build)
-//! are a parser-development concern served by `xtask samply`, `just
-//! bench`, and `just dhat` — not this user-facing flag. They also can't
-//! be surfaced uniformly here: `inspect <nodes|pairs>` and `pandoc` render
-//! from an `Tree`, whose internals the CLI cannot reconstruct from
-//! a hand-driven `Pipeline`, so a common three-stage view is the honest
-//! one.
+//! Collects document-command timings for stderr reports.
+//! Records timings in the CLI, preserving the parser boundary described by ADR-0001.
 
 use std::io::{self, IsTerminal, Write};
 use std::time::{Duration, Instant};
@@ -25,11 +8,7 @@ use crate::wire::Envelope;
 #[cfg(test)]
 use aozora::json::SCHEMA_VERSION;
 
-/// Accumulates phase durations and renders them to stderr.
-///
-/// When disabled (`--timing` absent) every [`Self::measure`] call runs
-/// its closure with no surrounding bookkeeping and records nothing, so
-/// the hot path is untouched and [`Self::report`] is a no-op.
+/// Collects optional timings for stderr reports.
 pub(crate) struct Timer {
     enabled: bool,
     phases: Vec<(&'static str, Duration)>,
@@ -43,8 +22,7 @@ impl Timer {
         }
     }
 
-    /// Run `f`, recording its wall-clock duration under `name` when
-    /// timing is enabled. Returns `f`'s value untouched either way.
+    /// Records `f`'s duration when timing runs.
     pub(crate) fn measure<T>(&mut self, name: &'static str, f: impl FnOnce() -> T) -> T {
         if !self.enabled {
             return f();
@@ -55,13 +33,7 @@ impl Timer {
         out
     }
 
-    /// Write the collected timings to stderr. A no-op when disabled or
-    /// when nothing was measured (`--timing` off, or no phases ran).
-    ///
-    /// The view auto-selects on the same rule as `check`'s diagnostics: the
-    /// aligned `human` report when stderr is a terminal, the machine `json`
-    /// envelope when it is piped — so an agent capturing stderr gets a
-    /// parseable stream without a flag.
+    /// Writes collected timings to stderr only when enabled and nonempty.
     pub(crate) fn report(&self) -> io::Result<()> {
         if !self.should_report() {
             return Ok(());
@@ -94,8 +66,6 @@ impl Timer {
         writeln!(w, "{:<width$}  {:>9.3} ms", "total", ms(total))
     }
 
-    /// The machine view uses the common wire envelope. `data` carries the
-    /// per-phase nanosecond durations and the total.
     fn report_json(&self, w: &mut impl Write) -> io::Result<()> {
         let total: Duration = self.phases.iter().map(|(_, d)| *d).sum();
         let phases: Vec<_> = self
@@ -112,15 +82,11 @@ impl Timer {
     }
 }
 
-/// Whole milliseconds as an `f64`, for the aligned human report.
 fn ms(d: Duration) -> f64 {
     const MILLIS_PER_SECOND: f64 = 1000.0;
     d.as_secs_f64() * MILLIS_PER_SECOND
 }
 
-/// Nanoseconds clamped to `u64` — `serde_json::Number` has no `u128`
-/// arm without `arbitrary_precision`, and `u64` nanoseconds span ~584
-/// years, far past any single parse.
 fn nanos(d: Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
@@ -131,29 +97,21 @@ mod tests {
 
     #[test]
     fn ms_is_secs_times_1000() {
-        // 1500 ms -> 1.5 s -> 1.5 * 1000.0 == 1500.0 exactly.
-        // Kills body->0.0/1.0/-1.0 (all differ from 1500.0) and
-        // `*`->`+` (1.5 + 1000.0 == 1001.5) / `*`->`/` (1.5 / 1000.0 == 0.0015).
         assert_eq!(ms(Duration::from_millis(1500)), 1500.0);
     }
 
     #[test]
     fn ms_scales_with_input() {
-        // A second fixed point pins the operator: 250 ms -> 250.0.
         assert_eq!(ms(Duration::from_millis(250)), 250.0);
         assert_eq!(ms(Duration::ZERO), 0.0);
     }
 
     #[test]
     fn nanos_is_exact_nanoseconds() {
-        // Kills body->0 and body->1: 2500 differs from both.
         assert_eq!(nanos(Duration::from_nanos(2500)), 2500);
         assert_eq!(nanos(Duration::from_millis(1)), 1_000_000);
     }
 
-    /// A `Timer` primed with fixed phase durations — bypasses `measure` so
-    /// the render seams can be pinned deterministically (wall-clock timing is
-    /// otherwise non-reproducible).
     fn primed() -> Timer {
         Timer {
             enabled: true,
@@ -187,8 +145,6 @@ mod tests {
         assert_eq!(v["data"]["phases"][0]["nanos"], 5);
         assert_eq!(v["data"]["phases"][1]["name"], "parse");
         assert_eq!(v["data"]["phases"][1]["nanos"], 7);
-        // The old top-level `phases` / `totalNanos` must be gone — the payload
-        // now lives exclusively under `data`.
         assert!(v.get("phases").is_none(), "phases must be nested: {v}");
         assert!(v.get("totalNanos").is_none(), "total must be nested: {v}");
     }

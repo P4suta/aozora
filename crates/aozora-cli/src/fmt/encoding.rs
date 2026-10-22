@@ -8,17 +8,17 @@ use aozora::{decode_auto, decode_sjis};
 
 use crate::fmt::source;
 
-/// How to decode source bytes into text.
+/// Controls source decoding.
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Encoding {
-    /// Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are decoded as Shift_JIS.
-    /// The right default — Aozora files ship as Shift_JIS, but UTF-8 mirrors are common, and the caller should not have to know which they have.
+    /// Detect the source encoding.
+    /// Read valid UTF-8 directly and decode other input as Shift_JIS.
     #[default]
     Auto,
-    /// Force UTF-8; error if the input is not valid UTF-8.
+    /// Force UTF-8 and report an error for invalid input.
     Utf8,
     /// Force Shift_JIS decoding.
     Sjis,

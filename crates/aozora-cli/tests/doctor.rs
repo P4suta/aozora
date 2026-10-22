@@ -22,6 +22,10 @@ fn doctor_command(work: &Path, path_dir: &Path) -> Command {
     cmd
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test setup and process capture failures must fail with context"
+)]
 fn run_doctor() -> (i32, String) {
     let work = TempDir::new().expect("work tempdir");
     let path_dir = TempDir::new().expect("empty PATH tempdir");

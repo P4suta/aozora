@@ -4,6 +4,10 @@ use std::process::{Command, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process capture failures must fail with context"
+)]
 fn run(args: &[&str]) -> (bool, String) {
     let out = Command::new(BIN)
         .args(args)

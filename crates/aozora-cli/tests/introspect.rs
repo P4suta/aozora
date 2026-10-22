@@ -6,6 +6,10 @@ use aozora::json::SCHEMA_VERSION;
 
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process capture failures must fail with context"
+)]
 fn run(args: &[&str]) -> (ExitStatus, String, String) {
     let output = Command::new(BIN)
         .args(args)

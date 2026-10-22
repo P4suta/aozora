@@ -1,30 +1,4 @@
-//! 金庫番 — guardrail tests that watch over the load-bearing
-//! invariants of the LSP surface.
-//!
-//! Targeted unit tests pin specific cases; property tests pin
-//! shape-level identities; this suite is the third leg: **adversarial
-//! invariants** that catch entire bug classes — panics on malformed
-//! input, formatter divergence, concurrency races, byte-level data
-//! loss across edit batches.
-//!
-//! Each section calls out its threat model:
-//!
-//! 1. **Panic resistance** — every public LSP entry point survives
-//!    arbitrary UTF-8 input + arbitrary `Position` queries (within
-//!    `u32` range) without panicking. Crashing the LSP server takes
-//!    out the editor's `IntelliSense` for the whole session, so this
-//!    is the highest-impact class to defend.
-//! 2. **Format fixed point** — `format ∘ format == format` for
-//!    every realistic input. The aozora corpus relies on this so
-//!    "format on save" doesn't oscillate.
-//! 3. **Edit-burst data integrity** — long sequences of random
-//!    edits never silently drop bytes; the resulting buffer always
-//!    matches an oracle.
-//! 4. **Concurrent reads/writes** — readers see a consistent
-//!    snapshot under heavy parallel write pressure; no torn reads,
-//!    no panics.
-//! 5. **Adversarial diagnostic payloads** — quick-fix actions
-//!    survive malformed `data` JSON without panicking.
+//! Exercises language-server providers with adversarial input, edits, and concurrent reads.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,25 +28,17 @@ use super::state::OpenDocument;
 use super::structured_snippets::snippet_completions;
 use super::text_edit::ByteEdit;
 
-/// Pinned message language for the adversarial provider sweeps — they only
-/// assert structural invariants (valid ranges, no panics), so any locale
-/// works; English keeps the sweep deterministic regardless of the host `LANG`.
+const KANA_RUN_CHAR_COUNT: usize = 100;
+const OVERSIZED_PARAGRAPH_CHAR_COUNT: usize = 30_000;
+const ASCII_LINE_BYTE_COUNT: usize = 5_000;
+const PARAGRAPH_REPEAT_COUNT: usize = 50;
+const PAST_LINE_END_COLUMN: u32 = 99;
+const PAST_SOURCE_POSITION_COMPONENT: u32 = 50;
+const FORMAT_FRAGMENT_COUNT_LIMIT: usize = 12;
+
 fn en() -> LanguageIdentifier {
     "en".parse().expect("en parses")
 }
-
-// ---------------------------------------------------------------
-// 1. Panic resistance across the public LSP surface.
-// ---------------------------------------------------------------
-//
-// Every handler below must return *something* (Vec, Option, …) for
-// any input — it must never panic. The corpus mixes ASCII, kanji,
-// emoji surrogate pairs, IME-input notation triggers, malformed
-// UTF-8-near input, and empty strings.
-//
-// `Position` queries are sampled with `u32` line/character values
-// so we cover both in-bounds and far-past-EOF cases. Handlers must
-// gracefully clamp or return None.
 
 const PANIC_CORPUS: &[&str] = &[
     "",
@@ -94,45 +60,34 @@ const PANIC_CORPUS: &[&str] = &[
     "※［＃「desc」、X］後文",
     "「鉤」",
     "〔Crevez〕",
-    // Adversarial: unmatched delimiters
     "［＃改ページ",
     "本文 ］",
     "《reading》",
     "｜",
     "※",
-    // Adversarial: surrogate pairs
     "a😀b\nc😀d",
-    // PUA sentinel that the lexer warns about
     "abc\u{E001}def",
 ];
 
-/// Lazy, owned-string variant for the adversarial corpus that
-/// includes cap-stressing inputs — those need allocation so they
-/// can't sit in `&'static str` form.
 fn adversarial_corpus() -> Vec<String> {
     let mut out: Vec<String> = PANIC_CORPUS.iter().map(|&s| s.to_owned()).collect();
-    // Long mixed-byte run (~300 bytes, well within scan budgets).
-    out.push("あ".repeat(100));
-    // Stress the paragraph-byte-ranges cap: 64 KB of multi-byte text
-    // with no `\n\n` boundary inside a single paragraph.
-    out.push("あ".repeat(30_000));
-    // Long single line without any aozora notation.
-    out.push("x".repeat(5_000));
-    // 多重 \n\n run
-    out.push("x\n\n".repeat(50));
+    out.push("あ".repeat(KANA_RUN_CHAR_COUNT));
+    out.push("あ".repeat(OVERSIZED_PARAGRAPH_CHAR_COUNT));
+    out.push("x".repeat(ASCII_LINE_BYTE_COUNT));
+    out.push("x\n\n".repeat(PARAGRAPH_REPEAT_COUNT));
     out
 }
 
-/// Sample `Position` queries spanning in-bounds, end-of-buffer,
-/// far-past-EOF, and surrogate-pair-aware columns. Every handler
-/// must accept all of them without panic.
 fn position_corpus() -> Vec<Position> {
     vec![
         Position::new(0, 0),
         Position::new(0, 1),
-        Position::new(0, 99),
+        Position::new(0, PAST_LINE_END_COLUMN),
         Position::new(1, 0),
-        Position::new(50, 50),
+        Position::new(
+            PAST_SOURCE_POSITION_COMPONENT,
+            PAST_SOURCE_POSITION_COMPONENT,
+        ),
         Position::new(u32::MAX, u32::MAX),
         Position::new(u32::MAX, 0),
         Position::new(0, u32::MAX),
@@ -163,8 +118,6 @@ fn completion_never_panics_on_corpus() {
 
 #[test]
 fn format_on_type_never_panics_on_corpus() {
-    // Trigger chars from the on-type capability + a few off-list chars
-    // so we exercise both the rule-found and rule-missing paths.
     let triggers = ["[", "]", "<", ">", "|", "*", "#", "a", "あ"];
     for src in adversarial_corpus() {
         for pos in position_corpus() {
@@ -198,11 +151,6 @@ fn diagnostics_format_folding_symbol_never_panic_on_corpus() {
 #[test]
 fn position_byte_round_trip_never_panics_on_boundary_offsets() {
     for src in adversarial_corpus() {
-        // For huge corpus members (`あ`×30 000 etc.), iterating
-        // every char boundary turns this into O(N²) — `position_to_
-        // byte_offset` walks newlines from byte 0 each call. Sample
-        // ~256 boundaries linearly instead; the property holds
-        // pointwise so the sampling doesn't weaken the guarantee.
         let stride = src.len().div_ceil(256).max(1);
         let mut byte = 0usize;
         while byte <= src.len() {
@@ -213,7 +161,6 @@ fn position_byte_round_trip_never_panics_on_boundary_offsets() {
             }
             byte += stride;
         }
-        // Always check the EOF byte too so end-of-buffer is pinned.
         let eof = src.len();
         let pos = byte_offset_to_position(&src, eof);
         let back = position_to_byte_offset(&src, pos);
@@ -230,7 +177,7 @@ fn wrap_actions_never_panic_on_corpus_ranges() {
         Range::new(Position::new(0, 0), Position::new(0, 99)),
         Range::new(Position::new(0, 0), Position::new(99, 99)),
         Range::new(Position::new(99, 0), Position::new(99, 1)),
-        Range::new(Position::new(0, 5), Position::new(0, 1)), // inverted
+        Range::new(Position::new(0, 5), Position::new(0, 1)),
     ];
     for src in adversarial_corpus() {
         let idx = LineIndex::new(&src);
@@ -240,16 +187,7 @@ fn wrap_actions_never_panic_on_corpus_ranges() {
     }
 }
 
-// ---------------------------------------------------------------
-// 2. Format fixed point: format ∘ format == format
-// ---------------------------------------------------------------
-
 proptest! {
-    /// `format_source` is contractually a fixed point on the second
-    /// pass — `format(format(x)) == format(x)`. This is the
-    /// invariant the `--check` mode and "format on save" rely on;
-    /// any drift would cause CI to oscillate between two equally
-    /// "canonical" forms.
     #[test]
     fn format_is_idempotent_for_realistic_inputs(text in realistic_text_strategy()) {
         let once = format_source(&text);
@@ -258,29 +196,21 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------
-// 3. Edit-burst data integrity
-// ---------------------------------------------------------------
-
-/// Tiny seeded PRNG (xorshift64) — avoids pulling in the `rand`
-/// crate just for two stress tests. Not cryptographic, but
-/// deterministic across runs so a regression reproduces.
 struct Xorshift(u64);
 impl Xorshift {
+    const NONZERO_SEED: u64 = 0xDEAD_BEEF_CAFE_BABE;
+    const INITIAL_LEFT_SHIFT: u32 = 13;
+    const RIGHT_SHIFT: u32 = 7;
+    const FINAL_LEFT_SHIFT: u32 = 17;
+
     const fn new(seed: u64) -> Self {
-        // The all-zero seed is a fixed point for xorshift; rotate
-        // any zero into something benign.
-        Self(if seed == 0 {
-            0xDEAD_BEEF_CAFE_BABE
-        } else {
-            seed
-        })
+        Self(if seed == 0 { Self::NONZERO_SEED } else { seed })
     }
     const fn next(&mut self) -> u64 {
         let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
+        x ^= x << Self::INITIAL_LEFT_SHIFT;
+        x ^= x >> Self::RIGHT_SHIFT;
+        x ^= x << Self::FINAL_LEFT_SHIFT;
         self.0 = x;
         x
     }
@@ -289,9 +219,6 @@ impl Xorshift {
             return lo;
         }
         let span = hi_inclusive - lo + 1;
-        // `usize` may be 32-bit on some targets; mask the high bits
-        // before the modulo to avoid clippy::cast_possible_truncation
-        // (the modulo would mask anyway, but the cast happens first).
         let bits = self.next() & u64::from(u32::MAX);
         lo + (usize::try_from(bits).unwrap_or(0) % span)
     }
@@ -300,11 +227,6 @@ impl Xorshift {
     }
 }
 
-/// A long sequence of random pure-ASCII insertions at random
-/// boundary-aligned offsets must converge to a buffer byte-equal to
-/// the equivalent oracle (the same insertions applied to a `String`
-/// directly). This is the strongest possible cross-check for the
-/// paragraph-segmented edit path.
 #[test]
 fn random_insert_burst_matches_string_oracle() {
     let mut rng = Xorshift::new(0xA0_20_BA_FE);
@@ -322,9 +244,6 @@ fn random_insert_burst_matches_string_oracle() {
     assert_eq!(state.snapshot().doc_text(), oracle);
 }
 
-/// Same drill but with random delete-then-insert cycles that
-/// occasionally cross paragraph boundaries (we sprinkle `\n\n` in
-/// the seed text so cross-paragraph edits actually trigger).
 #[test]
 fn random_replace_burst_matches_string_oracle() {
     let seed = "段落1\n\n段落2\n\n段落3\n\n段落4";
@@ -338,8 +257,6 @@ fn random_replace_burst_matches_string_oracle() {
         }
         let mut start = rng.range(0, len);
         let mut end = rng.range(start, len);
-        // Snap both to char boundaries — Japanese chars are 3 bytes
-        // so a naïve random offset often lands mid-codepoint.
         while start > 0 && !oracle.is_char_boundary(start) {
             start -= 1;
         }
@@ -352,7 +269,6 @@ fn random_replace_burst_matches_string_oracle() {
         let new_text = if rng.flip() {
             String::new()
         } else {
-            // ASCII chunk so the oracle replace_range stays simple.
             let ch = (b'A' + ((rng.next() % 26) as u8)) as char;
             ch.to_string()
         };
@@ -364,15 +280,6 @@ fn random_replace_burst_matches_string_oracle() {
     assert_eq!(state.snapshot().doc_text(), oracle);
 }
 
-// ---------------------------------------------------------------
-// 4. Concurrent read/write stress
-// ---------------------------------------------------------------
-
-/// Many readers + a single writer must observe consistent
-/// snapshots: every snapshot's `doc_text()` byte length agrees with
-/// the snapshot's `total_bytes`. Readers must never see torn
-/// state, never panic. Writer applies a long sequence of inserts
-/// at the start; readers loop loading + assertion.
 #[test]
 fn snapshot_reads_under_write_pressure_stay_consistent() {
     let state = OpenDocument::new("seed\n\nseed".to_owned());
@@ -386,9 +293,6 @@ fn snapshot_reads_under_write_pressure_stay_consistent() {
                 break;
             }
             _ = writer_state.apply_changes(&[ByteEdit::new(0..0, "X".to_owned())]);
-            // Force the snapshot rebuild to happen inline
-            // (otherwise it's queued on the blocking pool and
-            // readers would always race the same stale snapshot).
             writer_state.rebuild_snapshot_now();
         }
     });
@@ -404,11 +308,8 @@ fn snapshot_reads_under_write_pressure_stay_consistent() {
                     break;
                 }
                 let snap = reader_state.snapshot();
-                // DocSnapshot version is monotone — readers should
-                // never see it go backwards.
                 assert!(snap.version >= last_seen_version);
                 last_seen_version = snap.version;
-                // total_bytes must equal the materialised text len.
                 let text = snap.doc_text();
                 assert_eq!(text.len(), snap.total_bytes as usize);
             }
@@ -422,27 +323,12 @@ fn snapshot_reads_under_write_pressure_stay_consistent() {
     }
 }
 
-// ---------------------------------------------------------------
-// 5. Compute-diagnostics never panics on malformed input
-// ---------------------------------------------------------------
-
-/// `diagnostics_for_source` is the gatekeeper for what the editor
-/// shows the user — and it sits on top of the aozora semantic
-/// parser, which is the most complex piece in our dependency
-/// graph. Every adversarial input from the corpus must produce
-/// SOME diagnostic vector (possibly empty) without panicking.
 #[test]
 fn diagnostics_for_source_returns_valid_ranges_for_corpus() {
     for src in adversarial_corpus() {
         let diags = diagnostics_for_source(&src, &en());
-        // Every diagnostic's range must round-trip through the
-        // line index — i.e. its line/column must resolve back to a
-        // valid byte offset. A diagnostic pointing into the void
-        // would crash the editor's render path.
         let idx = LineIndex::new(&src);
         for d in diags {
-            // `byte_offset` returns None only for past-EOF lines.
-            // Diagnostic ranges should never reference such lines.
             assert!(
                 idx.byte_offset(&src, d.range.start).is_some(),
                 "diag start out of range: {:?} for src len {}",
@@ -453,10 +339,6 @@ fn diagnostics_for_source_returns_valid_ranges_for_corpus() {
         }
     }
 }
-
-// ---------------------------------------------------------------
-// Shared proptest strategy
-// ---------------------------------------------------------------
 
 fn realistic_text_strategy() -> impl Strategy<Value = String> {
     let fragments: Vec<&'static str> = vec![
@@ -473,5 +355,6 @@ fn realistic_text_strategy() -> impl Strategy<Value = String> {
         "\r\n",
         "X\nY",
     ];
-    proptest_vec(select(fragments), 0usize..12usize).prop_map(|frags| frags.concat())
+    proptest_vec(select(fragments), 0usize..FORMAT_FRAGMENT_COUNT_LIMIT)
+        .prop_map(|frags| frags.concat())
 }

@@ -8,6 +8,10 @@ use tempfile::TempDir;
 
 mod common;
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process capture failures must fail with context"
+)]
 fn init_in(dir: &Path, args: &[&str]) -> Output {
     common::hermetic_command()
         .arg("init")

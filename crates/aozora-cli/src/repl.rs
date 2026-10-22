@@ -22,7 +22,7 @@ use crate::Encoding;
 
 const PROMPT: &str = "aozora> ";
 
-/// `aozora repl` — start the interactive notation loop.
+/// Start the interactive notation loop.
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora repl                    # start the loop (all views)
@@ -32,27 +32,29 @@ const PROMPT: &str = "aozora> ";
 Inside the loop, type notation to see it parsed, or a :command:
   :mode html   :lang ja   :encoding sjis   :load FILE   :help   :quit")]
 pub(crate) struct ReplArgs {
-    /// Which view(s) to show for each line: `nodes`, `html`, `pandoc`, or `all` (the default).
-    /// Changeable in-session with `:mode`.
+    /// Choose `nodes`, `html`, `pandoc`, or `all` for each input line.
+    /// Defaults to `all`.
+    /// Change the view with `:mode`.
     #[arg(long, value_enum, default_value_t = Mode::default())]
     mode: Mode,
 
-    /// Source encoding for `:load`: `auto` (default), `utf8`, or `sjis`.
-    /// Typed lines are already UTF-8, so this only governs file loads.
-    /// Changeable in-session with `:encoding`.
+    /// Choose the source encoding for `:load`: `auto`, `utf8`, or `sjis`.
+    /// Defaults to `auto`.
+    /// Typed lines already use UTF-8, so this setting only affects file loads.
+    /// Change it with `:encoding`.
     #[arg(long, short = 'E', value_enum, default_value_t = Encoding::default())]
     encoding: Encoding,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 enum Mode {
-    /// The parsed source nodes as JSON (as `aozora inspect nodes`).
+    /// Show source nodes as JSON, matching `aozora inspect nodes`.
     Nodes,
-    /// The rendered HTML (as `aozora render`).
+    /// Render HTML as `aozora render` does.
     Html,
-    /// The Pandoc AST as JSON (as `aozora pandoc`).
+    /// Show the Pandoc abstract syntax tree as JSON, matching `aozora pandoc`.
     Pandoc,
-    /// Every view at once: nodes, HTML, and Pandoc.
+    /// Show nodes, HTML, and Pandoc together.
     #[default]
     All,
 }

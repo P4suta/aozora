@@ -1,42 +1,4 @@
-//! Structured-form snippet completions — IDE-style Tab-stop flow
-//! for the four aozora multi-character forms (`［＃...］`, ruby
-//! `｜base《reading》`, gaiji `※［＃「desc」、men］`).
-//!
-//! ## Why a snippet path on top of `onTypeFormatting`
-//!
-//! [`crate::lsp::on_type_formatting`] handles single-char swaps (`[` →
-//! `［`, `*` → `※`, `|` → `｜`, `<` → `《`). That's the snappy
-//! path for typing aozora content directly — no popup, no accept.
-//!
-//! But the multi-char forms benefit from the editor's snippet engine:
-//! a typed `｜` could naturally expand to `｜${1:base}《${2:reading}》`,
-//! letting the user fill in `太郎` → Tab → `たろう` → Tab. That's
-//! the IDE-style Tab-stop flow the user asked for on 2026-04-29
-//! ("｜太郎《たろう》でいえばIDEみたいに太郎の入力が終わったら
-//! tabでルビ入力に直接飛べるとかさ"). It only works while a snippet
-//! is **active** — i.e. the user accepted a snippet completion item
-//! that emitted `${1}…${2}…${0}` placeholders. There is no LSP
-//! mechanism to retroactively activate Tab-stops over already-typed
-//! text.
-//!
-//! ## Per-trigger snippet table
-//!
-//! The completion popup fires when the user has just typed one of the
-//! trigger chars (the on-type swap has already converted `*` → `※`,
-//! etc — by the time this handler runs, the document holds the
-//! full-width form). For each trigger we offer one or more
-//! `preselect: true` snippet items so a single Enter accepts.
-//!
-//! | Just typed (after on-type) | Snippet body                                 | Notes                                   |
-//! |----------------------------|----------------------------------------------|------------------------------------------|
-//! | `#` (not inside any opener)| `［＃${0}］`                                  | + every catalogue entry as `［＃X］`     |
-//! | `｜`                       | `${1:base}《${2:reading}》`                   | inserted AFTER the typed `｜`            |
-//! | `《` (not preceded by 漢字 run) | `${1:reading}》`                          | Tab-stop on reading                      |
-//! | `※`                        | `［＃「${1:description}」、${2:mencode}］${0}` | full gaiji skeleton                      |
-//!
-//! Each item carries `filter_text` matching the just-typed char so
-//! VS Code's filter accepts the typed prefix verbatim — same trick
-//! [`crate::lsp::completion`] and [`crate::lsp::half_width_emmet`] use.
+//! Provides notation snippets with tab stops through [`snippet_completions`].
 
 use crate::i18n::{self as i18n, LanguageIdentifier};
 use aozora::{Catalogue, CatalogueFamily as SlugFamily};
@@ -61,9 +23,7 @@ const GAIJI_LABEL: &str = "［＃「${desc}」、${men}］";
 const GAIJI_BODY: &str = "［＃「${1:description}」、${2:mencode}］${0}";
 const RUBY_LOOKAHEAD_CHARS: usize = 32;
 
-/// Compute every snippet completion item for the position. Returns
-/// an empty vec when none of the trigger chars sits immediately
-/// before the cursor.
+/// Returns snippet completions when a supported trigger precedes the cursor.
 #[must_use]
 pub(super) fn snippet_completions(
     source: &str,
@@ -82,13 +42,6 @@ pub(super) fn snippet_completions(
     items
 }
 
-/// `#` typed alone (NOT immediately after `[` or `［`) → wrap into
-/// `［＃${0}］` plus every catalogue entry pre-wrapped.
-///
-/// Existing `[#` / `［＃` flow goes through [`crate::lsp::completion`]
-/// which already shows the catalogue. This path covers the case
-/// where the user just types `#` first (no opener) and gets the
-/// brackets + catalogue in one popup.
 fn hash_wrap_completions(
     source: &str,
     cursor: usize,
@@ -97,8 +50,6 @@ fn hash_wrap_completions(
     let Some(typed_start) = char_typed_just_before(source, cursor, HASH) else {
         return Vec::new();
     };
-    // Skip when an opener is forming — the slug-catalogue path in
-    // `crate::lsp::completion` owns that case.
     if matches!(char_before(source, typed_start), Some('[' | '［')) {
         return Vec::new();
     }
@@ -110,13 +61,9 @@ fn hash_wrap_completions(
 
     let mut items = Vec::new();
 
-    // Empty wrap, preselected so a single Enter expands.
     items.push(CompletionItem {
         label: "［＃］".to_owned(),
         filter_text: Some("#".to_owned()),
-        // `sort_text` "00" makes this float to the top above the
-        // catalogue entries (which sort by their canonical body
-        // alphabetically).
         sort_text: Some("00".to_owned()),
         detail: Some(i18n::t(lang, "lsp-snippet-empty-wrap-detail")),
         documentation: Some(Documentation::MarkupContent(MarkupContent {
@@ -133,7 +80,6 @@ fn hash_wrap_completions(
         ..CompletionItem::default()
     });
 
-    // Each catalogue entry as a pre-wrapped option.
     for entry in Catalogue::directives() {
         let (body, format) = if entry.accepts_param {
             (
@@ -170,19 +116,11 @@ fn hash_wrap_completions(
         });
     }
 
-    // Block-container open entries get their close partner appended.
-    // We don't try to attach `additional_text_edits` here because the
-    // user is starting from `#` (no existing close to align with);
-    // the partner pair lands inline in the snippet body for the
-    // entries that need it.
     let _ = SlugFamily::BlockContainerOpen;
 
     items
 }
 
-/// `｜` typed alone → suggest `${1:base}《${2:reading}》` snippet
-/// inserted AFTER the typed pipe. Activates IDE-style Tab navigation:
-/// type base, Tab, type reading, Tab to escape.
 fn pipe_ruby_completion(
     source: &str,
     cursor: usize,
@@ -191,10 +129,6 @@ fn pipe_ruby_completion(
     if char_typed_just_before(source, cursor, PIPE_FW).is_none() {
         return Vec::new();
     }
-    // Don't fire when the user is mid-edit inside an existing ruby
-    // (the `｜` is the start of one already, with content after).
-    // Cheap heuristic: if any of `《》` appears within the next 32
-    // chars on the same line, the user already has the structure.
     if has_ruby_struct_ahead(source, cursor) {
         return Vec::new();
     }
@@ -219,9 +153,6 @@ fn pipe_ruby_completion(
     }]
 }
 
-/// `《` typed alone → suggest `${1:reading}》` snippet. Useful when
-/// the user types `《` directly (without going via `｜`); the
-/// reading slot is selected for direct typing.
 fn open_angle_reading_completion(
     source: &str,
     cursor: usize,
@@ -230,8 +161,6 @@ fn open_angle_reading_completion(
     if char_typed_just_before(source, cursor, OPEN_DOUBLE_ANGLE).is_none() {
         return Vec::new();
     }
-    // Bail when there's already a `》` close ahead — the user is
-    // editing inside an existing ruby pair.
     if source[cursor..].chars().take(32).any(|c| c == '》') {
         return Vec::new();
     }
@@ -256,10 +185,6 @@ fn open_angle_reading_completion(
     }]
 }
 
-/// `※` typed alone → suggest the full gaiji skeleton
-/// `［＃「${1:description}」、${2:mencode}］${0}`. The `※` itself is
-/// already typed (or auto-converted from `*`); the snippet body
-/// fills in the bracket structure with Tab-stops.
 fn kome_gaiji_completion(
     source: &str,
     cursor: usize,
@@ -268,7 +193,6 @@ fn kome_gaiji_completion(
     if char_typed_just_before(source, cursor, KOME).is_none() {
         return Vec::new();
     }
-    // Don't fire when the gaiji structure already exists ahead.
     if source[cursor..].chars().take(64).any(|c| c == '］') {
         return Vec::new();
     }
@@ -293,13 +217,6 @@ fn kome_gaiji_completion(
     }]
 }
 
-// ---------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------
-
-/// Returns `Some(typed_start)` when the char immediately before
-/// `cursor` is `expected`. Honours UTF-8 boundaries so multi-byte
-/// chars like `｜` (3 bytes) and `※` (3 bytes) work correctly.
 fn char_typed_just_before(source: &str, cursor: usize, expected: char) -> Option<usize> {
     let len = expected.len_utf8();
     let typed_start = cursor.checked_sub(len)?;
@@ -312,8 +229,6 @@ fn char_typed_just_before(source: &str, cursor: usize, expected: char) -> Option
     Some(typed_start)
 }
 
-/// Returns the char ending exactly at byte offset `byte_end`, or
-/// `None` if `byte_end` is `0` or sits mid-codepoint.
 fn char_before(source: &str, byte_end: usize) -> Option<char> {
     if byte_end == 0 || byte_end > source.len() {
         return None;
@@ -321,10 +236,6 @@ fn char_before(source: &str, byte_end: usize) -> Option<char> {
     source[..byte_end].chars().next_back()
 }
 
-/// Cheap "is the user already inside a ruby structure" check —
-/// looks for `《` or `》` within the next 32 chars on the same line.
-/// Used to suppress the `｜` snippet when the surrounding text
-/// already has the structure.
 fn has_ruby_struct_ahead(source: &str, cursor: usize) -> bool {
     source[cursor..]
         .chars()
@@ -349,8 +260,6 @@ mod tests {
         "en".parse().expect("en parses")
     }
 
-    /// Shim mirroring the pre-i18n `snippet_completions(source, position)`
-    /// arity, pinned to English so the detail/doc assertions stay locale-stable.
     fn snippet_completions(source: &str, position: Position) -> Vec<CompletionItem> {
         super::snippet_completions(source, position, &en())
     }
@@ -360,7 +269,6 @@ mod tests {
         let src = "#";
         let items = snippet_completions(src, pos_at(src, src.len()));
         assert!(!items.is_empty(), "must emit at least the empty wrap");
-        // The empty wrap sorts above catalogue entries via sort_text "00".
         let first = &items[0];
         assert_eq!(first.label, "［＃］");
         assert_eq!(first.filter_text.as_deref(), Some("#"));
@@ -377,8 +285,6 @@ mod tests {
     fn hash_typed_alone_also_emits_catalogue_entries() {
         let src = "#";
         let items = snippet_completions(src, pos_at(src, src.len()));
-        // 改ページ should be in there (one of the simplest catalogue
-        // entries, no parameters).
         let kaipage = items
             .iter()
             .find(|i| i.label == "［＃改ページ］")
@@ -392,9 +298,6 @@ mod tests {
 
     #[test]
     fn hash_inside_existing_opener_yields_no_wrap() {
-        // `[#` and `［#` go through the slug-catalogue path in
-        // `crate::lsp::completion`. We must NOT also offer the bare-`#`
-        // wrap, otherwise the popup shows duplicate items.
         for src in ["[#", "［#"] {
             let items = snippet_completions(src, pos_at(src, src.len()));
             assert!(
@@ -420,10 +323,8 @@ mod tests {
 
     #[test]
     fn pipe_inside_existing_ruby_yields_no_snippet() {
-        // Cursor sits between `｜` and an already-existing `《》`.
-        // No snippet — the user is editing, not creating.
         let src = "｜太郎《たろう》";
-        let cursor = "｜".len(); // right after the leading ｜
+        let cursor = "｜".len();
         let items = snippet_completions(src, pos_at(src, cursor));
         assert!(items.is_empty(), "{items:?}");
     }
@@ -485,8 +386,6 @@ mod tests {
 
     #[test]
     fn hash_after_japanese_text_still_fires_wrap() {
-        // The look-back is byte-aware so multi-byte preceding chars
-        // don't break the trigger detection.
         let src = "本文の途中で#";
         let items = snippet_completions(src, pos_at(src, src.len()));
         assert_ne!(items, Vec::<CompletionItem>::new());
@@ -495,21 +394,16 @@ mod tests {
 
     #[test]
     fn empty_wrap_carries_detail_documentation_and_kind() {
-        // Pins the three metadata fields on the preselected empty-wrap
-        // item: dropping any of them (mutant "delete field …") flips it
-        // to the `CompletionItem::default()` `None`.
         let src = "#";
         let items = snippet_completions(src, pos_at(src, src.len()));
         let wrap = items
             .iter()
             .find(|i| i.label == "［＃］")
             .expect("empty wrap present");
-        // `detail` field — the canonical English catalog value (via the shim).
         assert_eq!(
             wrap.detail.as_deref(),
             Some("Empty annotation-slug template (edit the body)")
         );
-        // `documentation` field — pin the markdown payload.
         let Some(Documentation::MarkupContent(mc)) = &wrap.documentation else {
             panic!("empty wrap must carry markdown documentation")
         };
@@ -518,14 +412,11 @@ mod tests {
             mc.value,
             "Convert `#` to `［＃<cursor>］`. Press Enter to confirm."
         );
-        // `kind` field.
         assert_eq!(wrap.kind, Some(CompletionItemKind::SNIPPET));
     }
 
     #[test]
     fn empty_wrap_prose_localizes_by_lang() {
-        // The empty-wrap detail/doc come from the shared catalog, one per
-        // locale (en is asserted above).
         let src = "#";
         let wrap = |tag: &str| {
             let lang: LanguageIdentifier = tag.parse().expect("locale parses");
@@ -546,8 +437,6 @@ mod tests {
 
     #[test]
     fn catalogue_entry_carries_detail_documentation_kind_and_format() {
-        // Pins the four metadata fields on a catalogue item. `改ページ`
-        // takes no parameter, so its `insert_text_format` is PLAIN_TEXT.
         let src = "#";
         let items = snippet_completions(src, pos_at(src, src.len()));
         let entry = Catalogue::directives()
@@ -558,16 +447,12 @@ mod tests {
             .iter()
             .find(|i| i.label == "［＃改ページ］")
             .expect("改ページ catalogue item present");
-        // `detail` field is the entry's doc string.
         assert_eq!(kaipage.detail.as_deref(), Some(entry.doc));
-        // `documentation` field is present.
         assert!(
             kaipage.documentation.is_some(),
             "catalogue item must carry documentation: {kaipage:?}",
         );
-        // `kind` field is derived from the entry's family.
         assert_eq!(kaipage.kind, Some(family_to_kind(entry.family)));
-        // `insert_text_format` field: no param → PLAIN_TEXT.
         let expected_format = if entry.accepts_param {
             InsertTextFormat::SNIPPET
         } else {
@@ -578,10 +463,6 @@ mod tests {
 
     #[test]
     fn open_angle_fires_when_only_non_close_text_follows() {
-        // `《` just typed, a reading half-entered, but NO closing `》`
-        // ahead → the `any(|c| c == '》')` guard is false → snippet
-        // fires. Flipping `==` to `!=` sees the non-`》` chars and
-        // wrongly bails (0 items).
         let src = "太郎《読み";
         let cursor = "太郎《".len();
         let items = snippet_completions(src, pos_at(src, cursor));
@@ -594,10 +475,6 @@ mod tests {
 
     #[test]
     fn kome_fires_when_only_non_bracket_text_follows() {
-        // `※` just typed, plain text after it, but NO closing `］`
-        // ahead → the `any(|c| c == '］')` guard is false → skeleton
-        // fires. Flipping `==` to `!=` sees the non-`］` char and
-        // wrongly bails (0 items).
         let src = "※あ";
         let cursor = "※".len();
         let items = snippet_completions(src, pos_at(src, cursor));
@@ -610,28 +487,17 @@ mod tests {
 
     #[test]
     fn char_before_returns_char_ending_exactly_at_offset() {
-        // `byte_end == source.len()` must return the LAST char, not
-        // `None`: `>` → `==` and `>` → `>=` both treat the end offset as
-        // out of range and return `None` instead.
         assert_eq!(char_before("ab", 2), Some('b'));
-        // Multi-byte: `あ` is 3 bytes; ending offset 3 == len → its char.
         assert_eq!(char_before("あ", 3), Some('あ'));
-        // Interior boundary returns the preceding char.
         assert_eq!(char_before("ab", 1), Some('a'));
-        // `byte_end == 0` → `None` (no char ends at the start).
         assert_eq!(char_before("ab", 0), None);
-        // `byte_end` past the end → `None`, NOT a panic: `||` → `&&`
-        // drops the out-of-range guard and slices out of bounds.
         assert_eq!(char_before("ab", 5), None);
     }
 
     #[test]
     fn has_ruby_struct_ahead_matches_both_angle_chars_only() {
-        // Open angle alone → true; `c == '《'` → `!=` would miss it.
         assert!(has_ruby_struct_ahead("《", 0));
-        // Close angle alone → true; `c == '》'` → `!=` would miss it.
         assert!(has_ruby_struct_ahead("》", 0));
-        // A non-angle char → false; either `==` → `!=` flip flips it true.
         assert!(!has_ruby_struct_ahead("あ", 0));
     }
 }

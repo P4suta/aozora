@@ -1,4 +1,4 @@
-//! End-to-end colour policy and anti-hang guard tests for the `aozora` binary.
+//! Tests terminal color policy and input guards for the `aozora` binary.
 
 use std::io::Write;
 use std::process::{Command, ExitStatus, Stdio};
@@ -13,6 +13,10 @@ struct Output {
     stderr: Vec<u8>,
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and capture failures must fail with context"
+)]
 fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
     let mut cmd = Command::new(BIN);
     cmd.args(args)

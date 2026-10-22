@@ -31,11 +31,6 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-# The one published library dependency. Features enabled here:
-#   schema  → `aozora::json::schema_*()` for `aozora spec schema` (implies json)
-#   fmt     → `aozora::fmt::format_source*` (the pure canonicalising core the
-#             `fmt`/`lint`/`repl`/`tui`/`timing` plumbing in `src/fmt/` wraps)
-#   pandoc  → `aozora::pandoc::to_pandoc` for `aozora pandoc`
 aozora = { workspace = true, features = [
   "schema",
   "fmt",
@@ -53,34 +48,27 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 toml = { workspace = true }
 notify = { workspace = true }
-rustyline = { workspace = true } # interactive line editor for `aozora repl`
-ratatui = { workspace = true } # immediate-mode TUI framework for `aozora tui`
-crossterm = { workspace = true } # terminal backend (raw mode / events) for the TUI
-tui-textarea-2 = { workspace = true } # multi-line source EDIT pane widget for the TUI
-# stderr-only structured logging for the CLI shell, gated behind `-v`/`-q` /
-# `AOZORA_LOG`; also the tracing surface the in-process LSP emits on.
+rustyline = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tui-textarea-2 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
 
-# --- Localization (folded from aozora-i18n): the Project Fluent stack backing
-# the human shell strings and the LSP's diagnostic prose (see `src/i18n.rs`). ---
 fluent-bundle = { workspace = true }
 unic-langid = { workspace = true }
 fluent-langneg = { workspace = true }
 
-# --- Formatter batch engine (folded from aozora-fmt CLI plumbing, `src/fmt/`) ---
-similar = { workspace = true } # unified diff for --diff
-walkdir = { workspace = true } # directory recursion
-anstream = { workspace = true } # TTY-aware stdout for coloured diffs
-anstyle = { workspace = true } # diff colour styling
-indicatif = { workspace = true } # TTY-gated batch progress bar / spinner (stderr)
+similar = { workspace = true }
+walkdir = { workspace = true }
+anstream = { workspace = true }
+anstyle = { workspace = true }
+indicatif = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 encoding_rs = { workspace = true }
 
-# --- In-process language server (folded from aozora-lsp, `src/lsp/`):
-# tower-lsp over tokio stdio, with rope-backed incremental documents. ---
 tower-lsp = { workspace = true }
 tokio = { workspace = true }
 dashmap = { workspace = true }
@@ -91,24 +79,12 @@ hdrhistogram = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
-# `#[cfg_attr(test, mutants::skip)]` on live-terminal progress widgets whose
-# pure visibility predicates carry the assertions (ADR-0031); a no-op outside
-# `cargo mutants`.
+# ADR-0031 uses predicate tests for live progress widgets marked with `mutants::skip`.
 mutants = { workspace = true }
-# Golden-fixture loader for the cross-surface parity gate
-# (`tests/fixture_parity.rs`). Declared path-only (no version) on
-# purpose: aozora-conformance is a dev-only, `publish = false` crate, so
-# cargo STRIPS this dev-dependency from the published manifest. A
-# versioned dev-dep would make crates.io require aozora-conformance to
-# exist on the registry and would fail the `aozora-cli` publish.
 aozora-conformance = { path = "../aozora-conformance" }
 proptest = { workspace = true }
-# In-process LSP end-to-end harness (`src/lsp/backend.rs` `mod e2e`): drives the
-# `LspService` as a `tower::Service` and drains the loopback `ClientSocket`.
 tower = "0.5"
 futures = "0.3"
-# Fluent's AST, so the i18n catalog-parity test (`src/i18n.rs`) reads each
-# locale's message ids from the resource Fluent itself parsed.
 fluent-syntax = { workspace = true }
 [package.metadata.docs.rs]
 all-features = true

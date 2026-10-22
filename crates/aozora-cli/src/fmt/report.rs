@@ -1,8 +1,10 @@
-//! Output rendering: the aggregate [`Outcome`], the JSON `--json` report,
-//! and coloured unified diffs.
+//! Renders formatter outcomes, JSON reports, and unified diffs.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
+
+const INTERNAL_EXIT_CODE: u8 = 3;
+const DIFF_CONTEXT_LINES: usize = 3;
 
 use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
@@ -20,59 +22,38 @@ use crate::wire::Envelope;
 #[cfg(test)]
 use aozora::json::SCHEMA_VERSION;
 
-/// The aggregate result of a run. Ordered so folding with `max` keeps the
-/// documented exit-code severity.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Outcome {
-    /// Everything was already formatted (or written / listed) without error.
     Ok,
-    /// `--check` found at least one input that would change.
     WouldReformat,
-    /// Strict mode rejected one or more parser diagnostics.
     Diagnostics,
-    /// An I/O error, missing path, parser panic, or guard failure occurred.
     Error,
-    /// The parser reported an internal invariant failure.
     Internal,
 }
 
 impl Outcome {
-    /// Map to the documented document-command exit code.
     pub(crate) fn exit_code(self) -> ExitCode {
         match self {
             Self::Ok => ExitCode::SUCCESS,
             Self::WouldReformat | Self::Diagnostics => ExitCode::from(1),
             Self::Error => ExitCode::from(2),
-            Self::Internal => ExitCode::from(3),
+            Self::Internal => ExitCode::from(INTERNAL_EXIT_CODE),
         }
     }
 }
 
-/// One file's contribution to a directory batch: its severity (for exit-code
-/// folding) plus whether the formatter changed it. The `changed` flag is what
-/// the batch summary needs and the `outcome` alone cannot supply — in `--write`
-/// mode a rewritten file and an already-canonical one both fold to
-/// [`Outcome::Ok`], so "formatted vs unchanged" must be carried explicitly.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct FileOutcome {
-    /// The file's severity, folded with `max` into the run's aggregate.
     pub(crate) outcome: Outcome,
-    /// Whether the formatter changed (or would change) this file.
     pub(crate) changed: bool,
 }
 
 impl FileOutcome {
-    /// Pair a per-file `outcome` with whether the file `changed`.
     pub(crate) fn new(outcome: Outcome, changed: bool) -> Self {
         Self { outcome, changed }
     }
 }
 
-/// Build the stdout stream for coloured output, honouring `--color`. `anstream`
-/// strips ANSI when the choice (or TTY detection, for `auto`) says no colour.
-///
-/// Re-exported from the crate root so the `aozora` CLI's terminal renderers
-/// share one TTY/`NO_COLOR` policy with the formatter's diffs.
 #[must_use]
 pub(super) fn auto_stdout(color: ColorChoice) -> StdoutWriter<AutoStream<io::Stdout>> {
     output::guard(match color {
@@ -82,7 +63,6 @@ pub(super) fn auto_stdout(color: ColorChoice) -> StdoutWriter<AutoStream<io::Std
     })
 }
 
-/// Write a coloured unified diff of `old` → `new` under a `label` header.
 pub(crate) fn write_diff(
     out: &mut impl Write,
     label: &str,
@@ -98,7 +78,7 @@ pub(crate) fn write_diff(
     writeln!(out, "{header}+++ {label}{header:#}")?;
 
     let diff = TextDiff::from_lines(old, new);
-    for group in &diff.grouped_ops(3) {
+    for group in &diff.grouped_ops(DIFF_CONTEXT_LINES) {
         let (os, ol, ns, nl) = hunk_span(group);
         writeln!(out, "{meta}@@ -{os},{ol} +{ns},{nl} @@{meta:#}")?;
         for op in group {
@@ -116,7 +96,7 @@ pub(crate) fn write_diff(
     Ok(())
 }
 
-/// 1-based `(old_start, old_len, new_start, new_len)` spanning a hunk group.
+/// Returns one-based old and new start positions and lengths for a hunk group.
 fn hunk_span(ops: &[DiffOp]) -> (usize, usize, usize, usize) {
     let (mut os, mut ns) = (usize::MAX, usize::MAX);
     let (mut oe, mut ne) = (0_usize, 0_usize);
@@ -130,7 +110,6 @@ fn hunk_span(ops: &[DiffOp]) -> (usize, usize, usize, usize) {
     (os + 1, oe - os, ns + 1, ne - ns)
 }
 
-/// One entry in the `--json` report.
 #[derive(Serialize)]
 pub(crate) struct JsonFile {
     path: String,
@@ -140,7 +119,6 @@ pub(crate) struct JsonFile {
 }
 
 impl JsonFile {
-    /// An already-formatted file.
     pub(crate) fn ok(path: String) -> Self {
         Self {
             path,
@@ -149,7 +127,6 @@ impl JsonFile {
         }
     }
 
-    /// A file that `--check` would reformat.
     pub(crate) fn would_reformat(path: String) -> Self {
         Self {
             path,
@@ -158,7 +135,6 @@ impl JsonFile {
         }
     }
 
-    /// A file that could not be read or formatted.
     pub(crate) fn error(path: String, message: String) -> Self {
         Self {
             path,
@@ -168,16 +144,12 @@ impl JsonFile {
     }
 }
 
-/// The `data` payload of the `--json` report: the aggregate `formatted` flag
-/// and the per-file statuses.
 #[derive(Serialize)]
 struct JsonReportData {
     formatted: bool,
     files: Vec<JsonFile>,
 }
 
-/// Print the JSON report to stdout. `formatted` is true only when every
-/// input was already canonical.
 pub(crate) fn emit_json(files: Vec<JsonFile>) -> io::Result<()> {
     let formatted = files.iter().all(|file| file.status == "ok");
     let report = Envelope::new(JsonReportData { formatted, files });
@@ -187,8 +159,6 @@ pub(crate) fn emit_json(files: Vec<JsonFile>) -> io::Result<()> {
     out.write_all(b"\n")
 }
 
-/// `--check --json` over a resolved file set: collect every file's status
-/// (including discovery errors) into one JSON object and return the outcome.
 pub(crate) fn run_check_json(
     ctx: &Ctx,
     resolved: &Resolved,
@@ -234,8 +204,6 @@ pub(crate) fn run_check_json(
 mod tests {
     use super::*;
 
-    /// `Outcome` folds with `max` to keep the most severe result, so the
-    /// ordering `Ok < WouldReformat < Error` is load-bearing.
     #[test]
     fn outcome_orders_by_severity() {
         assert!(Outcome::Ok < Outcome::WouldReformat);
@@ -262,15 +230,11 @@ mod tests {
 
     #[test]
     fn write_diff_spans_multiple_hunks() {
-        // Two well-separated edits produce two `@@` groups, exercising
-        // `hunk_span`'s min/max accumulation across distinct op groups.
         let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n";
         let new = "X\n2\n3\n4\n5\n6\n7\n8\n9\nY\n";
         let mut out = Vec::new();
         write_diff(&mut out, "f", old, new).expect("diff");
         let text = String::from_utf8(out).expect("utf8");
-        // Each hunk header is `@@ -a,b +c,d @@`; count headers via the
-        // unambiguous `@@ -` prefix.
         assert_eq!(
             text.matches("@@ -").count(),
             2,
@@ -280,12 +244,6 @@ mod tests {
 
     #[test]
     fn hunk_span_pins_exact_span_header() {
-        // A single-line change in the middle of a 10-line file. With three
-        // lines of context each side, the hunk covers old/new indices 2..9,
-        // so `hunk_span` must emit 1-based start 3 and length 7 on both sides:
-        // `@@ -3,7 +3,7 @@`. This pins every field of the returned tuple,
-        // and the operands (start 2, end 9) are chosen so `+1`/`*1` disagree
-        // and `end - start` differs from `end + start`.
         let old = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
         let new = "a\nb\nc\nd\ne\nX\ng\nh\ni\nj\n";
         let mut out = Vec::new();
@@ -307,7 +265,6 @@ mod tests {
         let mut out = Vec::new();
         write_diff(&mut out, "f", "same\n", "same\n").expect("diff");
         let text = String::from_utf8(out).expect("utf8");
-        // Only the `---` / `+++` headers, no `@@` hunks.
         assert!(!text.contains("@@"), "no hunks for identical input: {text}");
     }
 
@@ -321,7 +278,6 @@ mod tests {
         assert_eq!(v["schemaVersion"], SCHEMA_VERSION, "wire version: {v}");
         assert_eq!(v["data"]["formatted"], false, "formatted nested: {v}");
         assert_eq!(v["data"]["files"][0]["status"], "would_reformat", "{v}");
-        // The payload must not leak to the top level.
         assert!(
             v.get("formatted").is_none(),
             "formatted must be nested: {v}"
