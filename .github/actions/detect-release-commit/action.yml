@@ -1,13 +1,3 @@
-# Composite action: classify the checked-out HEAD as a release commit.
-#
-# The single source of truth for release-commit detection. The two
-# primitives below were copy-pasted across release-ready.yml (qualify),
-# docs.yml, and release-plz.yml; each caller now derives its own release
-# policy (dispatch handling, push-only guards, tag existence) from the
-# primitives instead of re-implementing the git-diff probe.
-#
-# Requires a checkout with fetch-depth >= 2 so `git diff HEAD^` can resolve
-# the parent commit.
 
 name: detect-release-commit
 description: Emit release-commit primitives (version-line change, release-plz branch head) for the checked-out HEAD.

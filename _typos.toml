@@ -1,38 +1,30 @@
+# Spelling allowances follow docs/adr/spelling-allowances.md.
 [default]
-# Git hashes can contain letter sequences that resemble misspellings.
 extend-ignore-identifiers-re = [
   "[A-Fa-f0-9]{7,}",
 ]
 
 [default.extend-words]
-# afm is the sibling repository's name.
 afm = "afm"
-# Aozora accent-decomposition examples contain the French fragment fune`bre.
 bre = "bre"
-# Author, translator, and contributor names appear in notices and documentation.
 Dostoyevsky = "Dostoyevsky"
 Fyodor = "Fyodor"
 Yonekawa = "Yonekawa"
 Masao = "Masao"
 Yasunobu = "Yasunobu"
-# Hepburn morae in render-slug tests collide with dictionary entries.
 gya = "gya"
 myu = "myu"
 ba = "ba"
 
 [files]
 extend-exclude = [
-  # Corpus source spellings must be preserved verbatim.
   "spec/aozora/fixtures/",
-  # Vendored JIS and Unicode tables contain hexadecimal spans that resemble misspellings.
   "crates/aozora/data/",
-  # Build, coverage, and mutation outputs contain generated text.
   "target/",
   "coverage/",
   "mutants.out/",
   "mutants.out.old/",
   "mutants-*/",
-  # Rendered HTML and lockfiles contain generated content.
   "*.html",
   "*.lock",
 ]

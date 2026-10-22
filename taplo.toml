@@ -1,4 +1,3 @@
-# Taplo does not honor .gitignore, so generated directories need explicit exclusions.
 exclude = ["target/**", "**/node_modules/**"]
 
 [formatting]

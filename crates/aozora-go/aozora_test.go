@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// TestEndToEnd loads the embedded aozora.wasm through the Extism Go host
-// SDK and exercises the JSON and HTML exports across the real plugin ABI — the Go
-// analogue of the Rust `host_smoke` test. It proves the Go transport
-// (wazero → wasm → wire JSON → generated structs) works end to end; the
-// byte-identical-to-aozora::json guarantee itself is pinned by the Rust
-// smoke test, so here we assert decoded structure for known inputs.
 func TestEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	p, err := Open(ctx)
@@ -49,8 +43,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("Pairs: expected at least one pair for %q", ruby)
 	}
 
-	// U+E001 is a PUA sentinel the parser reserves; source carrying one
-	// must raise a source_contains_pua diagnostic.
 	diag, err := p.Diagnostics("abc\uE001def")
 	if err != nil {
 		t.Fatalf("Diagnostics: %v", err)

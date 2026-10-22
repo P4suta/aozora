@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# First-run setup for a fresh clone.
 set -euo pipefail
 
 if ! command -v mise >/dev/null 2>&1; then

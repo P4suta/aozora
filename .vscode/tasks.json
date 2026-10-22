@@ -1,5 +1,4 @@
 {
-  // Surfaces the canonical native `just` recipes as VS Code tasks.
   "version": "2.0.0",
   "tasks": [
     {

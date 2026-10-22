@@ -13,8 +13,8 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      security-events: write # Upload SARIF to code scanning.
-      id-token: write # Publish results to the OpenSSF Scorecard API.
+      security-events: write
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,7 +26,6 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # The public Scorecard badge needs published results.
           publish_results: true
 
       - name: Upload artifact

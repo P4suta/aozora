@@ -75,7 +75,6 @@ jobs:
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: "-D warnings"
-        # Serial rustdoc avoids races in shared output for facade re-exports.
         run: cargo doc --workspace --no-deps --all-features --jobs 1
 
       - name: Build playground

@@ -1192,7 +1192,6 @@ jobs:
   real-work:
     needs: [qualify, real-work-candidate, real-work-inputs]
     if: needs.qualify.outputs.run == 'true'
-    # Reusable workflows cannot elevate the caller's permissions when downloading artifacts.
     permissions:
       actions: read
       contents: read

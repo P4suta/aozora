@@ -1,7 +1,5 @@
 name: spec-freshness
 
-# Detect specification changes even when this repository receives no pushes.
-
 on:
   schedule:
     - cron: "31 5 * * 4"

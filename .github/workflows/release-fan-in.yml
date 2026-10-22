@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read # Check out the qualified commit.
-  actions: write # Dispatch the publisher and docs workflows.
+  contents: read
+  actions: write
 
 jobs:
   fan-in:
