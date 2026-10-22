@@ -45,9 +45,9 @@ const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static st
 }
 
 #[cfg(feature = "extension-module")]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
-    reason = "the #[pyfunction] / #[pymethods] macros expand each fn into a Python ABI wrapper that PyO3 fills with extra context args (Python token, args, kwargs, …). The warning fires on the macro-generated signature, not on user code; per-item allow doesn't reach inside the macro expansion."
+    reason = "PyO3 emits ABI wrappers as sibling items outside function-level lint attributes"
 )]
 mod bindings {
     use aozora::{Document as AozoraDoc, decode_auto, decode_sjis as core_decode_sjis, json};

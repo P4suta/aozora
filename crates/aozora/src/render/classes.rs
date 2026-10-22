@@ -278,15 +278,41 @@ mod tests {
     /// stem). The authoritative derivation [`AOZORA_CLASSES`] is pinned to;
     /// enum families enumerate through the `*_KINDS` constants so a new
     /// variant flows in automatically.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one render call per Node + ContainerKind variant; \
-                  splitting would scatter the exhaustive enumeration"
-    )]
     fn all_emitted_classes() -> BTreeSet<String> {
         let mut a = Allocator::new();
-        let mut nodes: Vec<Node> = Vec::new();
+        let mut nodes = leaf_nodes(&mut a);
+        nodes.extend(annotation_nodes(&mut a));
+        nodes.extend(content_nodes(&mut a));
+        nodes.extend(forward_nodes(&mut a));
+        nodes.extend(accent_nodes(&mut a));
+        let containers = class_containers();
+        let store = a.into_store();
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        for node in nodes {
+            render_collected(node, &store, &mut emitted);
+        }
+        for kind in containers {
+            let mut html = String::new();
+            let container = Container { kind };
+            render_container(container, true, &mut html).expect("render into String is infallible");
+            render_container(container, false, &mut html)
+                .expect("render into String is infallible");
+            collect_classes(&html, &mut emitted);
+        }
+        let mut html = String::new();
+        let mut state = RenderState::default();
+        state
+            .open_warichu(&mut html)
+            .expect("render into String is infallible");
+        state
+            .close_warichu(&mut html)
+            .expect("render into String is infallible");
+        collect_classes(&html, &mut emitted);
+        emitted
+    }
 
+    fn leaf_nodes(a: &mut Allocator) -> Vec<Node> {
+        let mut nodes = Vec::new();
         // --- leaf nodes ---
         render_into(a.page_break(), &mut nodes);
         render_into(a.body_end(), &mut nodes);
@@ -347,6 +373,11 @@ mod tests {
             render_into(a.section_break(k), &mut nodes);
         }
 
+        nodes
+    }
+
+    fn annotation_nodes(a: &mut Allocator) -> Vec<Node> {
+        let mut nodes = Vec::new();
         let g = a.make_gaiji("X", None, false);
         render_into(a.gaiji(g), &mut nodes);
         for kind in [
@@ -391,6 +422,11 @@ mod tests {
             render_into(a.annotation(p), &mut nodes);
         }
 
+        nodes
+    }
+
+    fn content_nodes(a: &mut Allocator) -> Vec<Node> {
+        let mut nodes = Vec::new();
         // Nodes needing Content. `content_plain` takes `&mut self` but
         // returns a Content borrowing the arena (not the allocator), so
         // the `&mut` borrow ends before each `&self` constructor runs and
@@ -417,6 +453,11 @@ mod tests {
                 render_into(a.bouten(kind, t, pos, ForwardOrigin::Reclaimed), &mut nodes);
             }
         }
+        nodes
+    }
+
+    fn forward_nodes(a: &mut Allocator) -> Vec<Node> {
+        let mut nodes = Vec::new();
         // Every forward-emphasis attribute that produces a distinct class.
         for attr in [
             ForwardAttr::Bold,
@@ -446,6 +487,11 @@ mod tests {
                 &mut nodes,
             );
         }
+        nodes
+    }
+
+    fn accent_nodes(a: &mut Allocator) -> Vec<Node> {
+        let mut nodes = Vec::new();
         // AccentDot (#331) needs an interned body + a composable run, so it uses
         // its own constructor rather than the loop above; this exercises the
         // `aozora-accent-dot` class through the compose path.
@@ -484,8 +530,11 @@ mod tests {
             }
         }
 
-        // --- containers (open + close) ---
-        let mut containers = vec![
+        nodes
+    }
+
+    fn indent_containers() -> [RegionFormat; 5] {
+        [
             RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: None,
@@ -531,6 +580,12 @@ mod tests {
                     font: Some(FontShift(NonZeroI8::new(-1).unwrap())),
                 },
             }),
+        ]
+    }
+
+    fn class_containers() -> Vec<RegionFormat> {
+        let mut containers = indent_containers().to_vec();
+        containers.extend([
             RegionFormat::Warichu,
             RegionFormat::Framed(EnclosureKind::Rule),
             RegionFormat::AlignEnd { offset: 0 },
@@ -551,7 +606,7 @@ mod tests {
             RegionFormat::SmallScript(BoutenPosition::Left),
             RegionFormat::Caption { padded: false },
             RegionFormat::Caption { padded: true },
-        ];
+        ]);
         for &kind in BOUTEN_KINDS {
             for position in [
                 BoutenPosition::Right,
@@ -570,29 +625,7 @@ mod tests {
                 });
             }
         }
-        let store = a.into_store();
-        let mut emitted: BTreeSet<String> = BTreeSet::new();
-        for node in nodes {
-            render_collected(node, &store, &mut emitted);
-        }
-        for kind in containers {
-            let mut html = String::new();
-            let container = Container { kind };
-            render_container(container, true, &mut html).expect("render into String is infallible");
-            render_container(container, false, &mut html)
-                .expect("render into String is infallible");
-            collect_classes(&html, &mut emitted);
-        }
-        let mut html = String::new();
-        let mut state = RenderState::default();
-        state
-            .open_warichu(&mut html)
-            .expect("render into String is infallible");
-        state
-            .close_warichu(&mut html)
-            .expect("render into String is infallible");
-        collect_classes(&html, &mut emitted);
-        emitted
+        containers
     }
 
     #[test]

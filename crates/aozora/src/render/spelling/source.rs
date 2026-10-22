@@ -481,44 +481,6 @@ mod tests {
         }
     }
 
-    #[allow(
-        clippy::fn_params_excessive_bools,
-        reason = "test-only BlockStyles constructor mirroring the struct's fields"
-    )]
-    fn styles(
-        gothic: bool,
-        horizontal: bool,
-        framed: bool,
-        font: Option<FontShift>,
-    ) -> BlockStyles {
-        BlockStyles {
-            gothic,
-            horizontal,
-            framed,
-            font,
-        }
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "test-only IndentBlock constructor mirroring the struct's fields"
-    )]
-    fn ib(
-        amount: u8,
-        wrap: Option<u8>,
-        center: bool,
-        layout: IndentLayout,
-        styles: BlockStyles,
-    ) -> IndentBlock {
-        IndentBlock {
-            amount,
-            wrap,
-            center,
-            layout,
-            styles,
-        }
-    }
-
     // --- direct call helpers for the private / `pub(crate)` emitters --------
 
     fn close_src(close: RegionClose) -> String {
@@ -677,11 +639,7 @@ mod tests {
     // ---------------------------------------------------------------------
 
     #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "exhaustive per-family container-open assertion table"
-    )]
-    fn container_open_spells_every_family() {
+    fn container_open_spells_inline_styles() {
         let open = container_open_source;
         assert_eq!(
             open(RegionFormat::Bouten {
@@ -715,6 +673,11 @@ mod tests {
             open(RegionFormat::Italic { padded: true }),
             "［＃ここから斜体］"
         );
+    }
+
+    #[test]
+    fn container_open_spells_block_layouts() {
+        let open = container_open_source;
         assert_eq!(
             open(RegionFormat::AlignEnd { offset: 0 }),
             "［＃ここから地付き］"
@@ -791,87 +754,86 @@ mod tests {
         // three `!gothic` / `!horizontal` / `!framed` negations (drop any and the
         // guard fails, falling back to the numbered `…、ページの左右中央に` form).
         assert_eq!(
-            container_open_source(RegionFormat::Indent(ib(
-                0,
-                None,
-                true,
-                IndentLayout::None,
-                BlockStyles::EMPTY,
-            ))),
+            container_open_source(RegionFormat::Indent(IndentBlock {
+                amount: 0,
+                wrap: None,
+                center: true,
+                layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
+            })),
             "［＃ここからページの左右中央］"
         );
     }
 
     #[test]
     fn indent_open_page_centre_guard_needs_every_clause() {
-        // For every `&&` in the page-centre guard, an input where exactly the
-        // clause *after* that operator is false: the numbered form is emitted, so
-        // flipping that `&&` to `||` (which would wrongly emit the short
-        // page-centre opener) is caught.
+        let base = IndentBlock {
+            amount: 0,
+            wrap: None,
+            center: true,
+            layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
+        };
         let cases: &[(IndentBlock, &str)] = &[
-            // center false (256:9)
             (
-                ib(0, None, false, IndentLayout::None, BlockStyles::EMPTY),
+                IndentBlock {
+                    center: false,
+                    ..base
+                },
                 "［＃ここから0字下げ］",
             ),
-            // wrap present (257:9)
             (
-                ib(0, Some(2), true, IndentLayout::None, BlockStyles::EMPTY),
+                IndentBlock {
+                    wrap: Some(2),
+                    ..base
+                },
                 "［＃ここから0字下げ、折り返して2字下げ、ページの左右中央に］",
             ),
-            // secondary layout present (258:9)
             (
-                ib(
-                    0,
-                    None,
-                    true,
-                    IndentLayout::LineWidth(lw(3)),
-                    BlockStyles::EMPTY,
-                ),
+                IndentBlock {
+                    layout: IndentLayout::LineWidth(lw(3)),
+                    ..base
+                },
                 "［＃ここから0字下げ、ページの左右中央に、3字詰め］",
             ),
-            // gothic set (259:9)
             (
-                ib(
-                    0,
-                    None,
-                    true,
-                    IndentLayout::None,
-                    styles(true, false, false, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        gothic: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから0字下げ、ページの左右中央に、ゴシック体］",
             ),
-            // horizontal set (260:9)
             (
-                ib(
-                    0,
-                    None,
-                    true,
-                    IndentLayout::None,
-                    styles(false, true, false, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        horizontal: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから0字下げ、ページの左右中央に、横書き］",
             ),
-            // framed set (261:9)
             (
-                ib(
-                    0,
-                    None,
-                    true,
-                    IndentLayout::None,
-                    styles(false, false, true, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        framed: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから0字下げ、ページの左右中央に、罫囲み］",
             ),
-            // font set (262:9)
             (
-                ib(
-                    0,
-                    None,
-                    true,
-                    IndentLayout::None,
-                    styles(false, false, false, Some(fs(2))),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        font: Some(fs(2)),
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから0字下げ、ページの左右中央に、2段階大きな文字］",
             ),
         ];
@@ -891,82 +853,79 @@ mod tests {
         // the `bare` computation (all false here, so `!x` = true; deleting a `!`
         // makes `bare` false and forces the numbered form).
         assert_eq!(
-            container_open_source(RegionFormat::Indent(ib(
-                1,
-                None,
-                false,
-                IndentLayout::None,
-                BlockStyles::EMPTY,
-            ))),
+            container_open_source(RegionFormat::Indent(IndentBlock {
+                amount: 1,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
+            })),
             "［＃ここから字下げ］"
         );
     }
 
     #[test]
     fn indent_open_bare_guard_needs_every_clause() {
-        // For every `&&` in the `bare` guard (and the `amount == 1 && bare`
-        // join), an input with amount 1 where exactly one bare clause is false:
-        // the numbered form is emitted, so flipping the operator to `||` (which
-        // would wrongly emit the short `字下げ` opener) is caught.
+        let base = IndentBlock {
+            amount: 1,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
+        };
         let cases: &[(IndentBlock, &str)] = &[
-            // center set (270:9)
             (
-                ib(1, None, true, IndentLayout::None, BlockStyles::EMPTY),
+                IndentBlock {
+                    center: true,
+                    ..base
+                },
                 "［＃ここから1字下げ、ページの左右中央に］",
             ),
-            // secondary layout present (271:9)
             (
-                ib(
-                    1,
-                    None,
-                    false,
-                    IndentLayout::LineWidth(lw(3)),
-                    BlockStyles::EMPTY,
-                ),
+                IndentBlock {
+                    layout: IndentLayout::LineWidth(lw(3)),
+                    ..base
+                },
                 "［＃ここから1字下げ、3字詰め］",
             ),
-            // gothic set (272:9 + the `amount == 1 && bare` join at 276:20)
             (
-                ib(
-                    1,
-                    None,
-                    false,
-                    IndentLayout::None,
-                    styles(true, false, false, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        gothic: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから1字下げ、ゴシック体］",
             ),
-            // horizontal set (273:9)
             (
-                ib(
-                    1,
-                    None,
-                    false,
-                    IndentLayout::None,
-                    styles(false, true, false, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        horizontal: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから1字下げ、横書き］",
             ),
-            // framed set (274:9)
             (
-                ib(
-                    1,
-                    None,
-                    false,
-                    IndentLayout::None,
-                    styles(false, false, true, None),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        framed: true,
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから1字下げ、罫囲み］",
             ),
-            // font set (275:9)
             (
-                ib(
-                    1,
-                    None,
-                    false,
-                    IndentLayout::None,
-                    styles(false, false, false, Some(fs(-2))),
-                ),
+                IndentBlock {
+                    styles: BlockStyles {
+                        font: Some(fs(-2)),
+                        ..BlockStyles::EMPTY
+                    },
+                    ..base
+                },
                 "［＃ここから1字下げ、2段階小さな文字］",
             ),
         ];
@@ -987,35 +946,41 @@ mod tests {
         // FontShift(-1) must take the `小さい活字` arm, not the `N段階小さな文字`
         // fall-through).
         assert_eq!(
-            container_open_source(RegionFormat::Indent(ib(
-                2,
-                None,
-                false,
-                IndentLayout::None,
-                styles(false, false, false, Some(fs(-1))),
-            ))),
+            container_open_source(RegionFormat::Indent(IndentBlock {
+                amount: 2,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles {
+                    font: Some(fs(-1)),
+                    ..BlockStyles::EMPTY
+                },
+            })),
             "［＃ここから2字下げ、小さい活字］"
         );
         // A general shift keeps the `N段階…文字` form.
         assert_eq!(
-            container_open_source(RegionFormat::Indent(ib(
-                2,
-                None,
-                false,
-                IndentLayout::None,
-                styles(false, false, false, Some(fs(-2))),
-            ))),
+            container_open_source(RegionFormat::Indent(IndentBlock {
+                amount: 2,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles {
+                    font: Some(fs(-2)),
+                    ..BlockStyles::EMPTY
+                },
+            })),
             "［＃ここから2字下げ、2段階小さな文字］"
         );
         // 字組み secondary layout clause.
         assert_eq!(
-            container_open_source(RegionFormat::Indent(ib(
-                2,
-                None,
-                false,
-                IndentLayout::Kumi(kumi(5, 3)),
-                BlockStyles::EMPTY,
-            ))),
+            container_open_source(RegionFormat::Indent(IndentBlock {
+                amount: 2,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::Kumi(kumi(5, 3)),
+                styles: BlockStyles::EMPTY,
+            })),
             "［＃ここから2字下げ、5行3字組みで］"
         );
     }
@@ -1025,11 +990,7 @@ mod tests {
     // ---------------------------------------------------------------------
 
     #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "exhaustive per-family container-close assertion table"
-    )]
-    fn container_close_spells_every_family() {
+    fn container_close_spells_inline_styles() {
         assert_eq!(
             close_src(RegionClose::Bouten {
                 kind: BoutenKind::Goma,
@@ -1068,8 +1029,10 @@ mod tests {
             close_src(RegionClose::Italic { padded: true }),
             "［＃ここで斜体終わり］"
         );
-        // 字組み compound close keeps its own width; the generic close is the
-        // `kumi_width: None` fall-through.
+    }
+
+    #[test]
+    fn container_close_spells_indents_and_headings() {
         assert_eq!(
             close_src(RegionClose::Indent {
                 kumi_width: Some(lw(5)),
@@ -1118,6 +1081,10 @@ mod tests {
             }),
             "［＃ここで窓小見出し終わり］"
         );
+    }
+
+    #[test]
+    fn container_close_spells_other_families() {
         assert_eq!(close_src(RegionClose::Columns), "［＃ここで段組み終わり］");
         assert_eq!(close_src(RegionClose::Table), "［＃ここで表終わり］");
         assert_eq!(

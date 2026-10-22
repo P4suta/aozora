@@ -8,11 +8,6 @@
 //! enumerate every wrapper and report each mutant as a vacuous survivor. The
 //! real, host-testable logic stays in [`super::logic`] and is swept normally.
 //! See `mutants.toml`'s `exclude_globs`.
-#![allow(
-    clippy::unnecessary_wraps,
-    reason = "the #[plugin_fn] macro requires every export to return FnResult, even an infallible one"
-)]
-
 use super::logic;
 use extism_pdk::{Error, FnResult, plugin_fn};
 
@@ -63,26 +58,28 @@ pub fn gaiji_json(input: String) -> FnResult<String> {
     Ok(logic::render_gaiji_json(&input).map_err(Error::msg)?)
 }
 
-/// Return the static spec slug catalogue as a wire envelope. Input is
-/// ignored; the same envelope every call, so hosts can cache it. Powers
-/// `［＃…］` annotation completion.
-#[plugin_fn]
-pub fn slugs_json(_input: String) -> FnResult<String> {
-    Ok(logic::slugs_json())
-}
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "plugin_fn requires FnResult and discards attributes on each input function"
+)]
+mod metadata {
+    use super::{FnResult, logic, plugin_fn};
 
-/// Return the parser's channel-aware build version.
-/// Input is ignored; hosts call this to surface the plugin build in a
-/// footer / diagnostics, distinct from the wire `schema_version`.
-#[plugin_fn]
-pub fn version(_input: String) -> FnResult<String> {
-    Ok(logic::version().to_owned())
-}
+    /// Return the static spec slug catalogue as a wire envelope.
+    #[plugin_fn]
+    pub fn slugs_json(_input: String) -> FnResult<String> {
+        Ok(logic::slugs_json())
+    }
 
-/// Return the wire-format schema version as a decimal string. Input
-/// is ignored; hosts call this with empty input to assert
-/// plugin/SDK compatibility before parsing.
-#[plugin_fn]
-pub fn schema_version(_input: String) -> FnResult<String> {
-    Ok(logic::schema_version().to_string())
+    /// Return the parser's channel-aware build version.
+    #[plugin_fn]
+    pub fn version(_input: String) -> FnResult<String> {
+        Ok(logic::version().to_owned())
+    }
+
+    /// Return the wire-format schema version as a decimal string.
+    #[plugin_fn]
+    pub fn schema_version(_input: String) -> FnResult<String> {
+        Ok(logic::schema_version().to_string())
+    }
 }

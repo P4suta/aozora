@@ -44,24 +44,15 @@
 //! and the sampling profiler attaches cleanly to a single-thread call
 //! stack.
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::missing_panics_doc,
-    clippy::missing_errors_doc,
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora::decode_auto;
@@ -109,14 +100,18 @@ fn parallel_mode() -> bool {
     )
 }
 
-fn main() {
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
+
+fn run() -> Result<(), ExitCode> {
     let archive_path = env::var_os("AOZORA_CORPUS_ARCHIVE");
     let root = env::var_os("AOZORA_CORPUS_ROOT");
     if archive_path.is_none() && root.is_none() {
         eprintln!(
             "neither AOZORA_CORPUS_ARCHIVE nor AOZORA_CORPUS_ROOT is set; nothing to profile."
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
@@ -139,30 +134,55 @@ fn main() {
     // walkdir + per-file syscalls entirely; for the pre-decoded
     // UTF-8 + zstd variant also skips the per-doc decode.
     // AOZORA_CORPUS_ROOT remains the fallback when ARCHIVE is unset.
-    let load = archive_path.as_ref().map_or_else(
-        || {
-            // Safe to unwrap: we returned exit(2) above if both were unset.
-            let root = root.expect("AOZORA_CORPUS_ROOT must be set when ARCHIVE is not");
-            let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
-                eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
-                process::exit(2);
-            };
+    let load = if let Some(archive_path) = archive_path.as_ref() {
+        LoadPhase::run_archive(Path::new(archive_path), limit)
+    } else {
+        let root = root.expect("AOZORA_CORPUS_ROOT must be set when ARCHIVE is not");
+        let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
+            eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
+            return Err(ExitCode::from(2));
+        };
 
-            // The serial path splits I/O + decode + bucketing into
-            // four timers so each sub-phase's wall is visible. The
-            // parallel path fans out via rayon (`parallel_size_bands`)
-            // and overlaps read/decode, so the per-phase serial split
-            // is suppressed there — the per-phase timers no longer
-            // attribute meaningfully under concurrent dispatch.
-            if parallel {
-                LoadPhase::run_parallel(&corpus, limit)
-            } else {
-                LoadPhase::run(&corpus, limit)
-            }
+        // The serial path splits I/O + decode + bucketing into four timers so each sub-phase's wall is visible.
+        // The parallel path fans out via rayon (`parallel_size_bands`) and overlaps read/decode, so the per-phase serial split is suppressed there — the per-phase timers no longer attribute meaningfully under concurrent dispatch.
+        if parallel {
+            LoadPhase::run_parallel(&corpus, limit)
+        } else {
+            LoadPhase::run(&corpus, limit)
+        }
+    };
+
+    print_load_report(&load);
+    if load.banded.io_errors != 0 {
+        eprintln!(
+            "throughput_by_class: refusing a partial-corpus measurement after {} I/O error(s)",
+            load.banded.io_errors
+        );
+        return Err(ExitCode::from(2));
+    }
+
+    let parse_start = Instant::now();
+    let mut report = measure_all(&load.banded, parallel);
+    for _ in 1..repeat {
+        // Discard repeats — only the per-doc latencies of the final pass are kept; earlier passes serve to warm caches and (importantly) to give a sampling profiler more parser-bound wall time to attach to.
+        report = measure_all(&load.banded, parallel);
+    }
+    let parse_secs = parse_start.elapsed().as_secs_f64();
+
+    print_report(
+        &report,
+        &load.banded,
+        ReportTiming {
+            parse_secs,
+            load_secs: load.total_secs,
+            repeat,
+            parallel,
         },
-        |archive_path| LoadPhase::run_archive(Path::new(archive_path), limit),
     );
+    Ok(())
+}
 
+fn print_load_report(load: &LoadPhase) {
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={}, io_err={})",
         load.banded.small.len(),
@@ -188,14 +208,15 @@ fn main() {
             "  ├─ read    : {:>5.2}s ({:>4.1}%, {:.1} MB sjis)",
             split.read_secs,
             100.0 * split.read_secs / load.total_secs,
-            split.sjis_bytes_total as f64 / 1_048_576.0,
+            report_number(split.sjis_bytes_total) / 1_048_576.0,
         );
         eprintln!(
             "  ├─ decode  : {:>5.2}s ({:>4.1}%, {:.1} MB utf8 → {:.0} MB/s)",
             split.decode_secs,
             100.0 * split.decode_secs / load.total_secs,
-            split.utf8_bytes_total as f64 / 1_048_576.0,
-            (split.sjis_bytes_total as f64 / 1_048_576.0) / split.decode_secs.max(f64::EPSILON),
+            report_number(split.utf8_bytes_total) / 1_048_576.0,
+            (report_number(split.sjis_bytes_total) / 1_048_576.0)
+                / split.decode_secs.max(f64::EPSILON),
         );
         eprintln!(
             "  └─ bucket  : {:>5.2}s ({:>4.1}%)",
@@ -208,33 +229,6 @@ fn main() {
              sub-phase timers do not attribute"
         );
     }
-    if load.banded.io_errors != 0 {
-        eprintln!(
-            "throughput_by_class: refusing a partial-corpus measurement after {} I/O error(s)",
-            load.banded.io_errors
-        );
-        process::exit(2);
-    }
-
-    let parse_start = Instant::now();
-    let mut report = measure_all(&load.banded, parallel);
-    for _ in 1..repeat {
-        // Discard repeats — only the per-doc latencies of the final
-        // pass are kept; earlier passes serve to warm caches and
-        // (importantly) to give a sampling profiler more parser-bound
-        // wall time to attach to.
-        report = measure_all(&load.banded, parallel);
-    }
-    let parse_secs = parse_start.elapsed().as_secs_f64();
-
-    print_report(
-        &report,
-        &load.banded,
-        parse_secs,
-        load.total_secs,
-        repeat,
-        parallel,
-    );
 }
 
 /// Load-phase result — total wall time plus, in sequential mode, the
@@ -354,7 +348,7 @@ impl LoadPhase {
             archive.len(),
             if archive.is_utf8() { "UTF8 " } else { "SJIS " },
             if archive.is_zstd() { "ZSTD" } else { "RAW" },
-            archive_size as f64 / 1_048_576.0,
+            report_number(archive_size) / 1_048_576.0,
         );
         let banded = archive_size_bands_limited(&archive, limit);
         let total_secs = total_start.elapsed().as_secs_f64();
@@ -385,7 +379,11 @@ impl BandReport {
         if sorted.is_empty() {
             return 0;
         }
-        let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+        let idx = ((report_number(sorted.len()) - 1.0) * p)
+            .round()
+            .to_string()
+            .parse::<usize>()
+            .expect("quantile index fits usize");
         sorted[idx.min(sorted.len() - 1)]
     }
 }
@@ -428,7 +426,7 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
             let _out = aozora::parse(text)
                 .expect("source fits parser span limit")
                 .snapshot();
-            let ns = t.elapsed().as_nanos() as u64;
+            let ns = u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64");
             (text.len() as u64, ns)
         })
     };
@@ -446,14 +444,21 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     }
 }
 
-fn print_report(
-    report: &AllReport,
-    banded: &SizeBandedCorpus,
+#[derive(Clone, Copy)]
+struct ReportTiming {
     parse_secs: f64,
     load_secs: f64,
     repeat: usize,
     parallel: bool,
-) {
+}
+
+fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTiming) {
+    let ReportTiming {
+        parse_secs,
+        load_secs,
+        repeat,
+        parallel,
+    } = timing;
     println!("=== throughput_by_class ===");
     println!();
     println!(
@@ -467,27 +472,7 @@ fn print_report(
         plural = if repeat == 1 { "" } else { "es" }
     );
     if parallel {
-        // Sum of per-doc latencies = the work that would have been
-        // done serially. Concurrent wall = the parse_secs we just
-        // measured (one parse pass = one rayon par_iter). Their ratio
-        // is the achieved scaling factor.
-        let serial_work_ns: u64 = report
-            .bands
-            .iter()
-            .flat_map(|b| b.latencies_ns.iter().copied())
-            .sum();
-        let serial_work_secs = (serial_work_ns as f64) / NS_PER_S;
-        let single_pass_secs = parse_secs / (repeat as f64);
-        let scaling = if single_pass_secs > 0.0 {
-            serial_work_secs / single_pass_secs
-        } else {
-            0.0
-        };
-        let threads = rayon::current_num_threads();
-        println!(
-            "Parallel: {threads} threads   serial-work {serial_work_secs:.2}s   \
-             concurrent-wall {single_pass_secs:.2}s   scaling {scaling:.2}× (ideal {threads}×)"
-        );
+        print_scaling(report, parse_secs, repeat);
     }
     println!();
     println!(
@@ -524,12 +509,12 @@ fn print_report(
         let mb_per_s = if total_ns == 0 {
             0.0
         } else {
-            (total_bytes as f64) * NS_PER_S / (total_ns as f64) / (1024.0 * 1024.0)
+            (report_number(total_bytes)) * NS_PER_S / (report_number(total_ns)) / (1024.0 * 1024.0)
         };
         let ns_per_byte = if total_bytes == 0 {
             0.0
         } else {
-            (total_ns as f64) / (total_bytes as f64)
+            (report_number(total_ns)) / (report_number(total_bytes))
         };
         println!(
             "{:<13} {:>6} {:>13} {:>10.1} {:>10.1} {:>10.1} {:>10.1} {:>11.2} {:>10.2}",
@@ -537,11 +522,34 @@ fn print_report(
             docs,
             total_bytes,
             mb_per_s,
-            (p50 as f64) / 1000.0,
-            (p90 as f64) / 1000.0,
-            (p99 as f64) / 1000.0,
-            (max_ns as f64) / 1_000_000.0,
+            (report_number(p50)) / 1000.0,
+            (report_number(p90)) / 1000.0,
+            (report_number(p99)) / 1000.0,
+            (report_number(max_ns)) / 1_000_000.0,
             ns_per_byte,
         );
     }
+}
+
+fn print_scaling(report: &AllReport, parse_secs: f64, repeat: usize) {
+    // Sum of per-doc latencies = the work that would have been done serially.
+    // Concurrent wall = the parse_secs we just measured (one parse pass = one rayon par_iter).
+    // Their ratio is the achieved scaling factor.
+    let serial_work_ns: u64 = report
+        .bands
+        .iter()
+        .flat_map(|b| b.latencies_ns.iter().copied())
+        .sum();
+    let serial_work_secs = (report_number(serial_work_ns)) / NS_PER_S;
+    let single_pass_secs = parse_secs / (report_number(repeat));
+    let scaling = if single_pass_secs > 0.0 {
+        serial_work_secs / single_pass_secs
+    } else {
+        0.0
+    };
+    let threads = rayon::current_num_threads();
+    println!(
+        "Parallel: {threads} threads   serial-work {serial_work_secs:.2}s   \
+             concurrent-wall {single_pass_secs:.2}s   scaling {scaling:.2}× (ideal {threads}×)"
+    );
 }

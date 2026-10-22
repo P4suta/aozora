@@ -50,9 +50,9 @@ const MAX_SOURCE_BYTES: usize = u32::MAX as usize;
 #[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(
     target_arch = "wasm32",
-    allow(
+    expect(
         clippy::absurd_extreme_comparisons,
-        reason = "on wasm32 `usize` is `u32`, so `MAX_SOURCE_BYTES` (= u32::MAX) equals `usize::MAX` and this `> u32::MAX` guard is vacuously false there — a wasm32 `String` can never exceed the parser core's u32 span limit. The check is real and unit-tested on 64-bit hosts (usize = u64) under cfg(test)."
+        reason = "wasm32 source lengths cannot exceed the parser's u32 span limit"
     )
 )]
 const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static str> {

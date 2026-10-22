@@ -19,10 +19,7 @@ State an invariant as a check — an `assert!`, a type, a test, a gate — never
 as prose telling the next reader to uphold it. Prose is never re-read against
 the code.
 
-So a comment earns its place only as one of: a doc `missing_docs` requires
-(trimmed to what a reader needs), a load-bearing *why* that is underivable
-(cite the ADR or the corpus measurement), or something the toolchain demands
-(`// SAFETY:`, a `mutants::skip` reason, an `#[allow(reason = …)]`).
+So a comment earns its place only as one of: a doc `missing_docs` requires (trimmed to what a reader needs), a load-bearing *why* that is underivable (cite the ADR or the corpus measurement), or something the toolchain demands (`// SAFETY:`, a `mutants::skip` reason, an item-level `#[expect(lint, reason = …)]`).
 
 ## Running anything
 

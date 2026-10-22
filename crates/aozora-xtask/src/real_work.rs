@@ -10,6 +10,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+const COMMIT_SHA_LENGTH: usize = 40;
+const DIGEST_BUFFER_BYTES: usize = 65_536;
+const ENGINE_TIMEOUT_MS: u64 = 30_000;
+#[cfg(not(unix))]
+const DEFAULT_FILE_MODE: u32 = 0o644;
+
 #[derive(Args)]
 pub(crate) struct RealWorkArgs {
     #[command(subcommand)]
@@ -116,7 +122,7 @@ fn workspace_root() -> Result<PathBuf, String> {
 }
 
 fn validate_commit(value: &str, label: &str) -> Result<(), String> {
-    if value.len() == 40
+    if value.len() == COMMIT_SHA_LENGTH
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
@@ -214,7 +220,7 @@ fn command_output_path(path: &Path) -> Result<PathBuf, String> {
 fn digest(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut buffer = vec![0_u8; DIGEST_BUFFER_BYTES].into_boxed_slice();
     loop {
         let read = file
             .read(&mut buffer)
@@ -259,7 +265,7 @@ fn engine(
         support_paths: supports(support, identity.staging)?,
         expected_version: identity.version.to_owned(),
         expected_schema_version: identity.schema,
-        timeout_ms: 30_000,
+        timeout_ms: ENGINE_TIMEOUT_MS,
     })
 }
 
@@ -296,7 +302,7 @@ fn deterministic_tar(source: &Path, output: &Path) -> Result<(), String> {
             metadata.permissions().mode()
         };
         #[cfg(not(unix))]
-        let mode = 0o644;
+        let mode = DEFAULT_FILE_MODE;
         header.set_mode(mode);
         header.set_cksum();
         let mut input =
@@ -310,10 +316,42 @@ fn deterministic_tar(source: &Path, output: &Path) -> Result<(), String> {
         .map_err(|error| format!("finish {}: {error}", output.display()))
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "bundle assembly keeps discovery, extraction, and the seven manifest entries in release order"
-)]
+struct ArtifactFiles {
+    npm: PathBuf,
+    crate_artifact: PathBuf,
+    extism: PathBuf,
+    go: PathBuf,
+    native: PathBuf,
+    wheel: PathBuf,
+}
+
+struct PackageFiles {
+    npm_dir: PathBuf,
+    native_dir: PathBuf,
+    python_dir: PathBuf,
+    go_dir: PathBuf,
+    rust_dir: PathBuf,
+    rust_build: tempfile::TempDir,
+}
+
+struct WorkerFiles {
+    rust_worker: PathBuf,
+    extism_worker: PathBuf,
+    go_worker: PathBuf,
+    wasm_adapter: PathBuf,
+    python_adapter: PathBuf,
+    ffi_adapter: PathBuf,
+    cli: PathBuf,
+    library: PathBuf,
+}
+
+struct BundleBuild {
+    staging: PathBuf,
+    artifacts: ArtifactFiles,
+    packages: PackageFiles,
+    workers: WorkerFiles,
+}
+
 fn bundle(args: &BundleArgs) -> Result<(), String> {
     validate_commit(&args.commit, "commit")?;
     if args.version.is_empty() || args.schema_version == 0 {
@@ -334,6 +372,37 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     fs::create_dir_all(&packages).map_err(|error| error.to_string())?;
     fs::create_dir_all(&workers).map_err(|error| error.to_string())?;
 
+    let artifact_files = collect_artifacts(args, &artifacts)?;
+    let package_files = unpack_artifacts(&artifact_files, &packages, python)?;
+    let worker_files = build_workers(args, &package_files, &workers)?;
+    let build = BundleBuild {
+        staging,
+        artifacts: artifact_files,
+        packages: package_files,
+        workers: worker_files,
+    };
+    let engines = bundle_engines(args, &build, python)?;
+    let manifest = Manifest {
+        schema_version: 1,
+        aozora_commit: args.commit.clone(),
+        engines,
+    };
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    fs::write(build.staging.join("artifacts.json"), bytes).map_err(|error| error.to_string())?;
+    deterministic_tar(&build.staging, &args.out_dir.join("bundle.tar"))?;
+    println!(
+        "real-work bundle assembled for {}",
+        match args.platform {
+            Platform::Linux => "linux",
+            Platform::Macos => "macos",
+            Platform::Windows => "windows",
+        }
+    );
+    Ok(())
+}
+
+fn collect_artifacts(args: &BundleArgs, artifacts: &Path) -> Result<ArtifactFiles, String> {
     let npm_source = find_one(
         &args.release_dir,
         |path| path.extension().is_some_and(|ext| ext == "tgz"),
@@ -395,6 +464,29 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     copy(&native_source, &native)?;
     copy(&wheel_source, &wheel)?;
 
+    Ok(ArtifactFiles {
+        npm,
+        crate_artifact,
+        extism,
+        go,
+        native,
+        wheel,
+    })
+}
+
+fn unpack_artifacts(
+    artifacts: &ArtifactFiles,
+    packages: &Path,
+    python: &str,
+) -> Result<PackageFiles, String> {
+    let ArtifactFiles {
+        npm,
+        crate_artifact,
+        go,
+        native,
+        wheel,
+        ..
+    } = artifacts;
     let npm_dir = packages.join("npm");
     let native_dir = packages.join("native");
     let python_dir = packages.join("python");
@@ -409,7 +501,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     run(
         Command::new("tar")
             .args(["-xzf"])
-            .arg(&npm)
+            .arg(npm)
             .arg("-C")
             .arg(&npm_dir),
         "extract npm artifact",
@@ -417,7 +509,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     run(
         Command::new("tar")
             .args(["-xf"])
-            .arg(&native)
+            .arg(native)
             .arg("-C")
             .arg(&native_dir),
         "extract native artifact",
@@ -425,7 +517,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     run(
         Command::new("tar")
             .args(["-xzf"])
-            .arg(&go)
+            .arg(go)
             .arg("-C")
             .arg(&go_dir),
         "extract Go artifact",
@@ -433,7 +525,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     run(
         Command::new("tar")
             .args(["-xzf"])
-            .arg(&crate_artifact)
+            .arg(crate_artifact)
             .arg("-C")
             .arg(&rust_dir),
         "extract Rust crate",
@@ -441,37 +533,34 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     run(
         Command::new(python)
             .args(["-m", "zipfile", "-e"])
-            .arg(&wheel)
+            .arg(wheel)
             .arg(&python_dir),
         "extract Python wheel",
     )?;
 
+    Ok(PackageFiles {
+        npm_dir,
+        native_dir,
+        python_dir,
+        go_dir,
+        rust_dir,
+        rust_build,
+    })
+}
+
+fn build_workers(
+    args: &BundleArgs,
+    packages: &PackageFiles,
+    workers: &Path,
+) -> Result<WorkerFiles, String> {
+    let PackageFiles {
+        native_dir, go_dir, ..
+    } = packages;
     let suffix = args.platform.executable_suffix();
     let rust_worker = workers.join(format!("aozora-real-work-rust{suffix}"));
     let extism_worker = workers.join(format!("aozora-real-work-extism{suffix}"));
     let go_worker = workers.join(format!("aozora-real-work-go{suffix}"));
-    let rust_manifest = find_one(
-        &rust_dir,
-        |path| path.file_name().is_some_and(|name| name == "Cargo.toml"),
-        "Rust crate manifest",
-    )?;
-    let rust_target = rust_build.path().join("target");
-    run(
-        Command::new("cargo")
-            .args(["build", "--release", "--locked", "--manifest-path"])
-            .arg(&rust_manifest)
-            .args(["--example", "real_work_worker", "--features", "json"])
-            .arg("--target-dir")
-            .arg(&rust_target),
-        "build worker from the packaged Rust crate",
-    )?;
-    copy(
-        &rust_target
-            .join("release")
-            .join("examples")
-            .join(format!("real_work_worker{suffix}")),
-        &rust_worker,
-    )?;
+    build_rust_worker(packages, &rust_worker, suffix)?;
     copy(&args.extism_worker, &extism_worker)?;
     let go_module = go_dir.join("aozora-go");
     let go_worker_output = command_output_path(&go_worker)?;
@@ -495,7 +584,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
     copy(&args.adapters_dir.join("release-ffi.py"), &ffi_adapter)?;
 
     let cli = find_one(
-        &native_dir,
+        native_dir,
         |path| {
             path.file_name()
                 .is_some_and(|name| name == format!("aozora{suffix}").as_str())
@@ -503,7 +592,7 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
         "native CLI",
     )?;
     let library = find_one(
-        &native_dir,
+        native_dir,
         |path| {
             path.file_name().is_some_and(|name| {
                 matches!(
@@ -514,106 +603,148 @@ fn bundle(args: &BundleArgs) -> Result<(), String> {
         },
         "FFI dynamic library",
     )?;
-    let npm_package = npm_dir.join("package");
+    Ok(WorkerFiles {
+        rust_worker,
+        extism_worker,
+        go_worker,
+        wasm_adapter,
+        python_adapter,
+        ffi_adapter,
+        cli,
+        library,
+    })
+}
 
+fn build_rust_worker(
+    packages: &PackageFiles,
+    rust_worker: &Path,
+    suffix: &str,
+) -> Result<(), String> {
+    let PackageFiles {
+        rust_dir,
+        rust_build,
+        ..
+    } = packages;
+    let rust_manifest = find_one(
+        rust_dir,
+        |path| path.file_name().is_some_and(|name| name == "Cargo.toml"),
+        "Rust crate manifest",
+    )?;
+    let rust_target = rust_build.path().join("target");
+    run(
+        Command::new("cargo")
+            .args(["build", "--release", "--locked", "--manifest-path"])
+            .arg(&rust_manifest)
+            .args(["--example", "real_work_worker", "--features", "json"])
+            .arg("--target-dir")
+            .arg(&rust_target),
+        "build worker from the packaged Rust crate",
+    )?;
+    copy(
+        &rust_target
+            .join("release")
+            .join("examples")
+            .join(format!("real_work_worker{suffix}")),
+        rust_worker,
+    )?;
+    Ok(())
+}
+
+fn bundle_engines(
+    args: &BundleArgs,
+    build: &BundleBuild,
+    python: &str,
+) -> Result<BTreeMap<String, Engine>, String> {
+    let artifacts = &build.artifacts;
+    let workers = &build.workers;
     let candidate = |path: &Path| -> Result<String, String> {
-        Ok(format!("_release/candidates/{}", relative(path, &staging)?))
+        Ok(format!(
+            "_release/candidates/{}",
+            relative(path, &build.staging)?
+        ))
     };
+    let npm_package = build.packages.npm_dir.join("package");
     let identity = Identity {
-        staging: &staging,
+        staging: &build.staging,
         version: &args.version,
         schema: args.schema_version,
     };
-    let mut engines = BTreeMap::new();
-    engines.insert(
-        "wasm".to_owned(),
-        engine(
+    let inputs: [(&str, Vec<String>, &Path, &[&Path]); 7] = [
+        (
+            "wasm",
             vec![
                 "bun".to_owned(),
                 "run".to_owned(),
-                candidate(&wasm_adapter)?,
+                candidate(&workers.wasm_adapter)?,
                 candidate(&npm_package)?,
             ],
-            &npm,
-            &[&wasm_adapter],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "rust".to_owned(),
-        engine(
-            vec![candidate(&rust_worker)?],
-            &crate_artifact,
-            &[&rust_worker],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "cli".to_owned(),
-        engine(
-            vec![candidate(&cli)?, "lab-worker".to_owned()],
-            &native,
-            &[&cli],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "ffi".to_owned(),
-        engine(
+            &artifacts.npm,
+            &[&workers.wasm_adapter],
+        ),
+        (
+            "rust",
+            vec![candidate(&workers.rust_worker)?],
+            &artifacts.crate_artifact,
+            &[&workers.rust_worker],
+        ),
+        (
+            "cli",
+            vec![candidate(&workers.cli)?, "lab-worker".to_owned()],
+            &artifacts.native,
+            &[&workers.cli],
+        ),
+        (
+            "ffi",
             vec![
                 python.to_owned(),
-                candidate(&ffi_adapter)?,
-                candidate(&library)?,
+                candidate(&workers.ffi_adapter)?,
+                candidate(&workers.library)?,
             ],
-            &native,
-            &[&ffi_adapter, &library],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "extism".to_owned(),
-        engine(
-            vec![candidate(&extism_worker)?, candidate(&extism)?],
-            &extism,
-            &[&extism_worker],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "python".to_owned(),
-        engine(
+            &artifacts.native,
+            &[&workers.ffi_adapter, &workers.library],
+        ),
+        (
+            "extism",
+            vec![
+                candidate(&workers.extism_worker)?,
+                candidate(&artifacts.extism)?,
+            ],
+            &artifacts.extism,
+            &[&workers.extism_worker],
+        ),
+        (
+            "python",
             vec![
                 python.to_owned(),
-                candidate(&python_adapter)?,
-                candidate(&python_dir)?,
+                candidate(&workers.python_adapter)?,
+                candidate(&build.packages.python_dir)?,
             ],
-            &wheel,
-            &[&python_adapter],
-            &identity,
-        )?,
-    );
-    engines.insert(
-        "go".to_owned(),
-        engine(vec![candidate(&go_worker)?], &go, &[&go_worker], &identity)?,
-    );
-    let manifest = Manifest {
-        schema_version: 1,
-        aozora_commit: args.commit.clone(),
-        engines,
-    };
-    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
-    bytes.push(b'\n');
-    fs::write(staging.join("artifacts.json"), bytes).map_err(|error| error.to_string())?;
-    deterministic_tar(&staging, &args.out_dir.join("bundle.tar"))?;
-    println!(
-        "real-work bundle assembled for {}",
-        match args.platform {
-            Platform::Linux => "linux",
-            Platform::Macos => "macos",
-            Platform::Windows => "windows",
-        }
-    );
-    Ok(())
+            &artifacts.wheel,
+            &[&workers.python_adapter],
+        ),
+        (
+            "go",
+            vec![candidate(&workers.go_worker)?],
+            &artifacts.go,
+            &[&workers.go_worker],
+        ),
+    ];
+    collect_engines(inputs, &identity)
+}
+
+fn collect_engines<const N: usize>(
+    inputs: [(&str, Vec<String>, &Path, &[&Path]); N],
+    identity: &Identity<'_>,
+) -> Result<BTreeMap<String, Engine>, String> {
+    inputs
+        .into_iter()
+        .map(|(name, command, artifact, support)| {
+            Ok((
+                name.to_owned(),
+                engine(command, artifact, support, identity)?,
+            ))
+        })
+        .collect()
 }
 
 fn corpus(args: &CorpusArgs) -> Result<(), String> {
