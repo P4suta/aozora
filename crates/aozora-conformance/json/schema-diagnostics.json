@@ -47,7 +47,7 @@
           "source",
           "span"
         ],
-        "description": "One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].",
+        "description": "A diagnostic entry with `kind`, `severity`, `source`, `span`, and optional `codepoint` fields.",
         "title": "Diagnostic"
       }
     }

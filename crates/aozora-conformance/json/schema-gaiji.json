@@ -51,7 +51,7 @@
           "span",
           "description"
         ],
-        "description": "One `gaiji` envelope entry — a resolved `※［＃…］` reference.",
+        "description": "A gaiji entry with `span`, `description`, `mencode`, `codepoint`, and `resolved` fields.\n\nThe span uses original-source byte offsets.\nOptional fields use `null` for absent values.",
         "title": "GaijiResolution"
       }
     }

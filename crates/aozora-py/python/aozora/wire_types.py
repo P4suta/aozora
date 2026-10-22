@@ -74,7 +74,7 @@ class Span:
 
 @dataclass
 class ContainerPair:
-    """One `container_pairs` envelope entry."""
+    """A container pair with `kind`, `open`, and `close` source byte spans."""
 
     close: Span
     kind: str
@@ -117,8 +117,9 @@ class AozoraContainerPairsEnvelope:
 
 @dataclass
 class Diagnostic:
-    """One `diagnostics` envelope entry — a projected [`crate::Diagnostic`]."""
-
+    """A diagnostic entry with `kind`, `severity`, `source`, `span`, and optional `codepoint`
+    fields.
+    """
     kind: str
     severity: str
     source: str
@@ -167,8 +168,11 @@ class AozoraDiagnosticsEnvelope:
 
 @dataclass
 class GaijiResolution:
-    """One `gaiji` envelope entry — a resolved `※［＃…］` reference."""
+    """A gaiji entry with `span`, `description`, `mencode`, `codepoint`, and `resolved` fields.
 
+    The span uses original-source byte offsets.
+    Optional fields use `null` for absent values.
+    """
     description: str
     span: Span
     codepoint: Optional[int] = None
@@ -219,7 +223,7 @@ class AozoraGaijiEnvelope:
 
 @dataclass
 class Node:
-    """One `nodes` envelope entry — a classified node span in source coords."""
+    """A node entry with `kind` and an original-source byte `span`."""
 
     kind: str
     span: Span
@@ -259,7 +263,7 @@ class AozoraNodesEnvelope:
 
 @dataclass
 class Pair:
-    """One `pairs` envelope entry — a matched bracket pair."""
+    """A delimiter pair with `kind`, `open`, and `close` source byte spans."""
 
     close: Span
     kind: str
@@ -302,8 +306,11 @@ class AozoraPairsEnvelope:
 
 @dataclass
 class Slug:
-    """One `slugs` envelope entry — a row of the annotation slug catalogue."""
+    """A catalogue entry with `canonical`, `family`, `accepts_param`, `doc`, and `partner`
+    fields.
 
+    `family` uses `camelCase`, and `partner` is `null` for unpaired entries.
+    """
     accepts_param: bool
     canonical: str
     doc: str

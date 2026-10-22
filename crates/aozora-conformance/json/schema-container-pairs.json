@@ -35,7 +35,7 @@
           "open",
           "close"
         ],
-        "description": "One `container_pairs` envelope entry.",
+        "description": "A container pair with `kind`, `open`, and `close` source byte spans.",
         "title": "ContainerPair"
       }
     }

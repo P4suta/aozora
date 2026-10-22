@@ -45,7 +45,7 @@
           "accepts_param",
           "doc"
         ],
-        "description": "One `slugs` envelope entry — a row of the annotation slug catalogue.",
+        "description": "A catalogue entry with `canonical`, `family`, `accepts_param`, `doc`, and `partner` fields.\n\n`family` uses `camelCase`, and `partner` is `null` for unpaired entries.",
         "title": "Slug"
       }
     }
