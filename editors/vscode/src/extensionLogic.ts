@@ -1,3 +1,5 @@
+const CURSOR_MARKER = "$0";
+
 export interface PositionLike {
   readonly line: number;
   readonly character: number;
@@ -83,13 +85,13 @@ export function expandWrapText(
   readonly text: string;
   readonly cursorOffset: number;
 } {
-  const marker = template.indexOf("$0");
-  if (marker < 0 || template.indexOf("$0", marker + 2) >= 0) {
+  const marker = template.indexOf(CURSOR_MARKER);
+  if (marker < 0 || template.indexOf(CURSOR_MARKER, marker + CURSOR_MARKER.length) >= 0) {
     throw new Error("wrap template must contain one $0 marker");
   }
   const before = template.slice(0, marker).split("BASE").join(selected);
   const after = template
-    .slice(marker + 2)
+    .slice(marker + CURSOR_MARKER.length)
     .split("BASE")
     .join(selected);
   return { text: before + after, cursorOffset: before.length };

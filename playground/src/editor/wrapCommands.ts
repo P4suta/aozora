@@ -30,7 +30,7 @@ export const WRAP_SHAPES: readonly WrapShape[] = [
   },
 ] as const;
 
-/** Empty selections substitute an empty `BASE` and retain the `${0}` cursor position. */
+/** Empty selections substitute an empty `BASE` and keep the `${0}` cursor position. */
 export function wrapCommand(shape: WrapShape): Command {
   return (view: EditorView) => {
     const sel = view.state.selection.main;

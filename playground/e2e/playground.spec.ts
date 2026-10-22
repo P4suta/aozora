@@ -4,6 +4,17 @@ import LZString from 'lz-string';
 
 import { SAMPLES } from '../src/samples';
 
+const SPLIT_LAYOUT_MIN_WIDTH_PX = 768;
+const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const COMPACT_DESKTOP_VIEWPORT = { width: 900, height: 800 };
+const MOBILE_VIEWPORT = { width: 320, height: 720 };
+const COMPLETION_ACTIVATION_DELAY_MS = 100;
+const PREFERENCES_SAVE_DELAY_MS = 350;
+const MAX_SCREENSHOT_DIFF_PIXEL_RATIO = 0.01;
+const MOBILE_EDITOR_BOTTOM_TOLERANCE_PX = 4;
+const ANNOTATION_GUIDE_URL = 'https://www.aozora.gr.jp/annotation/';
+const REPOSITORY_URL = 'https://github.com/P4suta/aozora';
+
 const clientErrors = new WeakMap<Page, string[]>();
 
 test.beforeEach(async ({ page }) => {
@@ -25,7 +36,7 @@ async function openPlayground(page: Page): Promise<void> {
     page.getByRole('heading', { name: 'Aozora Notation', exact: true }),
   ).toBeVisible();
   await expect(page.locator('.cm-editor')).toBeVisible();
-  if ((page.viewportSize()?.width ?? 0) >= 768) {
+  if ((page.viewportSize()?.width ?? 0) >= SPLIT_LAYOUT_MIN_WIDTH_PX) {
     const preview = page.locator('.playground-preview-host');
     await expect(preview).toBeVisible();
     await expect(preview.locator('.aozora-notation')).not.toBeEmpty();
@@ -65,7 +76,7 @@ function sampleText(id: string): string {
 }
 
 test.describe('desktop authoring workspace', () => {
-  test.use({ viewport: { width: 1440, height: 900 } });
+  test.use({ viewport: DESKTOP_VIEWPORT });
 
   test.beforeEach(async ({ page }) => {
     await openPlayground(page);
@@ -132,7 +143,7 @@ test.describe('desktop authoring workspace', () => {
     });
     await expect(rubyCompletion).toBeVisible();
     await expect(rubyCompletion).toHaveAttribute('aria-selected', 'true');
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(COMPLETION_ACTIVATION_DELAY_MS);
     await page.keyboard.press('Enter');
     expect(await page.evaluate(() => getSelection()?.toString())).toBe('base');
     await page.keyboard.insertText('漢字');
@@ -344,7 +355,7 @@ test.describe('desktop authoring workspace', () => {
     await conversion.focus();
     await page.keyboard.press('Space');
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(350);
+    await page.waitForTimeout(PREFERENCES_SAVE_DELAY_MS);
     await page.reload();
 
     await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
@@ -373,9 +384,9 @@ test.describe('desktop authoring workspace', () => {
     });
     await expect(
       guideDialog.getByRole('link', {
-        name: 'https://www.aozora.gr.jp/annotation/',
+        name: ANNOTATION_GUIDE_URL,
       }),
-    ).toHaveAttribute('href', 'https://www.aozora.gr.jp/annotation/');
+    ).toHaveAttribute('href', ANNOTATION_GUIDE_URL);
     await page.keyboard.press('Escape');
     await expect(guide).toBeFocused();
 
@@ -395,7 +406,7 @@ test.describe('desktop authoring workspace', () => {
     await expect(aboutDialog).toContainText('Engine:');
     await expect(
       aboutDialog.getByRole('link', { name: 'Repository' }),
-    ).toHaveAttribute('href', 'https://github.com/P4suta/aozora');
+    ).toHaveAttribute('href', REPOSITORY_URL);
   });
 
   test('has no WCAG 2.2 AA violations in primary and modal states', async ({
@@ -439,7 +450,7 @@ test.describe('desktop authoring workspace', () => {
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot('desktop-ja-dark.png', {
       animations: 'disabled',
-      maxDiffPixelRatio: 0.01,
+      maxDiffPixelRatio: MAX_SCREENSHOT_DIFF_PIXEL_RATIO,
     });
   });
 
@@ -466,13 +477,13 @@ test.describe('desktop authoring workspace', () => {
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot('desktop-default.png', {
       animations: 'disabled',
-      maxDiffPixelRatio: 0.01,
+      maxDiffPixelRatio: MAX_SCREENSHOT_DIFF_PIXEL_RATIO,
     });
   });
 });
 
 test.describe('compact desktop action overflow', () => {
-  test.use({ viewport: { width: 900, height: 800 } });
+  test.use({ viewport: COMPACT_DESKTOP_VIEWPORT });
 
   test('reaches every primary header action through the overflow menu', async ({
     context,
@@ -517,7 +528,7 @@ test.describe('compact desktop action overflow', () => {
 });
 
 test.describe('mobile authoring workspace', () => {
-  test.use({ viewport: { width: 320, height: 720 } });
+  test.use({ viewport: MOBILE_VIEWPORT });
 
   test('uses tabs and mobile dialogs without page scrolling', async ({
     page,
@@ -525,10 +536,11 @@ test.describe('mobile authoring workspace', () => {
     await openPlayground(page);
     const editorBounds = await page.locator('.cm-editor').boundingBox();
     if (!editorBounds) throw new Error('mobile editor bounds missing');
-    const viewportHeight = page.viewportSize()?.height ?? 720;
+    const viewportHeight =
+      page.viewportSize()?.height ?? MOBILE_VIEWPORT.height;
     expect(
       Math.abs(editorBounds.y + editorBounds.height - viewportHeight),
-    ).toBeLessThanOrEqual(4);
+    ).toBeLessThanOrEqual(MOBILE_EDITOR_BOTTOM_TOLERANCE_PX);
     await page.getByRole('tab', { name: 'Preview' }).click();
     await expect(page.locator('.playground-preview-host')).toBeVisible();
 
@@ -606,7 +618,7 @@ test.describe('mobile authoring workspace', () => {
     );
     await expect(page.getByLabel('folded code')).toBeVisible();
 
-    await page.setViewportSize({ width: 900, height: 800 });
+    await page.setViewportSize(COMPACT_DESKTOP_VIEWPORT);
     await expect(page.getByRole('tab', { name: 'Editor' })).toHaveCount(0);
     const desktopEditor = await editorShell.elementHandle();
     expect(
@@ -621,7 +633,7 @@ test.describe('mobile authoring workspace', () => {
     );
     await expect(page.getByLabel('folded code')).toBeVisible();
 
-    await page.setViewportSize({ width: 320, height: 720 });
+    await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('tab', { name: 'Editor' })).toBeVisible();
     const mobileEditor = await editorShell.elementHandle();
     expect(
@@ -645,7 +657,7 @@ test.describe('mobile authoring workspace', () => {
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot('mobile-320.png', {
       animations: 'disabled',
-      maxDiffPixelRatio: 0.01,
+      maxDiffPixelRatio: MAX_SCREENSHOT_DIFF_PIXEL_RATIO,
     });
   });
 });

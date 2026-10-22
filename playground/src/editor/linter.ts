@@ -8,6 +8,9 @@ import {
   parserStateField,
 } from './parserState';
 
+const CODEPOINT_RADIX = 16;
+const MIN_CODEPOINT_HEX_DIGITS = 4;
+
 function classify(entry: DiagnosticEntry): {
   severity: Diagnostic['severity'];
   message: string;
@@ -20,7 +23,7 @@ function classify(entry: DiagnosticEntry): {
       return { severity, message: t('lintUnmatched') };
     case 'source_contains_pua': {
       const hex = entry.codepoint
-        ? `U+${entry.codepoint.toString(16).toUpperCase().padStart(4, '0')}`
+        ? `U+${entry.codepoint.toString(CODEPOINT_RADIX).toUpperCase().padStart(MIN_CODEPOINT_HEX_DIGITS, '0')}`
         : 'U+????';
       return {
         severity,
@@ -50,8 +53,6 @@ function lintSource(view: EditorView): readonly Diagnostic[] {
     const { severity, message } = classify(entry);
     let from = byteToUtf16(ps, entry.span.start);
     let to = byteToUtf16(ps, entry.span.end);
-    // Clamp to doc bounds; widen 0-width diagnostics by 1 so they
-    // are visible in the gutter / underline.
     if (from < 0) from = 0;
     if (to > docLen) to = docLen;
     if (from === to) {
@@ -65,9 +66,6 @@ function lintSource(view: EditorView): readonly Diagnostic[] {
 }
 
 export const aozoraLinter = linter(lintSource, {
-  // The parse runs synchronously in parserState. We do not want to
-  // throttle squigglies; latency stays sub-millisecond even on the
-  // bouten.afm benchmark. Override the default 750ms.
   delay: 50,
 });
 

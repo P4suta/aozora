@@ -1,5 +1,7 @@
 import LZString, { decompressFromBase64 } from 'lz-string';
 
+const BASE64_BLOCK_LENGTH = 4;
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 export const SHARE_URL_LIMIT = 3500;
@@ -19,7 +21,13 @@ export type SharedSourceResult =
 
 function fromBase64Url(value: string): string {
   const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
-  return base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  return (
+    base64 +
+    '='.repeat(
+      (BASE64_BLOCK_LENGTH - (base64.length % BASE64_BLOCK_LENGTH)) %
+        BASE64_BLOCK_LENGTH,
+    )
+  );
 }
 
 function normalizedBase64(value: string): string {

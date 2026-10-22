@@ -2,7 +2,7 @@
 export interface RenderHtmlResult {
   /** A document body or a size-limit notice when `paused` is true. */
   readonly html: string;
-  /** True when `html` is a notice that must not be exported as the document. */
+  /** True when `html` contains a notice that callers must exclude from exports. */
   readonly paused: boolean;
 }
 
@@ -17,7 +17,7 @@ export interface GaijiSpanWire {
   readonly resolved: string;
 }
 
-/** An LSP position: zero-based line, UTF-16 character offset. */
+/** A position with a zero-based line and UTF-16 character offset. */
 export interface VsPositionLike {
   readonly line: number;
   readonly character: number;

@@ -56,8 +56,8 @@ const TRIGGER_SNIPPETS: TriggerSnippet[] = [
   },
 ];
 
-/** Slug opener forms recognised both as full-width and half-width prefixes. */
 const SLUG_OPENERS = ['［＃', '［#', '[＃', '[#'];
+const SLUG_OPENER_LENGTH = 2;
 
 function familyToKind(family: string): Completion['type'] {
   switch (family) {
@@ -126,8 +126,11 @@ function escapeRegex(s: string): string {
 }
 
 function isInsideSlugBody(context: CompletionContext): boolean {
-  if (context.pos < 2) return false;
-  const before = context.state.sliceDoc(context.pos - 2, context.pos);
+  if (context.pos < SLUG_OPENER_LENGTH) return false;
+  const before = context.state.sliceDoc(
+    context.pos - SLUG_OPENER_LENGTH,
+    context.pos,
+  );
   return before === '［＃';
 }
 
@@ -172,8 +175,6 @@ const aozoraCompletionSource: CompletionSource = (
 
 export const aozoraCompletion = autocompletion({
   override: [aozoraCompletionSource],
-  // Aozora notation has no whitespace-delimited words; the default
-  // closeOnBlur=true is fine, but we make activate-on-typing snappy.
   activateOnTyping: true,
   defaultKeymap: true,
 });

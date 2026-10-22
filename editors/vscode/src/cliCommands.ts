@@ -63,7 +63,7 @@ async function exportHtml(client: LanguageClient): Promise<void> {
   const target = await vscode.window.showSaveDialog({
     saveLabel: "Export HTML",
     ...(defaultUri ? { defaultUri } : {}),
-    // biome-ignore lint/style/useNamingConvention: VS Code shows the filter key as its display label.
+    // biome-ignore lint/style/useNamingConvention: the filter key supplies the display label.
     filters: { HTML: ["html"] },
   });
   if (!target) {
@@ -197,8 +197,6 @@ function wrapStandalone(title: string, body: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
 <style>
-  /* Self-contained share / print form. Prose font / colour come from
-     .aozora-notation; 縦書き from .aozora-vertical (both on <body>). */
   body {
     max-block-size: 40em;
     margin: 1.5em auto;

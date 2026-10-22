@@ -1,5 +1,7 @@
 import { extname, resolve, sep } from 'node:path';
 
+const QUALITY_PARAMETER_PREFIX = 'q=';
+
 const root = resolve('dist');
 const base = '/aozora/playground/';
 const port = Number(Bun.env.PLAYGROUND_PORT ?? 5173);
@@ -21,12 +23,14 @@ function acceptsGzip(header: string | null): boolean {
     const [name, ...parameters] = value.trim().split(';');
     if (!name) continue;
     const qualityParameter = parameters.find((parameter) =>
-      parameter.trim().toLowerCase().startsWith('q='),
+      parameter.trim().toLowerCase().startsWith(QUALITY_PARAMETER_PREFIX),
     );
     const quality =
       qualityParameter === undefined
         ? 1
-        : Number(qualityParameter.trim().slice(2));
+        : Number(
+            qualityParameter.trim().slice(QUALITY_PARAMETER_PREFIX.length),
+          );
     encodings.set(name.toLowerCase(), quality);
   }
   return (encodings.get('gzip') ?? encodings.get('*') ?? 0) > 0;

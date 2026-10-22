@@ -54,7 +54,7 @@ export async function activate(context: ExtensionContext): Promise<void> {
       options: {
         env: {
           ...process.env,
-          // biome-ignore lint/style/useNamingConvention: The environment variable name is an external contract.
+          // biome-ignore lint/style/useNamingConvention: the environment variable name is an external contract.
           AOZORA_LOG: "aozora_cli=debug",
         },
       },

@@ -14,6 +14,8 @@ import { DEFAULT_SAMPLE_ID, SAMPLES } from './samples';
 type EngineModule = typeof import('./adapter-engine');
 type EditorModule = typeof import('./editor-controller');
 
+const REPOSITORY_URL = 'https://github.com/P4suta/aozora';
+
 let engineReady = false;
 const activeEditors = new Set<EngineAwareEditorController>();
 
@@ -127,7 +129,7 @@ export const aozoraPlaygroundAdapter: PlaygroundAdapter = {
       ja: '青空文庫記法の執筆・検証環境',
       en: 'Authoring and validation for Aozora Bunko notation',
     },
-    repositoryUrl: 'https://github.com/P4suta/aozora',
+    repositoryUrl: REPOSITORY_URL,
     engineVersion: wasmPackage.version,
   },
   samples,

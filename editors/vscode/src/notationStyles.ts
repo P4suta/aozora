@@ -1,4 +1,4 @@
-// ADR-0024 shares the renderer stylesheet to prevent preview and export notation styles from drifting.
+// ADR-0024 shares the renderer style sheet to prevent preview and export styles from drifting.
 
 import notationCss from "../../../crates/aozora/assets/aozora-notation.css";
 

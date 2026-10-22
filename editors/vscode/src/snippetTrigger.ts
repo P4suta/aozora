@@ -21,7 +21,7 @@ interface WrapRule {
   postExpandSuggest?: boolean;
 }
 
-// biome-ignore-start lint/suspicious/noTemplateCurlyInString: VS Code interprets these placeholders as snippet syntax.
+// biome-ignore-start lint/suspicious/noTemplateCurlyInString: the editor interprets these placeholders as snippet syntax.
 const WRAPS: readonly WrapRule[] = [
   {
     trigger: "#",
@@ -52,7 +52,7 @@ const WRAPS: readonly WrapRule[] = [
     suppressIfNextIs: "〕",
   },
 ];
-// biome-ignore-end lint/suspicious/noTemplateCurlyInString: VS Code interprets these placeholders as snippet syntax.
+// biome-ignore-end lint/suspicious/noTemplateCurlyInString: the editor interprets these placeholders as snippet syntax.
 
 const SKIP_OVER_CHARS: ReadonlySet<string> = new Set(["］", "》", "」", "』", "〕"]);
 
