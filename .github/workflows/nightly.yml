@@ -1,23 +1,10 @@
-# Nightly builds: an unsigned `aozora` CLI from the tip of main, stamped
-# `X.Y.Z-nightly.<date>+g<sha>` (via `xtask version --channel nightly`) so it can
-# never be mistaken for a stable release. Published as a 14-day GitHub Actions
-# ARTIFACT — NOT a Release — so it stays off the Releases list, needs no rolling
-# tag (sidesteps Immutable Releases), and never lands on crates.io. Grab the latest:
-#
-#   gh run download --repo P4suta/aozora -n aozora-nightly
-#
-# Nightlies are deliberately unsigned and carry no stability guarantee. Linux
-# x86_64 only for now (the common dev/test target) — expand to the release.yml
-# platform matrix here if there is demand. The stable, signed, multi-platform
-# pipeline is release.yml (v* tags); this lane is for testing main between releases.
 name: nightly
 
 on:
   schedule:
-    - cron: "30 16 * * *" # 01:30 JST — after the day's commits typically land
+    - cron: "30 16 * * *" # Run after the day's commits typically land.
   workflow_dispatch:
 
-# A new nightly supersedes an in-flight one; there is only ever one "latest".
 concurrency:
   group: nightly
   cancel-in-progress: true
@@ -32,9 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Don't rebuild an identical nightly: skip the scheduled run when main has
-      # not moved in the last 24h (HEAD's own commit date is the signal, so the
-      # default shallow checkout is enough). Manual dispatch always builds.
       - name: Decide whether to build
         id: freshness
         shell: bash
@@ -58,9 +42,6 @@ jobs:
         with:
           key: nightly
 
-      # Stamp the binary as a nightly. The canonical format lives in ONE place —
-      # `xtask version` — and is exported as AOZORA_BUILD_VERSION (read by the
-      # aozora-buildstamp build.rs) into $GITHUB_ENV so the build step picks it up.
       - name: Resolve nightly build version
         id: ver
         if: steps.freshness.outputs.build == 'true'
@@ -92,8 +73,6 @@ jobs:
           ( cd "${RUNNER_TEMP}" && sha256sum "${name}.tar.gz" > SHA256SUMS.txt )
           echo "dir=${RUNNER_TEMP}" >> "$GITHUB_OUTPUT"
           echo "tarball=${name}.tar.gz" >> "$GITHUB_OUTPUT"
-          # Smoke-assert that the channel stamp actually reached the binary —
-          # this is the nightly lane's daily check that the buildstamp wiring works.
           got="$("${staging}/aozora" --version)"
           echo "built: ${got}"
           case "${got}" in

@@ -1,26 +1,10 @@
 name: spec-freshness
 
-# Weekly drift audit of the vendored conformance vectors against the sibling
-# specification repo — the cloud half of the "spec is master" loop.
-#
-# The vendored copy under `crates/aozora-conformance/spec-vectors/` is a
-# snapshot of `P4suta/aozora-notation-spec`'s `conformance/` subtree. The
-# pre-push gate (`xtask spec-vectors check` via `just drift-gate`) enforces
-# vendored==spec on a developer host that has the sibling
-# checked out; it is a no-op elsewhere. This workflow closes that gap: it
-# checks out a FRESH sibling and runs the same drift check against it, so a
-# spec change that landed without a matching `just sync-spec-vectors` here
-# is caught even if no developer pushed in the interim.
-#
-# Non-blocking by design (mirrors `link-audit.yml`): a drift is not a merge
-# gate — it opens (or updates) a tracking issue labelled `spec-freshness`,
-# and closes it again once the vendored copy is back in sync.
-#
-# Action SHAs are pinned to match the other workflows; Renovate bumps them.
+# Detect specification changes even when this repository receives no pushes.
 
 on:
   schedule:
-    - cron: "31 5 * * 4"  # weekly, Thursday 05:31 UTC (offset from codeql/scorecard/link-audit/cross-os)
+    - cron: "31 5 * * 4"
   workflow_dispatch:
 
 permissions:
@@ -36,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # The parser repo and its vendored spec vectors.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
@@ -46,21 +29,15 @@ jobs:
           cache: true
           install_args: rust@1.97.0
 
-      # The sibling spec — the source of truth.
       - name: Check out the sibling specification
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: P4suta/aozora-notation-spec
           path: .spec-repo
 
-      # Compile the tool as a hard step: a build break is a real regression
-      # worth failing the weekly job loudly.
       - name: Build the xtask binary
         run: cargo build --locked -p aozora-xtask
 
-      # Drift check against the fresh sibling. `set +e` + PIPESTATUS captures
-      # the check's own exit code (the binary is already built, so this only
-      # reflects drift, not a compile error) for the issue reporter.
       - name: Drift-check vendored vectors against the sibling spec
         id: check
         run: |
@@ -82,7 +59,6 @@ jobs:
           TITLE="Spec-vector drift: vendored copy differs from aozora-notation-spec"
           REPORT="spec-check.log"
 
-          # Idempotent label (issues:write covers labels).
           gh label create "$LABEL" -c 1D76DB \
             -d "Vendored conformance vectors drifted from the sibling spec" 2>/dev/null || true
 
