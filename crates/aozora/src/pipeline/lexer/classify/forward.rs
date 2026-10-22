@@ -2030,6 +2030,44 @@ mod tests {
     }
 
     #[test]
+    fn forward_tcy_adjacent_target_is_combined_without_diagnostics() {
+        let source = "12［＃「12」は縦中横］";
+        let snapshot = crate::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot();
+
+        assert!(snapshot.diagnostics().is_empty());
+        assert!(
+            snapshot
+                .to_html()
+                .contains(r#"<span class="aozora-combine-upright">12</span>"#)
+        );
+        assert_eq!(snapshot.to_source(), source);
+    }
+
+    #[test]
+    fn forward_tcy_missing_target_keeps_directive_with_diagnostic() {
+        let source = "34［＃「12」は縦中横］";
+        let snapshot = crate::parse(source)
+            .expect("source fits parser span limit")
+            .snapshot();
+
+        assert!(matches!(
+            snapshot.diagnostics(),
+            [Diagnostic::TcyTargetNotFound { .. }]
+        ));
+        assert_eq!(
+            snapshot
+                .directives()
+                .map(crate::DirectiveView::source)
+                .collect::<Vec<_>>(),
+            ["［＃「12」は縦中横］"]
+        );
+        assert!(!snapshot.to_html().contains("aozora-combine-upright"));
+        assert_eq!(snapshot.to_source(), source);
+    }
+
+    #[test]
     fn tcy_small_script_compound_declines_to_unknown() {
         assert_eq!(forward_attr_from_suffix("縦中横、行右小書き"), None);
         assert_eq!(forward_attr_from_suffix("縦中横、行左小書き"), None);
