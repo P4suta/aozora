@@ -7,9 +7,6 @@
 Cargo.lock.bak
 # Local Cargo configuration and cache overrides are not repository state.
 /.cargo/
-# Inner Cargo.lock generated when building upstream/comrak standalone (e.g. for
-# running its own test suite). The workspace-root Cargo.lock is authoritative.
-/upstream/comrak/Cargo.lock
 
 # Editor / OS
 .DS_Store
@@ -74,8 +71,6 @@ __pycache__/
 .mypy_cache/
 
 # Fuzz — libFuzzer corpora and artifacts are working state, not source.
-# See `docs/fuzz-workflow.md` and `crates/<crate>/tests/fuzz_regressions/`
-# (the permanent regression set is committed; the rolling corpus is not).
 fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/

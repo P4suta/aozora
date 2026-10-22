@@ -36,14 +36,6 @@
       "type": "shell",
       "command": "just check",
       "problemMatcher": ["$rustc"]
-    },
-    {
-      "label": "book-serve",
-      "type": "shell",
-      "command": "just book-serve",
-      "isBackground": true,
-      "problemMatcher": [],
-      "detail": "Serve the handbook at http://localhost:3000 (long-running)."
     }
   ],
   "inputs": [

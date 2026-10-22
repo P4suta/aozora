@@ -40,9 +40,8 @@ explain-hint-header = ヒント: 詳細は `aozora explain <code>` を実行。�
 # フッタが列挙するより多くの別コードがあるときの末尾。$count は残り件数。
 explain-hint-more = … 他 {$count} 件
 
-# `aozora explain <code>` 出力内の節ラベル。再現例／修正例そのものは
-# aozora-spec 所有の言語中立な青空記法だが、localize された title／body の
-# プロースは以下で診断コードをキーに定義する。
+# `aozora explain <code>` 出力内の節ラベル。
+# 再現例／修正例そのものは aozora クレート内部の `spec` モジュールが所有する言語中立な青空記法だが、localize された title／body のプロースは以下で診断コードをキーに定義する。
 explain-repro-label = 再現例:
 explain-fixed-label = 修正後:
 explain-see-label = 参照:
@@ -117,14 +116,14 @@ concept-tcy-body =
 ## 1 組ずつ持つ。<slug> はコードの末尾 `::` セグメントの `_` を `-` にしたもの
 ## （例: `aozora::lex::unclosed_bracket` → `unclosed-bracket`）。body の `{$…}`
 ## プレースホルダは消費側（CLI の explain・LSP のホバー）が実診断から埋める。
-## このプロースは aozora-spec から剥離した — カタログ crate を純粋な機械契約に
-## 保つため。コード・重大度・`#[error]` Display・JSON は決して localize しない。
+## このプロースは aozora クレート内部の `spec` モジュールの外に置き、カタログを純粋な機械契約に保つ。
+## コード・重大度・`#[error]` Display・JSON は決して localize しない。
 
 diag-source-contains-pua-title = 私用領域文字がソースに紛れ込んでいる
 diag-source-contains-pua-body =
     私用領域文字 `U+{$codepoint}` がソースに紛れ込んでいます。
 
-    この文字 (`{$char}`) は青空文庫の通常テキストには現れない予約コードポイントで、aozora-lex の内部マーカー (U+E001..U+E004) と衝突します。
+    この文字 (`{$char}`) は青空文庫の通常テキストには現れない予約コードポイントで、aozora クレートの字句解析器の内部マーカー (U+E001..U+E004) と衝突します。
     通常はテキストエディタの非表示文字設定や、コピペ時の不可視文字で混入します。
 
     直し方: 該当の 1 文字を削除してください。
@@ -273,19 +272,19 @@ diag-unregistered-sentinel-title = 未登録の内部 sentinel（パイプライ
 diag-unregistered-sentinel-body =
     未登録の私用領域 sentinel が検出されました (pipeline 内部の整合性エラー)。
 
-    これは aozora-pipeline のバグの可能性が高いです。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
+    これは aozora クレートのバグの可能性が高いです。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
 
 diag-registry-out-of-order-title = プレースホルダーレジストリの順序破壊（パイプライン内部エラー）
 diag-registry-out-of-order-body =
     プレースホルダーレジストリの順序が崩れています (pipeline 内部の整合性エラー)。
 
-    aozora-pipeline のバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
+    aozora クレートのバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
 
 diag-registry-position-mismatch-title = プレースホルダーレジストリの位置不一致（パイプライン内部エラー）
 diag-registry-position-mismatch-body =
     プレースホルダーレジストリの位置情報が期待と異なっています (pipeline 内部の整合性エラー)。
 
-    aozora-pipeline のバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
+    aozora クレートのバグの可能性があります。再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues
 
 ## doctor
 ##
