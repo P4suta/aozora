@@ -1,0 +1,11 @@
+name = "aozora"
+summary = "Rust parser for Aozora Bunko notation"
+install = "cargo install aozora-cli --locked"
+usage = "aozora render FILE.txt"
+copyright = "Yasunobu"
+license = "MIT OR Apache-2.0"
+documentation_index = true
+
+[[consent]]
+contributor = "yasunobu"
+evidence = "yasunobu is the copyright holder's own alternate Git identity."
