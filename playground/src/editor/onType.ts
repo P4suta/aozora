@@ -23,25 +23,18 @@ const HALF_TO_FULL: Record<string, ReplacementSpec> = {
   '#': { insert: '＃', cursorOffset: 1 },
 };
 
-/** Mark the follow-up rewrite so the filter does not re-enter. */
 const ON_TYPE = Annotation.define<true>();
 
-/**
- * Single-char half-width inserts are rewritten to their full-width
- * counterparts, optionally with a paired closer. IME composition
- * events are skipped: their changes arrive in larger chunks and
- * tend to land outside this filter's scope anyway.
- */
+/** Leaves IME composition events unchanged. */
 export const halfToFullWidthFilter = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged) return tr;
   if (tr.annotation(ON_TYPE)) return tr;
-  // IME composition is multi-step; do not interfere.
   if (tr.isUserEvent('input.compose')) return tr;
 
   const replacements: ChangeSpec[] = [];
   const cursorOffsets = new Map<number, number>();
   tr.changes.iterChanges((fromA, toA, fromB, _toB, inserted) => {
-    if (toA !== fromA) return; // pure insertion only
+    if (toA !== fromA) return;
     if (inserted.length !== 1) return;
     const text = inserted.sliceString(0);
     if (text.length !== 1) return;

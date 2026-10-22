@@ -1,13 +1,3 @@
-// aozora CLI-flavoured commands for the editor.
-//
-// `aozora.exportHtml` renders the active document to a standalone HTML file the
-// user picks — reusing the LSP `aozora/renderHtml` request (the same one the
-// preview pane uses), so it works with zero extra binaries.
-//
-// `aozora.lintWorkspace` runs the `aozora` CLI's terminal linter over the
-// workspace folder for batch diagnostics beyond the open editors (the live LSP
-// only diagnoses documents the editor has opened).
-
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -61,9 +51,6 @@ async function exportHtml(client: LanguageClient): Promise<void> {
     return;
   }
 
-  // A paused render carries a notice instead of the document. Stop
-  // before the save dialog: exporting it would write a placeholder to
-  // the user's chosen path and report success.
   if (result.paused) {
     void vscode.window.showWarningMessage(
       "aozora: this document is too large for the server to render, so there is nothing to export.",
@@ -76,7 +63,7 @@ async function exportHtml(client: LanguageClient): Promise<void> {
   const target = await vscode.window.showSaveDialog({
     saveLabel: "Export HTML",
     ...(defaultUri ? { defaultUri } : {}),
-    // biome-ignore lint/style/useNamingConvention: VS Code shows the filter key as its display label
+    // biome-ignore lint/style/useNamingConvention: VS Code shows the filter key as its display label.
     filters: { HTML: ["html"] },
   });
   if (!target) {
@@ -202,11 +189,6 @@ function asMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Wrap an LSP-rendered body fragment in a self-contained HTML5 document with
- * vertical-writing (縦書き) CSS — the standalone form for sharing or printing,
- * matching `aozora render --standalone`.
- */
 function wrapStandalone(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html lang="ja">

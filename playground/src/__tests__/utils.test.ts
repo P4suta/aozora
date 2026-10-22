@@ -23,8 +23,8 @@ describe('lowerBoundByStart', () => {
   });
 
   it('returns the index after the final entry below the byte offset', () => {
-    expect(lowerBoundByStart(entries, 7)).toBe(2); // 5 < 7 < 10
-    expect(lowerBoundByStart(entries, 15)).toBe(3); // 10 < 15 < 20
+    expect(lowerBoundByStart(entries, 7)).toBe(2);
+    expect(lowerBoundByStart(entries, 15)).toBe(3);
   });
 
   it('returns the array length after every entry', () => {

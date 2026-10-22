@@ -6,17 +6,11 @@ export interface Sample {
   source: string;
 }
 
-/**
- * Demo samples for the playground. Each is a real, copyright-safe excerpt from
- * Aozora Bunko chosen to demonstrate one notation feature, verified to render with
- * zero diagnostics. Prefer real corpus text over invented strings so the demo
- * is both authentic and self-documenting.
- */
+/** Public-domain Aozora Bunko excerpts demonstrating notation features. */
 export const SAMPLES: Sample[] = [
   {
     id: 'ruby',
     title: 'ルビ（明示）',
-    // The place name contains small katakana, so an explicit delimiter is required.
     text: '「先生｜雑司ヶ谷《ぞうしがや》の銀杏はもう散ってしまったでしょうか」',
     source: '夏目漱石『こころ』',
   },
