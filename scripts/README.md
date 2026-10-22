@@ -56,17 +56,13 @@ scripts/sanitizers.sh tsan --filter concurrent_lsp
 scripts/sanitizers.sh miri --filter property_parallel
 ```
 
-The script auto-installs the `nightly` toolchain and the `miri`
-component on first run. Nothing else is global state.
+The script uses the date-pinned nightly toolchain from `mise.toml`.
 
 ### When to run
 
-- **Local pre-commit on concurrent changes** — touched
-  `parallel.rs` / `backend.rs` / `segment_cache.rs`? run TSan
-  before merging.
-- **Nightly cron** — full TSan + Miri across the workspace.
-- **Production incident triage** — Miri can sometimes reproduce a
-  race more deterministically than the original conditions.
+- **Local concurrency changes** — run TSan when changing `parallel.rs` or `backend.rs`.
+- **Release qualification** — `release-ready.yml` runs ASan and TSan on the candidate commit when code proof is not reused.
+- **Production incident triage** — Miri can sometimes reproduce a race more deterministically than the original conditions.
 
 ### Known limitations
 
