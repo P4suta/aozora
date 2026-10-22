@@ -1,9 +1,4 @@
-//! `aozora completions <shell>` smoke tests — every supported shell
-//! emits a non-empty script, and an unknown shell is rejected.
-//!
-//! Pure stdlib (mirrors `smoke.rs`). The script *contents* are clap's
-//! responsibility; here we only confirm the subcommand is wired and
-//! every shell dialect dispatches.
+//! Smoke tests for shell completion generation.
 
 use std::process::{Command, Stdio};
 

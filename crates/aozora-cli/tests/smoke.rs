@@ -1,19 +1,4 @@
 //! End-to-end smoke tests for the `aozora` binary.
-//!
-//! Each test spawns the *built* binary (resolved via the
-//! `CARGO_BIN_EXE_aozora` env var that `cargo test` injects) so we
-//! exercise the actual `ExitCode` + argv plumbing alongside the
-//! library, not just the library API.
-//!
-//! What this catches that the library tests can't:
-//! - argv / clap-derive wiring (subcommand dispatch, flag parsing)
-//! - encoding flag (`--encoding sjis`) byte path
-//! - stdin handling (`-` and missing positional)
-//! - exit codes (0 / non-zero) — fundamental for shell composition
-//! - real-file vs stdin-pipe behaviour parity
-//!
-//! Pure stdlib so the test crate stays dep-light. `assert_cmd` would
-//! be a step up if the suite grows; for now `Command` reads cleanly.
 
 use std::env;
 use std::fs;
@@ -45,10 +30,6 @@ fn write_temp(contents: &str) -> TempFile {
     TempFile { _dir: dir, path }
 }
 
-/// Run the binary with `args`, optionally feeding `stdin`. Returns
-/// (status, stdout, stderr) — every smoke test should assert on at
-/// least the exit status, and one of stdout/stderr to ensure the
-/// path actually executed (not just compiled).
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = common::hermetic_command();
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -57,9 +38,6 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     }
     let mut child = cmd.spawn().expect("spawn aozora");
     if let Some(s) = stdin {
-        // A command may legitimately exit before reading stdin — `lint --fix -`
-        // rejects a stdin path up front. Its read end then closes and this write
-        // races to a BrokenPipe; that is expected, not a test failure.
         match child
             .stdin
             .as_mut()
@@ -90,10 +68,6 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     (output.status, stdout, stderr)
 }
 
-// ---------------------------------------------------------------------
-// `aozora --version` — basic spawn / clap wiring smoke
-// ---------------------------------------------------------------------
-
 #[test]
 fn version_subcommand_succeeds() {
     let (status, stdout, _) = run(&["--version"], None);
@@ -106,7 +80,6 @@ fn version_subcommand_succeeds() {
 
 #[test]
 fn no_args_shows_help_and_exits_non_zero() {
-    // clap's default behaviour: missing required subcommand → 2.
     let (status, _, stderr) = run(&[], None);
     assert!(!status.success(), "expected failure on missing subcommand");
     assert!(
@@ -114,10 +87,6 @@ fn no_args_shows_help_and_exits_non_zero() {
         "expected clap help banner, got: {stderr:?}"
     );
 }
-
-// ---------------------------------------------------------------------
-// `aozora check` — diagnostics path
-// ---------------------------------------------------------------------
 
 #[test]
 fn check_clean_input_exits_zero() {
@@ -141,10 +110,6 @@ fn check_clean_input_via_stdin() {
 
 #[test]
 fn check_strict_fails_on_pua_collision() {
-    // Source containing a literal PUA sentinel triggers a
-    // `SourceContainsPua` warning (and an `UnregisteredSentinel`
-    // error). Without `--strict` we still exit 0 but print the
-    // diagnostic; with `--strict` we exit non-zero.
     let src = "abc\u{E001}def";
     let (status_relaxed, _, stderr_relaxed) = run(&["check"], Some(src));
     assert!(
@@ -185,15 +150,8 @@ fn every_document_projection_shares_diagnostic_flags_and_exit_codes() {
     }
 }
 
-// ---------------------------------------------------------------------
-// `aozora fmt` — round-trip path
-// ---------------------------------------------------------------------
-
 #[test]
 fn fmt_default_prints_canonical_form_on_stdout() {
-    // A redundant explicit `｜` (all-kanji base at line start) canonicalises
-    // to the bare ruby form (ADR 0002/0003); stdout carries the canonical
-    // form with the `｜` dropped.
     let (status, stdout, _) = run(&["fmt"], Some("｜日本《にほん》"));
     assert!(status.success(), "fmt should succeed");
     assert!(
@@ -204,7 +162,6 @@ fn fmt_default_prints_canonical_form_on_stdout() {
 
 #[test]
 fn fmt_check_succeeds_on_already_canonical_input() {
-    // Canonical (bare) input → stdout silent, exit 0.
     let canonical = "日本《にほん》\n";
     let (status, stdout, stderr) = run(&["fmt", "--check"], Some(canonical));
     assert!(
@@ -238,7 +195,7 @@ fn fmt_json_reports_the_processed_file() {
 
 #[test]
 fn fmt_check_fails_on_non_canonical_input() {
-    let non_canonical = "｜日本《にほん》"; // redundant ｜ (canonical form is bare)
+    let non_canonical = "｜日本《にほん》";
     let (status, _, stderr) = run(&["fmt", "--check"], Some(non_canonical));
     assert!(!status.success(), "non-canonical input must fail --check");
     assert!(
@@ -319,8 +276,6 @@ fn fmt_list_reports_a_dirty_file() {
 
 #[test]
 fn fmt_diff_prints_unified_diff() {
-    // The subcommand now exposes the standalone engine's --diff (unified diff
-    // of the change) — a capability the pre-consolidation `aozora fmt` lacked.
     let (status, stdout, _) = run(
         &["fmt", "--diff", "--color", "never"],
         Some("｜日本《にほん》"),
@@ -471,7 +426,6 @@ fn fmt_check_on_a_file_reports_dirty_input() {
 
 #[test]
 fn fmt_encoding_sjis_decodes_shift_jis() {
-    // `-E sjis` now reaches the standalone engine too. 「日本」in Shift_JIS.
     let f = write_temp("");
     fs::write(f.path(), [0x93, 0xfa, 0x96, 0x7b]).expect("seed sjis");
     let path = f.path().to_str().unwrap();
@@ -482,7 +436,6 @@ fn fmt_encoding_sjis_decodes_shift_jis() {
 
 #[test]
 fn fmt_fix_rewrites_flagged_directive_near_miss() {
-    // `--fix` applies the zero-false-positive Tier1 autofix.
     let (status, stdout, _) = run(&["fmt", "--fix"], Some("あ［＃字下げ終わり］"));
     assert!(status.success(), "fmt --fix must succeed");
     assert!(
@@ -490,10 +443,6 @@ fn fmt_fix_rewrites_flagged_directive_near_miss() {
         "--fix should canonicalise the directive: {stdout:?}"
     );
 }
-
-// ---------------------------------------------------------------------
-// `aozora lint` — notation-hygiene lints (aozora::lint::*)
-// ---------------------------------------------------------------------
 
 #[test]
 fn lint_reports_non_canonical_directive() {
@@ -533,8 +482,6 @@ fn lint_strict_exits_non_zero_when_a_lint_fires() {
 
 #[test]
 fn lint_ignores_non_lint_lex_faults() {
-    // An unclosed bracket is a lex fault (`aozora::lex::*`), not a lint, so
-    // `lint` stays silent on it — the is_lint() namespace filter at work.
     let (_, _, stderr) = run(&["lint", "--format", "short"], Some("あ［＃"));
     assert!(
         !stderr.contains("aozora::lint::"),
@@ -553,7 +500,6 @@ fn lint_fix_rewrites_file_then_relints_clean() {
         written.contains("ここで字下げ終わり"),
         "lint --fix must canonicalise in place: {written:?}"
     );
-    // Re-linting the fixed file is clean.
     let (status, _, _) = run(&["lint", "--strict", path], None);
     assert!(status.success(), "fixed file must re-lint clean");
 }
@@ -583,10 +529,6 @@ fn lint_fix_on_stdin_is_a_usage_error() {
     );
 }
 
-// ---------------------------------------------------------------------
-// `aozora render` — HTML output path
-// ---------------------------------------------------------------------
-
 #[test]
 fn render_emits_html_with_paragraph_tags() {
     let (status, stdout, _) = run(&["render"], Some("Hello.\n"));
@@ -614,17 +556,9 @@ fn render_does_not_leak_pua_sentinels() {
     }
 }
 
-// ---------------------------------------------------------------------
-// Encoding flag — UTF-8 vs Shift_JIS
-// ---------------------------------------------------------------------
-
 #[test]
 fn render_rejects_non_utf8_input_when_encoding_is_utf8() {
-    // A raw SJIS byte sequence is not valid UTF-8; under an explicit
-    // `-E utf8`, the binary must report the input as malformed rather
-    // than silently producing garbage. (The default is now `auto`,
-    // which would decode it — that path is covered separately.)
-    let sjis_bytes: Vec<u8> = vec![0x82, 0xa0]; // 「あ」 in SJIS
+    let sjis_bytes: Vec<u8> = vec![0x82, 0xa0];
     let mut child = common::hermetic_command()
         .args(["render", "-E", "utf8"])
         .stdin(Stdio::piped())
@@ -676,7 +610,6 @@ fn document_commands_map_unreadable_input_to_usage_exit() {
 
 #[test]
 fn render_accepts_sjis_input_with_explicit_encoding_flag() {
-    // 「あいうえお」 in Shift_JIS.
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0, 0x82, 0xa2, 0x82, 0xa4, 0x82, 0xa6, 0x82, 0xa8];
     let mut child = common::hermetic_command()
         .args(["render", "-E", "sjis"])
@@ -704,27 +637,11 @@ fn render_accepts_sjis_input_with_explicit_encoding_flag() {
     );
 }
 
-// ---------------------------------------------------------------------
-// Broken pipe (EPIPE) — `aozora … | head` must exit 0 quietly (ADR-0029)
-// ---------------------------------------------------------------------
-//
-// Unix-only: closing a pipe's read end early is POSIX EPIPE semantics, and
-// Rust's runtime resets SIGPIPE to SIG_IGN so the write surfaces as an
-// `io::ErrorKind::BrokenPipe` we can detect rather than a signal kill.
-
-/// A source whose render / inspect / fmt output each far exceed the OS pipe
-/// buffer (~64 KiB). A ruby line renders to `<ruby>…<rt>…</rt></ruby>`,
-/// contributes a node, and serializes back to canonical text, so all three
-/// output channels grow past the buffer at this repeat count — guaranteeing a
-/// downstream reader that leaves after one line breaks the pipe *mid-write*.
 #[cfg(unix)]
 fn oversized_source() -> String {
     "｜青梅《おうめ》\n".repeat(50_000)
 }
 
-/// Spawn `aozora ARGS BIGFILE`, read a token amount of stdout, then drop the
-/// read end while the child is still writing. Returns the child's
-/// `(status, stderr)`; a broken pipe must land as a quiet success.
 #[cfg(unix)]
 fn broken_pipe_run(args: &[&str], input_path: &str) -> (ExitStatus, String) {
     use std::io::Read;
@@ -737,14 +654,9 @@ fn broken_pipe_run(args: &[&str], input_path: &str) -> (ExitStatus, String) {
         .spawn()
         .expect("spawn aozora");
 
-    // Read one small chunk, then drop the read end of the pipe. Output is
-    // > 1 MiB against a ~64 KiB pipe buffer, so the child cannot have finished:
-    // its next stdout write gets EPIPE.
     {
         let mut stdout = child.stdout.take().expect("piped stdout");
         let mut buf = [0u8; 64];
-        // Ignore the byte count (and a racy read error): consuming any prefix
-        // is enough — dropping `stdout` next closes the read end of the pipe.
         let _n = stdout.read(&mut buf);
     }
 
@@ -823,8 +735,6 @@ fn stderr_broken_pipe_is_an_operational_error() {
 
 #[test]
 fn render_auto_detects_sjis_without_encoding_flag() {
-    // The default encoding is `auto`: a raw SJIS file renders correctly
-    // with no `-E` flag at all — the caller need not know the encoding.
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0, 0x82, 0xa2, 0x82, 0xa4, 0x82, 0xa6, 0x82, 0xa8];
     let mut child = common::hermetic_command()
         .args(["render"])
@@ -851,27 +761,16 @@ fn render_auto_detects_sjis_without_encoding_flag() {
     );
 }
 
-// ---------------------------------------------------------------------
-// `aozora repl` — scripted (piped-stdin) read-eval-print loop
-// ---------------------------------------------------------------------
-
 #[test]
 fn repl_evaluates_piped_lines_then_quits() {
-    // A piped stdin is not a terminal, so the loop falls through to its plain
-    // line reader: feed a notation line, a `:mode` switch, another line, and
-    // `:quit`. Every view is the same engine output the document subcommands
-    // emit — the REPL reimplements no parsing / rendering.
     let script = "｜青空《あおぞら》\n:mode html\n青梅《おうめ》\n:quit\n";
     let (status, stdout, stderr) = run(&["repl"], Some(script));
     assert!(
         status.success(),
         "scripted repl exits 0: {status:?} {stderr}"
     );
-    // The startup banner points the reader at `:help`.
     assert!(stdout.contains(":help"), "banner shown: {stdout}");
-    // The first line renders (the default `all` view includes HTML).
     assert!(stdout.contains("青空"), "first line evaluated: {stdout}");
-    // The `:mode html` switch is acknowledged and applied to the next line.
     assert!(
         stdout.contains("青梅"),
         "second line evaluated after :mode: {stdout}"
@@ -880,8 +779,6 @@ fn repl_evaluates_piped_lines_then_quits() {
 
 #[test]
 fn repl_surfaces_diagnostics_inline() {
-    // A private-use sentinel reliably fires a diagnostic; the loop shows the
-    // engine's namespaced code verbatim (the machine axis, un-localized).
     let script = "bad \u{E001} char\n:quit\n";
     let (status, stdout, stderr) = run(&["repl"], Some(script));
     assert!(
@@ -894,16 +791,8 @@ fn repl_surfaces_diagnostics_inline() {
     );
 }
 
-// ---------------------------------------------------------------------
-// `aozora tui` — the full-screen editor refuses a non-terminal
-// ---------------------------------------------------------------------
-
 #[test]
 fn tui_without_a_terminal_refuses_with_an_actionable_error() {
-    // The smoke harness always pipes stdout (and the test process's stdin is
-    // not a tty), so the TUI's terminal guard fires immediately instead of
-    // hanging on a render / read it cannot do. It exits non-zero and points
-    // the user at the scriptable alternatives.
     let (status, _stdout, stderr) = run(&["tui"], None);
     assert!(
         !status.success(),

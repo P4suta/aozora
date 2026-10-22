@@ -1,6 +1,4 @@
-//! `aozora man` smoke tests — the hidden man-page generator emits roff
-//! for the root command and for named subcommands, fails on an unknown
-//! one, and stays hidden from `--help`.
+//! Smoke tests for generated man pages.
 
 use std::process::{Command, Stdio};
 

@@ -1,23 +1,9 @@
-//! `textDocument/formatting` handler.
-//!
-//! Returns a single document-replace [`TextEdit`] when the canonical
-//! form differs from the current buffer, and an empty edit list
-//! otherwise — which is what `rust-analyzer` and `taplo` do too.
-//! That lets LSP clients short-circuit "already formatted" buffers
-//! without applying a no-op edit.
-
 use tower_lsp::lsp_types::{Position, Range, TextEdit};
 
 use aozora::fmt::format_source;
 
 use crate::lsp::position::byte_offset_to_position;
 
-/// Compute the list of `TextEdit`s that canonicalise `source`.
-///
-/// Runs the same `parse ∘ serialize` round-trip as the CLI formatter — the
-/// canonical form is defined by `aozora` itself, so calling it directly
-/// keeps the server's output byte-identical to the formatter without
-/// pulling in the formatter frontend's CLI-only dependencies.
 #[must_use]
 pub(super) fn format_edits(source: &str) -> Vec<TextEdit> {
     let formatted = format_source(source);
@@ -37,13 +23,11 @@ mod tests {
 
     #[test]
     fn canonical_input_produces_no_edits() {
-        // Bare ruby is canonical (all-kanji base at line start, ADR 0002/0003).
         assert!(format_edits("日本《にほん》").is_empty());
     }
 
     #[test]
     fn non_canonical_ruby_produces_one_replace_edit() {
-        // A redundant explicit ｜ canonicalises to the bare form.
         let src = "｜日本《にほん》";
         let edits = format_edits(src);
         assert_eq!(edits.len(), 1);

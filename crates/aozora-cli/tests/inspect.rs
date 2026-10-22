@@ -1,14 +1,4 @@
-//! End-to-end tests for `aozora inspect <kind>` — the document-data
-//! projection of the shared `aozora::json` envelope.
-//!
-//! These verify the argv / dispatch / stdin / file plumbing and that
-//! the versioned envelope reaches stdout. The byte-level shape of each envelope is pinned by the unit
-//! tests in `aozora::json`; here we only confirm the CLI surfaces it
-//! (and that `gaiji` resolves references while the others walk the tree).
-//! The static `slugs` catalogue is a `spec` view (`aozora spec slugs`,
-//! covered in `introspect.rs`), not an `inspect` document view.
-//!
-//! Pure stdlib (mirrors `smoke.rs`) so the test crate stays dep-light.
+//! End-to-end tests for document-data inspection.
 
 use std::io::{ErrorKind, Write};
 use std::process::{ExitStatus, Stdio};
@@ -101,8 +91,6 @@ fn inspect_container_pairs_emits_pair_offsets() {
 
 #[test]
 fn inspect_diagnostics_emits_data_for_pua_collision() {
-    // Diagnostics are tolerated without the shared `--strict` flag, and the
-    // PUA sentinel produces a `source_contains_pua` entry.
     let (status, stdout, _) = run(&["inspect", "diagnostics"], Some("abc\u{E001}def"));
     assert!(status.success(), "diagnostics are tolerated by default");
     assert!(

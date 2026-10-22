@@ -3,21 +3,6 @@
     reason = "diagnostic hints write into an infallible String buffer"
 )]
 
-//! Diagnostic rendering for document subcommands.
-//!
-//! Three views over the same `&[Diagnostic]`:
-//!
-//! - **human** — miette's graphical report: the source line, a caret
-//!   under the offending span, the label, and the help text. The
-//!   default when stderr is a terminal.
-//! - **json** — the `aozora::json` diagnostics envelope, byte-identical
-//!   to what the WASM / FFI / Python / Extism front doors emit. The
-//!   default when stderr is piped, so agents and CI get a stable,
-//!   parseable stream without a flag.
-//! - **short** — one rustc-style line per diagnostic
-//!   (`path:offset: severity[code]: message`), for editors that render
-//!   their own snippets.
-
 use std::error::Error;
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
@@ -43,14 +28,10 @@ pub(crate) enum DiagFormat {
 }
 
 impl DiagFormat {
-    /// Collapse `Auto` to a concrete view based on whether stderr is a TTY.
     fn resolved(self) -> Self {
         self.resolve(io::stderr().is_terminal())
     }
 
-    /// Pure decision seam for [`resolved`](Self::resolved): `Auto` becomes
-    /// `Human` on a terminal and `Json` otherwise; concrete formats pass
-    /// through unchanged.
     fn resolve(self, is_terminal: bool) -> Self {
         match self {
             Self::Auto if is_terminal => Self::Human,
@@ -60,9 +41,6 @@ impl DiagFormat {
     }
 }
 
-/// Render `diagnostics` (belonging to `doc`) to stderr in `format`. `lang`
-/// selects the language of the human-only `explain` footer; the `json` /
-/// `short` machine views ignore it and stay byte-identical.
 #[expect(
     clippy::too_many_arguments,
     reason = "the five render inputs (format / path / doc / diagnostics / lang) are each distinct; bundling them behind a struct would move the arity without clarifying it"
@@ -75,7 +53,6 @@ pub(crate) fn render(
     lang: &LanguageIdentifier,
 ) -> io::Result<()> {
     match format.resolved() {
-        // `resolved()` never returns `Auto`, but match exhaustively.
         DiagFormat::Human | DiagFormat::Auto => render_human(path, source, diagnostics, lang),
         DiagFormat::Json => render_json(diagnostics),
         DiagFormat::Short => render_short(path, diagnostics),
@@ -88,15 +65,10 @@ fn render_human(
     diagnostics: &[aozora::Diagnostic],
     lang: &LanguageIdentifier,
 ) -> io::Result<()> {
-    // English keeps the byte-stable `#[error]` Display as the report headline
-    // (unchanged); any other language substitutes the localized title through
-    // the `LocalizedHeadline` adapter. The machine views (`json` / `short`)
-    // never take this branch, so their bytes stay language-invariant.
     let localize_headline = !i18n::is_english(lang);
     let mut stderr = io::stderr().lock();
     for diag in diagnostics {
         let source = NamedSource::new(path, source.to_owned());
-        // With miette's `fancy` feature, `{:?}` renders the graphical report.
         if localize_headline {
             let headline = LocalizedHeadline {
                 title: i18n::diag_title(lang, diag.code()),
@@ -109,31 +81,12 @@ fn render_human(
             writeln!(stderr, "{report:?}")?;
         }
     }
-    // After the graphical reports, point the reader at `aozora explain
-    // <code>` so the obvious next step is one copy-paste away. Human-only:
-    // `json` / `short` are machine contracts (ADR-0008) and stay
-    // byte-identical, so the hint never reaches them.
+    // ADR-0033 reserves explain hints for human output to keep machine views byte-stable.
     write_explain_hint(&mut stderr, diagnostics, lang)
 }
 
-/// A miette adapter that swaps only the report *headline* for the localized title.
-///
-/// The headline is the `Display` line miette prints at the top of a graphical
-/// report; this adapter substitutes the localized diagnostic title and
-/// delegates every structural accessor (`code`, `severity`, `labels`, `help`,
-/// `url`, `source_code`, …) to the inner diagnostic.
-///
-/// Used for `--lang != en` so the human `check` / `lint` report reads its
-/// headline in the reader's language. The `#[error]` `Display` of the inner
-/// diagnostic — the byte-stable `short` / `json` / log string — is never
-/// touched: those views render the raw `aozora::Diagnostic`, not this adapter,
-/// so the machine axis stays language-invariant.
 struct LocalizedHeadline {
-    /// The diagnostic being reported, owned so the adapter is `'static` (miette
-    /// `Report::new` requires it) — mirrors the `diag.clone()` the un-localized
-    /// path already pays.
     inner: aozora::Diagnostic,
-    /// The localized title, rendered as the report headline via `Display`.
     title: String,
 }
 
@@ -145,8 +98,6 @@ impl fmt::Display for LocalizedHeadline {
 
 impl fmt::Debug for LocalizedHeadline {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Debug is only the `Error` supertrait obligation; the graphical report
-        // renders through `Display` + the miette accessors, not this.
         fmt::Debug::fmt(&self.inner, f)
     }
 }
@@ -175,10 +126,6 @@ impl miette::Diagnostic for LocalizedHeadline {
     }
 }
 
-/// Append a one-time `aozora explain <code>` pointer covering the
-/// distinct diagnostic codes present, in first-seen order and capped so
-/// noisy input does not bury the reports. A no-op when `diagnostics` is
-/// empty.
 fn write_explain_hint(
     w: &mut impl Write,
     diagnostics: &[aozora::Diagnostic],
@@ -190,11 +137,6 @@ fn write_explain_hint(
     Ok(())
 }
 
-/// Pure formatting seam for [`write_explain_hint`]: build the hint text
-/// for the distinct short codes among `codes` (first-seen order, capped at
-/// `MAX_HINTS` with an `… and N more` tail), or `None` when there are none.
-/// The header and the `… and N more` tail are localized via `lang`; the
-/// per-code `aozora explain <code>` lines are literal shell commands.
 fn explain_hint(
     codes: impl Iterator<Item = &'static str>,
     lang: &LanguageIdentifier,
@@ -227,9 +169,6 @@ fn explain_hint(
     Some(out)
 }
 
-/// The terminal segment of a `::`-qualified diagnostic code —
-/// `aozora::lex::nested_ruby` → `nested_ruby` — which is the short form
-/// `aozora explain` accepts.
 fn short_code(code: &'static str) -> &'static str {
     code.rsplit_once("::").map_or(code, |(_, tail)| tail)
 }
@@ -257,9 +196,6 @@ fn render_short(path: &str, diagnostics: &[aozora::Diagnostic]) -> io::Result<()
 mod tests {
     use super::*;
 
-    // `resolve` is the pure TTY-decision seam behind `resolved()`. On a
-    // terminal `Auto` renders `Human`; piped, it renders `Json`. Driving
-    // both branches kills the `is_terminal` guard being pinned to `false`.
     #[test]
     fn resolve_auto_on_terminal_is_human() {
         assert!(matches!(DiagFormat::Auto.resolve(true), DiagFormat::Human));
@@ -270,8 +206,6 @@ mod tests {
         assert!(matches!(DiagFormat::Auto.resolve(false), DiagFormat::Json));
     }
 
-    // Concrete formats ignore the terminal flag and pass straight through,
-    // regardless of which side of the guard we are on.
     #[test]
     fn resolve_concrete_formats_pass_through() {
         assert!(matches!(DiagFormat::Human.resolve(true), DiagFormat::Human));
@@ -292,15 +226,6 @@ mod tests {
         tag.parse().expect("test locale tag parses")
     }
 
-    // ---- LocalizedHeadline: the --lang report-headline adapter ----
-    //
-    // The adapter swaps ONLY the `Display` headline for the localized title and
-    // delegates every value-bearing structural accessor to the inner diagnostic. A
-    // real `source_contains_pua` warning is the value-bearing fixture: it has a
-    // non-default severity (Warning; miette defaults to Error), help text, a
-    // docs URL and a single caret label, so the delegation of each is observable.
-
-    /// A representative inner diagnostic built through the public `aozora` API.
     fn pua_diagnostic() -> aozora::Diagnostic {
         aozora::parse("a\u{E001}b")
             .expect("source fits parser span limit")
@@ -318,16 +243,12 @@ mod tests {
         }
     }
 
-    // Display is the swapped axis: it renders the localized title verbatim, not
-    // the inner `#[error]` sentence.
     #[test]
     fn headline_display_is_the_localized_title() {
         let h = headline_over(pua_diagnostic());
         assert_eq!(h.to_string(), "ローカライズ見出し");
     }
 
-    // Debug is only the `Error` supertrait obligation, delegated to the inner.
-    // The mutant that empties the body would make `{:?}` render nothing.
     #[test]
     fn headline_debug_delegates_to_inner() {
         let inner = pua_diagnostic();
@@ -336,9 +257,6 @@ mod tests {
         assert_eq!(shown, format!("{inner:?}"), "Debug delegates to the inner");
     }
 
-    // Severity delegates: the PUA diagnostic is a `Warning`, which is neither
-    // `None` nor miette's `Default` severity (`Error`) — so both severity
-    // mutants diverge from this.
     #[test]
     fn headline_severity_delegates_to_inner() {
         let inner = pua_diagnostic();
@@ -355,9 +273,6 @@ mod tests {
         );
     }
 
-    // help / url / code delegate: each is `Some` for the PUA diagnostic and
-    // must match the inner's value byte-for-byte. The mutants blank them to
-    // `None`.
     #[test]
     fn headline_help_url_code_delegate_to_inner() {
         let inner = pua_diagnostic();
@@ -386,8 +301,6 @@ mod tests {
         );
     }
 
-    // labels delegate: the PUA diagnostic carries exactly one caret label; the
-    // mutant drops it to `None`.
     #[test]
     fn headline_labels_delegate_to_inner() {
         let h = headline_over(pua_diagnostic());
@@ -403,7 +316,6 @@ mod tests {
         assert_eq!(explain_hint(empty(), &lang("en")), None);
     }
 
-    // Deduped to distinct short codes, in first-seen order. English default.
     #[test]
     fn explain_hint_dedups_by_short_code() {
         let codes = ["aozora::lex::foo", "aozora::parse::foo", "aozora::lex::bar"];
@@ -416,10 +328,6 @@ mod tests {
         );
     }
 
-    // Exactly `MAX_HINTS` (3) distinct codes: every code is listed and there
-    // is NO `… and N more` tail. `seen.len() > MAX_HINTS` is `3 > 3` == false;
-    // mutating `>` to `==` or `>=` would make `3 <op> 3` true and emit a
-    // spurious `… and 0 more`, so asserting the tail's absence kills both.
     #[test]
     fn explain_hint_exactly_max_has_no_more_tail() {
         let codes = ["aozora::a::x", "aozora::b::y", "aozora::c::z"];
@@ -434,10 +342,6 @@ mod tests {
         assert!(!hint.contains("more"));
     }
 
-    // One over the cap (4 distinct codes): only the first three are listed
-    // and a `… and 1 more` tail appears. `seen.len() > MAX_HINTS` is
-    // `4 > 3` == true; mutating `>` to `<` or `==` makes `4 <op> 3` false and
-    // drops the tail, so asserting the tail's presence kills both.
     #[test]
     fn explain_hint_over_max_shows_more_tail() {
         let codes = [
@@ -457,10 +361,6 @@ mod tests {
         );
     }
 
-    // Two over the cap (5 distinct codes): the tail count is
-    // `seen.len() - MAX_HINTS` == `5 - 3` == 2. Mutating `-` to `/` yields
-    // `5 / 3` == 1, so asserting the count is `2` (not `1`) kills it — the
-    // 4-code cases above can't, since `4 - 3` and `4 / 3` both equal 1.
     #[test]
     fn explain_hint_more_tail_counts_the_overflow_not_a_quotient() {
         let codes = [
@@ -481,8 +381,6 @@ mod tests {
         );
     }
 
-    // The header and the `… and N more` tail are localized; the literal
-    // per-code command lines are not. `--lang ja` / `zh` swap only the chrome.
     #[test]
     fn explain_hint_localizes_header_and_tail() {
         let codes = [
