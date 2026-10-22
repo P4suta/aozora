@@ -12,8 +12,7 @@
 
 ## Checklist
 
-- [ ] `just ci` passes locally (lint + build + test + property tests +
-      `cargo deny` + coverage).
+- [ ] `just ci` passes on Linux, or `just ci-repo` passes on another host.
 - [ ] Added or updated tests that exercise the change.
 - [ ] Commit messages follow Conventional Commits (the `commit-msg`
       hook enforces this).

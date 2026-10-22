@@ -2,8 +2,6 @@
 name: perf
 
 on:
-  schedule:
-    - cron: "0 17 * * *" # Run after the day's commits typically land.
   workflow_dispatch:
 
 concurrency:

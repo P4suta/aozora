@@ -23,13 +23,16 @@ So a comment earns its place only as one of: a doc `missing_docs` requires (trim
 
 ## Running anything
 
-The locked native mise environment is canonical. Run `./bootstrap` on a
-fresh clone, then use `just`; CI invokes the same fixed `just ci-*` suites.
+The locked native mise environment is canonical.
+Run `./bootstrap` on a fresh clone, then use `just`.
+CI invokes the same fixed `just ci-*` suites.
 Do not install ad-hoc tool versions around `mise.toml` and `mise.lock`.
-`just ci` is the local pre-push gate.
+`just ci` mirrors the fast pull request gate and is the pre-push gate on Linux.
+Other hosts run `just ci-repo` before pushing.
+Heavy checks run in `release-ready`, as [the gate split](docs/adr/fast-pull-request-gate-and-release-gate.md) records.
 
-Commits must be signed and Conventional. Do not reach for `LEFTHOOK=0`
-or `--no-verify`.
+Commits must be signed and Conventional.
+Do not reach for `LEFTHOOK=0` or `--no-verify`.
 
 ## The `aozora` CLI
 

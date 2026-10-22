@@ -1,8 +1,6 @@
 name: nightly
 
 on:
-  schedule:
-    - cron: "30 16 * * *" # Run after the day's commits typically land.
   workflow_dispatch:
 
 concurrency:
@@ -87,5 +85,5 @@ jobs:
           path: |
             ${{ steps.pkg.outputs.dir }}/${{ steps.pkg.outputs.tarball }}
             ${{ steps.pkg.outputs.dir }}/SHA256SUMS.txt
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: error

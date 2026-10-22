@@ -3,9 +3,11 @@
 Thanks for wanting to help. The rules are few and strict — the guarantees
 only hold when every contribution respects them.
 
-Run `./bootstrap` on a fresh clone. It installs the locked native toolchain,
-installs the git hooks, and runs the tests. After that, `just --list` is the
-menu and `just ci` is the pre-push gate.
+Run `./bootstrap` on a fresh clone.
+It installs the locked native toolchain, installs the git hooks, and runs the tests.
+After that, `just --list` is the menu, and `just ci` is the pre-push gate on Linux.
+Other hosts run `just ci-repo` before pushing.
+Coverage, corpus, mutation, fuzzing, and the other heavy checks run at the release gate, as [the gate split](docs/adr/fast-pull-request-gate-and-release-gate.md) records.
 
 ## Ground rules
 
@@ -20,9 +22,8 @@ menu and `just ci` is the pre-push gate.
 3. **Fix the code a lint names.**
    Use a narrow item-level `#[expect(lint, reason = "…")]` only where a macro, an ABI, or generated code forces an exception.
    New outer `#[allow]` attributes are rejected; do not add inner crate-wide or file-wide suppression.
-4. **A failing test lands first, then the fix.** `just coverage` gates on
-   region coverage; the property, corpus, and mutation layers are what
-   actually judge whether the tests assert anything.
+4. **A failing test lands first, then the fix.**
+   `release-ready` enforces region coverage, and the property, corpus, and mutation layers judge whether the tests assert anything.
 5. **Prefer a loud panic to a silent fallback** on the classify and render
    paths. A wrong-but-quiet default ships wrong bytes on a green build.
    Correctness beats liveness here.

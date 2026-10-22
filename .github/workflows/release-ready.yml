@@ -143,9 +143,8 @@ jobs:
           just baseline-ratchet
           just lint-full
           just test
-          just coverage
           just test-doc
-          just test-doc-all
+          just ci-rust-release
           just msrv-check
           just deny
           just audit
@@ -164,17 +163,32 @@ jobs:
       - name: Strict corpus gates
         env:
           AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
+          BASELINE_RATCHET_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          just audit-gate
-          just corpus-sweep
-          just verbatim-gate
-          just render-leak-gate
-          just render-correctness-gate
-          just alloc-gate
-          just perf-gate
-          just incremental-speedup-gate
-      - name: Deep property tests
-        run: just prop-deep
+          just ci-corpus
+          just ci-perf
+      - name: Benchmark observations
+        env:
+          AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
+        run: just bench
+
+  arm64:
+    needs: [qualify, code-proof]
+    if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: rust@1.99.1 just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: release-arm64
+      - run: just test-aarch64
 
   mutation:
     needs: [qualify, code-proof]
@@ -262,6 +276,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
+      - run: just ci-fuzz
       - run: just fuzz-all-deep
       - name: Reject retained fuzz failures
         run: |
@@ -1192,7 +1207,7 @@ jobs:
 
   release-ready:
     if: always()
-    needs: [qualify, code-proof, quality, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python, real-work]
+    needs: [qualify, code-proof, quality, arm64, mutation, fuzz, sanitizers, cross-os, native-artifacts, vscode-artifacts, artifacts, python, real-work]
     runs-on: ubuntu-latest
     steps:
       - name: Require every release gate
@@ -1202,6 +1217,7 @@ jobs:
           CODE_PROOF: ${{ needs.code-proof.result }}
           REUSE: ${{ needs.code-proof.outputs.reuse }}
           QUALITY: ${{ needs.quality.result }}
+          ARM64: ${{ needs.arm64.result }}
           MUTATION: ${{ needs.mutation.result }}
           FUZZ: ${{ needs.fuzz.result }}
           SANITIZERS: ${{ needs.sanitizers.result }}
@@ -1218,7 +1234,7 @@ jobs:
             exit 0
           fi
           test "$CODE_PROOF" = success
-          for result in "$QUALITY" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS"; do
+          for result in "$QUALITY" "$ARM64" "$MUTATION" "$FUZZ" "$SANITIZERS" "$CROSS_OS"; do
             if [[ "$REUSE" == true ]]; then
               [[ "$result" == success || "$result" == skipped ]]
             else
