@@ -1,8 +1,3 @@
-# `committed` (https://github.com/crate-ci/committed) — Conventional
-# Commits linter run by the commit-msg lefthook hook and by the
-# commitlint CI job. Supersedes the previous hand-rolled grep check.
-#
-# Schema: `committed --dump-config -` prints the active configuration.
 style = "conventional"
 subject_capitalized = false
 subject_not_punctuated = true

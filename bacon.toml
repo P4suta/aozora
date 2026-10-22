@@ -1,18 +1,6 @@
-# bacon configuration for aozora.
-#
-# Launch with `just watch` or the `just watch-lint` / `just watch-test`
-# convenience recipes after installing the locked mise toolchain.
-# Keybindings (built-in defaults):
-#   c  clippy       t  test        d  doc           f  failing-only
-#   q  quit         esc previous   Ctrl-J  list jobs
-#
-# Config reference: https://dystroy.org/bacon/config/
-
+# Bench-only dependencies are excluded to keep the edit-compile loop fast (ADR-0004).
 default_job = "check"
 
-# Fast edit-compile loop. `cargo check` skips codegen so the feedback
-# cycle stays under a second for most touches. Mirrors `just check`
-# (aozora-bench excluded — its criterion dep tree is bench-only).
 [jobs.check]
 command = [
   "cargo",
@@ -28,11 +16,6 @@ need_stdout = false
 watch = ["crates", "spec"]
 on_change_strategy = "kill_then_restart"
 
-# Matches `just clippy` — the `--lib --bins --tests` surface (example /
-# bench targets are skipped for the build-time reason documented on the
-# `clippy` recipe). `[workspace.lints]` in Cargo.toml is the single
-# source of truth for which lints fire (ADR-0004), so the CLI surface
-# stays at `-D warnings` and never re-enables a group.
 [jobs.clippy]
 command = [
   "cargo",
@@ -52,8 +35,6 @@ command = [
 ]
 need_stdout = false
 
-# Full workspace test suite via nextest — bacon's nextest analyzer
-# parses the output for inline failure navigation. Matches `just test`.
 [jobs.test]
 command = [
   "cargo",

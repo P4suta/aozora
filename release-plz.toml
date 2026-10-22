@@ -1,76 +1,33 @@
-# release-plz — workspace version automation + crates.io publishing.
-#
-# Conventional Commits land on main → release-plz keeps a single "Release PR"
-# open that bumps the one [workspace.package].version and the root CHANGELOG.md.
-# Merging that PR (a deliberate, manual squash-merge) makes release-plz publish
-# every public crate to crates.io (dependency-ordered, OIDC trusted publishing)
-# and cut a single `vX.Y.Z` tag — which fires release.yml (binaries + GitHub
-# Release) and the tag-driven PyPI / npm / extism publishers. Humans never
-# hand-edit a version or hand-push a release tag.
-#
-# Lockstep, single-tag, single-changelog — all three reduce to "suppress at the
-# workspace level, enable only on the `aozora` umbrella crate", making that one
-# crate the canonical release identity.
-
 [workspace]
-# `release-plz-release` runs on workflow_dispatch only (release-plz-pr owns the
-# push path), and release-fan-in dispatches it solely on a version-changed push
-# — so "release only on a deliberate release" is enforced by the dispatch
-# gating, not this flag (a leftover from the push-triggered era). Keep it true
-# so a recovery dispatch of a re-qualified, non-release-PR commit still
-# publishes the prepared-but-unpublished version; false makes release-plz skip
-# with "current commit is not from a release PR".
+# Recovery dispatches must publish prepared versions even when the commit is not from a Release PR.
 release_always = true
-# Publish every public crate to crates.io, in the dependency order release-plz
-# derives from the workspace graph.
 publish = true
-# cargo-semver-checks gate on every Release PR (mirrors `just semver`).
 semver_check = true
-# Do not refresh third-party dependencies inside the Release PR; that is Renovate's job.
-# release-plz still rewrites Cargo.lock for the version bump.
+# Dependency upgrades belong to Renovate rather than release version proposals.
 dependencies_update = false
-# no-automerge-on-release-pr.yml identifies Release PRs by this prefix.
+# The release PR protection workflow identifies branches by this prefix.
 pr_branch_prefix = "release-plz-"
-# Consumed by ci.yml's `release-gate`: a maintainer must add `release: approved`.
 pr_labels = ["autorelease: pending"]
 
-# --- single tag + single GitHub Release ownership --------------------------
-# Suppress the default per-package `<pkg>-vX.Y.Z` tags (they start "aozora-…"
-# and would never match release.yml's `on: push: tags: ['v*']`). release.yml
-# owns the GitHub Release, so release-plz never creates one.
+# A single aozora tag identifies the lockstep workspace release (ADR-0038).
 git_tag_enable = false
+# The artifact release workflow owns GitHub Release creation (ADR-0038).
 git_release_enable = false
 
-# --- single aggregated CHANGELOG.md at the repo root -----------------------
-# Every crate inherits this path, but changelog writing is disabled below for
-# all but `aozora`, so we get one root CHANGELOG.md, not 18 per-crate files.
 changelog_path = "./CHANGELOG.md"
 changelog_update = false
 
-# The `aozora` umbrella crate is the single release identity: it alone cuts the
-# `vX.Y.Z` tag and owns the aggregated changelog.
 [[package]]
 name = "aozora"
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
 changelog_update = true
-# Fold the other two published crates' commits into the one root changelog
-# section (each commit is owned by exactly one crate by path, so this is the
-# union of all commits, with none counted twice). The former building-block
-# crates are folded into `aozora`, so their commits already land on this
-# package by path.
 changelog_include = [
   "aozora-cli",
   "tree-sitter-aozora",
 ]
 
-# --- changelog rendering (git-cliff syntax) --------------------------------
-# Keep-a-Changelog body so CHANGELOG.md and the GitHub Release page agree.
-# A GitHub squash-merge subject already ends in " (#N)", so appending
-# commit.remote.pr_number on top of it would double the reference
-# ("… (#72) (#72)"). When a PR number is known we strip the subject's trailing
-# " (#N)" (split on " (#", keep the head) and append the canonical one;
-# otherwise the subject is rendered verbatim so a bare reference is never lost.
+# GitHub squash subjects already include PR numbers, so the template avoids appending them twice.
 [changelog]
 protect_breaking_commits = true
 header = """

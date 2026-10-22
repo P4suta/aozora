@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-# Run aozora workspace tests under a sanitiser.
-#
-# Usage:
-#   scripts/sanitizers.sh miri        [--filter <pat>]   # MIR interpreter (UB detection)
-#   scripts/sanitizers.sh tsan        [--filter <pat>]   # ThreadSanitizer (data race)
-#   scripts/sanitizers.sh asan        [--filter <pat>]   # AddressSanitizer (memory safety)
-#
-# Why this script exists
-#   Concurrency bugs that escape proptest/stress tests show up as
-#   data races (TSan), use-after-free (ASan), or undefined behaviour
-#   (Miri). These are nightly-only Rust capabilities that need a
-#   one-line invocation; this wrapper centralises the env var dance
-#   so the developer doesn't need to remember it.
-#
-# Notes
-#   - Each sanitiser uses the date-pinned nightly from mise.toml.
-#   - Miri rejects most C dependencies and is slow; expect 10-100x
-#     slower than `cargo test`. Use --filter to scope.
-#   - TSan requires `RUSTFLAGS=-Zsanitizer=thread` and a panic=abort
-#     profile. The script forces `--target` to the host triple
-#     because sanitisers don't work with cross-compilation.
-#   - Scheduled CI provides early warning; release-ready runs ASan and TSan on
-#     the exact commit whose artifacts it qualifies.
 
 set -euo pipefail
 
@@ -62,8 +39,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Date-pinned nightly keeps sanitizer and Miri behavior reproducible.
 nightly="nightly-2026-07-15"
 
+# Sanitizers need an explicit host target for the standard-library rebuild.
 host_triple() {
     rustc -vV | sed -n 's/^host: //p'
 }
@@ -80,9 +59,7 @@ case "$mode" in
     tsan)
         target="$(host_triple)"
         echo ">> running ThreadSanitizer (target=$target)" >&2
-        # `Z build-std=std,test` is required because the sanitiser
-        # needs to instrument std as well. RUSTFLAGS reaches both
-        # the binary and std rebuild.
+        # Instrumenting the standard library detects races across its boundary with workspace code.
         export RUSTFLAGS="-Zsanitizer=thread"
         export RUSTDOCFLAGS="-Zsanitizer=thread"
         if [[ -n "$filter" ]]; then

@@ -1,5 +1,3 @@
-# cargo-deny configuration for the aozora workspace.
-
 [graph]
 all-features = true
 
@@ -10,18 +8,11 @@ unused-ignored-advisory = "deny"
 
 [licenses]
 version = 2
-# Our crates are Apache-2.0 OR MIT. The list below is the union of
-# allowed licenses across the transitive dep graph.
-#
-# MIT-0 (MIT No Attribution) is OSI-approved and strictly more
-# permissive than MIT. Listed defensively so a future transitive
-# dep on an MIT-0 crate (a growing convention for tiny
-# micro-utility crates on crates.io) lands without a policy
-# decision in the moment.
 allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "MIT",
+  # MIT-0 permits reuse without attribution and is accepted for transitive utility crates.
   "MIT-0",
   "BSD-2-Clause",
   "BSD-3-Clause",
@@ -30,9 +21,7 @@ allow = [
   "CC0-1.0",
   "MPL-2.0",
   "Zlib",
-  # BSL-1.0 (Boost Software License 1.0) covers rustyline's Windows-only
-  # clipboard-win/error-code deps — OSI-approved, permissive, and not
-  # shipped in the Linux binary.
+  # BSL-1.0 covers rustyline's Windows clipboard dependencies and permits redistribution.
   "BSL-1.0",
 ]
 confidence-threshold = 0.9
@@ -40,12 +29,7 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
-# Internal crates used only as dev-dependencies are declared path-only
-# (no `version`) so cargo strips them from the published manifest — see
-# the note in `[workspace.dependencies]` (Cargo.toml). Those path-only
-# deps resolve as wildcards (`*`); allow wildcards specifically when the
-# dependency is a path dependency so `wildcards = "deny"` still rejects a
-# stray wildcard on a registry dep.
+# Path-only internal dev-dependencies are stripped from published manifests by Cargo.
 allow-wildcard-paths = true
 highlight = "all"
 
