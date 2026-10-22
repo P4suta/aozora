@@ -23,6 +23,10 @@ impl TempFile {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test input files must exist before the command runs"
+)]
 fn write_temp(contents: &str) -> TempFile {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("aozora-cli-test.txt");
@@ -30,6 +34,11 @@ fn write_temp(contents: &str) -> TempFile {
     TempFile { _dir: dir, path }
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test process failures and timeouts must fail with diagnostics"
+)]
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = common::hermetic_command();
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -643,6 +652,10 @@ fn oversized_source() -> String {
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and capture failures must fail with context"
+)]
 fn broken_pipe_run(args: &[&str], input_path: &str) -> (ExitStatus, String) {
     use std::io::Read;
 

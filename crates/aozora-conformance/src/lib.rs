@@ -29,7 +29,7 @@ pub struct RenderFixture {
     /// Source bytes from `source.txt`.
     pub source: String,
     /// Expected HTML from `expected.html`.
-    /// `None` if the file does not exist (`UPDATE_GOLDEN` mode populates it on first run).
+    /// `None` for a missing file, which `UPDATE_GOLDEN` mode creates on first use.
     pub expected_html: Option<String>,
     /// Expected serialize output from `expected.serialize.txt`.
     pub expected_serialize: Option<String>,
@@ -50,7 +50,7 @@ impl RenderFixture {
     ///
     /// # Panics
     ///
-    /// Panics if the fixture tree cannot be read or a fixture lacks its required source file.
+    /// Panics if reading the fixture tree fails or a fixture lacks its required source file.
     #[must_use]
     pub fn load_group(fixtures_root: &Path, group: &str) -> Vec<Self> {
         let group_dir = fixtures_root.join(group);
@@ -106,7 +106,7 @@ impl RenderFixture {
         }
     }
 
-    /// Write `expected.html` if `UPDATE_GOLDEN=1` is set, return the new content.
+    /// Writes `expected.html` in `UPDATE_GOLDEN=1` mode and returns the new content.
     /// Otherwise return the existing golden or panic.
     #[must_use]
     pub fn html_golden(&self, actual: &str) -> String {
@@ -118,7 +118,7 @@ impl RenderFixture {
         })
     }
 
-    /// Write `expected.serialize.txt` if `UPDATE_GOLDEN=1` is set.
+    /// Writes `expected.serialize.txt` in `UPDATE_GOLDEN=1` mode.
     #[must_use]
     pub fn serialize_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {
@@ -129,7 +129,7 @@ impl RenderFixture {
         })
     }
 
-    /// Write `expected.diagnostics.json` if `UPDATE_GOLDEN=1` is set.
+    /// Writes `expected.diagnostics.json` in `UPDATE_GOLDEN=1` mode.
     #[must_use]
     pub fn diagnostics_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {
@@ -140,7 +140,7 @@ impl RenderFixture {
         })
     }
 
-    /// Write `expected.nodes.json` if `UPDATE_GOLDEN=1` is set.
+    /// Writes `expected.nodes.json` in `UPDATE_GOLDEN=1` mode.
     #[must_use]
     pub fn nodes_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {
@@ -151,7 +151,7 @@ impl RenderFixture {
         })
     }
 
-    /// Write `expected.pairs.json` if `UPDATE_GOLDEN=1` is set.
+    /// Writes `expected.pairs.json` in `UPDATE_GOLDEN=1` mode.
     #[must_use]
     pub fn pairs_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {
@@ -162,7 +162,7 @@ impl RenderFixture {
         })
     }
 
-    /// Write `expected.container_pairs.json` if `UPDATE_GOLDEN=1` is set.
+    /// Writes `expected.container_pairs.json` in `UPDATE_GOLDEN=1` mode.
     #[must_use]
     pub fn container_pairs_golden(&self, actual: &str) -> String {
         self.golden_for(&GoldenSpec {

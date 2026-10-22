@@ -39,10 +39,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Date-pinned nightly keeps sanitizer and Miri behavior reproducible.
 nightly="nightly-2026-07-15"
 
-# Sanitizers need an explicit host target for the standard-library rebuild.
 host_triple() {
     rustc -vV | sed -n 's/^host: //p'
 }
@@ -59,7 +57,6 @@ case "$mode" in
     tsan)
         target="$(host_triple)"
         echo ">> running ThreadSanitizer (target=$target)" >&2
-        # Instrumenting the standard library detects races across its boundary with workspace code.
         export RUSTFLAGS="-Zsanitizer=thread"
         export RUSTDOCFLAGS="-Zsanitizer=thread"
         if [[ -n "$filter" ]]; then

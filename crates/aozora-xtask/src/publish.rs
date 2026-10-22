@@ -482,6 +482,10 @@ fn check_manifest_hygiene(ledger: &Ledger, violations: &mut Vec<String>) {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let ledger = load(&root)?;

@@ -3,7 +3,7 @@
     reason = "release ruleset patterns and workflow fixtures are validated constants"
 )]
 
-//! Offline source integrity for the release path.
+//! Checks release rules and workflow consistency offline.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use serde_json::Value;
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 pub(super) fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let mut violations = Vec::new();
@@ -31,9 +35,6 @@ pub(super) fn check() -> Result<(), String> {
     }
 }
 
-// ── tag ruleset integrity ────────────────────────────────────────────────
-
-/// Rule `type` strings present in a ruleset document.
 fn rule_types(ruleset: &Value) -> BTreeSet<String> {
     ruleset
         .get("rules")
@@ -45,7 +46,6 @@ fn rule_types(ruleset: &Value) -> BTreeSet<String> {
         .collect()
 }
 
-/// The `required_status_checks` contexts a branch ruleset demands.
 fn status_check_contexts(ruleset: &Value) -> BTreeSet<String> {
     ruleset
         .get("rules")
@@ -69,8 +69,6 @@ fn load_ruleset(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
 }
 
-/// A ruleset must keep a non-empty `rules` array (fail-on-zero — an emptied one
-/// still parses) and each rule it exists to enforce.
 fn check_required_rules(
     file: &str,
     required: &[&str],
@@ -172,11 +170,6 @@ fn release_inputs_integrity(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
-// ── native-SBOM path mirror ──────────────────────────────────────────────
-
-/// The per-target native SBOM filenames named inside a bash array in a
-/// workflow `run:` block. `marker` is the array opener (`expected=(` /
-/// `native_sboms=(`); scanning stops at the closing `)`.
 fn native_sboms_in(text: &str, marker: &str) -> BTreeSet<String> {
     let sbom = Regex::new(r"aozora-v\$\{version\}-[A-Za-z0-9_.-]+-(?:cli|ffi)\.cdx\.json")
         .expect("static native-SBOM regex");
@@ -210,8 +203,6 @@ fn sbom_mirror_parity(root: &Path, violations: &mut Vec<String>) {
     let expected = native_sboms_in(&tag_text, "expected=(");
     let mirror = native_sboms_in(&pr_text, "native_sboms=(");
 
-    // Fail-on-zero: an extraction that finds nothing means the array moved or
-    // was renamed, and the gate would otherwise pass vacuously.
     if expected.is_empty() {
         violations.push("release.yml: found no native SBOMs in `expected=(…)`".to_owned());
     }
@@ -234,12 +225,6 @@ fn sbom_mirror_parity(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
-// ── release_always ───────────────────────────────────────────────────────
-
-/// `release-plz release` runs only on `workflow_dispatch` (the recovery / fan-in
-/// path). With `release_always = false` it publishes only from a release-PR
-/// merge commit and silently skips a re-qualified recovery commit — it must be
-/// `true`. Pure over the file text so the branches are unit-testable.
 fn release_always_violation(text: &str) -> Option<String> {
     let re = Regex::new(r"(?m)^\s*release_always\s*=\s*(true|false)\b")
         .expect("static release_always regex");
@@ -265,12 +250,6 @@ fn release_always_enabled(root: &Path, violations: &mut Vec<String>) {
     }
 }
 
-// ── detached-HEAD attach ─────────────────────────────────────────────────
-
-/// Pure over release-plz.yml text: if `release-plz-release` checks out a SHA
-/// (detached HEAD) but the attach-branch step's load-bearing
-/// `git update-ref refs/remotes/origin/main` is gone, `release-plz release`
-/// aborts at `git … @{upstream}`.
 fn detached_head_violation(release_plz_yml: &str) -> Option<String> {
     let checks_out_sha = release_plz_yml.contains("ref: ${{ env.QUALIFIED_SHA }}");
     let attaches = release_plz_yml.contains("update-ref refs/remotes/origin/main");
@@ -450,14 +429,11 @@ AOZORA_SPEC_SHA=a5473069f219000f7306a012e79e3ea393406680\n";
                 .expect("a SHA checkout without the attach is a violation")
                 .contains("@{upstream}")
         );
-        // A workflow that never checks out a SHA is not subject to this.
         assert!(detached_head_violation("ref: main\n").is_none());
     }
 
     #[test]
     fn live_release_source_integrity_holds() {
-        // The integration guard: the committed rulesets and the two SBOM
-        // filename lists must actually agree.
         check().expect("release source-integrity must hold on the live tree");
     }
 }

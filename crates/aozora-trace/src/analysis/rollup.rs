@@ -1,26 +1,23 @@
-//! Category rollup — group function names into named buckets.
-//!
-//! `hot_leaves` shows individual functions; `rollup` shows
-//! *categories of functions* (tokenize stage / classify stage /
-//! `corpus_load` / allocation / etc.). Drives the high-level "where
-//! is the time conceptually going?" view in PROFILING.md.
-//!
-//! Categorisation is driven by [`crate::Categorizer`]; pass either
-//! [`crate::RollupConfig::aozora_defaults`] or a user TOML.
+//! Groups leaf-frame samples into configured categories through [`rollup`].
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use crate::render::{Align, Column, TableBuilder};
 use crate::{Categorizer, TableRenderable, Trace};
 
-/// Per-category sample rollup, produced by [`rollup`].
+const PERCENT_SCALE: f64 = 100.0;
+const PERCENT_COLUMN_WIDTH: usize = 6;
+const SAMPLES_COLUMN_WIDTH: usize = 8;
+const FUNCTIONS_COLUMN_WIDTH: usize = 5;
+
+/// Distribution of samples by category, produced by [`rollup`].
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RollupReport {
-    /// Total sample weight across the trace (the percentage denominator).
+    /// Total weight of samples across the trace.
     pub total_samples: u64,
-    /// One row per category: declared categories first (in config
-    /// order), then any leftover buckets by descending sample count.
+    /// Configured categories in declaration order, followed by remaining categories in descending weight of samples.
     pub rows: Vec<RollupRow>,
 }
 
@@ -28,26 +25,23 @@ pub struct RollupReport {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RollupRow {
-    /// Category label (a [`crate::RollupConfig`] category, or
-    /// `unknown` for unmatched functions).
+    /// Configured category label, or `unknown` for unmatched functions.
     pub category: String,
-    /// Leaf-frame sample weight whose function fell in this category.
+    /// Weight of leaf-frame samples in this category.
     pub samples: u64,
     /// `samples` as a percentage of [`RollupReport::total_samples`].
     pub pct: f64,
-    /// How many distinct functions matched this category. Useful
-    /// sanity check: a category with `distinct_funcs = 1` is
-    /// suspicious: its matcher probably catches less than the label
-    /// implies.
+    /// Number of distinct function labels assigned to this category.
     pub distinct_funcs: usize,
 }
 
-/// Bucket every leaf-frame sample into a category. Categories with
-/// zero samples are still emitted (in declaration order) so the
-/// report row order is stable across traces.
+/// Groups leaf-frame samples by category, including configured categories with zero samples.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "sample shares are rendered as approximate percentages"
+)]
 #[must_use]
 pub fn rollup(trace: &Trace, categorizer: &Categorizer) -> RollupReport {
-    // (category_name, function_name) → sample count.
     let mut grouped: HashMap<String, HashMap<String, u64>> = HashMap::new();
     let mut total = 0u64;
     for thread in &trace.threads {
@@ -64,8 +58,6 @@ pub fn rollup(trace: &Trace, categorizer: &Categorizer) -> RollupReport {
             *grouped.entry(cat).or_default().entry(label).or_insert(0) += sample.weight;
         }
     }
-    // Build rows in declaration order, then trailing `unknown`,
-    // then any extras alphabetically.
     let mut rows: Vec<RollupRow> = Vec::new();
     for cat_name in categorizer.category_names() {
         let funcs = grouped.remove(cat_name).unwrap_or_default();
@@ -76,15 +68,13 @@ pub fn rollup(trace: &Trace, categorizer: &Categorizer) -> RollupReport {
             pct: if total == 0 {
                 0.0
             } else {
-                (samples as f64 / total as f64) * 100.0
+                (samples as f64 / total as f64) * PERCENT_SCALE
             },
             distinct_funcs: funcs.len(),
         });
     }
-    // Anything left over (incl. unknown) — append at the end,
-    // sorted by sample count descending so it eyeballs cleanly.
     let mut leftover: Vec<(String, HashMap<String, u64>)> = grouped.into_iter().collect();
-    leftover.sort_by_key(|(_, funcs)| std::cmp::Reverse(funcs.values().sum::<u64>()));
+    leftover.sort_by_key(|(_, funcs)| Reverse(funcs.values().sum::<u64>()));
     for (cat, funcs) in leftover {
         let samples: u64 = funcs.values().sum();
         rows.push(RollupRow {
@@ -93,7 +83,7 @@ pub fn rollup(trace: &Trace, categorizer: &Categorizer) -> RollupReport {
             pct: if total == 0 {
                 0.0
             } else {
-                (samples as f64 / total as f64) * 100.0
+                (samples as f64 / total as f64) * PERCENT_SCALE
             },
             distinct_funcs: funcs.len(),
         });
@@ -113,17 +103,17 @@ impl TableRenderable for RollupReport {
                 Column {
                     header: "%".into(),
                     align: Align::Right,
-                    width: 6,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "samples".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: SAMPLES_COLUMN_WIDTH,
                 },
                 Column {
                     header: "funcs".into(),
                     align: Align::Right,
-                    width: 5,
+                    width: FUNCTIONS_COLUMN_WIDTH,
                 },
                 Column {
                     header: "category".into(),

@@ -1,4 +1,4 @@
-//! Aozora to Pandoc AST projection.
+//! Projects Aozora documents to Pandoc.
 //!
 //! Notation without a native Pandoc construct uses spans or divs with Aozora classes.
 //!
@@ -8,7 +8,6 @@
 //! let doc = parse("｜青梅《おうめ》").expect("source fits parser limits");
 //! let snapshot = doc.snapshot();
 //! let pandoc = aozora::pandoc::to_pandoc(&snapshot);
-//! // The ruby base lands in the Pandoc AST.
 //! assert!(format!("{:?}", pandoc.blocks).contains("青梅"));
 //! ```
 

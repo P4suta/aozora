@@ -3,32 +3,8 @@
     reason = "the maintained MSRV regex is a valid static pattern"
 )]
 
-//! MSRV / toolchain pin coherence gate.
-//!
-//! Two authorities, deliberately holding **different** numbers:
-//!
-//! - `T` = `rust-toolchain.toml`'s `channel` — the DEV toolchain. Tracks
-//!   latest stable; that is how we get new clippy lints.
-//! - `M` = the root `Cargo.toml`'s `rust-version` — the PUBLIC CONTRACT.
-//!   A measured floor; moves only when a new stable feature is needed.
-//!
-//! There is no rule that they match. The rule is that every *other* pin
-//! follows the right one of the two, and that `M` stays far enough behind
-//! `T` to honour the six-month policy. See ADR-0034 and
-//! `docs/contrib/msrv.md`.
-//!
-//! ## Why a gate rather than care
-//!
-//! `dd65755`'s commit message asserted "All version pins move together".
-//! It did not: three README badges were left behind and a later commit
-//! had to sweep them. Nothing checked, so nothing caught it. Coupling the
-//! numbers made that inevitable — one edit had to land in a dozen places
-//! at once, and "a dozen places, by hand, every time" is not a policy.
-//!
-//! The existing `version-literal-gate` (`Justfile`) cannot cover this: it
-//! requires a `v` prefix, so `Rust 1.96.0` never matches, and its scope
-//! excludes the READMEs. It polices release-tag literals; this polices
-//! version pins. Different facts, different gates.
+//! Checks Rust version pins and the supported version policy.
+//! ADR-0034 separates the development toolchain from the supported version floor.
 
 use std::fmt::{self, Display, Formatter};
 use std::fs;
@@ -42,26 +18,18 @@ use serde::de::DeserializeOwned;
 use crate::MsrvArgs;
 use crate::MsrvOp;
 
-/// Minimum number of releases `M` must sit behind `T`.
-///
-/// Rust ships every 6 weeks, so `T - 4` is 24 weeks (~5.5 months) — short
-/// of the six-month promise — while `T - 5` is 30 weeks (~6.9 months).
-/// Five is therefore the smallest gap that keeps the policy true, and it
-/// is pure arithmetic, so the repo needs no release calendar to check it.
+/// Rust's six-week release cadence needs this gap to meet ADR-0034.
 const MIN_RELEASES_BEHIND: u64 = 5;
 
-/// Pins that must equal the MSRV (`Cargo.toml`'s `rust-version`).
 static MSRV_PINS: &[Pin] = &[Pin {
     path: "clippy.toml",
     what: "clippy's `msrv`",
-    // `msrv = "1.89.0"`
     pattern: r#"(?m)^msrv\s*=\s*"([^"]+)""#,
 }];
 
 const WORKFLOW_DEV_RUST_PIN: &str =
     r#"(?m)(?:rust@|toolchain:\s*["']?)([0-9]+\.[0-9]+\.[0-9]+)(?:["']|\b)"#;
 
-/// Pins that must equal the toolchain channel (`rust-toolchain.toml`).
 static TOOLCHAIN_PINS: &[Pin] = &[
     Pin {
         path: "mise.toml",
@@ -97,8 +65,6 @@ struct PinExpectation<'a> {
     follows: &'a str,
 }
 
-/// A Rust version as `(minor, patch)`. Every release since 1.0 is `1.x`,
-/// so the major is not worth carrying.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Version {
     minor: u64,
@@ -124,7 +90,6 @@ fn parse_version(text: &str) -> Result<Version, String> {
         .next()
         .and_then(|p| p.parse().ok())
         .ok_or_else(|| format!("missing minor version in {text:?}"))?;
-    // `rust-version = "1.89"` is legal; treat the patch as 0.
     let patch = parts.next().map_or(Ok(0), |p| {
         p.parse::<u64>()
             .map_err(|_| format!("bad patch version in {text:?}"))
@@ -159,7 +124,6 @@ struct ToolchainTable {
     channel: String,
 }
 
-/// A workspace member's manifest — only the `[package]` fields I7 reads.
 #[derive(Deserialize)]
 struct MemberManifest {
     package: Option<MemberPackage>,
@@ -173,8 +137,6 @@ struct MemberPackage {
     rust_version: Option<RustVersion>,
 }
 
-/// `cargo`'s `publish` key: a bool, or an allow-list of registries. Absent
-/// means publishable to every registry.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Publish {
@@ -182,9 +144,6 @@ enum Publish {
     Registries(Vec<String>),
 }
 
-/// `rust-version` is either inherited from the workspace
-/// (`rust-version.workspace = true`) or written as a literal. Only the
-/// inherited form keeps the MSRV single-source.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RustVersion {
@@ -192,8 +151,6 @@ enum RustVersion {
     Literal(String),
 }
 
-/// Whether cargo would publish this member (i.e. `publish` is not `false`
-/// and not an empty registry list).
 fn is_published(package: &MemberPackage) -> bool {
     match &package.publish {
         None | Some(Publish::Flag(true)) => true,
@@ -202,8 +159,6 @@ fn is_published(package: &MemberPackage) -> bool {
     }
 }
 
-/// The MSRV violation for a published member, or `None` when it correctly
-/// inherits the workspace `rust-version`.
 fn member_msrv_violation(member: &str, package: &MemberPackage) -> Option<String> {
     let name = package.name.as_deref().unwrap_or(member);
     match &package.rust_version {
@@ -233,9 +188,6 @@ pub(crate) fn dispatch(args: &MsrvArgs) -> Result<(), String> {
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
-    // The xtask binary lives under <workspace>/crates/aozora-xtask;
-    // resolve the workspace root by stripping two directory levels
-    // from CARGO_MANIFEST_DIR so this works from any cwd.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let root = Path::new(manifest_dir)
         .parent()
@@ -289,48 +241,25 @@ fn pin_violations(pin: &Pin, found: &[Version], expected: &PinExpectation<'_>) -
         .collect()
 }
 
-/// Maintained docs may not name a Rust version — `docs/contrib/msrv.md`
-/// is the single place that does. Matches `1.NN` only near a rust/MSRV
-/// word so a crate version (`aozora = "0.4"`) or a dep pin
-/// (`toml = "1.1"`) does not trip it.
 static MAINTAINED_DOC_VERSION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(rust|msrv)[^\n]{0,20}?\b1\.(8[5-9]|9[0-9]|[1-9][0-9]{2})\b")
         .expect("static pattern")
 });
 
-/// The MSRV badge must be derived from crates.io, never written down.
-/// A plain substring, not a regex — shields.io's hand-written form is
-/// `/badge/rust-<ver>`, the derived one `/crates/msrv/aozora`.
 const STATIC_MSRV_BADGE: &str = "img.shields.io/badge/rust-";
 const DERIVED_MSRV_BADGE: &str = "https://img.shields.io/crates/msrv/aozora";
 
 const READMES: &[&str] = &["README.md", "crates/aozora/README.md"];
 const MSRV_PAGE: &str = "docs/contrib/msrv.md";
 
-/// Prose we maintain, and therefore prose that must not restate the MSRV.
-///
-/// `docs/adr/` is deliberately absent. An accepted ADR is a dated record,
-/// never edited (`docs/ADR_INDEX.md`), so the Rust version inside one is
-/// history rather than a fact anybody keeps current — ADR-0031 says "rust
-/// 1.96.0" and is *correct* to, because that is what it was. Scanning
-/// them would turn every honest record into a violation.
 const MAINTAINED_DOCS: &[&str] = &["docs/contrib"];
 
-/// I7 — every *published* member inherits the workspace MSRV.
-///
-/// The contract this gate polices is a single workspace field, but a
-/// published member that hardcodes or omits `rust-version` silently opts
-/// out of it. `tree-sitter-aozora` shipped published with no `rust-version`
-/// for a full release cycle because nothing looked past the root manifest.
 fn check_members_inherit_msrv(
     root: &Path,
     members: &[String],
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
     for member in members {
-        // The members here are literal paths; a glob would have to be
-        // expanded first, and skipping it silently is exactly the hole
-        // this gate closes.
         if member.contains('*') {
             return Err(format!(
                 "workspace member glob {member:?} is unsupported here — this gate \
@@ -338,7 +267,6 @@ fn check_members_inherit_msrv(
             ));
         }
         let manifest: MemberManifest = read_toml(&root.join(member).join("Cargo.toml"))?;
-        // No `[package]` — a virtual member that publishes nothing.
         let Some(package) = manifest.package else {
             continue;
         };
@@ -353,10 +281,6 @@ fn check_members_inherit_msrv(
 
 fn check_docs(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let mut offenders = Vec::new();
-    // The exemption below is only sound while its subject exists. Without
-    // this, deleting the page turns `MSRV_PAGE` into a dead constant and
-    // leaves the gate green — the same silent pass the directory check
-    // guards against.
     if !root.join(MSRV_PAGE).exists() {
         return Err(format!(
             "{MSRV_PAGE}: not found — the page every other doc defers to is \
@@ -365,9 +289,6 @@ fn check_docs(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     }
     for dir in MAINTAINED_DOCS {
         let src = root.join(dir);
-        // A missing path is an error, not an absence of violations. The
-        // gate that silently passes when its subject disappears is the
-        // gate that is not there.
         if !src.exists() {
             return Err(format!(
                 "{dir}: not found — MAINTAINED_DOCS is stale, so this gate is \
@@ -430,6 +351,10 @@ fn check_badges(root: &Path, violations: &mut Vec<String>) -> Result<(), String>
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
 
@@ -443,7 +368,6 @@ fn check() -> Result<(), String> {
 
     let mut violations = Vec::new();
 
-    // I1 — every MSRV pin equals the contract.
     for pin in MSRV_PINS {
         let found = scrape(&root, pin)?;
         violations.extend(pin_violations(
@@ -457,7 +381,6 @@ fn check() -> Result<(), String> {
         ));
     }
 
-    // I2 — every toolchain pin equals the channel.
     for pin in TOOLCHAIN_PINS {
         let found = scrape(&root, pin)?;
         violations.extend(pin_violations(
@@ -471,22 +394,11 @@ fn check() -> Result<(), String> {
         ));
     }
 
-    // I3 — the contract cannot ask for more than we develop on.
-    //
-    // Usually cargo gets there first: with `M > T` it refuses to build
-    // xtask at all ("requires rustc <M>"), so this branch never runs. It
-    // is still load-bearing twice over. It keeps I4's subtraction below
-    // from underflowing, and it IS reachable whenever the running
-    // toolchain is neither `T` nor selected by rust-toolchain.toml — a
-    // `RUSTUP_TOOLCHAIN` override (which the mise host lane sets) can
-    // satisfy `M` while `T` in the file does not. Do not delete this as
-    // dead.
     if msrv.minor > channel.minor {
         violations.push(format!(
             "MSRV {msrv} is newer than the toolchain channel {channel}; the contract cannot \
              exceed what we build with"
         ));
-    // I4 — the six-month rule.
     } else if channel.minor - msrv.minor < MIN_RELEASES_BEHIND {
         violations.push(format!(
             "MSRV {msrv} is only {} release(s) behind the channel {channel}; the policy is at \
@@ -497,11 +409,9 @@ fn check() -> Result<(), String> {
         ));
     }
 
-    // I5 / I6 — the number lives in exactly one page, and the badge is derived.
     check_docs(&root, &mut violations)?;
     check_badges(&root, &mut violations)?;
 
-    // I7 — every published member inherits the workspace MSRV.
     check_members_inherit_msrv(&root, &manifest.workspace.members, &mut violations)?;
 
     if violations.is_empty() {
@@ -531,7 +441,6 @@ mod tests {
                 patch: 0
             },
         );
-        // `rust-version = "1.89"` is legal cargo.
         assert_eq!(
             parse_version("1.89").expect("two components"),
             Version {
@@ -559,8 +468,6 @@ mod tests {
 
     #[test]
     fn six_month_rule_arithmetic_matches_the_documented_reasoning() {
-        // 6-week cadence: 4 releases = 24 weeks (~5.5 months, short of the
-        // promise); 5 = 30 weeks (~6.9 months, honours it).
         assert_eq!(
             MIN_RELEASES_BEHIND, 5,
             "5 releases is the smallest gap that clears six months"
@@ -581,8 +488,6 @@ mod tests {
 
     #[test]
     fn maintained_doc_pattern_ignores_unrelated_versions() {
-        // The blind spot that let the READMEs drift was over-narrow
-        // matching; the opposite failure is matching everything.
         assert!(
             !MAINTAINED_DOC_VERSION.is_match(r#"aozora = "0.4""#),
             "a crate version is not a Rust version"
@@ -639,8 +544,6 @@ mod tests {
 
     #[test]
     fn the_live_pins_are_coherent() {
-        // The integration test: read the real files. This is what fails in
-        // CI when someone bumps one pin and forgets its siblings.
         check().expect("the committed pins must satisfy every invariant");
     }
 
@@ -674,7 +577,6 @@ mod tests {
 
     #[test]
     fn published_member_must_inherit_the_workspace_rust_version() {
-        // Inherited — the only accepted form.
         assert!(
             member_msrv_violation(
                 "crates/x",
@@ -684,7 +586,6 @@ mod tests {
             "inheriting the workspace MSRV is compliant"
         );
 
-        // Hardcoded literal — drifts from the single source.
         let literal = member_msrv_violation(
             "crates/x",
             &member("[package]\nname = \"x\"\nrust-version = \"1.89.0\"\n"),
@@ -692,13 +593,10 @@ mod tests {
         .expect("a literal rust-version is a violation");
         assert!(literal.contains("hardcodes"), "{literal}");
 
-        // Omitted entirely — no contract at all. This is the exact hole
-        // `tree-sitter-aozora` sat in.
         let missing = member_msrv_violation("crates/x", &member("[package]\nname = \"x\"\n"))
             .expect("a missing rust-version is a violation");
         assert!(missing.contains("declares no"), "{missing}");
 
-        // Explicit opt-out.
         let optout = member_msrv_violation(
             "crates/x",
             &member("[package]\nname = \"x\"\nrust-version.workspace = false\n"),

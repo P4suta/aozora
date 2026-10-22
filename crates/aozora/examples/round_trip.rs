@@ -1,5 +1,10 @@
 //! Verify that canonical source serialization is a fixed point.
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "fixed example inputs must parse successfully and the example demonstrates stdout output"
+)]
 fn main() {
     let source = "青梅《おうめ》街道を行く。";
 

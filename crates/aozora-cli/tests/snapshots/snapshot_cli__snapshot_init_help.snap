@@ -2,58 +2,57 @@
 source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"init\", \"--help\"])"
 ---
-Scaffold a new Aozora notation project into `[DIR]` (default the working directory): a commented
-`.aozora.toml`, a sample `hon.aozora` exercising ruby / 傍点 / 字下げ so `render` and `check` work
-immediately, and a `.gitignore`. Existing files are kept untouched unless `--force`; idempotent.
-`--no-sample` / `--no-gitignore` opt out
+Scaffold an Aozora notation project in `[DIR]`, defaulting to the working directory. Create a
+commented `.aozora.toml`, a `.gitignore`, and `hon.aozora` with ruby, emphasis dots, and indentation
+for `render` and `check`. Preserve existing files unless `--force` permits replacement, so repeated
+runs are safe. Skip optional files with `--no-sample` and `--no-gitignore`
 
 Usage: aozora init [OPTIONS] [DIR]
 
 Arguments:
   [DIR]
-          Directory to scaffold into (created if it does not exist). Defaults to the current
+          Choose the directory to scaffold. Create it if it doesn't exist. Defaults to the current
           directory
 
           [default: .]
 
 Options:
       --force
-          Overwrite files that already exist. Without it, an existing file is kept untouched — never
-          silently clobbered — and reported as skipped
+          Overwrite existing files. Without this flag, keep existing files with a skipped status
 
       --no-sample
-          Skip the sample `hon.aozora` document
+          Skip the example `hon.aozora` document
 
       --no-gitignore
           Skip the `.gitignore`
 
       --color <WHEN>
-          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
-          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Falls back to the `color` key in
-          `.aozora.toml`, then `auto`. Global — accepted after any subcommand. Governs `check`'s
-          graphical diagnostics and `fmt --diff`; `spec kinds` tables are always monochrome
+          Choose `auto`, `always`, or `never` for diagnostic color. `auto` uses terminal detection
+          and honours `NO_COLOR`, `CLICOLOR`, and `CLICOLOR_FORCE`. Defaults to `.aozora.toml`'s
+          `color`, then `auto`. Applies to graphical diagnostics and `fmt --diff`. `spec kinds`
+          tables stay monochrome. Accepts placement after any subcommand
 
           Possible values:
-          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
-            `CLICOLOR_FORCE`)
-          - always: Always colour, even when piped
-          - never:  Never colour
+          - auto:   Use color when stdout is a terminal, honoring `NO_COLOR`, `CLICOLOR`, and
+            `CLICOLOR_FORCE`
+          - always: Always use color, even when piped
+          - never:  Never use color
 
   -v, --verbose...
-          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
-          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
-          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+          Increase stderr log verbosity with `-v` for info, `-vv` for debug, or `-vvv` for trace.
+          Preserves stdout and diagnostic output. `AOZORA_LOG` overrides this setting. One `-v`
+          cancels `--quiet`. Accepts placement after any subcommand
 
   -q, --quiet
-          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
-          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
-          Global
+          Restrict stderr logging to errors. Preserves stdout. One `-v` cancels this setting.
+          `AOZORA_LOG` overrides it. Accepts placement after any subcommand
 
       --lang <LOCALE>
-          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
-          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
-          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
-          (json / short / codes / exit / schema) or `--encoding`. Global
+          Choose the human message language with a `BCP-47` tag: `en`, `ja`, or `zh`. Applies to the
+          stdin guard, watch banner, and `explain`. Resolves through `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`, then English. Unknown locales use English. Preserves JSON,
+          short diagnostics, codes, exit status, schemas, and source encoding. Accepts placement
+          after any subcommand
 
   -h, --help
           Print help (see a summary with '-h')

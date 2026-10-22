@@ -11,14 +11,12 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Internal — bench-only crate, never published.
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-# Benchmarks drive the stable document, encoding, and render APIs.
 aozora = { workspace = true }
 aozora-corpus = { workspace = true }
 rayon = { workspace = true }

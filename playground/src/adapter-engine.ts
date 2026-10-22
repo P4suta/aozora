@@ -10,6 +10,15 @@ import type { ContainerPair, Diagnostic, Node, Span } from 'aozora-wasm';
 
 import { Document, ensureWasmReady } from './wasm-loader';
 
+const UTF8_SINGLE_BYTE_MAX = 0x7f;
+const UTF8_TWO_BYTE_MAX = 0x7ff;
+const UNICODE_BMP_MAX = 0xffff;
+const UTF8_TWO_BYTE_WIDTH = 2;
+const UTF8_THREE_BYTE_WIDTH = 3;
+const UTF8_FOUR_BYTE_WIDTH = 4;
+const MEDIUM_HEADING_LEVEL = 2;
+const SMALL_HEADING_LEVEL = 3;
+
 const diagnosticMessages: Readonly<Record<string, LocalizedText>> = {
   source_contains_pua: {
     ja: '私用領域文字がソースに紛れ込んでいます。',
@@ -105,18 +114,18 @@ function byteToUtf16Table(source: string): Uint32Array {
     const codePoint = source.codePointAt(utf16Offset);
     if (codePoint === undefined) break;
     const width =
-      codePoint <= 0x7f
+      codePoint <= UTF8_SINGLE_BYTE_MAX
         ? 1
-        : codePoint <= 0x7ff
-          ? 2
-          : codePoint <= 0xffff
-            ? 3
-            : 4;
+        : codePoint <= UTF8_TWO_BYTE_MAX
+          ? UTF8_TWO_BYTE_WIDTH
+          : codePoint <= UNICODE_BMP_MAX
+            ? UTF8_THREE_BYTE_WIDTH
+            : UTF8_FOUR_BYTE_WIDTH;
     for (let index = 0; index < width; index++) {
       table[byteOffset + index] = utf16Offset;
     }
     byteOffset += width;
-    if (codePoint > 0xffff) utf16Offset++;
+    if (codePoint > UNICODE_BMP_MAX) utf16Offset++;
   }
   table[byteOffset] = source.length;
   return table;
@@ -157,8 +166,8 @@ function normalizeDiagnosticsWithTable(
 }
 
 function headingLevel(value: string): number {
-  if (value.includes('中見出し')) return 2;
-  if (value.includes('小見出し')) return 3;
+  if (value.includes('中見出し')) return MEDIUM_HEADING_LEVEL;
+  if (value.includes('小見出し')) return SMALL_HEADING_LEVEL;
   return 1;
 }
 

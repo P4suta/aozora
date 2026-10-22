@@ -14,6 +14,11 @@ pub(crate) fn dispatch(args: &PerfArgs) -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let baseline_path = root.join(PERF_BASELINE);

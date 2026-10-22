@@ -1,43 +1,4 @@
-//! Host-side dev tooling for the aozora workspace.
-//!
-//! Today: `xtask samply <doc|corpus> …` wrappers around the
-//! [`samply`](https://github.com/mstange/samply) sampling profiler.
-//!
-//! ## Why not a shell script
-//!
-//! An earlier attempt sat in `scripts/samply-doc.sh` /
-//! `scripts/samply-corpus.sh`. It was rewritten in Rust because:
-//! - the rest of the project is Rust 2024 — keeping tooling in the
-//!   same language means one toolchain, one set of types, one set of
-//!   error messages
-//! - shell scripts add a parallel shell-quoting / `set -euo pipefail`
-//!   surface that is fundamentally harder to reason about
-//! - portability: bash idioms break on Windows / non-bash shells; an
-//!   `xtask` binary works wherever `cargo run` does
-//!
-//! ## Why a separate crate (and not part of `aozora-bench`)
-//!
-//! `aozora-bench` is a library + examples crate consumed by `cargo
-//! bench` and `cargo run --example`. Adding a binary target to it
-//! would tie the bench compile to a binary that nobody benchmarking
-//! actually wants. The `xtask` pattern keeps developer tooling in a
-//! dedicated crate that is not built by `just build`'s default path.
-//! The crate is `publish = false` since it's not a library
-//! consumers depend on.
-
-#![allow(
-    clippy::disallowed_methods,
-    reason = "xtask binary uses std::process::exit / std::env::set_var to wire up the spawned `cargo` and `samply` invocations; both are appropriate here, in the dev-tooling crate, but disallowed elsewhere"
-)]
-#![allow(
-    missing_docs,
-    reason = "host dev-tool binary — not a public API surface"
-)]
-#![allow(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "xtask reports command results directly to developers and CI"
-)]
+//! Provides development and verification commands for the aozora workspace.
 
 use std::env;
 use std::ffi::OsString;
@@ -80,6 +41,7 @@ const PERF_PARANOID_MAX: i32 = 1;
 const SAMPLY_RATE_HZ: u32 = 4000;
 const DEFAULT_CORPUS_REPEAT: usize = 5;
 const DEFAULT_RENDER_REPEAT: usize = 5;
+const SAMPLY_OUTPUT_DIR: &str = "/tmp";
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "aozora developer tooling", version)]
@@ -92,68 +54,29 @@ struct Cli {
 enum Cmd {
     /// Build and verify local distribution artifacts without publishing them.
     Artifacts(ArtifactsArgs),
-    /// Sample-profile a target via `samply`.
+    /// Profile a target with `samply`.
     Samply(SamplyArgs),
     /// Analyse a saved samply `.json.gz` trace via `aozora-trace`.
     Trace(TraceArgs),
-    /// Local-only dependency-follow-up tooling — install / inspect /
-    /// remove the systemd user timer that runs `just deps-check`
-    /// weekly alongside repository update automation.
+    /// Manage the local weekly dependency-check timer.
     Deps(DepsArgs),
-    /// Build / inspect aozora-corpus binary archives. Replaces the
-    /// directory-of-17-k-small-files load shape with a single packed
-    /// file that can be raw SJIS, pre-decoded UTF-8, and/or zstd-
-    /// compressed. The pack step is incremental — entries whose source
-    /// `mtime` and `blake3` hash match the previous archive are copied
-    /// verbatim.
+    /// Build and inspect corpus archives.
     Corpus(CorpusArgs),
-    /// CI / GitHub Actions instrumentation: profile a finished run,
-    /// run every CI job locally before pushing, or replay a workflow
-    /// job through `nektos/act`.
+    /// Report GitHub Actions run timings.
     Ci(CiArgs),
-    /// JSON Schema artefact dump / drift gate for the `aozora::json`
-    /// envelopes. Generates schema files under
-    /// `crates/aozora-conformance/json/schema-*.json` and CI-checks
-    /// that they stay in sync with the live wire shape.
+    /// Generate and check wire schemas.
     Schema(SchemaArgs),
-    /// TypeScript types artefact dump / drift gate. Generates
-    /// `crates/aozora-wasm/types/aozora_types.d.ts` from the live
-    /// enums (`NodeKind` / `PairKind` / `Severity` /
-    /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
-    /// Drift-gated like `xtask schema`.
+    /// Generate and check binding types.
     Types(TypesArgs),
-    /// WPT-style conformance suite runner. Walks every
-    /// fixture under `crates/aozora-conformance/fixtures/render/`,
-    /// runs the parser, and reports pass/fail counts per
-    /// `(feature, level)` pair declared in each fixture's
-    /// `meta.toml`. Exits non-zero on any `must`-tier failure.
+    /// Run conformance fixtures and check generated grammar artifacts.
     Conformance(ConformanceArgs),
-    /// Print the channel-aware build-version string (the `AOZORA_BUILD_VERSION`
-    /// format) — the single source of the `dev` / `nightly` / `stable` version
-    /// identity. `nightly.yml` / `release.yml` call this so the binaries are
-    /// stamped from one place. `nightly` needs `--date YYYYMMDD`.
+    /// Print the build version for the selected channel.
     Version(VersionArgs),
-    /// Vendor / drift-check the conformance vectors against the sibling
-    /// `aozora-notation-spec` repo (the source of truth). `sync` copies the
-    /// vectors + schema + RUNNER.md into
-    /// `crates/aozora-conformance/spec-vectors/`; `check` fails the build
-    /// when the vendored copy has drifted or the configured source is absent.
+    /// Synchronize and check vendored specification vectors.
     SpecVectors(SpecVectorsArgs),
-    /// crates.io publish-path ledger drift gate. Offline — never contacts
-    /// a registry; it reads manifests only. Cross-checks the workspace's
-    /// publishable members against `release-plz.toml`'s `changelog_include`
-    /// (a crate added to the workspace but not to that list drops out of
-    /// the aggregated CHANGELOG), and enforces the manifest hygiene rules
-    /// the root `Cargo.toml` already states in prose: path-only internal
-    /// dev-deps, and no registry `version` on a `publish = false` member.
+    /// Check publishable manifests and changelog coverage offline.
     Publish(PublishArgs),
-    /// Release rearm guard tooling (DEV-64): the executable form of the
-    /// rearm runbook. `rearm-decision` is the pure, tested version-standstill
-    /// accept/reject logic `release-plz.yml` calls; `check` is an offline
-    /// source-integrity gate (tag ruleset non-empty, native-SBOM path mirror)
-    /// folded into `drift-gate`; `preflight` / `rehearse` verify deployed
-    /// registry/environment state and dry-run the tag-driven publishers at
-    /// rearm time.
+    /// Check release contracts and rehearse publishers.
     Release(ReleaseArgs),
     /// Run deterministic instruction-count performance contracts.
     Perf(PerfArgs),
@@ -161,16 +84,9 @@ enum Cmd {
     Ratchet(RatchetArgs),
     /// Assemble immutable real-work release-lab inputs and worker bundles.
     RealWork(RealWorkArgs),
-    /// MSRV / toolchain pin coherence gate. `rust-toolchain.toml`'s
-    /// channel (the DEV toolchain, tracking latest stable) and
-    /// `Cargo.toml`'s `rust-version` (the PUBLIC CONTRACT, a measured
-    /// floor) are two authorities holding deliberately different numbers
-    /// (ADR-0034). Checks that every other pin follows the right one, that
-    /// `docs/contrib/` names a Rust version in exactly one page, that the
-    /// READMEs derive the MSRV badge rather than writing it down, and that
-    /// the contract stays at least six months behind the channel.
+    /// Check the supported Rust version policy and toolchain pins.
     Msrv(MsrvArgs),
-    /// Repository source-policy checks that cannot be expressed by the compiler.
+    /// Check repository source policy.
     Lint(LintArgs),
 }
 
@@ -182,9 +98,7 @@ struct LintArgs {
 
 #[derive(Subcommand)]
 enum LintOp {
-    /// Fail when a comment cites source by `file:line` — a coordinate that
-    /// rots on the next edit above it. Name a symbol instead. Wired into
-    /// `drift-gate`.
+    /// Reject source coordinates in comments.
     Coordinates,
 }
 
@@ -196,9 +110,7 @@ struct MsrvArgs {
 
 #[derive(Subcommand)]
 enum MsrvOp {
-    /// Fail when a version pin follows the wrong authority, or when the
-    /// MSRV drifts within six months of the dev channel. Wired into
-    /// `drift-gate`.
+    /// Check toolchain pins and the six-month supported Rust version policy.
     Check,
 }
 
@@ -229,9 +141,7 @@ struct RatchetArgs {
 
 #[derive(Subcommand)]
 enum PublishOp {
-    /// Fail when the publish ledger has drifted — `release-plz.toml`
-    /// disagreeing with the workspace's publish set, or a manifest
-    /// breaking the publish-path hygiene rules. Wired into `drift-gate`.
+    /// Reject manifest or changelog coverage drift.
     Check,
 }
 
@@ -243,47 +153,37 @@ struct ReleaseArgs {
 
 #[derive(Subcommand)]
 enum ReleaseOp {
-    /// Decide whether the checked-out commit should publish. The pure
-    /// version-standstill accept/reject logic (a rearm dispatch need not bump
-    /// the version, but must not re-publish an already-tagged one), lifted out
-    /// of `release-plz.yml` so the untested inline branch no longer exists.
+    /// Decide whether the checked-out commit should publish.
     /// Prints `release=<bool>` for `$GITHUB_OUTPUT`.
     RearmDecision {
-        /// The triggering event (`push` / `workflow_dispatch`).
+        /// Triggering event name.
         #[arg(long, env = "GITHUB_EVENT_NAME")]
         event: String,
-        /// Whether HEAD bumped the workspace version ("true" / "false").
+        /// Whether `HEAD` bumped the workspace version, as `true` or `false`.
         #[arg(long, env = "VERSION_CHANGED")]
         version_changed: String,
-        /// The exact qualified commit; must equal HEAD.
+        /// Qualified commit, which must equal `HEAD`.
         #[arg(long, env = "QUALIFIED_SHA")]
         commit: String,
     },
-    /// Offline source-integrity gate (wired into `drift-gate`): the committed
-    /// tag ruleset still encodes its rules, and the PR-time native-SBOM path
-    /// set still mirrors what the tag-time `release.yml` expects — so the exact
-    /// drift that would otherwise fail only at tag push fails at PR time.
+    /// Check release rules and artifact path consistency offline.
     Check,
-    /// Verify the rearm preconditions. `--offline` runs only the checks that
-    /// read the repo (the `check` gate + freeze-latch state); the default also
-    /// queries deployed `gh` / registry state. Fails closed and on zero
-    /// subjects; prints the irreducibly-manual residue to acknowledge.
+    /// Verify the rearm preconditions.
+    /// Uses network probes unless `--offline` disables them.
     Preflight {
-        /// Skip every network probe — run only the repo-local checks.
+        /// Skip network probes and run local checks.
         #[arg(long)]
         offline: bool,
-        /// The commit being rearmed (defaults to HEAD).
+        /// Commit to rearm, defaulting to `HEAD`.
         #[arg(long)]
         commit: Option<String>,
-        /// Acknowledge a known first-publish (a new crate / project the
-        /// registry cannot auto-create), so preflight does not hard-stop on it.
+        /// Acknowledge a first publication that requires manual registry setup.
         #[arg(long)]
         first_publish: bool,
     },
-    /// Rehearse the tag-driven publishers before the real tag: fire their
-    /// `dry_run` dispatches and fail on any qualify failure or zero dispatches.
+    /// Dispatch publisher rehearsals and reject qualification failures or zero dispatches.
     Rehearse {
-        /// The commit to rehearse (defaults to HEAD).
+        /// Commit to rehearse, defaulting to `HEAD`.
         #[arg(long)]
         commit: Option<String>,
     },
@@ -297,12 +197,9 @@ struct SpecVectorsArgs {
 
 #[derive(Subcommand)]
 enum SpecVectorsOp {
-    /// Fail when the vendored `spec-vectors/` has drifted from the sibling
-    /// spec's `conformance/` subtree (vectors + schema + RUNNER.md).
+    /// Reject drift from the configured specification source.
     Check,
-    /// Copy the vectors + schema + RUNNER.md out of the sibling spec into the
-    /// vendored copy, replacing them wholesale so spec-side deletions
-    /// propagate. Commit the diff.
+    /// Replace vendored vectors and supporting files from the configured specification source.
     Sync,
 }
 
@@ -314,13 +211,9 @@ struct SchemaArgs {
 
 #[derive(Subcommand)]
 enum SchemaOp {
-    /// Generate the four wire-format schemas and write them to
-    /// `crates/aozora-conformance/json/schema-*.json`. Overwrites
-    /// existing files; commit the diff.
+    /// Regenerate wire schemas in `crates/aozora-conformance/json/`.
     Dump,
-    /// Compare on-disk schemas against freshly-generated ones; exit
-    /// non-zero on drift. Used as a CI gate so renamed fields /
-    /// added variants force the artefact regeneration step.
+    /// Compare committed schemas with generated output and reject drift.
     Check,
 }
 
@@ -335,10 +228,8 @@ struct RunArgs {
     /// Which implementation to measure conformance for.
     #[arg(long, value_enum, default_value_t = Implementation::Rust)]
     implementation: Implementation,
-    /// Regenerate the `tree-sitter` S-expression snapshots
-    /// (`expected.tree-sitter.txt`) and the results artefact. Use after
-    /// an intentional grammar change; no effect on the `rust`
-    /// implementation.
+    /// Regenerate tree-sitter snapshots and results.
+    /// Has no effect on the `rust` implementation.
     #[arg(long)]
     update: bool,
 }
@@ -348,77 +239,40 @@ struct VectorsArgs {
     /// Which implementation to run the specification vectors through.
     #[arg(long, value_enum, default_value_t = Implementation::Rust)]
     implementation: Implementation,
-    /// Regenerate the `tree-sitter` spec-vector S-expression snapshot
-    /// (`spec-vectors/tree-sitter-snapshot.json`). Use after an
-    /// intentional grammar change; no effect on the `rust` implementation.
+    /// Regenerate tree-sitter specification snapshots.
+    /// Has no effect on the `rust` implementation.
     #[arg(long)]
     update: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Implementation {
-    /// The canonical Rust parser (`crates/aozora-pipeline`).
+    /// The canonical Rust parser.
     Rust,
-    /// The reference tree-sitter grammar (`crates/tree-sitter-aozora`).
+    /// The reference tree-sitter grammar.
     #[value(name = "tree-sitter")]
     TreeSitter,
 }
 
 #[derive(Subcommand)]
 enum ConformanceOp {
-    /// Run every fixture against the chosen `--implementation`.
-    ///
-    /// `rust` (default) is the canonical parser: it compares each
-    /// fixture's `to_html()` / `to_source()` to the committed goldens,
-    /// writes a per-case results.json under
-    /// `crates/aozora-conformance/conformance-results.json`, and exits
-    /// non-zero on any `must`-tier failure.
-    ///
-    /// `tree-sitter` runs the reference grammar
-    /// (`crates/tree-sitter-aozora`): it reports the per-tier pass rate
-    /// (a fixture "passes" when the grammar parses it without ERROR
-    /// nodes) and gates on a per-fixture S-expression snapshot
-    /// (`expected.tree-sitter.txt`). Any snapshot drift exits non-zero,
-    /// tier-independent; pass `--update` to regenerate the snapshots
-    /// after an intentional grammar change.
+    /// Run fixtures with the selected implementation.
+    /// Rust rejects `must` failures, and tree-sitter rejects snapshot drift.
     Run(RunArgs),
-    /// Run the vendored specification conformance vectors
-    /// (`crates/aozora-conformance/spec-vectors/`) against the chosen
-    /// `--implementation`.
-    ///
-    /// `rust` (default) holds the parser to each vector's `expected`
-    /// projections (`serialize` / `nodes` / `pairs` / `diagnostics`) per
-    /// its `meta.level`. Any projection mismatch exits non-zero, including
-    /// `should`, `may`, and HTML.
-    ///
-    /// `tree-sitter` runs the reference grammar over each vector's
-    /// `source`: it reports the per-tier pass rate (no ERROR nodes) and
-    /// gates on the `spec-vectors/tree-sitter-snapshot.json` S-expression
-    /// snapshot. Any drift exits non-zero; `--update` regenerates it.
+    /// Run vendored specification vectors with the selected implementation.
+    /// Reject any Rust projection mismatch or tree-sitter snapshot drift.
     Vectors(VectorsArgs),
-    /// Regenerate-drift gate for the committed tree-sitter parser.
-    ///
-    /// `crates/tree-sitter-aozora/grammar.js` is the source of truth; the
-    /// checked-in `src/parser.c` (+ `grammar.json` / `node-types.json`) is
-    /// `tree-sitter generate`'s output, compiled by `build.rs` into the
-    /// static parser `aozora-lsp` links against. `--check` (default,
-    /// wired into `drift-gate`) exits non-zero when those artefacts have
-    /// drifted from a fresh generate; `--update` regenerates them in place
-    /// via the pinned `tree-sitter` CLI. Commit the diff.
+    /// Check or regenerate the committed tree-sitter parser.
     Grammar(GrammarArgs),
 }
 
 #[derive(Args)]
 struct GrammarArgs {
-    /// Regenerate the committed grammar artefacts
-    /// (`crates/tree-sitter-aozora/src/{parser.c,grammar.json,node-types.json}`)
-    /// in place from `grammar.js` via the pinned `tree-sitter` CLI, then
-    /// exit. Use after an intentional grammar edit; commit the diff.
+    /// Regenerate parser artifacts from `grammar.js` with the pinned tree-sitter tool.
     #[arg(long)]
     update: bool,
-    /// Verify the committed artefacts still match a fresh `tree-sitter
-    /// generate`; exit non-zero on drift. This is the default when neither
-    /// flag is given, and the form the `drift-gate` CI job runs.
+    /// Reject generated parser drift.
+    /// Runs by default without either flag.
     #[arg(long, conflicts_with = "update")]
     check: bool,
 }
@@ -431,22 +285,13 @@ struct TypesArgs {
 
 #[derive(Subcommand)]
 enum TypesOp {
-    /// Generate `aozora_types.d.ts` from the live enums + wire
-    /// structs and write it under `crates/aozora-wasm/types/`.
-    /// Overwrites the existing file; commit the diff.
+    /// Regenerate TypeScript wire types from Rust definitions.
     Ts,
-    /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
-    /// exit non-zero on drift. CI gate.
+    /// Reject TypeScript wire type drift.
     Check,
-    /// Generate native wire types for every host-SDK language from the
-    /// committed JSON Schema via `quicktype` (one generator, all
-    /// languages). Writes one file per language (e.g.
-    /// `crates/aozora-go/json_gen.go`); overwrites it, commit
-    /// the diff.
+    /// Regenerate host binding types from committed schemas with `quicktype`.
     Langs,
-    /// Compare each on-disk per-language wire types file against fresh
-    /// `quicktype` codegen; exit non-zero on drift. CI gate (extends
-    /// `drift-gate`).
+    /// Reject host binding type drift.
     LangsCheck,
 }
 
@@ -458,44 +303,23 @@ struct SamplyArgs {
 
 #[derive(Subcommand)]
 enum SamplyTarget {
-    /// Profile a single corpus document via the `pathological_probe` example.
-    ///
-    /// The probe runs `lex` 100 times on the doc, so a 232 KB
-    /// outlier doc gives samply ~170 ms of parser-bound wall time at 4 kHz
-    /// = ~700 samples. Larger docs (e.g. 3 MB doc 50685) give richer
-    /// traces (~10 k samples).
+    /// Profile a corpus document through the `pathological_probe` example.
     Doc {
         /// Corpus-relative path under `AOZORA_CORPUS_ROOT`.
-        ///
-        /// e.g. `001529/files/50685_ruby_67979/50685_ruby_67979.txt`.
         relative_path: String,
 
-        /// Output basename (the `.json.gz` is appended). Defaults to
-        /// `aozora-doc-<file-stem>` so multiple runs on different docs
-        /// don't clobber each other.
+        /// Output basename without the `.json.gz` suffix.
+        /// Defaults to `aozora-doc-<file-stem>`.
         #[arg(long)]
         out_name: Option<String>,
     },
-    /// Profile the parser hot path across the full corpus via the
-    /// `throughput_by_class` example.
-    ///
-    /// `repeat` controls how many times the parse pass is replayed
-    /// after the corpus is loaded — higher values give samply more
-    /// parser-bound wall time to attach to (the corpus load happens
-    /// once and contributes mostly Shift-JIS decode + filesystem
-    /// syscalls, which would otherwise dominate the trace).
+    /// Profile corpus parsing through the `throughput_by_class` example.
     Corpus {
         /// Number of parse passes after the one-time corpus load.
         #[arg(default_value_t = DEFAULT_CORPUS_REPEAT)]
         repeat: usize,
     },
-    /// Profile the **HTML render** hot path across the full corpus via
-    /// the `render_hot_path` example.
-    ///
-    /// `repeat` controls the per-doc render loop count. Default 5 so
-    /// render-bound stack frames dominate the trace; the per-doc parse
-    /// (untimed in the probe report but still on the wall) drops to a
-    /// minority of samples at this multiplier.
+    /// Profile corpus rendering through the `render_hot_path` example.
     Render {
         /// Number of `render_to_string` calls per document.
         #[arg(default_value_t = DEFAULT_RENDER_REPEAT)]
@@ -503,6 +327,11 @@ enum SamplyTarget {
     },
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::disallowed_methods,
+    reason = "the command entry point reports errors and selects the process exit status"
+)]
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -540,7 +369,10 @@ fn main() {
     }
 }
 
-/// Sample-profile a single corpus document via `pathological_probe`.
+#[expect(
+    clippy::print_stderr,
+    reason = "report profiling progress and output paths"
+)]
 fn samply_doc(relative_path: &str, out_name: Option<&str>) -> Result<(), String> {
     let corpus_root = require_env("AOZORA_CORPUS_ROOT")?;
     let doc_full = Path::new(&corpus_root).join(relative_path);
@@ -550,7 +382,7 @@ fn samply_doc(relative_path: &str, out_name: Option<&str>) -> Result<(), String>
     require_perf_paranoid()?;
 
     let basename = out_name.map_or_else(|| derive_basename(relative_path), str::to_owned);
-    let out = PathBuf::from("/tmp").join(format!("aozora-doc-{basename}.json.gz"));
+    let out = PathBuf::from(SAMPLY_OUTPUT_DIR).join(format!("aozora-doc-{basename}.json.gz"));
 
     rebuild_with_debug("pathological_probe")?;
     let bin = bench_example_path("pathological_probe")?;
@@ -583,13 +415,16 @@ fn samply_doc(relative_path: &str, out_name: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
-/// Sample-profile the corpus parser hot path via `throughput_by_class`.
+#[expect(
+    clippy::print_stderr,
+    reason = "report profiling progress and output paths"
+)]
 fn samply_corpus(repeat: usize) -> Result<(), String> {
     require_env("AOZORA_CORPUS_ROOT")?;
     require_perf_paranoid()?;
 
     let timestamp = current_yyyymmdd_hhmmss();
-    let out = PathBuf::from("/tmp").join(format!("aozora-corpus-{timestamp}.json.gz"));
+    let out = PathBuf::from(SAMPLY_OUTPUT_DIR).join(format!("aozora-corpus-{timestamp}.json.gz"));
 
     rebuild_with_debug("throughput_by_class")?;
     let bin = bench_example_path("throughput_by_class")?;
@@ -622,15 +457,16 @@ fn samply_corpus(repeat: usize) -> Result<(), String> {
     Ok(())
 }
 
-/// Sample-profile the HTML render hot path via `render_hot_path`.
-/// `repeat` controls per-doc render-loop iterations so render frames
-/// dominate the trace over the per-doc parse warmup.
+#[expect(
+    clippy::print_stderr,
+    reason = "report profiling progress and output paths"
+)]
 fn samply_render(repeat: usize) -> Result<(), String> {
     require_env("AOZORA_CORPUS_ROOT")?;
     require_perf_paranoid()?;
 
     let timestamp = current_yyyymmdd_hhmmss();
-    let out = PathBuf::from("/tmp").join(format!("aozora-render-{timestamp}.json.gz"));
+    let out = PathBuf::from(SAMPLY_OUTPUT_DIR).join(format!("aozora-render-{timestamp}.json.gz"));
 
     rebuild_with_debug("render_hot_path")?;
     let bin = bench_example_path("render_hot_path")?;
@@ -667,18 +503,6 @@ fn require_env(key: &str) -> Result<OsString, String> {
     env::var_os(key).ok_or_else(|| format!("{key} not set"))
 }
 
-/// Refuse to launch samply when `perf_event_paranoid` is too high.
-///
-/// Samply uses `perf_event_open(2)` to sample the CPU. The Linux
-/// kernel hides that syscall behind `kernel.perf_event_paranoid`,
-/// which on most distros defaults to `2` ("block all unprivileged
-/// perf access") — samply will spawn but record zero samples.
-///
-/// We catch this *before* spawning samply because samply itself
-/// fails late and silently (a half-empty trace looks like "your
-/// program ran too fast"). The error message gives the user a
-/// one-shot fix, a permanent fix, and a "why this is needed"
-/// explanation in 12 lines or less.
 fn require_perf_paranoid() -> Result<(), String> {
     let raw = match fs::read_to_string(PERF_PARANOID_PATH) {
         Ok(s) => s,
@@ -705,9 +529,6 @@ fn require_perf_paranoid() -> Result<(), String> {
     Ok(())
 }
 
-/// Format the user-facing message shown when `perf_event_paranoid`
-/// is too high. Extracted from [`require_perf_paranoid`] for testing
-/// + so the layout is reviewable in isolation.
 fn format_paranoid_blocked(level: i32) -> String {
     format!(
         "\n\
@@ -737,14 +558,7 @@ fn format_paranoid_blocked(level: i32) -> String {
     )
 }
 
-/// Rebuild a bench example with debug info preserved so samply can
-/// symbolicate the resulting binary. `--profile=bench` inherits from
-/// `release` but overrides `strip = "none"` and `debug = 1`.
-///
-/// We deliberately do NOT use `cargo run --release` here — that
-/// invocation strips debug info and clobbers any prior bench-profile
-/// build of the same binary, which is the foot-gun the original
-/// shell script existed to avoid.
+#[expect(clippy::print_stderr, reason = "report the profiling build command")]
 fn rebuild_with_debug(example: &str) -> Result<(), String> {
     eprintln!(">>> rebuilding {example} with debug info (--profile=bench)");
     let status = Command::new(env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))
@@ -759,10 +573,6 @@ fn rebuild_with_debug(example: &str) -> Result<(), String> {
     expect_status(status, "cargo build --profile=bench")
 }
 
-/// Resolve the on-disk path of the bench-profile example binary.
-/// Cargo writes profile=bench output to `target/release/examples/`
-/// (the `release` directory is shared with `--release`; bench layers
-/// on debug info via `[profile.bench] strip = "none"; debug = 1`).
 fn bench_example_path(example: &str) -> Result<PathBuf, String> {
     let workspace = workspace_root()?;
     let path = workspace
@@ -779,16 +589,11 @@ fn bench_example_path(example: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Walk up from the binary's invocation directory to find the
-/// workspace `Cargo.toml`. Cargo sets `CARGO_MANIFEST_DIR` for the
-/// xtask crate, so the workspace root is the parent of the
-/// `crates/` directory above us.
 fn workspace_root() -> Result<PathBuf, String> {
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").ok_or_else(|| {
         "CARGO_MANIFEST_DIR not set (xtask must be run via `cargo run -p aozora-xtask`)".to_owned()
     })?;
     let manifest_dir = PathBuf::from(manifest_dir);
-    // `crates/aozora-xtask/Cargo.toml` → workspace root is two up.
     manifest_dir
         .parent()
         .and_then(Path::parent)
@@ -810,7 +615,6 @@ fn expect_status(status: ExitStatus, label: &str) -> Result<(), String> {
 }
 
 fn derive_basename(relative_path: &str) -> String {
-    // Strip the directory + `.txt` suffix → just the file stem.
     Path::new(relative_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -818,37 +622,33 @@ fn derive_basename(relative_path: &str) -> String {
         .to_owned()
 }
 
-/// `YYYYMMDD-HHMMSS` derived from `SystemTime` without pulling in
-/// `chrono` for a single invocation. Day-precision is enough to
-/// disambiguate per-session profile runs in `/tmp`.
 fn current_yyyymmdd_hhmmss() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    // Convert to UTC broken-down time using the gregorian-day algorithm.
-    // Good enough for filenames; not for actual datetime work.
     let (year, month, day, hour, minute, second) = secs_to_utc(secs);
     format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
 }
 
-/// Tiny epoch-seconds → (Y, M, D, h, m, s) for filename timestamps.
-/// Doesn't handle leap seconds or pre-1970 inputs (irrelevant here).
 #[expect(
     clippy::cast_possible_truncation,
     reason = "epoch sub-day quantities and the day index fit in u32; explicit `as u32` is the simplest expression for this throwaway date-format helper"
 )]
 fn secs_to_utc(mut secs: u64) -> (u32, u32, u32, u32, u32, u32) {
-    let second = (secs % 60) as u32;
-    secs /= 60;
-    let minute = (secs % 60) as u32;
-    secs /= 60;
-    let hour = (secs % 24) as u32;
-    secs /= 24;
-    // `secs` is now days since 1970-01-01 (Thursday).
+    const SECONDS_PER_MINUTE: u64 = 60;
+    const MINUTES_PER_HOUR: u64 = 60;
+    const HOURS_PER_DAY: u64 = 24;
+    const UNIX_EPOCH_YEAR: u32 = 1970;
+    let second = (secs % SECONDS_PER_MINUTE) as u32;
+    secs /= SECONDS_PER_MINUTE;
+    let minute = (secs % MINUTES_PER_HOUR) as u32;
+    secs /= MINUTES_PER_HOUR;
+    let hour = (secs % HOURS_PER_DAY) as u32;
+    secs /= HOURS_PER_DAY;
     let mut days = secs as u32;
-    let mut year: u32 = 1970;
+    let mut year: u32 = UNIX_EPOCH_YEAR;
     loop {
         let len = days_in_year(year);
         if days < len {
@@ -871,22 +671,48 @@ fn secs_to_utc(mut secs: u64) -> (u32, u32, u32, u32, u32, u32) {
 }
 
 fn is_leap_year(y: u32) -> bool {
-    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+    const LEAP_YEAR_INTERVAL: u32 = 4;
+    const YEARS_PER_CENTURY: u32 = 100;
+    const GREGORIAN_CYCLE_YEARS: u32 = 400;
+    (y.is_multiple_of(LEAP_YEAR_INTERVAL) && !y.is_multiple_of(YEARS_PER_CENTURY))
+        || y.is_multiple_of(GREGORIAN_CYCLE_YEARS)
 }
 
 fn days_in_year(y: u32) -> u32 {
-    if is_leap_year(y) { 366 } else { 365 }
+    const LEAP_YEAR_DAYS: u32 = 366;
+    const COMMON_YEAR_DAYS: u32 = 365;
+    if is_leap_year(y) {
+        LEAP_YEAR_DAYS
+    } else {
+        COMMON_YEAR_DAYS
+    }
 }
 
 fn days_in_month(y: u32, m: u32) -> u32 {
+    const JANUARY: u32 = 1;
+    const FEBRUARY: u32 = 2;
+    const MARCH: u32 = 3;
+    const APRIL: u32 = 4;
+    const MAY: u32 = 5;
+    const JUNE: u32 = 6;
+    const JULY: u32 = 7;
+    const AUGUST: u32 = 8;
+    const SEPTEMBER: u32 = 9;
+    const OCTOBER: u32 = 10;
+    const NOVEMBER: u32 = 11;
+    const DECEMBER: u32 = 12;
+    const LONG_MONTH_DAYS: u32 = 31;
+    const SHORT_MONTH_DAYS: u32 = 30;
+    const LEAP_FEBRUARY_DAYS: u32 = 29;
+    const COMMON_FEBRUARY_DAYS: u32 = 28;
     match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
+        JANUARY | MARCH | MAY | JULY | AUGUST | OCTOBER | DECEMBER => LONG_MONTH_DAYS,
+        APRIL | JUNE | SEPTEMBER | NOVEMBER => SHORT_MONTH_DAYS,
+        FEBRUARY => {
             if is_leap_year(y) {
-                29
+                LEAP_FEBRUARY_DAYS
             } else {
-                28
+                COMMON_FEBRUARY_DAYS
             }
         }
         _ => unreachable!("month out of range"),
@@ -917,22 +743,17 @@ mod tests {
 
     #[test]
     fn secs_to_utc_handles_leap_year_crossing() {
-        // 2020-02-29 12:00:00 UTC = 1582977600
         assert_eq!(secs_to_utc(1_582_977_600), (2020, 2, 29, 12, 0, 0));
     }
 
     #[test]
     fn secs_to_utc_handles_recent_date() {
-        // 2026-01-01 00:00:00 UTC = 1767225600
         assert_eq!(secs_to_utc(1_767_225_600), (2026, 1, 1, 0, 0, 0));
     }
 
     #[test]
     fn paranoid_blocked_message_lists_three_remedies() {
         let msg = format_paranoid_blocked(2);
-        // The message MUST tell the user what the problem is and
-        // give them at least a one-shot fix + a permanent fix +
-        // an explanation of *why* this is needed.
         assert!(
             msg.contains("perf_event_paranoid = 2"),
             "missing observed value: {msg}"

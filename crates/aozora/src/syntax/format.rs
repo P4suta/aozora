@@ -18,7 +18,7 @@ impl FontShift {
     }
 }
 
-// The corpus work 暗黒公使 names absolute headline sizes rather than relative shifts.
+// The corpus work `暗黒公使` names absolute headline sizes rather than relative shifts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -138,7 +138,7 @@ pub struct IndentBlock {
 #[non_exhaustive]
 pub enum Format {
     Bold,
-    // Gothic and bold occur in disjoint corpus work populations and denote distinct typefaces (ADR-0027).
+    // ADR-0027 distinguishes gothic from bold based on their disjoint corpus use.
     Gothic,
     Italic,
     Bouten(BoutenKind),
@@ -227,7 +227,7 @@ pub(crate) enum ForwardAttr {
     },
 }
 
-// Ruby-base referents cannot be reclaimed as text, so serialization needs explicit provenance (ADR-0019).
+// ADR-0019 requires provenance to distinguish ruby-base referents from reclaimable text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) enum ForwardOrigin {

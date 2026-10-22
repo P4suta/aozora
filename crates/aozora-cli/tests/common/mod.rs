@@ -6,6 +6,10 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
+#[expect(
+    clippy::expect_used,
+    reason = "test setup must fail if an isolated configuration directory cannot be created"
+)]
 static EMPTY_XDG_CONFIG_HOME: LazyLock<TempDir> =
     LazyLock::new(|| TempDir::new().expect("create empty XDG_CONFIG_HOME tempdir"));
 

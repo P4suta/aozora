@@ -9,6 +9,10 @@ fn cli_filters() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "snapshot process capture and UTF-8 decoding must succeed"
+)]
 fn run(args: &[&str]) -> String {
     let bin = env!("CARGO_BIN_EXE_aozora");
     let output = Command::new(bin)

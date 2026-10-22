@@ -15,6 +15,10 @@ fn all_fixture_sources() -> &'static Vec<String> {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "bounded conformance fixtures must parse on both passes"
+)]
 fn parse_serialise_parse(source: &str) {
     let doc = aozora::parse(source.to_owned()).expect("source fits parser span limit");
     let tree = doc.snapshot();

@@ -263,9 +263,10 @@ const fn parse_is_slow(latency_us: u64, threshold_us: u64) -> bool {
 }
 
 fn parse_slow_threshold(value: Option<&str>) -> u64 {
+    const DEFAULT_SLOW_PARSE_THRESHOLD_US: u64 = 100_000;
     value
         .and_then(|value| value.trim().parse().ok())
-        .unwrap_or(100_000)
+        .unwrap_or(DEFAULT_SLOW_PARSE_THRESHOLD_US)
 }
 
 fn slow_parse_threshold_us() -> u64 {

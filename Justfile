@@ -505,7 +505,6 @@ fuzz-triage CRATE TARGET:
     fi
     failed=0
     for art in $(find "$art_dir" -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) | sort); do
-        # cargo-fuzz resolves artifact paths relative to crates/aozora/fuzz/<package>/.
         rel="${art#crates/aozora/fuzz/${crate}/}"
         echo "==> ${art}"
         out=$(bash -c "cd crates/aozora/fuzz/${crate} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
@@ -595,14 +594,11 @@ dhat:
 latency:
     cargo run --release -p aozora-bench --example latency_synthetic
 
-# Region coverage supports the stable toolchain, while branch reporting requires nightly.
 _COV_FLOOR := "84"
-# Binary entrypoints are thin adapters covered through their libraries.
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
 [doc("Check workspace region coverage against the configured floor.")]
 coverage:
-    # Fresh instrumentation avoids aggregating stale coverage maps after source files move.
     sh -c 'rm -rf "${CARGO_TARGET_DIR:-target}/llvm-cov-target"'
     cargo llvm-cov nextest \
         {{_ws}} \
@@ -611,7 +607,6 @@ coverage:
 
 [doc("Run CLI and in-process LSP tests with all optional features.")]
 test-internals:
-    # Workspace-wide features would enable the Extism host smoke test without its WASM artifact.
     cargo nextest run -p aozora-cli --all-features
 
 [doc("Generate an HTML coverage report without enforcing a threshold.")]
@@ -630,7 +625,6 @@ coverage-branch:
 
 [doc("Run mutation tests with the supplied cargo-mutants arguments.")]
 mutants *ARGS:
-    # Disable shell globbing so cargo-mutants receives exclusion patterns verbatim.
     set -f; CARGO_TARGET_DIR=target/mutants CARGO_INCREMENTAL=1 RUSTC_WRAPPER= \
       cargo mutants --config mutants.toml -j 1 {{ARGS}}
 
@@ -639,7 +633,6 @@ lint: fmt-check clippy typos doc
 
 [doc("Build workspace rustdoc with warnings treated as errors.")]
 doc:
-    # Rustdoc processes share output files, so serialization avoids concurrent writes.
     env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --jobs 1
 
 [doc("Check Rust and TOML formatting without writing files.")]
@@ -660,7 +653,7 @@ reuse:
 clippy:
     # CLI lint-group flags would override workspace per-lint exceptions (ADR-0004).
     cargo clippy {{_ws}} --lib --bins --all-features -- -D warnings
-    # Test targets use panics and output for failure diagnostics.
+    # Test diagnostics follow docs/adr/repository-lint-exceptions.md.
     cargo clippy {{_ws}} --tests --all-features -- \
       -D warnings -A clippy::unwrap_used -A clippy::expect_used \
       -A clippy::panic -A clippy::print_stdout -A clippy::print_stderr
@@ -668,7 +661,7 @@ clippy:
 [doc("Lint all workspace targets and optional features.")]
 clippy-strict:
     cargo clippy --workspace --lib --bins --all-features -- -D warnings
-    # Test, example, and benchmark targets use panics and output for diagnostics.
+    # Test, example, and benchmark diagnostics follow docs/adr/repository-lint-exceptions.md.
     cargo clippy --workspace --examples --tests --benches --all-features -- \
       -D warnings -A clippy::unwrap_used -A clippy::expect_used \
       -A clippy::panic -A clippy::print_stdout -A clippy::print_stderr
@@ -698,7 +691,7 @@ shear:
 
 [doc("Check API compatibility against published crate baselines.")]
 semver *ARGS:
-    # tree-sitter-aozora has no published baseline for cargo-semver-checks.
+    # API baseline exclusions follow docs/adr/repository-lint-exceptions.md.
     cargo semver-checks check-release --workspace \
         --exclude tree-sitter-aozora {{ARGS}}
 
@@ -1002,7 +995,7 @@ playground-all: playground-ci playground-build
 
 [doc("Build the playground and run Playwright browser tests.")]
 playground-e2e: playground-build
-    # Playwright browser dependencies must be installed by the host package manager.
+    # Host browser prerequisites follow ADR-0053.
     cd playground && bun run playwright install chromium firefox webkit
     cd playground && bun run playwright test
 

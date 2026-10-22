@@ -21,6 +21,11 @@ const ALLOC_METRICS: &[&str] = &[
     "tolerance",
 ];
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 pub(crate) fn check(args: &RatchetArgs) -> Result<(), String> {
     let root = workspace_root()?;
     let base = resolve_base(&root, &args.base)?;

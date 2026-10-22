@@ -393,14 +393,15 @@ fn balanced_nodes(nodes: &[SourceNode]) -> bool {
 }
 
 fn normalized_offset(cached: &LexOutput, source_offset: u32) -> Option<u32> {
+    const NORMALIZED_SENTINEL_BYTE_LEN: i64 = 3;
     let mut drift = 0_i64;
     for entry in cached
         .source_nodes
         .iter()
         .take_while(|entry| entry.source_span.end <= source_offset)
     {
-        drift +=
-            i64::from(standalone_padding(entry.node)) * 2 + 3 - i64::from(entry.source_span.len());
+        drift += i64::from(standalone_padding(entry.node)) * 2 + NORMALIZED_SENTINEL_BYTE_LEN
+            - i64::from(entry.source_span.len());
     }
     let offset = shift_u32(source_offset, drift)?;
     cached

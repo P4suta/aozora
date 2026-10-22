@@ -1,35 +1,5 @@
-//! Deterministic allocation-pressure ratchet for the public document parser,
-//! the #237 P0.2-real perf gate.
-//!
-//! The lex producer stores the AST in owned `Vec` / `String` storage
-//! (`NodeStore`, `StrInterner`). The worry
-//! the gate guards is that many small `Vec` pushes / re-grows inflate
-//! `malloc` traffic versus the bump allocator. Allocation *count* and *bytes*
-//! are a pure function of the input — unlike wall-clock they gate identically
-//! on a laptop and a noisy CI runner — so they make a stable ratchet.
-//!
-//! For every corpus document this measures, via dhat's [`dhat::HeapStats`]
-//! around `parse` and `snapshot`, the owned-path allocation delta (source,
-//! transient scratch, and owned storage). Two normalized metrics are gated against a
-//! committed baseline at `corpus/alloc-baseline.json`, mirroring
-//! `xtask corpus audit-gate`:
-//!
-//! - `alloc_blocks_per_file`        = Σ Δblocks / files   (malloc-count pressure)
-//! - `alloc_bytes_per_source_byte`  = Σ Δbytes  / Σ src   (volume amplification)
-//!
-//! A structural-count check (the AST's registry / source-node / pair
-//! counts per document) is the correctness floor under the proxy: if the AST
-//! started producing a *different amount* of data, the alloc baseline
-//! would be measuring the wrong thing. (Byte-identity itself is proven by the
-//! conformance golden and the corpus round-trip fixed-point gate.)
-//!
-//! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example alloc_gate -p aozora-bench \
-//!     -- --baseline corpus/alloc-baseline.json [--root DIR] [--update]
-//! ```
-//!
-//! Exit codes: `0` pass (or no corpus → skip), `1` over budget, `2` usage /
-//! parity error.
+//! Checks parser allocation counts and bytes using a committed corpus baseline.
+//! Skips without a configured corpus.
 
 mod support;
 
@@ -52,8 +22,6 @@ use serde_json::{Map, Value, from_str, json, to_string_pretty};
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// The release corpus and toolchain are pinned, so allocation ceilings have no
-/// regression headroom.
 const DEFAULT_TOLERANCE: f64 = 0.0;
 const EDIT_BYTES: usize = 256 * 1024;
 const LARGE_BYTES: usize = 1024 * 1024;
@@ -126,6 +94,10 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args, Strin
     })
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn parse_args() -> Result<Args, ExitCode> {
     parse_args_from(env::args().skip(1)).map_err(|error| {
         eprintln!("alloc_gate: {error}");
@@ -133,9 +105,11 @@ fn parse_args() -> Result<Args, ExitCode> {
     })
 }
 
-/// Resolve the corpus: `--root` wins, else `AOZORA_CORPUS_ROOT`, else skip
-/// cleanly (exit 0) so the gate is a no-op on corpus-less hosts, exactly like
-/// `audit-gate`.
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn resolve_corpus(root: Option<&Path>) -> Result<Option<Box<dyn CorpusSource>>, ExitCode> {
     if let Some(root) = root {
         return match open_corpus(root.to_path_buf()) {
@@ -167,7 +141,6 @@ fn open_corpus(root: PathBuf) -> Result<FilesystemCorpus, CorpusError> {
     FilesystemCorpus::new(root)
 }
 
-/// Per-corpus allocation totals.
 #[derive(Default)]
 struct Totals {
     files: u64,
@@ -208,6 +181,10 @@ fn main() -> ExitCode {
     run().err().unwrap_or(ExitCode::SUCCESS)
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn run() -> Result<(), ExitCode> {
     let args = parse_args()?;
 
@@ -215,7 +192,6 @@ fn run() -> Result<(), ExitCode> {
         return Ok(());
     };
 
-    // Testing mode lets `HeapStats::get` read live cumulative counters.
     let _profiler = Profiler::builder().testing().build();
 
     let totals = collect_allocations(corpus.as_ref(), args.limit);
@@ -236,6 +212,10 @@ fn run() -> Result<(), ExitCode> {
     report_allocations(&args, &totals)
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn collect_allocations(corpus: &dyn CorpusSource, limit: Option<usize>) -> Totals {
     let mut totals = Totals::default();
     for item in corpus.iter() {
@@ -253,8 +233,6 @@ fn collect_allocations(corpus: &dyn CorpusSource, limit: Option<usize>) -> Total
             continue;
         };
 
-        // Measured window: only the owned producer's allocations (transient
-        // scratch + owned storage) land in the delta.
         let before = HeapStats::get();
         let owned = aozora::parse(text.as_ref())
             .expect("source fits parser span limit")
@@ -265,7 +243,6 @@ fn collect_allocations(corpus: &dyn CorpusSource, limit: Option<usize>) -> Total
         totals.files += 1;
         totals.source_bytes += text.len() as u64;
 
-        // Read the side-table lengths so the optimiser cannot elide the parse.
         black_box((
             owned.nodes().len(),
             owned.pairs().len(),
@@ -277,6 +254,11 @@ fn collect_allocations(corpus: &dyn CorpusSource, limit: Option<usize>) -> Total
     totals
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn report_allocations(args: &Args, totals: &Totals) -> Result<(), ExitCode> {
     let blocks_per_file = totals.blocks_per_file();
     let bytes_per_source_byte = totals.bytes_per_source_byte();
@@ -360,6 +342,10 @@ fn report_allocations(args: &Args, totals: &Totals) -> Result<(), ExitCode> {
     Ok(())
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn allocation_contract() -> Contract {
     let edit_source = build_synthetic_aozora(EDIT_BYTES);
     let large_source = build_synthetic_aozora(LARGE_BYTES);
@@ -457,6 +443,10 @@ struct RatioBaseline {
     denominator: Option<u64>,
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn check_ratio_metric(name: &str, current: Ratio, baseline: RatioBaseline, tolerance: f64) -> bool {
     let Some(baseline_numerator) = baseline.numerator else {
         eprintln!("alloc_gate: baseline metric {name} missing/invalid");
@@ -491,6 +481,10 @@ fn check_ratio_metric(name: &str, current: Ratio, baseline: RatioBaseline, toler
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn check_contract(name: &str, current: Allocation, baseline: &Value) -> bool {
     let mut failed = false;
     for (metric, actual) in [("blocks", current.blocks), ("bytes", current.bytes)] {
@@ -514,6 +508,10 @@ struct Baseline {
     contract: Value,
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn read_baseline(path: &Path) -> Result<Baseline, ExitCode> {
     let Ok(text) = fs::read_to_string(path) else {
         eprintln!("alloc_gate: cannot read baseline {}", path.display());
@@ -547,6 +545,11 @@ fn baseline_from_value(v: &Value) -> Baseline {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn write_baseline(
     args: &Args,
     totals: &Totals,

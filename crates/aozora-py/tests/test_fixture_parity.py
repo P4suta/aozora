@@ -1,15 +1,6 @@
-"""Cross-surface parity gate — Python (PyO3) channel.
+"""Compares the Python extension with shared rendering fixtures.
 
-One golden authority (``crates/aozora-conformance/fixtures/render``), N
-thin walkers. This walker drives the compiled ``aozora`` extension over
-every render fixture and asserts each accessor matches the golden the
-in-process ``render_gate`` pins. A binding that reframes,
-re-orders, or drops a byte lights up here without duplicating the golden
-per channel.
-
-The JSON loader removes one optional storage newline before comparing the raw
-shared ``aozora::json`` bytes. The line-oriented ``aozora inspect`` CLI adds
-its own trailing newline.
+JSON comparisons remove the optional storage newline from fixture files.
 """
 
 from __future__ import annotations
@@ -20,13 +11,8 @@ import pytest
 
 import aozora
 
-# Resolve the shared golden corpus relative to THIS file so the walk is
-# independent of pytest's working directory (repo root under both
-# `just smoke-py` and the ci.yml `python-wheel` job).
-#   parents[0] = tests/  parents[1] = aozora-py/  parents[2] = crates/
 FIXTURES = Path(__file__).resolve().parents[2] / "aozora-conformance" / "fixtures" / "render"
 
-# surface file -> Document accessor producing the byte-identical output.
 SURFACES = [
     ("expected.html", lambda d: d.to_html()),
     ("expected.serialize.txt", lambda d: d.to_source()),
@@ -44,8 +30,6 @@ def _fixture_dirs() -> list[Path]:
 
 
 def test_fixture_root_is_present() -> None:
-    """Guard against a silent no-op: if path resolution breaks, this fails
-    loudly instead of the parametrized walk collecting zero cases."""
     assert FIXTURES.is_dir(), f"fixtures root missing: {FIXTURES}"
     assert (FIXTURES / "bouten").is_dir(), "expected the `bouten` fixture under the render group"
     assert _fixture_dirs(), "no render fixtures discovered"

@@ -50,6 +50,10 @@ fn run() -> Result<(), ExitCode> {
     Ok(())
 }
 
+#[expect(
+    clippy::panic,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn configured_ratio(name: &str) -> Option<f64> {
     env::var(name).ok().map(|value| {
         parse_ratio(&value).unwrap_or_else(|()| panic!("{name} must be a finite positive number"))
@@ -64,6 +68,10 @@ fn parse_ratio(value: &str) -> Result<f64, ()> {
         .ok_or(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn load_documents(minimum: Option<f64>) -> Result<Vec<String>, ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("incremental_speedup: AOZORA_CORPUS_ROOT is not set.");
@@ -107,6 +115,12 @@ fn load_documents(minimum: Option<f64>) -> Result<Vec<String>, ExitCode> {
     Ok(docs)
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn measure(
     docs: &[String],
     minimum: Option<f64>,
@@ -194,6 +208,10 @@ fn add_band(total: &mut Band, band: Band) {
     total.edit_ns += band.edit_ns;
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn print_row(name: &str, band: Band) {
     let full_us = report_number(band.full_ns) / report_number(band.docs) / 1000.0;
     let edit_us = report_number(band.edit_ns) / report_number(band.docs) / 1000.0;

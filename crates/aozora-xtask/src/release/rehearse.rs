@@ -1,46 +1,16 @@
-//! `xtask release rehearse` — dry-run the tag-driven publishers before the
-//! real tag.
-//!
-//! Cutting the `v*` tag is irreversible, yet the `qualify` jobs that gate each
-//! publisher never run until that tag pushes — so a break in them surfaces only
-//! after the point of no return. This fires each publisher's `dry_run` dispatch
-//! (`qualify` runs, `publish` stays skipped) against the qualified commit while
-//! the tag can still be withheld, and fails on zero dispatches so a rehearsal
-//! that exercised nothing can never read the same as one that passed.
-//!
-//! Only the publishers whose `qualify` verifies the commit's retained artifacts
-//! *without* resolving a tag can be rehearsed pre-tag: `publish-pypi.yml` and
-//! `publish-npm.yml` leave `RELEASE_TAG` empty on dispatch. `release.yml` and
-//! `publish-extism-wasm.yml` resolve the tag with `git rev-parse` in `qualify`,
-//! which cannot succeed before the push, so they are inherently tag-only and
-//! are reported as deliberately skipped rather than silently dropped.
-//!
-//! `gh workflow run` returns no run id, and a dispatched run's head SHA is the
-//! branch tip rather than the input `commit`, so there is no race-free way to
-//! correlate and block on the run this process just started. The rehearsal
-//! therefore confirms each dispatch was accepted and hands the maintainer the
-//! exact `gh run watch` command to require green — the fail-on-zero gate is the
-//! automated half; watching `qualify` to completion is the manual half.
+//! Dispatches publisher rehearsals and reports commands for monitoring their results.
 
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The branch the dispatches target; a rehearsal runs against the release line.
 const DEFAULT_BRANCH: &str = "main";
 
-/// A publisher whose `qualify` job runs under `workflow_dispatch` without a
-/// pre-existing tag, so its dry run rehearses the tag-push path in advance.
 struct Rehearsable {
-    /// The workflow file under `.github/workflows/`.
     workflow: &'static str,
-    /// The `workflow_dispatch` inputs, besides the per-run `commit`, that select
-    /// the no-upload dry run — each declared verbatim by that workflow.
     dry_run_inputs: &'static [&'static str],
 }
 
-/// The publishers whose `qualify` verifies retained artifacts against the
-/// commit alone (`RELEASE_TAG` empty on dispatch), so a dry run needs no tag.
 const REHEARSABLE: &[Rehearsable] = &[
     Rehearsable {
         workflow: "publish-pypi.yml",
@@ -52,9 +22,6 @@ const REHEARSABLE: &[Rehearsable] = &[
     },
 ];
 
-/// The publishers whose `qualify` resolves the release tag with `git rev-parse`
-/// and so cannot run before the tag exists. Named, not omitted, so the report
-/// distinguishes "deliberately tag-only" from "forgotten".
 const TAG_ONLY: &[&str] = &["release.yml", "publish-extism-wasm.yml"];
 
 pub(super) fn run(commit: Option<&str>) -> Result<(), String> {
@@ -71,8 +38,6 @@ pub(super) fn run(commit: Option<&str>) -> Result<(), String> {
         }
     }
 
-    // Fail-on-zero: a rehearsal that dispatched nothing exercised nothing, so it
-    // proves nothing — it must never render the same as a clean pass.
     if fired.is_empty() {
         let detail = if failures.is_empty() {
             String::new()
@@ -96,9 +61,6 @@ pub(super) fn run(commit: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Fire one publisher's dry-run dispatch and confirm GitHub accepted it. A
-/// non-zero exit (bad input, missing workflow, unauthenticated `gh`) is a
-/// failure — acceptance is the most this step can assert offline.
 fn fire(repo: &str, publisher: &Rehearsable, commit: &str) -> Result<(), String> {
     let mut args = vec![
         "workflow".to_owned(),
@@ -128,17 +90,16 @@ fn fire(repo: &str, publisher: &Rehearsable, commit: &str) -> Result<(), String>
     }
 }
 
-/// Build the `-f key=value` inputs for `gh workflow run`: the required `commit`
-/// pinned to the rehearsed SHA, then each dry-run selector the workflow
-/// declares. Pure so the table-to-inputs mapping is tested without a dispatch.
 fn dispatch_inputs(publisher: &Rehearsable, commit: &str) -> Vec<String> {
     let mut inputs = vec![format!("commit={commit}")];
     inputs.extend(publisher.dry_run_inputs.iter().copied().map(str::to_owned));
     inputs
 }
 
-/// Report what fired, how to require each `qualify` green, and which publishers
-/// are inherently tag-only. Prose only — the gate already fired in [`run`].
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn report_success(repo: &str, commit: &str, fired: &[&str]) {
     eprintln!(
         "xtask release rehearse: fired {} dry-run dispatch(es) for commit {commit}:",
@@ -169,9 +130,6 @@ fn report_success(repo: &str, commit: &str, fired: &[&str]) {
     );
 }
 
-/// The commit to rehearse: the explicit argument, else `HEAD`. Validated to a
-/// full SHA here so a typo fails loud locally, not deep inside a dispatched
-/// runner's checkout.
 fn resolve_commit(root: &Path, commit: Option<&str>) -> Result<String, String> {
     let commit = match commit {
         Some(commit) => commit.to_owned(),
@@ -184,14 +142,11 @@ fn resolve_commit(root: &Path, commit: Option<&str>) -> Result<String, String> {
     }
 }
 
-/// A full-length hex commit id, as the publishers' `qualify` steps require.
 fn is_full_sha(commit: &str) -> bool {
-    commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+    const FULL_COMMIT_HEX_DIGITS: usize = 40;
+    commit.len() == FULL_COMMIT_HEX_DIGITS && commit.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// The `OWNER/REPO` to dispatch against: `$GITHUB_REPOSITORY` when running under
-/// Actions, else whatever `gh` resolves from the checkout. Explicit so a
-/// rehearsal inside CI targets the same repo the eventual tag push will.
 fn resolve_repo(root: &Path) -> Result<String, String> {
     if let Some(value) = env::var_os("GITHUB_REPOSITORY") {
         let repo = value.to_string_lossy().trim().to_owned();
@@ -273,9 +228,6 @@ mod tests {
 
     #[test]
     fn every_rehearsable_declares_a_dry_run_selector() {
-        // Fail-on-zero at the table level: a publisher with no dry-run input
-        // would dispatch a *real* publish, so the set must never be empty and
-        // each entry must carry a selector.
         assert!(!REHEARSABLE.is_empty(), "rehearsable set must not be empty");
         for publisher in REHEARSABLE {
             assert!(
@@ -319,8 +271,6 @@ mod tests {
 
     #[test]
     fn named_workflows_exist_on_disk() {
-        // Guards against a workflow rename silently emptying a set: every named
-        // file must actually live under `.github/workflows/`.
         let dir = workspace_root()
             .expect("workspace root")
             .join(".github/workflows");

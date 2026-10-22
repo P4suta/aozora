@@ -1,14 +1,4 @@
-//! Per-size-band parser throughput probe.
-//!
-//! The Tier-1 `alloc_gate` ratchet is deterministic
-//! and CI-stable but cannot see index-resolution throughput (resolving
-//! `StrId` / ranges leaves no allocation footprint). This example measures the
-//! parser's current wall-clock throughput. It is a diagnostic, not a gate;
-//! compare results only under the same machine and build configuration.
-//!
-//! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput -p aozora-bench
-//! ```
+//! Reports parser throughput by document size for the configured corpus.
 
 mod support;
 
@@ -19,7 +9,6 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora::decode_auto;
-/// Size bands in bytes: `[lo, hi)`.
 const BANDS: &[(&str, u64, u64)] = &[
     ("< 50 KiB", 0, 50 * 1024),
     ("50 KiB – 500 KiB", 50 * 1024, 500 * 1024),
@@ -38,13 +27,18 @@ fn main() -> ExitCode {
     run().err().unwrap_or(ExitCode::SUCCESS)
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::expect_used,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn run() -> Result<(), ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         println!("throughput: AOZORA_CORPUS_ROOT not set — nothing to measure.");
         return Ok(());
     };
 
-    // Decode everything up front so the timed loops measure only the parse.
     let mut docs: Vec<String> = Vec::new();
     let mut io_errors = 0;
     let mut decode_errors = 0;
@@ -64,7 +58,6 @@ fn run() -> Result<(), ExitCode> {
     }
     eprintln!("throughput: {} docs decoded, measuring…", docs.len());
 
-    // Warmup pass (discarded) to page in code and warm caches.
     for doc in &docs {
         black_box(
             aozora::parse(doc.as_str())
@@ -103,6 +96,10 @@ fn run() -> Result<(), ExitCode> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn report_load_errors(io_errors: usize, decode_errors: usize) -> Result<(), ExitCode> {
     if io_errors != 0 {
         eprintln!(

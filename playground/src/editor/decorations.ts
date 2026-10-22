@@ -14,13 +14,8 @@ import {
 } from './parserState';
 import { lowerBoundByStart } from './utils';
 
-/**
- * Map every `kind` returned by `Document.nodes()` to a CSS class
- * defined in `theme.ts`. Kinds not in this table are skipped.
- *
- * Mapping note: the wire format uses camelCase ("aozoraHeading"); we
- * fold the prefix here so the CSS class names stay short and readable.
- */
+const VIEWPORT_LOOKBEHIND_ENTRIES = 32;
+
 const KIND_TO_CLASS: Record<string, string> = {
   ruby: 'cm-aozora-ruby',
   angleQuote: 'cm-aozora-angle-quote',
@@ -50,16 +45,11 @@ function buildDecorations(view: EditorView): DecorationSet {
   const vpFromByte = utf16ToByte(ps, viewport.from);
   const vpToByte = utf16ToByte(ps, viewport.to);
 
-  // Find the slice of entries that could overlap the viewport.
-  // Widen by 32 entries on the leading edge because entries are
-  // sorted by start, and an earlier-starting entry may still cover
-  // bytes inside our viewport.
-  const startIdx = Math.max(0, lowerBoundByStart(entries, vpFromByte) - 32);
+  const startIdx = Math.max(
+    0,
+    lowerBoundByStart(entries, vpFromByte) - VIEWPORT_LOOKBEHIND_ENTRIES,
+  );
 
-  // Decorations must be added in increasing `from` order. Since
-  // entries are sorted by span.start, and span.start in bytes maps
-  // monotonically to UTF-16 positions, the resulting `from` values
-  // are also non-decreasing.
   const builder = new RangeSetBuilder<Decoration>();
   for (let i = startIdx; i < entries.length; i++) {
     const entry = entries[i]!;

@@ -11,10 +11,7 @@ authors.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-# Absorbed from aozora-encoding: the gaiji / JIS X 0213 PHF table codegen.
 build = "build.rs"
-# Package the codegen inputs and render CSS asset — cargo would otherwise
-# ship neither the data nor the build script with the published crate.
 include = [
   "src/**/*.rs",
   "build.rs",
@@ -38,99 +35,37 @@ path = "examples/real_work_worker.rs"
 required-features = ["json"]
 
 [dependencies]
-# The core parse/render chain (aozora-spec, aozora-veb, aozora-scan,
-# aozora-encoding, aozora-syntax, aozora-pipeline, aozora-render) is now
-# folded into this crate as private modules; the runtime deps below are the
-# deduped union of what those crates needed.
 memchr = { workspace = true }
-# Multi-pattern search: the trigger-trigram scan automaton (crate::scan) and
-# the annotation-keyword body dispatcher (crate::pipeline). Now unconditional
-# — the folded scanner is std-only, so aho-corasick must always compile in.
 aho-corasick = { workspace = true }
 bumpalo = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }
 encoding_rs = { workspace = true }
-# PHF — the gaiji table is emitted via `phf_codegen` in `build.rs` (runtime
-# reads `phf::Map` from the generated file); additionally the folded
-# `syntax::accent` module builds ACCENT_DIGRAPHS with the `phf::phf_map!`
-# macro, so the `macros` feature (from the workspace pin) is required — the
-# encoding crate's old `default-features = false` override cannot carry over.
 phf = { workspace = true }
 ropey = { workspace = true }
 
-# Driver-shared wire format (see `aozora::json`). Optional so library
-# consumers that only use the owned-AST surface do not have to
-# compile serde / serde_json. Drivers (aozora-ffi / aozora-wasm /
-# aozora-py) enable `aozora/json` to project the AST into JSON.
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-# JSON Schema generation for the wire format. Optional, enabled by
-# the `schema` feature only — most wire consumers don't need
-# `schema_*()` functions and shouldn't pull schemars into their
-# dep tree.
 schemars = { workspace = true, optional = true }
-# Pandoc AST projection (`aozora::pandoc`). Optional, enabled by the
-# `pandoc` feature so library-only consumers don't pull pandoc_ast in.
 pandoc_ast = { workspace = true, optional = true }
 [features]
 default = []
-# JSON wire format projection used by FFI / WASM / PyO3 drivers.
-# Enables `aozora::json::diagnostics` /
-# `nodes` / `pairs` and the `SCHEMA_VERSION`
-# constant — the single authority for cross-language wire output.
-#
-# `serde_json/preserve_order` makes `serde_json::Value` keep insertion
-# order (IndexMap, not the default sorted BTreeMap). The wire functions
-# emit from structs, so their field order is already canonical; this
-# only matters for callers (and the `property_json_round_trip` test)
-# that round-trip the envelope through `Value` and rely on byte-stable
-# key order. Pinning it to `json` makes the byte-canonical contract
-# self-contained instead of silently depending on `schema` pulling in
-# schemars (which also enables `preserve_order`).
 json = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]
-# JSON Schema introspection for the wire format. Enables
-# `aozora::json::schema_diagnostics` / `schema_nodes` /
-# `schema_pairs` / `schema_container_pairs` (one per envelope).
-# Used by `xtask schema dump` and the introspection CLI subcommand.
 schema = ["json", "dep:schemars"]
-# Source-formatter algorithm (`aozora::fmt::format_source`). The
-# canonicalising `parse ∘ to_source` round trip; adds no dependency (its
-# byte-identity is inherited from `Document::snapshot` + `Snapshot::to_source`).
-# The CLI plumbing that wraps it lives in `aozora-cli`.
 fmt = []
-# Pandoc AST projection (`aozora::pandoc::to_pandoc`). Emits a
-# `pandoc_ast::Pandoc` document consumable by every Pandoc output format.
 pandoc = ["dep:pandoc_ast"]
 [build-dependencies]
-# Codegen-time PHF builder — runs in `build.rs` to emit the gaiji /
-# JIS X 0213 tables as a Rust source fragment included via `include!()`.
-# Pinned to 0.14 (a major bump regenerates the tables); mirrors the
-# absorbed aozora-encoding build-dep.
 phf_codegen = "0.14"
 
 [dev-dependencies]
-# Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
-# verify parse + round-trip invariants on every document. Declared
-# path-only (no version) on purpose: aozora-corpus is a dev-only
-# corpus loader that stays `publish = false`, so cargo must STRIP this
-# dev-dependency from the published manifest. A versioned dev-dep
-# would make crates.io require aozora-corpus to exist on the registry
-# and would fail the `aozora` publish.
+# A path-only aozora-corpus dependency keeps the unpublished helper out of the published dependency graph.
 aozora-corpus = { path = "../aozora-corpus" }
 proptest = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
-# Assertion helper carried in from the folded render / pipeline unit +
-# integration tests.
 pretty_assertions = { workspace = true }
-# The folded `pandoc` module's unit + property tests serialise the projected
-# `pandoc_ast::Pandoc` through serde to assert determinism. A dev-dep (not the
-# optional `json`-feature dep) so those tests compile under `--features pandoc`
-# without also enabling `json`.
 serde_json = { workspace = true }
-# `#[cfg_attr(test, mutants::skip)]` markers carried in from the folded
-# scan / syntax units (ADR-0031); a no-op outside `cargo mutants`.
+# ADR-0031 requires mutants::skip markers in tests.
 mutants = { workspace = true }
 
 [package.metadata.docs.rs]

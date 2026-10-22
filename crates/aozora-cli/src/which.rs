@@ -1,34 +1,22 @@
-//! A hand-rolled `which`: locate an executable on `PATH` (or in a single
-//! directory) without pulling in a dependency for one small probe.
-//!
-//! `doctor` uses it to report whether `pandoc` is reachable on `PATH` — the
-//! exec-bit check on Unix and the `PATHEXT` expansion on Windows.
+//! Finds executables on `PATH` through [`which`].
 
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-/// Find `program` on the process `PATH`, returning the first executable
-/// candidate — the convenience wrapper over [`find_on_path`] that reads the
-/// live `PATH`.
+#[cfg(unix)]
+const EXECUTE_PERMISSION_BITS: u32 = 0o111;
+
 pub(crate) fn which(program: &str) -> Option<PathBuf> {
     find_on_path(&env::var_os("PATH")?, program)
 }
 
-/// The pure `PATH` search behind [`which`], taking the raw `PATH` value so it
-/// is unit-testable without mutating the process environment. Uses
-/// [`env::split_paths`] for the platform's separator, skips empty entries, and
-/// delegates each directory to [`find_in_dir`].
 pub(crate) fn find_on_path(paths: &OsStr, program: &str) -> Option<PathBuf> {
     env::split_paths(paths)
         .filter(|dir| !dir.as_os_str().is_empty())
         .find_map(|dir| find_in_dir(&dir, program))
 }
 
-/// Find `program` inside a single `dir`, returning the first executable
-/// candidate. Split out so a caller with a specific directory in hand (the
-/// `lsp` delegate's "next to this binary" fallback) can search it directly,
-/// with the same exec-bit / `PATHEXT` semantics the `PATH` walk uses.
 pub(crate) fn find_in_dir(dir: &Path, program: &str) -> Option<PathBuf> {
     executable_candidates(dir, program)
         .into_iter()
@@ -65,8 +53,9 @@ fn is_executable_file(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        path.metadata()
-            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        path.metadata().is_ok_and(|meta| {
+            meta.is_file() && meta.permissions().mode() & EXECUTE_PERMISSION_BITS != 0
+        })
     }
     #[cfg(not(unix))]
     {
@@ -123,14 +112,10 @@ mod tests {
         let tool = with_tool.path().join("mytool");
         fs::write(&tool, b"#!/bin/sh\n").expect("write tool");
         fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).expect("chmod +x");
-        // A non-executable file of the same name in an earlier dir must be
-        // skipped, so the search reaches the real executable.
         let shadow = empty.path().join("mytool");
         fs::write(&shadow, b"not runnable").expect("write shadow");
         fs::set_permissions(&shadow, fs::Permissions::from_mode(0o644)).expect("chmod -x");
 
-        // PATH = "<empty-dir>::<tool-dir>" — note the empty middle entry, which
-        // must be skipped rather than joined into "/mytool".
         let path =
             env::join_paths([empty.path(), Path::new(""), with_tool.path()]).expect("join PATH");
         assert_eq!(
@@ -152,10 +137,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let dir = tempfile::TempDir::new().expect("dir");
-        // No such program yet: None.
         assert_eq!(find_in_dir(dir.path(), "daemon"), None, "absent -> None");
 
-        // A plain (non-executable) file is not a match.
         let plain = dir.path().join("daemon");
         fs::write(&plain, b"").expect("write");
         fs::set_permissions(&plain, fs::Permissions::from_mode(0o644)).expect("chmod -x");
@@ -165,7 +148,6 @@ mod tests {
             "a non-executable file is not a candidate"
         );
 
-        // Flip the exec bit and it resolves.
         fs::set_permissions(&plain, fs::Permissions::from_mode(0o755)).expect("chmod +x");
         assert_eq!(
             find_in_dir(dir.path(), "daemon").as_deref(),
@@ -191,7 +173,6 @@ mod tests {
         fs::set_permissions(&plain, fs::Permissions::from_mode(0o644)).expect("chmod");
         assert!(!is_executable_file(&plain), "0o644 file is not executable");
 
-        // A directory is never an executable *file*, even with the exec bit.
         assert!(!is_executable_file(dir.path()), "a directory is not a file");
     }
 }

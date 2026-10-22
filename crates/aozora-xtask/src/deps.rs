@@ -17,11 +17,9 @@ pub(crate) struct DepsArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum DepsCmd {
-    /// Install (or refresh) the systemd user timer that runs `just deps-check` weekly.
-    /// Idempotent.
+    /// Install or refresh the weekly dependency-check timer.
     InstallTimer,
-    /// Remove the systemd user timer + service unit.
-    /// The rolling log at `$XDG_STATE_HOME/aozora/deps-check.log` is preserved (delete manually if desired).
+    /// Remove the dependency-check timer and service while keeping its log.
     UninstallTimer,
     /// Show the timer's current status, the next scheduled run, and the most recent journal entries.
     Status,
@@ -35,6 +33,10 @@ pub(crate) fn dispatch(args: &DepsArgs) -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn install_timer() -> Result<(), String> {
     let repo_root = locate_repo_root()?;
     let unit_dir = unit_dir()?;
@@ -73,6 +75,10 @@ fn install_timer() -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn uninstall_timer() -> Result<(), String> {
     drop(systemctl([
         "disable",
@@ -104,6 +110,10 @@ fn uninstall_timer() -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn status() -> Result<(), String> {
     if !unit_installed()? {
         return Err(

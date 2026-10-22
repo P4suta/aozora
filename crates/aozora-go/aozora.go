@@ -1,15 +1,4 @@
-// Package aozora is the Go host SDK for the Aozora Bunko notation
-// (青空文庫記法) parser.
-//
-// It embeds and runs the portable `aozora.wasm` Extism plugin through the
-// pure-Go wazero runtime (no cgo, no native libextism), exposing the
-// parser's text-in / JSON-out wire API: ruby, bouten, 縦中横, 外字,
-// kaeriten, indent containers, page breaks. Its output is byte-identical to
-// the Rust / WASM / Python / C-ABI front doors because every channel funnels
-// through `aozora::json`.
-//
-// The generated JSON types live in json_gen.go (regenerate with
-// `just types-langs`). This file is the hand-written transport wrapper.
+// Package aozora runs the Aozora Bunko notation parser through an embedded Extism plugin.
 package aozora
 
 import (
@@ -22,20 +11,17 @@ import (
 	extism "github.com/extism/go-sdk"
 )
 
-// The single portable plugin artifact, produced by `just extism-build`
-// and copied here by `just smoke-go` / the release workflow.
-//
 //go:embed aozora.wasm
 var wasmBytes []byte
 
-// Parser is a loaded aozora plugin instance. It is NOT safe for
-// concurrent use; create one per goroutine or guard it with a mutex.
+// Parser holds a loaded plugin instance.
+// It is not safe for concurrent use; create one per goroutine or guard it with a mutex.
 type Parser struct {
 	plugin *extism.Plugin
 }
 
-// Open instantiates the embedded aozora.wasm plugin and verifies its wire
-// schema version matches this SDK. Call Close when done.
+// Open instantiates the embedded plugin and verifies its wire schema version.
+// Call Close when done.
 func Open(ctx context.Context) (*Parser, error) {
 	manifest := extism.Manifest{
 		Wasm: []extism.Wasm{extism.WasmData{Data: wasmBytes}},
@@ -71,8 +57,6 @@ func (p *Parser) ToHTML(source string) (string, error) {
 }
 
 // ToSource parses source and re-emits it as Aozora notation (round-trip).
-// The cross-binding name for source re-emission (Rust to_source, WASM
-// toSource, Python to_source).
 func (p *Parser) ToSource(source string) (string, error) {
 	return p.call("to_source", source)
 }
@@ -98,15 +82,14 @@ func (p *Parser) Pairs(source string) (AozoraPairsEnvelope, error) {
 	return env, err
 }
 
-// ContainerPairs parses source and returns the container open/close pair
-// envelope (indent / warichu / keigakomi / alignEnd, in source coords).
+// ContainerPairs parses source and returns container pairs in source coordinates.
 func (p *Parser) ContainerPairs(source string) (AozoraContainerPairsEnvelope, error) {
 	var env AozoraContainerPairsEnvelope
 	err := p.callJSON("container_pairs_json", source, &env)
 	return env, err
 }
 
-// Gaiji parses source and returns resolved ※［＃…］ gaiji references.
+// Gaiji parses source and returns resolved `※［＃…］` gaiji references.
 func (p *Parser) Gaiji(source string) (AozoraGaijiEnvelope, error) {
 	var env AozoraGaijiEnvelope
 	err := p.callJSON("gaiji_json", source, &env)
@@ -120,15 +103,11 @@ func (p *Parser) Slugs() (AozoraSlugsEnvelope, error) {
 	return env, err
 }
 
-// Version returns the parser's channel-aware build version string. This is
-// the engine build stamp, distinct from SchemaVersion (the wire-contract
-// version). Mirrors the version() export of the WASM / Python drivers.
+// Version returns the parser's build version, distinct from the wire SchemaVersion.
 func (p *Parser) Version() (string, error) {
 	return p.call("version", "")
 }
 
-// call invokes one plugin export with source bytes and returns its raw
-// string output.
 func (p *Parser) call(fn, source string) (string, error) {
 	exit, out, err := p.plugin.Call(fn, []byte(source))
 	if err != nil {
@@ -140,7 +119,6 @@ func (p *Parser) call(fn, source string) (string, error) {
 	return string(out), nil
 }
 
-// callJSON invokes a JSON-returning export and decodes the wire envelope.
 func (p *Parser) callJSON(fn, source string, v any) error {
 	out, err := p.call(fn, source)
 	if err != nil {

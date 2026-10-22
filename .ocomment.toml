@@ -1,0 +1,53 @@
+version = 1
+
+[files]
+exclude = [
+  "docs/**",
+  "**/*.md",
+  "**/*.ftl",
+  "corpus/**",
+  "spec/**",
+  "**/fixtures/**",
+  "**/spec-vectors/**",
+  "**/tests/fuzz_regressions/**",
+  "crates/aozora-wasm/types/**",
+  "crates/aozora-go/json_gen.go",
+  "crates/aozora-py/python/aozora/wire_types.py",
+  "crates/aozora-ffi/include/aozora.h",
+  "crates/aozora/src/lib.rs",
+  "crates/aozora/src/document.rs",
+  "playground-ui/src/PlaygroundApp.tsx",
+  "mutants.toml",
+  "crates/aozora-go/aozora.go",
+]
+
+[policy]
+mode = "conservative"
+layout = "compact"
+keep_regex = [
+  "SAFETY:",
+  "mutants::skip",
+  "ADR-[0-9]{4}",
+  "docs/adr/[a-z0-9-]+\\.md",
+  "\\bcorpus\\b",
+  "\\bmeasured\\b",
+  "biome-ignore",
+  "@ts-expect-error",
+  "@ts-ignore",
+  "@ts-nocheck",
+  "eslint-",
+  "c8 ignore",
+  "istanbul ignore",
+  "prettier-ignore",
+  "@vitest-environment",
+  "shellcheck",
+  "zizmor",
+  "noqa",
+  "type: ignore",
+  "#:schema",
+  "rustfmt::skip",
+  "^#\\s*(v?[0-9]+(\\.[0-9]+){0,3}|master|main)\\s*$",
+]
+
+[style]
+wrap = "sentence"

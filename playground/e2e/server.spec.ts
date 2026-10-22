@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test';
 
+const HTTP_OK = 200;
+const HTTP_NOT_FOUND = 404;
+
 test.describe('production server policy', () => {
   test('serves HEAD without a body and preserves representation headers', async ({
     page,
   }) => {
     const documentResponse = await page.request.get('./');
-    expect(documentResponse.status()).toBe(200);
+    expect(documentResponse.status()).toBe(HTTP_OK);
     expect(documentResponse.headers()['cache-control']).toBe('no-cache');
 
     const scriptSource = await documentResponse
@@ -20,7 +23,7 @@ test.describe('production server policy', () => {
       method: 'HEAD',
       headers: { 'Accept-Encoding': 'gzip' },
     });
-    expect(response.status()).toBe(200);
+    expect(response.status()).toBe(HTTP_OK);
     expect(response.headers()['cache-control']).toContain('immutable');
     expect(response.headers()['content-encoding']).toBe('gzip');
     expect(await response.body()).toHaveLength(0);
@@ -29,7 +32,7 @@ test.describe('production server policy', () => {
       method: 'HEAD',
       headers: { 'Accept-Encoding': 'gzip;q=0, identity;q=1' },
     });
-    expect(identityResponse.status()).toBe(200);
+    expect(identityResponse.status()).toBe(HTTP_OK);
     expect(identityResponse.headers()['content-encoding']).toBeUndefined();
     expect(identityResponse.headers().vary).toBe('Accept-Encoding');
     expect(await identityResponse.body()).toHaveLength(0);
@@ -48,7 +51,7 @@ test.describe('production server policy', () => {
       '/Cargo.toml',
     ]) {
       const response = await page.request.get(`${origin}${path}`);
-      expect(response.status()).toBe(404);
+      expect(response.status()).toBe(HTTP_NOT_FOUND);
     }
   });
 });

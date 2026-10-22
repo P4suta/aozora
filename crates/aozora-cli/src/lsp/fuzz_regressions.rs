@@ -1,9 +1,4 @@
-//! Stable replay of promoted LSP fuzz artifacts — no nightly.
-//!
-//! A promoted crash input is a raw byte file under
-//! `src/lsp/fuzz_regressions/<target>/`. This test re-runs each one
-//! through the same property the libFuzzer target asserts, so a fixed
-//! crash can never silently regress. No-op until the first promotion.
+//! Replays promoted language-server fuzz artifacts with their original assertions.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +6,16 @@ use std::path::{Path, PathBuf};
 use super::position::{byte_offset_to_position, position_to_byte_offset};
 use super::text_edit::ByteEdit;
 
+const OFFSET_FIELD_BYTES: usize = 2;
+const EDIT_HEADER_BYTES: usize = 2 * OFFSET_FIELD_BYTES;
+const REPLACEMENT_END_BYTE_LIMIT: usize = 16;
+const POSITION_ROUND_TRIP_BYTE_LIMIT: usize = 8192;
+
 #[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "fuzz replay reports its artifact count in the test log"
+)]
 fn promoted_fuzz_artifacts_replay_cleanly() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lsp/fuzz_regressions");
     if !root.exists() {
@@ -20,7 +24,7 @@ fn promoted_fuzz_artifacts_replay_cleanly() {
     let mut replayed = 0usize;
     for target_dir in read_dir_sorted(&root) {
         if !target_dir.is_dir() {
-            continue; // skip the README and any stray files
+            continue;
         }
         for artifact in read_dir_sorted(&target_dir) {
             if !artifact.is_file() {
@@ -34,21 +38,24 @@ fn promoted_fuzz_artifacts_replay_cleanly() {
     eprintln!("fuzz_regressions: replayed {replayed} artifact(s)");
 }
 
-/// Mirror of the `edit_pipeline` fuzz target body (keep in sync). The
-/// asserts must match the target so a promoted crash reproduces here.
+/// Replays the `edit_pipeline` fuzz properties.
 fn replay_edit_pipeline(data: &[u8]) {
     let text = String::from_utf8_lossy(data).into_owned();
 
-    if data.len() >= 4 {
+    if data.len() >= EDIT_HEADER_BYTES {
         let a = u16::from_le_bytes([data[0], data[1]]) as usize;
-        let b = u16::from_le_bytes([data[2], data[3]]) as usize;
-        let repl = String::from_utf8_lossy(&data[4..data.len().min(16)]).into_owned();
+        let b =
+            u16::from_le_bytes([data[OFFSET_FIELD_BYTES], data[OFFSET_FIELD_BYTES + 1]]) as usize;
+        let repl = String::from_utf8_lossy(
+            &data[EDIT_HEADER_BYTES..data.len().min(REPLACEMENT_END_BYTE_LIMIT)],
+        )
+        .into_owned();
         let edit = ByteEdit::new(a..b, repl);
         let mut document = aozora::parse(text.clone()).expect("fuzz source fits");
         drop(document.edit([aozora::TextEdit::new(edit.range, edit.new_text)]));
     }
 
-    if text.len() <= 8192 {
+    if text.len() <= POSITION_ROUND_TRIP_BYTE_LIMIT {
         for byte in 0..=text.len() {
             if !text.is_char_boundary(byte) {
                 continue;
@@ -61,7 +68,6 @@ fn replay_edit_pipeline(data: &[u8]) {
     }
 }
 
-/// Directory entries as a sorted `Vec` so replay order is deterministic.
 fn read_dir_sorted(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|entry| entry.path()).collect())

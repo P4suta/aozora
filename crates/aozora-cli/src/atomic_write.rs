@@ -2,6 +2,10 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+const DEFAULT_FILE_MODE: u32 = 0o666;
+const SYMLINK_HOP_LIMIT: usize = 40;
+
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_with(path, |file| file.write_all(bytes))
 }
@@ -17,7 +21,7 @@ fn replace_with(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(fs::Permissions::from_mode(0o666))
+        builder.permissions(fs::Permissions::from_mode(DEFAULT_FILE_MODE))
     };
     let mut temporary = builder.tempfile_in(parent)?;
     if let Some(permissions) = permissions {
@@ -46,7 +50,7 @@ fn existing_permissions(destination: &Path) -> io::Result<Option<fs::Permissions
 
 fn destination(path: &Path) -> io::Result<PathBuf> {
     let mut current = path.to_path_buf();
-    for _ in 0..40 {
+    for _ in 0..SYMLINK_HOP_LIMIT {
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 let target = fs::read_link(&current)?;

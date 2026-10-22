@@ -1,4 +1,3 @@
-# Auto-merge would let the approval label bypass the deliberate manual release merge.
 name: no-automerge-on-release-pr
 
 on:

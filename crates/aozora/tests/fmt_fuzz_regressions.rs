@@ -6,6 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "the regression test reports how many artifacts it replayed"
+)]
 fn promoted_fuzz_artifacts_replay_cleanly() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fmt_fuzz_regressions");
     if !root.exists() {

@@ -7,6 +7,10 @@ use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use proptest::prelude::*;
 
+#[expect(
+    clippy::panic,
+    reason = "envelope assertions report the source and validation failure"
+)]
 fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
     let parsed: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|e| {
         panic!("{label} envelope is not valid JSON for source {source:?}\n{e}\n---\n{json}")
@@ -32,6 +36,11 @@ fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
     );
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "round-trip assertions require valid JSON and report serialization failures"
+)]
 fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
     let parsed: serde_json::Value =
         serde_json::from_str(json).expect("envelope already validated by caller");
@@ -45,6 +54,10 @@ fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
     );
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the property requires parsing generated input to succeed"
+)]
 fn assert_json_round_trip(source: &str) {
     let doc = aozora::parse(source).expect("source fits parser span limit");
     let tree = doc.snapshot();

@@ -205,7 +205,7 @@ fn render_side_note<W: Write>(
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
-// A Referenced directive's literal is already upstream, so rendering it again would duplicate text (ADR-0019).
+// ADR-0019 leaves a `Referenced` literal upstream to avoid duplicate rendering.
 fn render_format<W: Write>(
     f: &ForwardFormat,
     store: &NodeStore,

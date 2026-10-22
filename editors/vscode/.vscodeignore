@@ -9,10 +9,6 @@ vsc-extension-quickstart.md
 **/biome.json
 **/*.map
 **/*.ts
-# `out/extension.js` is the bundled output of `esbuild.mjs`. All
-# runtime dependencies (`vscode-languageclient` and its transitive
-# tree) are inlined into that single file — `node_modules/` is
-# irrelevant at install time and would only inflate the .vsix.
 node_modules/**
 esbuild.mjs
 bun.lock

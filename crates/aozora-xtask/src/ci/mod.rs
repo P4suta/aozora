@@ -10,7 +10,7 @@ pub(crate) struct CiArgs {
 
 #[derive(Subcommand)]
 enum CiCmd {
-    /// Profile the per-job + per-step wall time of a workflow run via the GitHub API (uses the local `gh` CLI).
+    /// Report workflow job and step timings through `gh`.
     Profile(profile::ProfileArgs),
 }
 

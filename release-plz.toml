@@ -1,11 +1,8 @@
 [workspace]
-# Recovery dispatches must publish prepared versions even when the commit is not from a Release PR.
 release_always = true
 publish = true
 semver_check = true
-# Dependency upgrades belong to Renovate rather than release version proposals.
 dependencies_update = false
-# The release PR protection workflow identifies branches by this prefix.
 pr_branch_prefix = "release-plz-"
 pr_labels = ["autorelease: pending"]
 
@@ -27,7 +24,6 @@ changelog_include = [
   "tree-sitter-aozora",
 ]
 
-# GitHub squash subjects already include PR numbers, so the template avoids appending them twice.
 [changelog]
 protect_breaking_commits = true
 header = """

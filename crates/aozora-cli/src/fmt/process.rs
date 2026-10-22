@@ -1,5 +1,4 @@
-//! Per-file work: read, format (panic-guarded), and the in-place write with
-//! the idempotency guard.
+//! Reads, formats, and replaces files with panic and idempotency guards.
 
 use std::cell::Cell;
 use std::fs;
@@ -21,36 +20,26 @@ use crate::fmt::source;
 use aozora::fmt::format_source_with;
 
 const MAX_BATCH_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+const PARALLEL_FILE_COUNT_THRESHOLD: usize = 4;
+const FORMAT_PANIC_MESSAGE: &str = "the formatter panicked while processing this input; no files were \
+    modified. This is a bug — please report it at \
+    https://github.com/P4suta/aozora/issues";
 
-/// A formatted file: the original decoded source and the canonical form.
 #[derive(Debug)]
 pub(crate) struct Formatted {
-    /// The decoded source, before canonicalisation.
     pub old: String,
-    /// The canonical form.
     pub new: String,
-    /// Parser diagnostics in original-source byte coordinates.
     pub diagnostics: Vec<aozora::Diagnostic>,
     encoding: FileEncoding,
 }
 
 impl Formatted {
-    /// True when canonicalisation changed the source.
     #[must_use]
     pub(crate) fn changed(&self) -> bool {
         self.old != self.new
     }
 }
 
-/// Read `path` under `encoding` and canonicalise it (panic-guarded).
-///
-/// Shared verbatim with the `aozora` CLI's `lint --fix`, so its source rewrite
-/// is byte-identical to `fmt --fix --write`.
-///
-/// # Errors
-///
-/// Returns an error if `path` cannot be read, its bytes do not decode under
-/// `encoding`, or the formatter panics on the input.
 pub(crate) fn read_and_format(
     path: &Path,
     opts: SerializeOptions,
@@ -77,7 +66,7 @@ pub(crate) fn read_and_format_batch(
 }
 
 fn collect_batch<T: Send>(paths: &[PathBuf], process: impl Fn(&Path) -> T + Send + Sync) -> Vec<T> {
-    if paths.len() < 4 {
+    if paths.len() < PARALLEL_FILE_COUNT_THRESHOLD {
         return paths.iter().map(|path| process(path.as_path())).collect();
     }
     let Some(pool) = batch_pool() else {
@@ -123,16 +112,7 @@ fn batch_pool() -> Option<&'static ThreadPool> {
     .as_ref()
 }
 
-/// Rewrite `path` with its canonical form if it changed, upholding the
-/// formatter's idempotency contract: refuse to write when a second pass
-/// differs rather than corrupt the file.
-///
-/// Shared with the `aozora` CLI's `lint --fix` (see [`read_and_format`]).
-///
-/// # Errors
-///
-/// Returns an error (leaving the file untouched) if the canonical form is not
-/// idempotent — a second pass differs — or if the write fails.
+/// Refuses a non-idempotent result before replacing the file.
 pub(crate) fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -> Result<()> {
     if !fmt.changed() {
         return Ok(());
@@ -151,25 +131,10 @@ pub(crate) fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -
     atomic_write::replace(path, &encoded).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Marker error returned by [`guard`] when the wrapped closure panicked.
-///
-/// Callers turn this into a domain-specific message (the formatter says "no
-/// files were modified"; the CLI's `render` says "no output was produced").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Panicked;
 
-/// Run `f`, turning an upstream `aozora` parser panic into a typed [`Panicked`].
-///
-/// `catch_unwind` only intercepts the panic under `panic = "unwind"` — the
-/// dev/test default and the LSP's dist profile. The shipping release binary
-/// sets `panic = "abort"`, so there a parser panic aborts the process before the
-/// catch runs, exactly as the sibling `source` module documents. The default panic hook is
-/// silenced for the duration so a caught panic doesn't also print "thread 'main'
-/// panicked …"; the caller reports it instead.
-///
-/// # Errors
-///
-/// Returns [`Panicked`] if `f` unwinds from a panic.
+/// Catches unwinding panics and silences their hook output, but aborting panics still stop the process.
 pub(super) fn guard<T>(f: impl FnOnce() -> T) -> Result<T, Panicked> {
     install_panic_hook();
     SUPPRESS_PANIC_HOOK.with(|depth| depth.set(depth.get().saturating_add(1)));
@@ -203,17 +168,8 @@ fn install_panic_hook() {
     });
 }
 
-/// Format `source` under [`guard`]. In `--write` mode a caught panic surfaces
-/// as an error before any write, so no file is touched (where [`guard`] can
-/// catch — see its note on `panic = "unwind"` vs `"abort"`).
 pub(crate) fn format_guarded(source: &str, opts: SerializeOptions) -> Result<String> {
-    guard(|| format_source_with(source, opts)).map_err(|_| {
-        anyhow!(
-            "the formatter panicked while processing this input; no files were \
-             modified. This is a bug — please report it at \
-             https://github.com/P4suta/aozora/issues"
-        )
-    })
+    guard(|| format_source_with(source, opts)).map_err(|_| anyhow!(FORMAT_PANIC_MESSAGE))
 }
 
 pub(crate) fn format_with_diagnostics(
@@ -226,13 +182,7 @@ pub(crate) fn format_with_diagnostics(
         let diagnostics = snapshot.diagnostics().to_vec();
         Ok::<_, aozora::ParseError>((snapshot.to_source_with(opts), diagnostics))
     })
-    .map_err(|_| {
-        anyhow!(
-            "the formatter panicked while processing this input; no files were \
-             modified. This is a bug — please report it at \
-             https://github.com/P4suta/aozora/issues"
-        )
-    })?
+    .map_err(|_| anyhow!(FORMAT_PANIC_MESSAGE))?
     .map_err(Into::into)
 }
 
@@ -246,8 +196,6 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::thread;
 
-    /// A unique scratch path under the OS temp dir. A per-test counter
-    /// keeps parallel test threads from colliding on the same file.
     fn scratch(name: &str) -> PathBuf {
         static SEQ: AtomicU32 = AtomicU32::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -258,7 +206,6 @@ mod tests {
 
     #[test]
     fn format_guarded_canonicalises_ruby() {
-        // A redundant explicit ｜ canonicalises to the bare ruby form.
         let out =
             format_guarded("｜日本《にほん》", SerializeOptions::default()).expect("format ok");
         assert_eq!(out, "日本《にほん》", "bare canonical expected: {out:?}");
@@ -468,20 +415,12 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 
-    /// The idempotency guard is the formatter's anti-corruption seatbelt:
-    /// if a (hypothetically non-idempotent) canonical form does not survive
-    /// a second pass, `write_back` must refuse to write rather than persist
-    /// a form it can't reproduce. We simulate that by handing it a
-    /// `Formatted` whose `new` is deliberately *not* canonical, so the
-    /// second pass differs.
     #[test]
     fn write_back_refuses_non_idempotent_output_and_preserves_file() {
         let path = scratch("guard.afm");
         fs::write(&path, "original").expect("seed file");
         let fmt = Formatted {
             old: "original".to_owned(),
-            // Non-canonical on purpose: a redundant ｜ canonicalises away,
-            // so format_guarded(new) != new.
             new: "｜日本《にほん》".to_owned(),
             diagnostics: Vec::new(),
             encoding: FileEncoding::Utf8,

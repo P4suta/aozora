@@ -20,9 +20,9 @@ pub(crate) struct ConfigFile {
     pub encoding: Option<Encoding>,
     pub format: Option<DiagFormat>,
     pub strict: Option<bool>,
-    /// When to colourise diagnostics; `always` and `never` override terminal colour detection.
+    /// Color policy, where `always` and `never` override terminal detection.
     pub color: Option<ColorChoice>,
-    /// Human-message language as a BCP-47 tag; unknown locales fall back to English.
+    /// Human message language as a `BCP-47` tag, defaulting to English for unknown locales.
     pub lang: Option<String>,
 }
 

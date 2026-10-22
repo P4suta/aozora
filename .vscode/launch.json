@@ -1,5 +1,4 @@
 {
-  // Debug the CLI with CodeLLDB after `./bootstrap`.
   "version": "0.2.0",
   "configurations": [
     {
@@ -10,8 +9,6 @@
         "args": ["build", "--package=aozora-cli"],
         "filter": { "name": "aozora", "kind": "bin" }
       },
-      // Add CLI arguments here, e.g. ["check", "file.txt"] or
-      // ["render", "-"]. Left empty so a bare launch prints --help.
       "args": [],
       "cwd": "${workspaceFolder}"
     }

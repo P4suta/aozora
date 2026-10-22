@@ -1,23 +1,17 @@
-//! Synthetic corpus benchmark — portable replacement for the
-//! `crime_and_punishment` bench when `AOZORA_CORPUS_ROOT` is not set.
-//!
-//! Builds an aozora-shaped buffer at sizes spanning small editor
-//! buffers (16 KiB) to large novels (3 MiB) so the criterion plot
-//! shows the parse curve over realistic input sizes.
+//! Benchmarks parser throughput on generated Aozora source.
 
 use std::hint::black_box;
 
 use aozora_bench::build_synthetic_aozora;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn bench_synthetic_corpus(c: &mut Criterion) {
     let mut g = c.benchmark_group("synthetic_corpus");
-    for size in [
-        16 * 1024,       // 16 KiB — typical editor buffer
-        128 * 1024,      // 128 KiB — short story
-        512 * 1024,      // 512 KiB — long short story (above PARALLEL_THRESHOLD)
-        2 * 1024 * 1024, // 2 MiB  — novel-scale
-    ] {
+    for size in [16 * 1024, 128 * 1024, 512 * 1024, 2 * 1024 * 1024] {
         let buf = build_synthetic_aozora(size);
         g.throughput(Throughput::Bytes(buf.len() as u64));
         g.bench_with_input(BenchmarkId::from_parameter(buf.len()), &buf, |b, sample| {

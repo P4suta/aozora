@@ -1,4 +1,4 @@
-"""Slug catalogue + full-document gaiji resolution (parity with the WASM driver)."""
+"""Checks the slug catalogue and document-wide gaiji resolution."""
 
 import json
 
@@ -18,7 +18,6 @@ def test_slugs_catalogue_nonempty_and_shaped():
     for entry in data:
         assert {"canonical", "family", "accepts_param", "doc"} <= set(entry)
         assert set(entry) <= {"canonical", "family", "accepts_param", "doc", "partner"}
-    # No shipped slug should degrade to the catch-all "unknown" family.
     assert all(e["family"] != "unknown" for e in data)
 
 

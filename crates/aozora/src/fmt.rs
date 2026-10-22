@@ -7,7 +7,6 @@ use crate::{Document, Severity};
 ///
 /// ```
 /// let canonical = aozora::fmt::format_source("｜日本《にほん》\n");
-/// // The redundant `｜` before an all-kanji base is dropped (ADR 0002/0003).
 /// assert_eq!(canonical, "日本《にほん》\n");
 /// ```
 #[must_use]

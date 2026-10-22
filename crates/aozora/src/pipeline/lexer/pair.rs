@@ -54,7 +54,7 @@ where
     PairStream::new(tokens)
 }
 
-// This inline stack capacity covers the measured 99th percentile of corpus delimiter nesting.
+// This inline stack capacity covers the measured ninety-ninth percentile of corpus delimiter nesting.
 #[derive(Debug)]
 pub(crate) struct PairStream<I>
 where
@@ -126,7 +126,7 @@ where
                 };
             }
 
-            // A bracket close unwinds nested dangling opens so malformed quotes cannot consume the rest of the document (ADR-0025).
+            // ADR-0025 makes a bracket close end nested dangling quotes to bound malformed input.
             if pair_kind == PairKind::Bracket
                 && let Some(bracket_pos) = self
                     .stack
@@ -164,7 +164,7 @@ where
         PairEvent::Solo { kind, span }
     }
 
-    // Stray brackets end at newlines so malformed directives cannot swallow later lines (ADR-0030).
+    // ADR-0030 ends stray brackets at newlines to keep malformed directives within one line.
     fn newline_event(&mut self, pos: u32) -> PairEvent {
         if let Some(bracket_pos) = self
             .stack

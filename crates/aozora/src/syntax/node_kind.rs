@@ -2,51 +2,51 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum NodeKind {
-    /// Ruby annotation (`｜base《reading》`).
+    /// Ruby annotation `｜base《reading》`.
     Ruby,
-    /// Bouten (傍点) — emphasis dots over a span.
+    /// Emphasis dots or lines on a text span.
     Bouten,
-    /// 縦中横 (tate-chu-yoko) — horizontal text inside vertical run.
+    /// Horizontal text within a vertical line.
     CombineUpright,
-    /// 外字 (gaiji) — non-Unicode character reference.
+    /// External character reference.
     Gaiji,
-    /// Inline indent (字下げ) marker.
+    /// Line indentation marker.
     Indent,
-    /// Right-edge alignment (字上げ) marker.
+    /// Alignment from the end of a line.
     AlignEnd,
-    /// Centring (中央) marker (`ページの左右中央` / `中央揃え`).
+    /// Center alignment marker.
     Center,
-    /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on in gothic, distinct from 太字.
+    /// Gothic font marker for a line.
     LineGothic,
-    /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the line it sits on.
+    /// Absolute font-size marker for a line.
     LineFontSize,
-    /// 改ページ (page break).
+    /// Page break.
     PageBreak,
-    /// Section break (大見出し系統合).
+    /// Section break.
     SectionBreak,
-    /// 本文終わり (body-end marker) — main body ends, colophon follows.
+    /// End of the main body before the colophon.
     BodyEnd,
-    /// 改行 (forced line break) — in-paragraph `<br />`.
+    /// Forced line break.
     ForcedBreak,
-    /// Aozora heading (見出し).
+    /// Aozora heading.
     Heading,
-    /// Heading hint that informs downstream rendering decisions.
+    /// Hint for heading presentation.
     HeadingHint,
-    /// 挿絵 (sashie) — illustration reference.
+    /// Illustration reference.
     Illustration,
-    /// 返り点 (kaeriten) — kanbun reading marker.
+    /// Kanbun return mark.
     Kaeriten,
-    /// Generic annotation that no specific recogniser claimed.
+    /// Annotation without a more specific semantic kind.
     Directive,
-    /// Double-angle quotation (input `≪…≫`, display `《…》`).
+    /// Quotation with source delimiters `≪…≫` and display delimiters `《…》`.
     AngleQuote,
-    /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
+    /// Styling directive for a preceding text span.
     Emphasis,
-    /// Side annotation (注記) — `「X」の左に「Y」の注記`.
+    /// Side annotation on a preceding text span.
     MarginNote,
-    /// `NodeRef::BlockOpen` projection — paired-container open sentinel position.
+    /// Opening marker of a paired container.
     ContainerOpen,
-    /// `NodeRef::BlockClose` projection — paired-container close sentinel position.
+    /// Closing marker of a paired container.
     ContainerClose,
 }
 
@@ -78,7 +78,7 @@ impl NodeKind {
         Self::ContainerClose,
     ];
 
-    /// Stable camelCase string identifier for this kind.
+    /// Stable `camelCase` identifier for this kind.
     #[must_use]
     pub const fn as_json_tag(self) -> &'static str {
         match self {

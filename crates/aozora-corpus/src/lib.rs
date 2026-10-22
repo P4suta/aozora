@@ -28,7 +28,7 @@ pub const ENV_CORPUS_ROOT: &str = "AOZORA_CORPUS_ROOT";
 pub struct CorpusItem {
     /// Human-readable diagnostic label, not a stable key.
     pub label: String,
-    /// Raw file content in its original encoding (typically Shift_JIS).
+    /// Raw file content in its original encoding.
     /// Decoding is the caller's responsibility.
     pub bytes: Vec<u8>,
 }
@@ -47,7 +47,7 @@ impl CorpusItem {
 /// Source of candidate texts for parser sweep tests.
 pub trait CorpusSource: Send + Sync {
     /// Iterate candidate texts in implementation-defined order.
-    /// Per-item errors (for example an unreadable file in a filesystem walk) are yielded inline so the caller can choose to skip, log, or fail fast.
+    /// Each entry contains file bytes or an error for the caller to handle.
     fn iter(&self) -> Box<dyn Iterator<Item = Result<CorpusItem, CorpusError>> + '_>;
 
     /// Human-readable provenance label for diagnostics.
@@ -56,7 +56,7 @@ pub trait CorpusSource: Send + Sync {
 
 /// Construct a [`FilesystemCorpus`] from [`ENV_CORPUS_ROOT`].
 ///
-/// Returns [`None`] if the variable is unset, the path is not a directory, or construction fails.
+/// Returns [`None`] for an unset variable, a non-directory path, or a construction failure.
 #[must_use]
 pub fn from_env() -> Option<Box<dyn CorpusSource>> {
     from_path(env::var_os(ENV_CORPUS_ROOT)?)

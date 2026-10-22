@@ -1,4 +1,4 @@
-"""Core Document construction / render / to_source surface."""
+"""Checks document construction, rendering, and source serialization."""
 
 import aozora
 
@@ -16,10 +16,8 @@ def test_to_html_renders_ruby():
 
 
 def test_serialize_round_trips():
-    # Canonical bare ruby round-trips to itself.
     src = "青梅《おうめ》の街"
     assert aozora.Document(src).to_source() == src
-    # The redundant `｜` on an all-kanji base is dropped (ADR 0003).
     assert aozora.Document("｜青梅《おうめ》の街").to_source() == src
 
 

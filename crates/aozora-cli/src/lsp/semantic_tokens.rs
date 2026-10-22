@@ -5,15 +5,12 @@ use tower_lsp::lsp_types::{SemanticToken, SemanticTokenType, SemanticTokens};
 
 use crate::lsp::line_index::LineIndex;
 
-/// LSP semantic-token-type legend. Index = `tokenType` field in the
-/// emitted tuples; the values must match the order published in
-/// `ServerCapabilities::semantic_tokens_provider`.
 #[must_use]
 pub(super) fn legend() -> Vec<SemanticTokenType> {
     vec![
-        SemanticTokenType::MACRO,  // 0 → gaiji
-        SemanticTokenType::ENUM,   // 1 → ruby base
-        SemanticTokenType::STRING, // 2 → ruby reading
+        SemanticTokenType::MACRO,
+        SemanticTokenType::ENUM,
+        SemanticTokenType::STRING,
     ]
 }
 
@@ -163,8 +160,7 @@ impl PairIndex {
     }
 }
 
-// mutants::skip — `classify_forward_left_ruby` only emits a ruby after finding
-// a non-empty predecessor target, so equality is unreachable from a Snapshot.
+// mutants::skip: `classify_forward_left_ruby` produces only nonempty bases, so snapshots can't reach the equality branch.
 #[cfg_attr(test, mutants::skip)]
 fn left_ruby_base_span(start: u32, end: u32) -> Option<Span> {
     (start < end).then(|| Span::new(start, end))
@@ -468,7 +464,6 @@ mod tests {
         assert_eq!(tokens.len(), 2, "{tokens:?}");
         assert_eq!(tokens[0].token_type, TT_RUBY_BASE);
         assert_eq!(tokens[1].token_type, TT_RUBY_READING);
-        // Reading comes after base on the same line.
         assert_eq!(tokens[1].delta_line, 0);
         assert!(tokens[1].delta_start > 0);
     }
@@ -486,12 +481,7 @@ mod tests {
     fn delta_encoding_resets_on_new_line() {
         let src = "｜青空《あおぞら》\n｜白雲《はくうん》";
         let tokens = tokens_for(src);
-        // Tokens: base1, reading1, base2, reading2
         assert_eq!(tokens.len(), 4);
-        // 3rd token (base2) is on the next line, delta_line == 1.
-        // delta_start is absolute when delta_line > 0; tree-sitter
-        // places `ruby_base_explicit`'s start *after* the `｜` so
-        // the absolute char position is 1 (｜ is one UTF-16 unit).
         assert_eq!(tokens[2].delta_line, 1);
         assert_eq!(tokens[2].delta_start, 1);
     }

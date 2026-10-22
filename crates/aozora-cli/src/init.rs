@@ -74,7 +74,7 @@ Thumbs.db\n\
 *~\n\
 .*.swp\n";
 
-/// `aozora init [DIR]` — scaffold a project directory.
+/// Scaffold a project directory.
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora init                 # scaffold the current directory
@@ -82,17 +82,18 @@ Thumbs.db\n\
   aozora init --no-sample     # config + .gitignore only
   aozora init --force         # overwrite files that already exist")]
 pub(crate) struct InitArgs {
-    /// Directory to scaffold into (created if it does not exist).
+    /// Choose the directory to scaffold.
+    /// Create it if it doesn't exist.
     /// Defaults to the current directory.
     #[arg(default_value = ".", value_name = "DIR")]
     dir: PathBuf,
 
-    /// Overwrite files that already exist.
-    /// Without it, an existing file is kept untouched — never silently clobbered — and reported as skipped.
+    /// Overwrite existing files.
+    /// Without this flag, keep existing files with a skipped status.
     #[arg(long)]
     force: bool,
 
-    /// Skip the sample `hon.aozora` document.
+    /// Skip the example `hon.aozora` document.
     #[arg(long)]
     no_sample: bool,
 

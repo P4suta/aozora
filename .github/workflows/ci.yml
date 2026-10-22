@@ -332,14 +332,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
+      # Dependency review exceptions follow docs/adr/dependency-license-policy.md.
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
-          # Match cargo-deny's advisory threshold.
           fail-on-severity: moderate
 
-          # Mirror deny.toml's license allow-list.
-          # MIT-0 permits attribution-free use compatible with the workspace license.
-          # BSL-1.0 covers rustyline's Windows-only clipboard dependencies.
           allow-licenses: >-
             Apache-2.0,
             Apache-2.0 WITH LLVM-exception,
@@ -355,10 +352,6 @@ jobs:
             Zlib,
             BSL-1.0
 
-          # rust-cache runs only in CI and is not distributed with the crates.
-          # protobuf's permissive Go patent grant is not recognized as an SPDX license.
-          # const-siphasher uses legacy MIT/Apache-2.0 metadata accepted by cargo-deny.
-          # filetime uses legacy MIT/Apache-2.0 metadata accepted by cargo-deny.
           allow-dependencies-licenses: >-
             pkg:githubactions/Swatinem/rust-cache,
             pkg:golang/google.golang.org/protobuf,
@@ -395,9 +388,6 @@ jobs:
           exit 1
       - run: echo "ci-success"
 
-  # The one status check branch protection requires,
-  # named the same in every P4suta repository.
-  # It passes only when every job it needs succeeded or was skipped.
   required:
     name: required
     if: always()

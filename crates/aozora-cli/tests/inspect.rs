@@ -12,6 +12,10 @@ fn envelope_prefix() -> String {
     format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"#)
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and capture failures must fail with context"
+)]
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = common::hermetic_command();
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -37,6 +41,10 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test input files must exist before the command runs"
+)]
 fn write_temp(contents: &str) -> NamedTempFile {
     let mut f = tempfile::Builder::new()
         .prefix("aozora-inspect-test-")

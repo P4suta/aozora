@@ -16,12 +16,12 @@ use miette::{NamedSource, Report};
 #[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum DiagFormat {
-    /// Graphical (`human`) on a terminal, machine (`json`) when piped.
+    /// Use `human` on a terminal or `json` when piped.
     #[default]
     Auto,
-    /// miette graphical report — source snippet + caret + label + help.
+    /// Show a `miette` graphical report with source, caret, label, and help.
     Human,
-    /// The `aozora::json` JSON envelope — the cross-binding machine view.
+    /// Emit the `aozora::json` envelope shared with bindings.
     Json,
     /// One grep-able line per diagnostic: `path:offset: severity[code]: msg`.
     Short,

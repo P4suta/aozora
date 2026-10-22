@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// TestFixtureParity is the Go/Extism arm of the cross-surface parity gate:
-// one golden authority (crates/aozora-conformance/fixtures/render), N thin
-// walkers. It walks every render fixture through the real plugin boundary
-// (wazero -> wasm -> wire) and asserts each export is byte-identical to the
-// golden the in-process Rust render_gate pins.
-//
-// It compares the RAW plugin output (via the unexported call), not the
-// decoded structs, so a reframed / re-ordered / dropped byte is caught here
-// too — the decoded-struct smoke lives in aozora_test.go. All six surfaces
-// are byte-exact: every plugin export returns the shared aozora::json bytes
-// (and to_html / to_source output) with no framing.
 func TestFixtureParity(t *testing.T) {
 	root := filepath.Join("testdata", "render")
 	if _, err := os.Stat(root); err != nil {
@@ -36,7 +25,6 @@ func TestFixtureParity(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Close(ctx) })
 
-	// surface plugin export -> golden file with byte-identical output.
 	surfaces := []struct{ export, file string }{
 		{"to_html", "expected.html"},
 		{"to_source", "expected.serialize.txt"},

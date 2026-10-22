@@ -1,26 +1,4 @@
-//! Isolated Shift-JIS decode benchmark.
-//!
-//! Measures `aozora_encoding::decode_sjis` throughput in isolation
-//! from filesystem I/O. The corpus is fully read into memory before
-//! the timer starts, so neither `walkdir` traversal nor `fs::read`
-//! syscalls pollute the per-band decode-MB/s number.
-//!
-//! Mirrors the `throughput_by_class.rs` env-var contract:
-//!
-//! - `AOZORA_CORPUS_ROOT` (required) — corpus root directory.
-//! - `AOZORA_PROFILE_LIMIT=N` — cap the sweep to the first N docs.
-//! - `AOZORA_PROFILE_PARALLEL=1` — also run a rayon-parallel decode
-//!   pass so its delta against the sequential baseline is visible
-//!   side-by-side.
-//!
-//! Output columns (one row per size band, plus an aggregate row):
-//!
-//! | docs | sjis MB | utf8 MB | seq MB/s | par MB/s | scale | p50 / p90 / p99 / max µs |
-//!
-//! `seq MB/s` and `par MB/s` use **sjis bytes in / decode wall** so
-//! the number maps to "how many SJIS megabytes can the decoder
-//! consume per second". The scale column is `par MB/s ÷ seq MB/s`,
-//! the per-band parallel-efficiency check.
+//! Measures decoding throughput by document size after loading corpus bytes into memory.
 
 mod support;
 
@@ -48,6 +26,11 @@ fn main() -> ExitCode {
     run().err().unwrap_or(ExitCode::SUCCESS)
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn run() -> Result<(), ExitCode> {
     let Some(root) = env::var_os("AOZORA_CORPUS_ROOT") else {
         eprintln!("AOZORA_CORPUS_ROOT not set; nothing to profile.");
@@ -65,10 +48,6 @@ fn run() -> Result<(), ExitCode> {
 
     eprintln!("decode_throughput: starting (limit = {limit:?}, parallel_pass = {parallel})");
 
-    // Pre-load every CorpusItem into memory so I/O is fully amortised
-    // before we start timing. This is the central discipline of an
-    // isolated decode benchmark — the timer must wrap *only* the
-    // decode work.
     let load_start = Instant::now();
     let mut paths = Vec::new();
     let mut io_errors = 0;
@@ -123,9 +102,6 @@ struct BandStats {
     utf8_bytes: u64,
     seq_decode_ns: u64,
     par_decode_ns: u64,
-    /// Sequential per-doc decode latencies; populated only when
-    /// non-empty so the aggregate can compute quantiles across all
-    /// bands without per-band noise.
     latencies_ns: Vec<u64>,
 }
 
@@ -145,10 +121,6 @@ impl BandStats {
 }
 
 fn bucket_for_decode(items: &[CorpusItem]) -> [Vec<usize>; 4] {
-    // Bucket by SJIS byte length — we don't have UTF-8 sizes yet
-    // (that's what the decode produces) so use input length, which is
-    // ~75 % of UTF-8 length on Aozora data and gives a stable
-    // distribution.
     const SMALL_MAX: usize = 50 * 1024;
     const MEDIUM_MAX: usize = 500 * 1024;
     const LARGE_MAX: usize = 2 * 1024 * 1024;
@@ -170,12 +142,14 @@ fn bucket_for_decode(items: &[CorpusItem]) -> [Vec<usize>; 4] {
     bands
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn measure_band(items: &[CorpusItem], indices: &[usize], parallel: bool) -> BandStats {
     let docs = indices.len();
     let sjis_bytes: u64 = indices.iter().map(|&i| items[i].bytes.len() as u64).sum();
 
-    // Sequential pass — produces the per-doc latency distribution and
-    // the seq decode wall.
     let mut utf8_bytes: u64 = 0;
     let mut latencies_ns: Vec<u64> = Vec::with_capacity(docs);
     let seq_start = Instant::now();
@@ -195,15 +169,9 @@ fn measure_band(items: &[CorpusItem], indices: &[usize], parallel: bool) -> Band
     let seq_decode_ns =
         u64::try_from(seq_start.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64");
 
-    // Parallel pass (optional) — fans the same work across rayon. We
-    // discard per-doc latencies for the parallel pass because the
-    // wall time is what matters for scaling analysis.
     let par_decode_ns = if parallel {
         let par_start = Instant::now();
         indices.par_iter().for_each(|&i| {
-            // Discard the result — only wall time is measured here;
-            // correctness was already exercised by the sequential pass
-            // that populated `latencies_ns` above.
             drop(decode_sjis(&items[i].bytes));
         });
         u64::try_from(par_start.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64")
@@ -221,6 +189,10 @@ fn measure_band(items: &[CorpusItem], indices: &[usize], parallel: bool) -> Band
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn print_header(parallel: bool) {
     if parallel {
         println!(
@@ -254,6 +226,11 @@ fn print_header(parallel: bool) {
     println!("  {}", "─".repeat(106));
 }
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn print_row(label: &str, s: &BandStats) {
     let sjis_mb = report_number(s.sjis_bytes) / 1_048_576.0;
     let utf8_mb = report_number(s.utf8_bytes) / 1_048_576.0;

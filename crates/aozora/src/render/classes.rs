@@ -1,28 +1,12 @@
-//! The CSS class names the HTML renderer can emit.
-//!
-//! [`AOZORA_CLASSES`] is the authoritative, public list of every
-//! `aozora-*` class `crate::render::render_node` / `crate::render::html` writes.
-//! Downstream consumers (e.g. the sibling `afm` crate) import it instead
-//! of hand-mirroring the contract. The `class_list_matches_emitted`
-//! test renders every `Node` + `ContainerKind` variant and asserts
-//! the emitted class tokens are *exactly* this set, so the published
-//! list can never drift from the emit sites.
+//! Defines renderer class names and the public [`AOZORA_CLASSES`] catalogue.
 
 use crate::spec::roman_slug;
 use crate::syntax::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 
-/// Every CSS class token the HTML renderer can emit.
+/// CSS classes that the HTML renderer can emit, sorted without duplicates.
 ///
-/// Open-ended numeric variants are normalised to their stem
-/// (`aozora-indent-2` → `aozora-indent`, `aozora-align-end-3` →
-/// `aozora-align-end`); the fixed slug families (`aozora-bouten-<kind>`,
-/// `aozora-section-break-<kind>`, the emphasis slugs, the
-/// `aozora-heading-<level>` / `-<style>` modifiers) are listed in full.
-/// Sorted and deduplicated.
-///
-/// Pinned by the `class_list_matches_emitted` test. A consumer that
-/// accepts a numeric variant should match `aozora-indent` / etc. as a
-/// stem and allow a trailing `-<n>`.
+/// Numeric variants use a shared stem, such as `aozora-indent` for `aozora-indent-2`.
+/// Fixed class names appear in full.
 pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-accent",
     "aozora-accent-dot",
@@ -117,23 +101,11 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-yokogumi",
 ];
 
-// ── Per-enum class-token slugs ────────────────────────────────────────
-// Single source of truth for the variable `aozora-*` slugs the renderer
-// composes, shared by `crate::render::render_node` (the emit sites) and the
-// `class_list_matches_emitted` derivation below. Fixed, structure-bound
-// class literals stay inline in the HTML templates they belong to.
-
-/// Romaji slug for a [`BoutenKind`] — the `aozora-bouten-<slug>` suffix.
-///
-/// The slug lives in the spec table (`RENDER_SLUGS`), keyed by the
-/// canonical 青空文庫 keyword.
 #[must_use]
 pub(crate) fn bouten_kind_slug(kind: BoutenKind) -> &'static str {
     roman_slug(kind.keyword()).unwrap_or("other")
 }
 
-/// Side slug for a [`BoutenPosition`] — the `aozora-bouten-<slug>` /
-/// `aozora-kogaki-<slug>` suffix.
 #[must_use]
 pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
     match pos {
@@ -143,11 +115,6 @@ pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
     }
 }
 
-/// Outline-level slug for a [`HeadingKind`] — the `aozora-heading-<slug>`
-/// suffix.
-///
-/// Shared by the forward-reference leaf and the paired/block heading
-/// container.
 #[must_use]
 pub(crate) const fn heading_level_slug(kind: HeadingKind) -> &'static str {
     match kind {
@@ -157,10 +124,6 @@ pub(crate) const fn heading_level_slug(kind: HeadingKind) -> &'static str {
     }
 }
 
-/// Per-style modifier slug for a [`HeadingStyle`].
-///
-/// `None` for the standard style, which adds no modifier so a standard
-/// heading's markup is unchanged.
 #[must_use]
 pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static str> {
     match style {
@@ -202,11 +165,6 @@ mod tests {
         }
     }
 
-    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) owns the
-    /// only copy of its target, so it renders the styled run — it is **not**
-    /// short-circuited like [`ForwardOrigin::Referenced`] (the #228 guard). The
-    /// producer is wired in E1-2/E1-3; the render fall-through is pinned here so
-    /// the plumbing PR carries its own proof.
     #[test]
     fn self_contained_forward_renders_styled_run() {
         let mut a = Allocator::new();
@@ -233,10 +191,6 @@ mod tests {
         );
     }
 
-    /// Pull the `aozora-*` tokens out of every `class="…"` attribute in
-    /// `html`, collapsing a trailing `-<digits>` run to its stem so
-    /// open-ended numeric variants (indent / align-end amounts) don't
-    /// explode the set.
     fn collect_classes(html: &str, into: &mut BTreeSet<String>) {
         let mut rest = html;
         while let Some(p) = rest.find("class=\"") {
@@ -260,9 +214,6 @@ mod tests {
         }
     }
 
-    /// Collect a built owned node for later rendering (the allocator's store is
-    /// still borrowed mutably during the build, so the render pass runs after
-    /// `into_store`).
     fn render_into(node: Node, nodes: &mut Vec<Node>) {
         nodes.push(node);
     }
@@ -273,11 +224,6 @@ mod tests {
         collect_classes(&s, set);
     }
 
-    /// Render every `Node` + `ContainerKind` variant and collect the
-    /// emitted `aozora-*` class tokens (numeric variants collapsed to their
-    /// stem). The authoritative derivation [`AOZORA_CLASSES`] is pinned to;
-    /// enum families enumerate through the `*_KINDS` constants so a new
-    /// variant flows in automatically.
     fn all_emitted_classes() -> BTreeSet<String> {
         let mut a = Allocator::new();
         let mut nodes = leaf_nodes(&mut a);
@@ -313,7 +259,6 @@ mod tests {
 
     fn leaf_nodes(a: &mut Allocator) -> Vec<Node> {
         let mut nodes = Vec::new();
-        // --- leaf nodes ---
         render_into(a.page_break(), &mut nodes);
         render_into(a.body_end(), &mut nodes);
         render_into(a.forced_break(), &mut nodes);
@@ -327,8 +272,6 @@ mod tests {
             }),
             &mut nodes,
         );
-        // Both-margin compound emits the align-end classes alongside the indent
-        // classes (both stems already listed in `AOZORA_CLASSES`).
         render_into(
             a.line(LineFormat::Indent {
                 amount: 2,
@@ -350,7 +293,6 @@ mod tests {
                 &mut nodes,
             );
         }
-        // The `、太字` compound adds the line-bold class (already covered above).
         render_into(
             a.line(LineFormat::FontSizeAbsolute {
                 size: AbsoluteSize::Large,
@@ -389,10 +331,8 @@ mod tests {
             let p = a.make_directive("［＃注］", kind);
             render_into(a.annotation(p), &mut nodes);
         }
-        // EditorNote renders a visible 注N superscript from its raw shape.
         let editor_note = a.make_directive("［＃入力者注(1)］", DirectiveKind::EditorNote);
         render_into(a.annotation(editor_note), &mut nodes);
-        // Ruby-placement notes render a compact `aozora-ruby-note` marker.
         for (kind, raw) in [
             (DirectiveKind::RubyAttached, "［＃「親」にルビ］"),
             (DirectiveKind::RubyRetarget, "［＃ルビは「親」にかかる］"),
@@ -405,7 +345,6 @@ mod tests {
             let p = a.make_directive(raw, kind);
             render_into(a.annotation(p), &mut nodes);
         }
-        // Margin-note span markers render a compact `aozora-margin-note` marker.
         for (kind, raw) in [
             (DirectiveKind::MarginNotePairOpen, "［＃注記付き］"),
             (DirectiveKind::MarginNotePairOpen, "［＃左に注記付き］"),
@@ -427,10 +366,6 @@ mod tests {
 
     fn content_nodes(a: &mut Allocator) -> Vec<Node> {
         let mut nodes = Vec::new();
-        // Nodes needing Content. `content_plain` takes `&mut self` but
-        // returns a Content borrowing the arena (not the allocator), so
-        // the `&mut` borrow ends before each `&self` constructor runs and
-        // plain sequential lets compile.
         let ruby_base = a.content_plain("親");
         let ruby_reading = a.content_plain("おや");
         render_into(a.ruby(ruby_base, ruby_reading), &mut nodes);
@@ -458,7 +393,6 @@ mod tests {
 
     fn forward_nodes(a: &mut Allocator) -> Vec<Node> {
         let mut nodes = Vec::new();
-        // Every forward-emphasis attribute that produces a distinct class.
         for attr in [
             ForwardAttr::Bold,
             ForwardAttr::Italic,
@@ -492,17 +426,11 @@ mod tests {
 
     fn accent_nodes(a: &mut Allocator) -> Vec<Node> {
         let mut nodes = Vec::new();
-        // AccentDot (#331) needs an interned body + a composable run, so it uses
-        // its own constructor rather than the loop above; this exercises the
-        // `aozora-accent-dot` class through the compose path.
         let dotted = a.content_plain("Sam");
         render_into(
             a.accent_dot(dotted, "mは上ドット付き", ForwardOrigin::Reclaimed),
             &mut nodes,
         );
-        // Accent (forward accent-mark): the letter rides on the target (no
-        // interned body), so it uses `forward_format`; a composable single
-        // letter exercises the `aozora-accent` class through the compose path.
         let accented = a.content_plain("e");
         render_into(
             a.forward_format(
@@ -512,8 +440,6 @@ mod tests {
             ),
             &mut nodes,
         );
-        // FontSize positive → font-larger above; its negative magnitude
-        // (font-smaller) is the only other class the variant produces.
         let smaller = a.content_plain("小");
         render_into(
             a.forward_format(
@@ -549,8 +475,6 @@ mod tests {
                 layout: IndentLayout::None,
                 styles: BlockStyles::EMPTY,
             }),
-            // #78 line-layout compounds — exercise the new line-kumi class
-            // (字詰め reuses the standalone line-width class).
             RegionFormat::Indent(IndentBlock {
                 amount: 3,
                 wrap: None,
@@ -565,9 +489,6 @@ mod tests {
                 layout: IndentLayout::LineWidth(lw(18)),
                 styles: BlockStyles::EMPTY,
             }),
-            // #78 co-applied style stack — exercises the flat decoration
-            // classes (futoji / yokogumi / keigakomi / font-smaller) on one
-            // indent `<div>`.
             RegionFormat::Indent(IndentBlock {
                 amount: 4,
                 wrap: None,
@@ -637,8 +558,6 @@ mod tests {
             "AOZORA_CLASSES is out of sync with the renderer's emitted classes"
         );
 
-        // The published list must stay sorted + deduplicated so a binary
-        // search / diff against it is well-defined downstream.
         let mut sorted = AOZORA_CLASSES.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -681,16 +600,6 @@ mod tests {
         assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
     }
 
-    /// The canonical reference stylesheet
-    /// (`assets/aozora-notation.css`) is the single source of truth for
-    /// how every emitted `aozora-*` class is presented. This test pins
-    /// its `.aozora-*` selectors to [`AOZORA_CLASSES`] *exactly*, so a
-    /// renamed class (the `aozora_gaiji` / `aozora_tcy` drift that broke
-    /// the VS Code preview), a typo, or a forgotten style is a test
-    /// failure rather than a silent visual regression. The two consumer
-    /// scope hooks — `.aozora-notation` (base) and `.aozora-vertical`
-    /// (縦書き) — are not renderer-emitted, so they are the only
-    /// non-`AOZORA_CLASSES` selectors the sheet may carry.
     #[test]
     fn canonical_stylesheet_matches_emitted_classes() {
         const CSS: &str = include_str!("../../assets/aozora-notation.css");
@@ -725,11 +634,6 @@ mod tests {
         );
     }
 
-    /// Collect every `.aozora-*` class selector in the stylesheet,
-    /// normalising open-ended numeric variants to their stem
-    /// (`aozora-indent-3` → `aozora-indent`) to match how
-    /// [`AOZORA_CLASSES`] lists them. Block comments are stripped first so
-    /// class names mentioned in prose do not count.
     fn extract_css_classes(css: &str) -> BTreeSet<String> {
         let mut cleaned = String::with_capacity(css.len());
         let mut chars = css.chars().peekable();
@@ -773,9 +677,6 @@ mod tests {
         out
     }
 
-    /// Strip a trailing `-<digits>` so `aozora-indent-3` collapses to the
-    /// `aozora-indent` stem `AOZORA_CLASSES` records. No emitted class
-    /// name ends in a digit, so this never corrupts a real name.
     fn normalize_numeric_variant(cls: &str) -> String {
         if let Some(idx) = cls.rfind('-') {
             let suffix = &cls[idx + 1..];

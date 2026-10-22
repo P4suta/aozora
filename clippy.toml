@@ -1,4 +1,4 @@
-# Domain terms and encoding names are valid prose without code formatting.
+# Clippy configuration exceptions follow docs/adr/repository-lint-exceptions.md.
 doc-valid-idents = [
   "..",
   "CommonMark",
@@ -17,7 +17,6 @@ too-many-arguments-threshold = 4
 
 too-many-lines-threshold = 80
 
-# Parser type nesting makes a lower complexity threshold noisy without improving readability.
 type-complexity-threshold = 250
 
 max-fn-params-bools = 1
@@ -28,12 +27,10 @@ enum-variant-size-threshold = 256
 # The public MSRV keeps incompatible_msrv effective against the development toolchain (ADR-0034).
 msrv = "1.89.0"
 
-# Test assertions use unwrap, expect, and panic to report failures directly.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 
-# The pre-1.0 API can change when needed to simplify its implementation.
 avoid-breaking-exported-api = false
 
 pass-by-value-size-limit = 128

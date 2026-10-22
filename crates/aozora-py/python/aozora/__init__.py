@@ -1,27 +1,7 @@
-"""Aozora Bunko notation parser — Python bindings.
+"""Parses and inspects Aozora documents through :class:`Document`.
 
-The public surface is the :class:`Document` class plus the module-level
-helpers :func:`parse_to_html`, :func:`prewarm`, :func:`decode_sjis`,
-:func:`slugs`, :func:`version`, and :func:`schema_version`.
-Parsing is pure-functional: construct a ``Document`` from source text
-(or Shift_JIS / UTF-8 bytes via :meth:`Document.from_bytes`) and call the
-render / inspection methods.
-
-Two version numbers, deliberately distinct: :func:`version` is the
-parser engine's channel-aware *build* stamp (shared with the WASM /
-Extism / Go drivers), while ``__version__`` is the installed PyPI
-*package* version from distribution metadata. :func:`schema_version`
-is the cross-driver *wire* schema version stamped into every
-``*_json()`` envelope.
-
-Inspection methods come in two flavours:
-
-* the parsed accessors return generated, typed Python dataclasses;
-* the ``*_json()`` accessors return the raw wire envelope string used by
-  CLI, FFI, Extism, and Go.
-
-The compiled extension lives in the private submodule
-``aozora._aozora``; import from ``aozora`` directly.
+Parsed accessors return typed Python values, while ``*_json()`` accessors return wire envelopes.
+Use :func:`version` for the engine build, ``__version__`` for the installed package, and :func:`schema_version` for wire compatibility.
 """
 
 from __future__ import annotations
@@ -78,7 +58,7 @@ __all__ = [
 
 try:
     __version__ = _dist_version("aozora")
-except PackageNotFoundError:  # source tree / editable build without dist metadata
+except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 
@@ -90,11 +70,8 @@ def slugs() -> list[Slug]:
 class Document:
     """A parsed Aozora Bunko document.
 
-    ``unsendable``: a ``Document`` is pinned to the thread that created it
-    (a conservative marker; the underlying document is thread-safe but the
-    handle is pinned to its constructing thread). Touching one
-    from another thread raises ``RuntimeError`` rather than sharing
-    unsoundly.
+    Access from a thread other than the creating thread raises ``pyo3_runtime.PanicException``.
+    Construction raises ``ValueError`` if the source exceeds ``2**32 - 1`` UTF-8 bytes.
     """
 
     __slots__ = ("_native",)
@@ -110,17 +87,15 @@ class Document:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Document:
-        """Construct from raw bytes, auto-detecting Shift_JIS vs UTF-8.
+        """Creates a document from bytes, preferring UTF-8 and otherwise decoding ``Shift_JIS``.
 
-        Real 青空文庫 archive files are Shift_JIS; pre-converted corpora
-        are UTF-8. Both are accepted. Raises ``ValueError`` on bytes that
-        are neither, or on a source over the 4 GiB span limit.
+        Raises ``ValueError`` for invalid encoding or decoded source exceeding ``2**32 - 1`` UTF-8 bytes.
         """
         return cls._wrap(_aozora.Document.from_bytes(data))
 
     @property
     def source(self) -> str:
-        """The source text this document was parsed from."""
+        """Returns the document's source text."""
         return self._native.source
 
     def source_byte_len(self) -> int:
@@ -128,7 +103,7 @@ class Document:
         return self._native.source_byte_len()
 
     def to_html(self) -> str:
-        """Render to semantic HTML5."""
+        """Renders the document as HTML."""
         return self._native.to_html()
 
     def to_source(self) -> str:
@@ -136,16 +111,10 @@ class Document:
         return self._native.to_source()
 
     def diagnostics_text(self) -> str:
-        """Diagnostics as a plain-text report (``miette``-free).
-
-        One block per diagnostic with its code, span, message, and the
-        offending source slice; a clean parse returns the empty string.
-        Use :meth:`diagnostics` for the structured list or
-        :meth:`diagnostics_json` for the raw wire envelope.
+        """Returns a plain-text diagnostic report, or an empty string for a clean parse.
         """
         return self._native.diagnostics_text()
 
-    # ── parsed accessors ──────────────────────────────────────────────
     def diagnostics(self) -> list[Diagnostic]:
         """Diagnostics as typed native values."""
         return _DiagnosticsEnvelope.from_dict(
@@ -153,15 +122,15 @@ class Document:
         ).data
 
     def nodes(self) -> list[Node]:
-        """Classified Aozora-node spans as typed native values."""
+        """Returns typed nodes with original-source UTF-8 byte spans."""
         return _NodesEnvelope.from_dict(json.loads(self._native.nodes_json())).data
 
     def pairs(self) -> list[Pair]:
-        """Matched open/close pair links as typed native values."""
+        """Returns typed delimiter pairs with original-source UTF-8 byte spans."""
         return _PairsEnvelope.from_dict(json.loads(self._native.pairs_json())).data
 
     def container_pairs(self) -> list[ContainerPair]:
-        """Container open/close pairs as typed native values."""
+        """Returns typed container pairs with original-source UTF-8 byte spans."""
         return _ContainerPairsEnvelope.from_dict(
             json.loads(self._native.container_pairs_json())
         ).data
@@ -170,25 +139,24 @@ class Document:
         """Resolved gaiji references as typed native values."""
         return _GaijiEnvelope.from_dict(json.loads(self._native.gaiji_json())).data
 
-    # ── raw wire accessors (byte-identical envelope strings) ──────────
     def diagnostics_json(self) -> str:
-        """Raw diagnostics wire envelope (JSON string)."""
+        """Returns the diagnostics wire envelope as a JSON string."""
         return self._native.diagnostics_json()
 
     def nodes_json(self) -> str:
-        """Raw nodes wire envelope (JSON string)."""
+        """Returns the nodes wire envelope as a JSON string."""
         return self._native.nodes_json()
 
     def pairs_json(self) -> str:
-        """Raw pairs wire envelope (JSON string)."""
+        """Returns the pairs wire envelope as a JSON string."""
         return self._native.pairs_json()
 
     def container_pairs_json(self) -> str:
-        """Raw container-pairs wire envelope (JSON string)."""
+        """Returns the container pairs wire envelope as a JSON string."""
         return self._native.container_pairs_json()
 
     def gaiji_json(self) -> str:
-        """Raw gaiji-resolutions wire envelope (JSON string)."""
+        """Returns the gaiji wire envelope as a JSON string."""
         return self._native.gaiji_json()
 
     def __repr__(self) -> str:

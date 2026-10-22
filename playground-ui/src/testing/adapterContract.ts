@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { PlaygroundAdapter } from '../types';
 
+const MAX_HEADING_LEVEL = 6;
+const ABORTED_ANALYSIS_REVISION = 2;
+const LIFECYCLE_ANALYSIS_REVISION = 3;
+
 function expectLocalized(value: { ja: string; en: string }): void {
   expect(value.ja.trim()).not.toBe('');
   expect(value.en.trim()).not.toBe('');
@@ -78,7 +82,7 @@ export function playgroundAdapterContract(
       }
       for (const entry of analysis.outline) {
         expect(entry.level).toBeGreaterThanOrEqual(1);
-        expect(entry.level).toBeLessThanOrEqual(6);
+        expect(entry.level).toBeLessThanOrEqual(MAX_HEADING_LEVEL);
         expect(entry.text.trim()).not.toBe('');
         if (entry.range) {
           expect(entry.range.start).toBeGreaterThanOrEqual(0);
@@ -93,7 +97,7 @@ export function playgroundAdapterContract(
       abort.abort();
       await expect(
         adapter.analyze(adapter.samples[0]!.source, {
-          revision: 2,
+          revision: ABORTED_ANALYSIS_REVISION,
           signal: abort.signal,
         }),
       ).rejects.toMatchObject({ name: 'AbortError' });
@@ -108,7 +112,7 @@ export function playgroundAdapterContract(
       const editor = await adapter.createEditor(editorHost, source, () => {});
       const preview = adapter.createPreview(previewHost);
       const analysis = await adapter.analyze(source, {
-        revision: 3,
+        revision: LIFECYCLE_ANALYSIS_REVISION,
         signal: new AbortController().signal,
       });
 

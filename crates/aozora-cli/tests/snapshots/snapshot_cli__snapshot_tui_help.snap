@@ -2,72 +2,70 @@
 source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"tui\", \"--help\"])"
 ---
-Open a full-screen live editor: a source EDIT pane, a live PREVIEW pane (rendered HTML / nodes /
-Pandoc), and a DIAGNOSTICS pane, all refreshed on every keystroke (debounced) through the same parse
-/ render / json engine as the document subcommands. The editor-free counterpart to `--watch`.
-`Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles the preview view, `Ctrl-Q` quits. An
-optional `[FILE]` opens for editing
+Open a full-screen editor with source, preview, and diagnostic panes. Preview HTML, nodes, or Pandoc
+through the document subcommands' engine. Edits refresh all panes after a debounce delay, providing
+an alternative to `--watch`. `Ctrl-S` saves, `Ctrl-L` cycles language, `Ctrl-P` cycles preview, and
+`Ctrl-Q` quits. Supply `[FILE]` to open a document
 
 Usage: aozora tui [OPTIONS] [FILE]
 
 Arguments:
   [FILE]
-          Optional file to open in the editor. Omit to start with an empty buffer; `Ctrl-S` then
-          reports that there is no file to save
+          Open this file in the editor. Omit to start with an empty buffer, where `Ctrl-S` reports
+          that no file is available
 
 Options:
       --preview <PREVIEW>
-          Which projection the preview pane shows at startup: `html` (the default, as `aozora
-          render`), `nodes` (as `aozora inspect nodes`), or `pandoc` (the Pandoc AST). Cycle it live
-          with `Ctrl-P`
+          Choose the initial preview: `html`, `nodes`, or `pandoc`. Defaults to HTML, matching
+          `aozora render`. The other views match `aozora inspect nodes` and `aozora pandoc`. Cycle
+          views with `Ctrl-P`
 
           Possible values:
-          - html:   Rendered HTML (as `aozora render`)
-          - nodes:  The parsed source nodes as JSON (as `aozora inspect nodes`)
-          - pandoc: The Pandoc AST as JSON (as `aozora pandoc`, pretty-printed for the pane)
+          - html:   Render HTML as `aozora render` does
+          - nodes:  Show source nodes as JSON, matching `aozora inspect nodes`
+          - pandoc: Show the Pandoc abstract syntax tree as formatted JSON, matching `aozora pandoc`
 
           [default: html]
 
   -E, --encoding <ENCODING>
-          Source encoding for opening `[FILE]`: `auto` (default), `utf8`, or `sjis`. The edit buffer
-          is Unicode; `Ctrl-S` always saves UTF-8
+          Choose the source encoding for `[FILE]`: `auto`, `utf8`, or `sjis`. Defaults to `auto`.
+          The Unicode edit buffer always saves as UTF-8 with `Ctrl-S`
 
           Possible values:
-          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
-            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
-            mirrors are common, and the caller should not have to know which they have
-          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - auto: Detect the source encoding. Read valid UTF-8 directly and decode other input as
+            Shift_JIS
+          - utf8: Force UTF-8 and report an error for invalid input
           - sjis: Force Shift_JIS decoding
 
           [default: auto]
 
       --color <WHEN>
-          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
-          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Falls back to the `color` key in
-          `.aozora.toml`, then `auto`. Global — accepted after any subcommand. Governs `check`'s
-          graphical diagnostics and `fmt --diff`; `spec kinds` tables are always monochrome
+          Choose `auto`, `always`, or `never` for diagnostic color. `auto` uses terminal detection
+          and honours `NO_COLOR`, `CLICOLOR`, and `CLICOLOR_FORCE`. Defaults to `.aozora.toml`'s
+          `color`, then `auto`. Applies to graphical diagnostics and `fmt --diff`. `spec kinds`
+          tables stay monochrome. Accepts placement after any subcommand
 
           Possible values:
-          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
-            `CLICOLOR_FORCE`)
-          - always: Always colour, even when piped
-          - never:  Never colour
+          - auto:   Use color when stdout is a terminal, honoring `NO_COLOR`, `CLICOLOR`, and
+            `CLICOLOR_FORCE`
+          - always: Always use color, even when piped
+          - never:  Never use color
 
   -v, --verbose...
-          Increase log verbosity (repeatable): `-v` info, `-vv` debug, `-vvv` trace. Logs go to
-          stderr only, so stdout — and the JSON / short diagnostic streams — stay byte-identical.
-          `AOZORA_LOG` overrides this; cancels against `--quiet` (one axis). Global
+          Increase stderr log verbosity with `-v` for info, `-vv` for debug, or `-vvv` for trace.
+          Preserves stdout and diagnostic output. `AOZORA_LOG` overrides this setting. One `-v`
+          cancels `--quiet`. Accepts placement after any subcommand
 
   -q, --quiet
-          Lower log verbosity to errors only — the opposite end of the `--verbose` axis (a single
-          `-v` cancels it). Affects only stderr logging, never stdout. `AOZORA_LOG` overrides it.
-          Global
+          Restrict stderr logging to errors. Preserves stdout. One `-v` cancels this setting.
+          `AOZORA_LOG` overrides it. Accepts placement after any subcommand
 
       --lang <LOCALE>
-          Language for human messages (the stdin guard, the `--watch` banner, and `explain`), as a
-          BCP-47 tag: `en` (the default), `ja`, or `zh`. Highest priority in `--lang > AOZORA_LANG >
-          .aozora.toml lang > LANG`; unknown locales fall back to `en`. Never affects machine output
-          (json / short / codes / exit / schema) or `--encoding`. Global
+          Choose the human message language with a `BCP-47` tag: `en`, `ja`, or `zh`. Applies to the
+          stdin guard, watch banner, and `explain`. Resolves through `--lang > AOZORA_LANG >
+          .aozora.toml lang > LANG`, then English. Unknown locales use English. Preserves JSON,
+          short diagnostics, codes, exit status, schemas, and source encoding. Accepts placement
+          after any subcommand
 
   -h, --help
           Print help (see a summary with '-h')

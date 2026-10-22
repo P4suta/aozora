@@ -11,6 +11,10 @@ const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
 const DOC_URI: &str = "file:///doc.aozora";
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the handshake watchdog reports stalled test servers on stderr"
+)]
 fn arm_watchdog() {
     thread::spawn(|| {
         thread::sleep(Duration::from_secs(30));
@@ -67,6 +71,10 @@ fn open_and_collect_diagnostics(
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test protocol serialization and writes must succeed"
+)]
 fn send(stdin: &mut impl Write, msg: &Value) {
     let body = serde_json::to_vec(msg).expect("serialize JSON-RPC message");
     write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).expect("write header");
@@ -74,6 +82,10 @@ fn send(stdin: &mut impl Write, msg: &Value) {
     stdin.flush().expect("flush stdin");
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test protocol reads and decoding must succeed"
+)]
 fn recv(reader: &mut BufReader<ChildStdout>) -> Value {
     let mut content_length: Option<usize> = None;
     loop {
@@ -158,6 +170,10 @@ fn in_process_lsp_completes_the_initialize_didopen_diagnostics_handshake() {
     );
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test server setup and diagnostic extraction must succeed"
+)]
 fn first_diagnostic_message(locale: &str) -> String {
     let mut child = Command::new(BIN)
         .args(["lsp", "--stdio"])

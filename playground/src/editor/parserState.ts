@@ -9,11 +9,20 @@ import type {
 } from 'aozora-wasm';
 import { Document } from '../wasm-loader';
 
-/** A single container fold range, both endpoints in UTF-16 code units. */
+const UTF8_SINGLE_BYTE_LIMIT = 0x80;
+const UTF8_TWO_BYTE_LIMIT = 0x800;
+const UTF16_HIGH_SURROGATE_START = 0xd800;
+const UTF16_LOW_SURROGATE_START = 0xdc00;
+const UTF16_SURROGATE_END = 0xe000;
+const UTF8_TWO_BYTE_WIDTH = 2;
+const UTF8_THREE_BYTE_WIDTH = 3;
+const UTF8_FOUR_BYTE_WIDTH = 4;
+
+/** A container fold range in UTF-16 code units. */
 export interface ContainerFold {
-  /** End of the line carrying the open marker — fold starts here. */
+  /** Fold start at the end of the opening marker's line. */
   openLineEnd: number;
-  /** Start of the close marker — fold ends here. */
+  /** Fold end at the start of the closing marker. */
   closeStart: number;
 }
 
@@ -29,34 +38,18 @@ export interface ParserState {
   diagnostics: DiagnosticEntry[];
   pairs: PairEntry[];
   gaijiResolutions: GaijiResolutionEntry[];
-  /** index = UTF-16 code unit offset, value = UTF-8 byte offset. Length = source.length + 1. */
+  /** UTF-16 offsets mapped to UTF-8 byte offsets, including the end offset. */
   u2b: Uint32Array;
-  /** index = UTF-8 byte offset, value = UTF-16 code unit offset. Length = byteLen + 1. */
+  /** UTF-8 byte offsets mapped to UTF-16 offsets, including the end offset. */
   b2u: Uint32Array;
-  /** Container open/close fold ranges, pre-computed once per parse. */
   containerFolds: ContainerFold[];
 }
 
 /**
- * Build UTF-16 ↔ UTF-8 offset translation tables for `source`.
+ * Build UTF-16 and UTF-8 offset translation tables for `source`.
  *
- * `u2b[i]` is the UTF-8 byte offset where the i-th UTF-16 code unit
- * starts. `b2u[j]` is the UTF-16 code unit index for the character
- * that contains byte j. Both arrays include a sentinel terminator
- * (`u2b[source.length]` = total bytes, `b2u[totalBytes]` = source.length).
- *
- * Surrogate-pair accounting: the high surrogate "owns" all 4 bytes
- * of the encoded astral character; the low surrogate contributes 0.
- * That keeps `u2b` monotonically non-decreasing and lets `b2u`
- * resolve any interior byte to the starting UTF-16 index.
- *
- * Complexity: O(n) on source length, with one Uint32Array of size
- * `source.length + 1` and one of `byteLen + 1`. Memory: at most
- * `8 * (n_utf16 + n_byte)` bytes ≈ 8 × 2 × n_byte for typical
- * Japanese text. A 6 MB document is roughly 100 MB of table — large
- * but acceptable for an in-tab editor; smaller documents are
- * proportionally faster. Building the tables for a 6 MB doc takes
- * ~50 ms on a modern laptop.
+ * Both tables include the end offset.
+ * Interior bytes map to the character's first UTF-16 code unit.
  */
 export function buildOffsetTables(source: string): {
   u2b: Uint32Array;
@@ -69,15 +62,28 @@ export function buildOffsetTables(source: string): {
   for (let i = 0; i < len; i++) {
     u2b[i] = byte;
     const code = source.charCodeAt(i);
-    if (code < 0x80) byte += 1;
-    else if (code < 0x800) byte += 2;
-    else if (code >= 0xd800 && code < 0xdc00) {
+    if (code < UTF8_SINGLE_BYTE_LIMIT) byte += 1;
+    else if (code < UTF8_TWO_BYTE_LIMIT) byte += UTF8_TWO_BYTE_WIDTH;
+    else if (
+      code >= UTF16_HIGH_SURROGATE_START &&
+      code < UTF16_LOW_SURROGATE_START
+    ) {
       const next = source.charCodeAt(i + 1);
-      byte += next >= 0xdc00 && next < 0xe000 ? 4 : 3;
-    } else if (code >= 0xdc00 && code < 0xe000) {
+      byte +=
+        next >= UTF16_LOW_SURROGATE_START && next < UTF16_SURROGATE_END
+          ? UTF8_FOUR_BYTE_WIDTH
+          : UTF8_THREE_BYTE_WIDTH;
+    } else if (
+      code >= UTF16_LOW_SURROGATE_START &&
+      code < UTF16_SURROGATE_END
+    ) {
       const previous = source.charCodeAt(i - 1);
-      byte += previous >= 0xd800 && previous < 0xdc00 ? 0 : 3;
-    } else byte += 3;
+      byte +=
+        previous >= UTF16_HIGH_SURROGATE_START &&
+        previous < UTF16_LOW_SURROGATE_START
+          ? 0
+          : UTF8_THREE_BYTE_WIDTH;
+    } else byte += UTF8_THREE_BYTE_WIDTH;
   }
   u2b[len] = byte;
   const b2u = new Uint32Array(byte + 1);
@@ -117,9 +123,6 @@ function deriveContainerFolds(
       if (!opened) continue;
       const openEndU16 = utf16At(opened.span.end);
       const closeStartU16 = utf16At(entry.span.start);
-      // Find the end of the line carrying the open marker. Without
-      // an EditorState in scope we approximate by looking forward
-      // for the next newline in `source`.
       const nlIdx = source.indexOf('\n', openEndU16);
       const lineEnd = nlIdx === -1 ? openEndU16 : nlIdx;
       if (closeStartU16 > lineEnd) {
@@ -170,10 +173,7 @@ function computeParserState(
   };
 }
 
-/**
- * The single Document owner. All CM6 extensions read parsed data
- * from `view.state.field(parserStateField)`.
- */
+/** Own the editor's parsed document and update its projections after each edit. */
 export const parserStateField = StateField.define<ParserState>({
   create(state: EditorState): ParserState {
     return computeParserState(null, state.doc.toString(), null);
@@ -192,14 +192,14 @@ export const parserStateField = StateField.define<ParserState>({
   },
 });
 
-/** UTF-16 code unit offset → UTF-8 byte offset (clamped). */
+/** Convert a UTF-16 code unit offset to a UTF-8 byte offset, clamping to the source bounds. */
 export function utf16ToByte(ps: ParserState, u16: number): number {
   if (u16 < 0) return 0;
   if (u16 >= ps.u2b.length) return ps.u2b[ps.u2b.length - 1] ?? 0;
   return ps.u2b[u16] ?? 0;
 }
 
-/** UTF-8 byte offset → UTF-16 code unit offset (clamped). */
+/** Convert a UTF-8 byte offset to a UTF-16 code unit offset, clamping to the source bounds. */
 export function byteToUtf16(ps: ParserState, byte: number): number {
   if (byte < 0) return 0;
   if (byte >= ps.b2u.length) return ps.b2u[ps.b2u.length - 1] ?? 0;

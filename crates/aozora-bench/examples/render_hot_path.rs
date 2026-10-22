@@ -1,30 +1,4 @@
-//! Per-size-class **render** throughput report.
-//!
-//! Mirror of `throughput_by_class.rs` for snapshot HTML rendering.
-//! For each corpus document the probe:
-//!
-//! 1. Pre-parses the document once (untimed — the
-//!    parse perf story lives in the other probes; we want a clean
-//!    render-bound number here)
-//! 2. Renders its `Snapshot` to HTML, repeating `AOZORA_RENDER_REPEAT` times so
-//!    the per-doc latency is stable and so a `samply` trace gets
-//!    enough render-bound wall time to attach to (without the repeat,
-//!    the smallest docs spend more time in parse than render and the
-//!    sample stack is dominated by lex internals)
-//!
-//! Reports per-band MB/s (input bytes per render second), p50/p90/p99
-//! / max latency, ns/byte, and an aggregate render-vs-parse ratio so
-//! the reader can see at a glance whether render time dominates parse
-//! time on a given doc class.
-//!
-//! Reads `AOZORA_CORPUS_ROOT`. Optional `AOZORA_PROFILE_LIMIT=N` caps
-//! the sweep. Optional `AOZORA_RENDER_REPEAT=K` controls the per-doc
-//! render loop count (default 1; raise to 5+ when running under
-//! samply so the parse warmup doesn't dominate the trace).
-//!
-//! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example render_hot_path -p aozora-bench
-//! ```
+//! Reports corpus rendering throughput and latency by document size.
 
 mod support;
 
@@ -41,6 +15,10 @@ fn main() -> ExitCode {
     run().err().unwrap_or(ExitCode::SUCCESS)
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn run() -> Result<(), ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
@@ -110,14 +88,9 @@ fn run() -> Result<(), ExitCode> {
 
 #[derive(Debug, Default)]
 struct BandReport {
-    /// Per-doc render latency in ns (median of `repeat` runs).
     render_ns: Vec<u64>,
-    /// Per-doc parse latency in ns (single run, untimed in the loop).
     parse_ns: Vec<u64>,
-    /// Per-doc input size (post-decode UTF-8 bytes).
     sizes_bytes: Vec<u64>,
-    /// Per-doc output HTML size in bytes (one of the K renders;
-    /// they all produce the same string).
     html_bytes: Vec<u64>,
 }
 
@@ -134,6 +107,10 @@ impl BandReport {
     fn total_parse_ns(&self) -> u64 {
         self.parse_ns.iter().sum()
     }
+    #[expect(
+        clippy::expect_used,
+        reason = "benchmark inputs must meet parser and numeric preconditions"
+    )]
     fn quantile(sorted: &[u64], p: f64) -> u64 {
         if sorted.is_empty() {
             return 0;
@@ -152,6 +129,10 @@ struct AllReport {
     bands: [BandReport; 4],
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
     let mut report = AllReport::default();
     for (slot, band) in SizeBand::ordered().into_iter().enumerate() {
@@ -162,8 +143,6 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
         let mut html_bytes: Vec<u64> = Vec::with_capacity(docs.len());
 
         for (_, text) in docs {
-            // Parse once (timed for the parse-vs-render ratio summary
-            // line below; not on the render hot path itself).
             let t = Instant::now();
             let out = aozora::parse(text.as_str())
                 .expect("source fits parser span limit")
@@ -171,7 +150,6 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             parse_ns
                 .push(u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64"));
 
-            // Render `repeat` times, keep the median ns.
             let mut samples: Vec<u64> = Vec::with_capacity(repeat);
             let mut last_html_len: u64 = 0;
             for _ in 0..repeat {
@@ -207,6 +185,11 @@ struct ReportTiming {
     repeat: usize,
 }
 
+#[expect(
+    clippy::print_stdout,
+    clippy::expect_used,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTiming) {
     let ReportTiming {
         measure_secs,
@@ -285,6 +268,10 @@ fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTim
     print_cost_share(report);
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn print_cost_share(report: &AllReport) {
     println!();
     println!("Render output / input ratio + render-vs-parse cost share:");

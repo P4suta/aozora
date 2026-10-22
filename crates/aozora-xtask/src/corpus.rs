@@ -1,28 +1,4 @@
-//! `xtask corpus pack` — build / refresh a single-file corpus archive
-//!.
-//!
-//! The pack step walks a directory tree of `.txt` Aozora source files
-//! and writes a single binary archive. Four variants:
-//!
-//! ```text
-//! xtask corpus pack <SRC> <OUT>             # raw SJIS, no compression
-//! xtask corpus pack <SRC> <OUT> --utf8      # pre-decoded UTF-8
-//! xtask corpus pack <SRC> <OUT> --zstd      # raw SJIS, zstd-compressed
-//! xtask corpus pack <SRC> <OUT> --utf8 --zstd  # the trifecta
-//! ```
-//!
-//! ## Incremental rebuild
-//!
-//! If `<OUT>` already exists and parses as a valid archive with the
-//! same flags, the pack is **incremental**: each source file's
-//! `mtime_ns` is compared with the previous archive's record, and a
-//! per-file `blake3` hash is computed only when `mtime` says "may
-//! have changed". Unchanged entries are copied verbatim from the
-//! previous archive (already-compressed payload bytes flow through
-//! without re-encoding).
-//!
-//! Reported as `(reused / new / removed)` so the operator can tell
-//! at a glance how much work the pack actually did.
+//! Builds corpus archives and runs corpus audits through the `corpus` subcommands.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::f64::consts::E;
@@ -106,38 +82,23 @@ pub(crate) struct CorpusArgs {
 
 #[derive(Subcommand)]
 pub(crate) enum CorpusTarget {
-    /// Build / refresh a single-file binary archive from a directory
-    /// of `.txt` files. Incremental: reuses unchanged entries from a
-    /// previous archive at `<OUT>` if one exists with matching flags.
+    /// Build or refresh an archive from `.txt` files, reusing unchanged entries when flags match.
     Pack {
-        /// Source directory — typically the Aozora corpus checkout
-        /// (e.g. `~/aozora-corpus/aozorabunko_text-master/cards`).
+        /// Source directory containing corpus text files.
         src: PathBuf,
-        /// Output archive path. Conventional extensions: `.aozc`
-        /// (raw), `.aozc.utf8`, `.aozc.zst`, `.aozc.utf8.zst`.
+        /// Output archive path.
         out: PathBuf,
-        /// Pre-decode Shift-JIS source bytes into UTF-8 before
-        /// packing. Eliminates the runtime `decode_sjis` cost
-        /// entirely; archive becomes ~50 % larger on disk because
-        /// SJIS-Japanese is denser than UTF-8.
+        /// Decode `Shift_JIS` source bytes into UTF-8 before packing.
         #[arg(long)]
         utf8: bool,
-        /// zstd-compress each entry's payload. Combine with
-        /// `--utf8` for the smallest total disk + smallest runtime
-        /// load wall (single read + parallel decompress).
+        /// Compress each entry with zstd.
         #[arg(long)]
         zstd: bool,
-        /// zstd compression level (1..=22). Default 9 — high ratio
-        /// with reasonable build wall. Level 19 is the long-mode
-        /// max but ~10× slower to encode. Has no effect without
-        /// `--zstd`.
+        /// Compression level for `--zstd`.
         #[arg(long, default_value_t = 9)]
         zstd_level: i32,
     },
-    /// Inspect an existing archive — header flags, entry count,
-    /// per-band breakdown (count, mean/median/max bytes, on-disk
-    /// payload bytes, compression ratio for zstd archives), top-K
-    /// largest entries, mtime distribution.
+    /// Report archive flags, sizes, compression ratios, and modification times.
     Stat {
         /// Archive path.
         archive: PathBuf,
@@ -145,95 +106,55 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value_t = 10)]
         top: usize,
     },
-    /// Evict a file (or every regular file under a directory tree)
-    /// from the kernel page cache via `posix_fadvise(POSIX_FADV_DONTNEED)`.
-    /// Used to make cold-cache load benchmarks reproducible without
-    /// `sudo drop_caches` (which flushes the *entire* page cache —
-    /// disruptive to anything else running on the host).
-    ///
-    /// Works without elevated privileges for files the user owns
-    /// because `posix_fadvise(2)` is per-fd, not system-wide.
+    /// Evict files from the kernel page cache on Linux.
     Uncache {
-        /// File or directory to evict from the page cache. For
-        /// directories, walks recursively and evicts every regular
-        /// file. Reports the total bytes evicted.
+        /// File or directory tree to evict from the page cache.
         path: PathBuf,
     },
-    /// Parse every `.txt` in the corpus and report what the parser
-    /// *actually* does on real data — the empirical ground truth for
-    /// spec-conformance work, independent of any documentation or
-    /// hand-written vector.
-    ///
-    /// Headline output: the distinct `［＃…］` bodies that fall through
-    /// to `DirectiveKind::Unknown` (the true unsupported set), with
-    /// per-body counts, a first-seen `label:line`, and a normalized
-    /// "shape" grouping (`「…」` → `「」`, digit runs → `N`) so families
-    /// of unsupported directives surface. Also: per-`NodeKind`
-    /// frequency, the `DirectiveKind` breakdown, the 外字 address-form
-    /// distribution (+ unresolved count), diagnostics by code, and
-    /// decode-error / parse-panic counts.
-    ///
-    /// The JSON report goes to stdout (or `--out`); the human summary
-    /// goes to stderr, so the JSON pipes clean. The report is a
-    /// throwaway measurement — it must NEVER be committed back into the
-    /// conformance vectors, because feeding parser output into the
-    /// vectors is exactly the circularity this audit exists to expose.
+    /// Report notation usage and diagnostics across the corpus.
+    /// Writes JSON to stdout or `--out`, and a text summary to stderr.
     Audit {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
         /// Write the JSON report here instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Rows per table in the human (stderr) summary. The JSON
-        /// report always carries the full, untruncated lists.
+        /// Rows per table in the stderr summary.
+        /// The JSON report contains all rows.
         #[arg(long, default_value_t = 40)]
         top: usize,
-        /// Process at most N files (debugging; default: whole corpus).
+        /// Process at most this many files.
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Strict corpus conformance gate.
+    /// Check strict corpus conformance.
     AuditGate {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Verbatim-provenance gate: fail (exit 1) when any corpus document's
-    /// `Snapshot::to_source_verbatim()` no longer equals its decoded original
-    /// source. Binary — one byte of drift fails. Needs a corpus
-    /// (`$AOZORA_CORPUS_ROOT` or `--root`); gracefully skips (exit 0) when
-    /// none is set.
+    /// Reject any difference between decoded source and verbatim serialization.
     Verbatim {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Strict render-leak gate.
+    /// Reject notation markers in visible rendered text.
     RenderLeakGate {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Strict render-correctness gate.
+    /// Reject structural defects in rendered output.
     RenderCorrectnessGate {
-        /// Corpus root directory of `.txt` files. Defaults to
-        /// `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
     },
-    /// Select a stratified, family-diverse set of real works to extend the
-    /// `fixtures/works/` golden set (WS-1 / #414). Deterministic greedy
-    /// weighted set-cover over the notation families, seeded by the works
-    /// already vendored, excluding Unknown-dominated, unclean, and >500 KiB
-    /// works. Writes a TOML manifest whose `slug` fields are blank for a human
-    /// to fill (romanising the kanji author/title is not automatable).
+    /// Select works by notation coverage and write a manifest with blank slugs.
     SelectWorks {
-        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
         /// How many works to add on top of the already-vendored set.
@@ -245,32 +166,24 @@ pub(crate) enum CorpusTarget {
             default_value = "crates/aozora-conformance/fixtures/works-selection.toml"
         )]
         out: PathBuf,
-        /// Directory of already-vendored works — seeds coverage and is excluded
-        /// from re-selection (matched by `source.txt` content).
+        /// Directory of existing golden works to seed coverage and exclude from selection.
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
         vendored: PathBuf,
-        /// Maximum Unknown-annotation ratio a candidate may carry.
+        /// Upper bound on the ratio of unknown annotations per candidate.
         #[arg(long, default_value_t = 0.25)]
         max_unknown_ratio: f64,
-        /// Hard budget on total vendored `source.txt` bytes — the objective is
-        /// weighted family coverage *per byte*, so small works that cover rare
-        /// families win. Default ~2 MiB keeps the golden set lean.
+        /// Total byte budget for vendored source files.
         #[arg(long, default_value_t = 2_000_000)]
         max_total_source_bytes: usize,
-        /// Force-include the smallest clean corpus work exercising each named
-        /// family (repeatable), on top of the greedy selection — the direct way
-        /// to fill a specific uncovered family. A family no clean work exercises
-        /// (e.g. `rubyRetarget`) is reported as unsatisfiable (craft a
-        /// `fixtures/render/` fixture instead).
+        /// Require the smallest clean work for each named notation family.
+        /// Fails if a required family has no clean candidate.
         #[arg(long = "require-family", value_name = "FAMILY")]
         require_family: Vec<String>,
     },
-    /// Vendor the works named in a selection manifest into `fixtures/works/`:
-    /// decode each corpus file, normalise CRLF→LF, and write `source.txt`.
-    /// Skips rows with an empty `slug`. Does NOT write `expected.html` — seed
-    /// that with `UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate`.
+    /// Vendor sources named by a selection manifest, skipping blank slugs.
+    /// Generate expected HTML with `UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate`.
     VendorWorks {
-        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
         /// Selection manifest to read.
@@ -283,30 +196,19 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
         dest: PathBuf,
     },
-    /// Classify the corpus `Unknown` residue against the notation-hygiene
-    /// catalogues — the reproducible mining worklist for growing them.
-    ///
-    /// Runs the full audit, then buckets every raw Unknown body by whether
-    /// Tier1 (`canonical_directive`), Tier2 (`degraded_directive`), or neither
-    /// (the discovery *residue*) resolves it. The residue is shape-aggregated
-    /// and occurrence-ranked with a raw example each. Like `audit`, the JSON
-    /// report is a throwaway measurement — never committed. Needs a corpus.
+    /// Classify unknown annotations by catalogue coverage and report unresolved shapes.
     ClassifyUnknown {
-        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        /// Corpus directory, defaulting to `$AOZORA_CORPUS_ROOT`.
         #[arg(long)]
         root: Option<PathBuf>,
         /// Write the JSON report here instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
-        /// Residue shapes to print in the human (stderr) summary.
+        /// Unresolved shapes to print in the stderr summary.
         #[arg(long, default_value_t = 40)]
         top: usize,
     },
-    /// Gate golden family coverage: every notation family must be exercised by
-    /// the golden fixtures. Counts the union of the vendored golden works
-    /// (`fixtures/works/`) AND the crafted render fixtures (`fixtures/render/`),
-    /// so a structurally-rare family with no clean corpus work is covered by a
-    /// crafted fixture. Reads only committed fixtures, so it needs no corpus.
+    /// Check notation-family coverage across committed golden works and render fixtures.
     FamilyCoverage {
         /// Vendored golden-works directory to measure.
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
@@ -315,11 +217,7 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/render")]
         render: PathBuf,
     },
-    /// Probe which of the 43 notation families a single source exercises — the
-    /// authoring aid for crafting a `fixtures/render/` fixture that fills a
-    /// specific uncovered family (run it on candidate notation until the target
-    /// family appears). Uses the same `analyze` walk `family-coverage` counts, so
-    /// its answer is exactly what the golden set would gain. Reads no corpus.
+    /// Report the notation families present in a source string or file.
     FamilyProbe {
         /// Source text to analyse inline.
         #[arg(long, conflicts_with = "file")]
@@ -398,6 +296,10 @@ struct PackOptions {
     zstd_level: i32,
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
     let PackOptions {
         utf8,
@@ -417,7 +319,6 @@ fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
 
     let total_start = Instant::now();
 
-    // Step 1: enumerate source files.
     let walk_start = Instant::now();
     let corpus = FilesystemCorpus::new(src.to_path_buf())
         .map_err(|e| format!("invalid corpus root: {e:?}"))?;
@@ -429,14 +330,8 @@ fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
         walk_start.elapsed().as_secs_f64()
     );
 
-    // Step 2: load previous archive (incremental cache lookup) if
-    // present and the flags match.
     let prev = previous_archive(out, flags)?;
 
-    // Step 3: per-source-file decision (reuse vs re-pack), in
-    // parallel via rayon. The decision body is pure-CPU + filesystem
-    // metadata; it does not touch the in-progress builder, so no
-    // shared mutability.
     let scan_start = Instant::now();
     let decisions = classify_entries(&paths, src, prev.as_ref(), utf8)?;
     eprintln!(
@@ -457,19 +352,9 @@ fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
             .count()
     });
 
-    // Step 4: assemble. Two sub-steps so the slow zstd encode runs
-    // in parallel — without this, level-9 encoding of 17 k entries
-    // serialised through `push_entry` takes minutes; with par
-    // encoding it's seconds.
-    //
-    // 4a. Sort by label for deterministic on-disk layout (helpful
-    //     for diff / reproducible-build verification).
     let mut sorted = decisions;
     sorted.sort_by(|a, b| a.label.cmp(&b.label));
 
-    // 4b. Encode all `Encode` entries in parallel — produces
-    //     `(label, payload_bytes, decoded_len, mtime_ns, source_blake3)`
-    //     tuples ready for sequential append.
     let encode_start = Instant::now();
     let prepared = prepare_entries(sorted, prev.as_ref(), flags, zstd_level)?;
     eprintln!(
@@ -483,8 +368,6 @@ fn pack(src: &Path, out: &Path, options: PackOptions) -> Result<(), String> {
         },
     );
 
-    // 4c.
-    // Sequential append into the builder + write to disk.
     let assemble_start = Instant::now();
     let bytes_written = write_prepared(prepared, flags, zstd_level, out)?;
     eprintln!(
@@ -533,6 +416,10 @@ fn write_prepared(
         .map_err(|e| format!("write archive: {e}"))
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn previous_archive(out: &Path, flags: u32) -> Result<Option<PrevArchive>, String> {
     Ok(match Archive::open(out) {
         Ok(arc) if arc.flags() == flags => {
@@ -640,10 +527,10 @@ fn collect_corpus_results<T>(
         .map_err(|error| format!("{operation}: {error}"))
 }
 
-/// Stat an existing archive — print header summary, per-band
-/// breakdown (count, mean / median / max bytes per entry,
-/// compression ratio for zstd archives), top-K largest entries by
-/// decoded length, and an mtime distribution histogram.
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn stat(path: &Path, top: usize) -> Result<(), String> {
     let arc = Archive::open(path).map_err(|e| format!("open: {e}"))?;
     let bytes_on_disk = fs::metadata(path).map_or(0, |m| m.len());
@@ -671,9 +558,6 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         println!("  zstd ratio   : {ratio:.2}× decoded ÷ on-disk (overall)");
     }
 
-    // Per-band breakdown — bucket by decoded_len matching
-    // `aozora-bench::SizeBand` thresholds. Index buckets are kept
-    // separate so we can compute median per band.
     println!();
     println!("  per-band breakdown (by decoded byte length):");
     print_band_header(arc.is_zstd());
@@ -691,9 +575,6 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         print_band_row(label, &bucketed[slot], arc.is_zstd())?;
     }
 
-    // mtime distribution — by year. Useful sanity check that the
-    // archive carries source mtimes (for incremental diff) and
-    // gives a quick "what era of corpus is this" answer.
     println!();
     println!("  mtime distribution (by source-file year):");
     let mut by_year: HashMap<i32, usize> = HashMap::new();
@@ -715,8 +596,6 @@ fn stat(path: &Path, top: usize) -> Result<(), String> {
         );
     }
 
-    // Top-K largest entries by decoded bytes — useful for spotting
-    // pathological docs at a glance.
     if top > 0 {
         println!();
         println!("  top {top} largest entries (by decoded bytes):");
@@ -756,6 +635,10 @@ fn band_slot(decoded_len: u32) -> usize {
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_band_header(zstd: bool) {
     if zstd {
         println!(
@@ -770,6 +653,10 @@ fn print_band_header(zstd: bool) {
     }
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) -> Result<(), String> {
     if entries.is_empty() {
         if zstd {
@@ -823,9 +710,6 @@ fn print_band_row(label: &str, entries: &[&EntryMeta], zstd: bool) -> Result<(),
     Ok(())
 }
 
-/// Plain "year of UNIX epoch second" — works for the 1970-2099 range
-/// (the only range Aozora corpus mtimes will ever land in). Avoids
-/// pulling chrono just for this readout.
 fn year_of(t: SystemTime) -> Result<i32, String> {
     const SECONDS_PER_DAY: u64 = 86_400;
     const CIVIL_EPOCH_DAYS: i128 = 719_468;
@@ -852,15 +736,11 @@ fn bar(count: usize, total: usize, width: usize) -> String {
     "█".repeat(filled.min(width))
 }
 
-/// Evict a path (file or directory tree) from the kernel page cache
-/// via `posix_fadvise(POSIX_FADV_DONTNEED)`. Safe-API rustix wrapper;
-/// works without sudo for files the caller can open.
-///
-/// Linux-only: `posix_fadvise(POSIX_FADV_DONTNEED)` exists only on Linux
-/// (`rustix::fs::fadvise` is configured out on Windows and macOS has no
-/// `Advice::DontNeed`), so the non-Linux build carries the stub below,
-/// which fails loudly rather than silently no-op'ing.
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn uncache(path: &Path) -> Result<(), String> {
     let total_start = Instant::now();
     let metadata =
@@ -910,9 +790,6 @@ fn uncache(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Non-Linux stub for `corpus uncache` (see the Linux definition above):
-/// `posix_fadvise(POSIX_FADV_DONTNEED)` has no portable counterpart, so
-/// the command is unsupported off Linux and says so rather than lying.
 #[cfg(not(target_os = "linux"))]
 fn uncache(_path: &Path) -> Result<(), String> {
     Err("xtask corpus uncache evicts the page cache via \
@@ -929,30 +806,18 @@ fn uncache_file(path: &Path) -> Result<u64, String> {
         .metadata()
         .map_err(|e| format!("inspect {}: {e}", path.display()))?
         .len();
-    // `len = None` means "advise to end of file"; for our case (whole-
-    // file eviction) that's exactly what we want, regardless of size.
     fadvise(&file, 0, None, Advice::DontNeed)
         .map_err(|e| format!("fadvise {}: {e}", path.display()))?;
     Ok(len)
 }
 
-/// Per-source-file outcome of the incremental scan.
 struct EntryDecision {
     label: String,
     action: EntryAction,
 }
 
 enum EntryAction {
-    /// Keep the previous archive's entry verbatim (mtime + hash
-    /// matched).
     Reuse,
-    /// Re-encode and re-pack. Carries the loaded payload bytes so
-    /// the builder doesn't have to re-read them, plus the
-    /// source-file blake3 hash (computed over the on-disk raw
-    /// bytes, NOT over the post-decode payload — so incremental
-    /// matching is consistent across archive flavours: a `--utf8`
-    /// archive's `source_blake3` still hashes the original SJIS
-    /// source file).
     Encode {
         payload_bytes: Vec<u8>,
         mtime_ns: i64,
@@ -960,9 +825,6 @@ enum EntryAction {
     },
 }
 
-/// Output of the parallel encode step (4b in `pack`). Each entry is
-/// either copied from a previous archive verbatim, or freshly
-/// encoded with the new compression / decode settings.
 enum PreparedEntry {
     Prebuilt {
         meta: EntryMeta,
@@ -1016,19 +878,12 @@ fn classify_entry(
         && prev_meta.source_mtime_ns == mtime_ns
         && prev_meta.source_blake3 == source_blake3
     {
-        // mtime + hash match → previous entry's encoded payload is
-        // still valid; reuse verbatim.
         return Ok(EntryDecision {
             label,
             action: EntryAction::Reuse,
         });
     }
 
-    // No previous archive, or label unseen, or content drifted —
-    // re-encode the payload (normalise to UTF-8 here for utf8
-    // archives, auto-detecting Shift_JIS vs already-UTF-8 source) but
-    // keep `source_blake3` pinned to the raw source bytes so the next
-    // incremental pack can match identity.
     let payload_bytes = payload_bytes.unwrap_or(bytes);
     Ok(EntryDecision {
         label,
@@ -1057,17 +912,9 @@ fn classify_entries(
         .collect()
 }
 
-/// Wrapper around [`Archive`] that exposes `(meta, payload)` lookup by
-/// label — needed by the incremental-pack `EntryAction::Reuse` path,
-/// which copies pre-encoded payload bytes verbatim into the new
-/// archive.
 struct PrevArchive {
     arc: Archive,
-    /// label → entry index in `arc.entries()`. Built once at open
-    /// time so the per-decision lookup is O(1).
     lookup: HashMap<String, EntryMeta>,
-    /// label → entry index in `arc.entries()` for `raw_payload`
-    /// access.
     by_index: HashMap<String, usize>,
 }
 
@@ -1096,11 +943,6 @@ impl PrevArchive {
     }
 }
 
-// ===========================================================================
-// corpus audit — empirical ground truth for spec-conformance work
-// ===========================================================================
-
-/// Directive classes in report order.
 const ANN_KIND_LABELS: &[&str] = &[
     "nonCanonical",
     "editorial",
@@ -1118,37 +960,27 @@ const ANN_KIND_LABELS: &[&str] = &[
     "marginNotePairClose",
 ];
 
-/// 外字 mencode address-form buckets, in the fixed order used by
-/// [`gaiji_bucket`] / [`FileStat::gaiji_forms`].
 const GAIJI_FORM_LABELS: &[&str] = &[
-    "jisLevel",  // 第N水準… (named JIS level)
-    "jisTriple", // men-ku-ten N-N-N
-    "unicode",   // U+XXXX
-    "pageLine",  //底本ページ-行 N-N
-    "named",     // free-form description / other
-    "absent",    // no mencode at all
+    "jisLevel",
+    "jisTriple",
+    "unicode",
+    "pageLine",
+    "named",
+    "absent",
 ];
 
-/// Per-file audit accumulator. Owned data only — it must cross the
-/// rayon worker boundary, so it holds no borrows into the per-file
-/// parse output.
 #[derive(Default)]
 struct FileStat {
     label: String,
     decode_error: bool,
     parse_error: bool,
     panicked: bool,
-    /// Indexed parallel to [`NodeKind::ALL`].
     node_kinds: [u64; NodeKind::ALL.len()],
-    /// Indexed parallel to [`ANN_KIND_LABELS`].
     annotation_kinds: [u64; ANN_KIND_LABELS.len()],
     gaiji_total: u64,
     gaiji_unresolved: u64,
-    /// Indexed parallel to [`GAIJI_FORM_LABELS`].
     gaiji_forms: [u64; GAIJI_FORM_LABELS.len()],
-    /// One `(raw body, 1-based line)` per Unknown annotation occurrence.
     unknown: Vec<(String, u32)>,
-    /// Diagnostic codes emitted for this file.
     diags: Vec<&'static str>,
 }
 
@@ -1162,10 +994,7 @@ struct Kv {
 struct UnknownRow {
     body: String,
     count: u64,
-    /// First-seen (lexicographically smallest, for determinism)
-    /// `corpus-relative-path:line`.
     example: String,
-    /// Normalized family this body belongs to.
     shape: String,
 }
 
@@ -1215,18 +1044,16 @@ fn with_suppressed_panic_hook<T>(f: impl FnOnce() -> T) -> T {
     }
 }
 
-/// Walk the corpus and build the [`AuditReport`] without emitting any
-/// human/JSON output — the shared core behind both `corpus audit` and the
-/// strict zero-residue `corpus audit-gate`.
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn run_audit(root: Option<&Path>, limit: Option<usize>) -> Result<AuditReport, String> {
     let corpus = resolve_corpus(root)?;
     let root_display = corpus.root().display().to_string();
     eprintln!("xtask corpus audit: walking {root_display} …");
     let start = Instant::now();
 
-    // Per-document parse panics are recorded as a datum (see
-    // `audit_one`); suppress the default backtrace printer so a
-    // pathological doc does not flood stderr. Restored after the run.
     let results: Vec<Result<FileStat, aozora_corpus::CorpusError>> =
         with_suppressed_panic_hook(|| {
             limit.map_or_else(
@@ -1244,6 +1071,11 @@ fn run_audit(root: Option<&Path>, limit: Option<usize>) -> Result<AuditReport, S
     Ok(merge(results, root_display, start.elapsed().as_secs_f64()))
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn audit(
     root: Option<&Path>,
     out: Option<&Path>,
@@ -1264,6 +1096,10 @@ fn audit(
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn audit_gate(root: Option<&Path>) -> Result<(), String> {
     let report = run_audit(root, None)?;
     let mut problems = Vec::new();
@@ -1324,28 +1160,23 @@ fn audit_gate(root: Option<&Path>) -> Result<(), String> {
     }
 }
 
-/// Outcome of checking one document's verbatim-provenance invariant.
 enum VerbatimOutcome {
-    /// `to_source_verbatim()` equalled the decoded original source.
     Match,
-    /// Source decoded as neither UTF-8 nor Shift_JIS.
     DecodeSkipped,
-    /// The decoded source exceeded the parser's accepted input range.
     ParseRejected(String),
-    /// The invariant broke (or the parse panicked); carries the label.
     Mismatch(String),
 }
 
-/// Verbatim-provenance gate for every corpus document.
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     let root_display = corpus.root().display().to_string();
     eprintln!("xtask corpus verbatim: walking {root_display} …");
     let start = Instant::now();
 
-    // Per-document parse panics are folded into `Mismatch` (see
-    // `verbatim_one`); silence the default backtrace printer so a
-    // pathological doc does not flood stderr. Restored after the run.
     let results: Vec<Result<VerbatimOutcome, aozora_corpus::CorpusError>> =
         with_suppressed_panic_hook(|| par_load_decoded(&corpus, verbatim_one));
 
@@ -1407,7 +1238,6 @@ fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-/// Check one document's verbatim invariant.
 fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
     let label = item.label;
     let source: Arc<str> = match decode_auto(&item.bytes) {
@@ -1432,41 +1262,26 @@ fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
     }
 }
 
-/// A notation control marker that leaked into rendered visible text.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum LeakCat {
-    /// A non-empty ruby delimiter `《` (with `》`) survived — a ruby that
-    /// never attached to its base and replayed as literal text.
     Ruby,
-    /// A fullwidth ruby-base marker `｜` survived — the renderer should
-    /// always consume it.
     Bar,
-    /// An annotation open `［＃` survived — a directive (incl. gaiji
-    /// `※［＃…］`) that never resolved.
     Directive,
 }
 
-/// One leaked marker plus a small visible-text context window.
 struct LeakHit {
     cat: LeakCat,
     snippet: String,
 }
 
-/// Per-document render-audit outcome.
 enum DocRenderOutcome {
-    /// Rendered, no leaked markers.
     Clean,
-    /// Neither UTF-8 nor Shift_JIS — skipped (mirrors `corpus_sweep`).
     DecodeSkipped,
-    /// Decoded input exceeded the parser's accepted span range.
     ParseRejected(String),
-    /// `to_html()` panicked; carries the label.
     Panicked(String),
-    /// Rendered and leaked ≥1 marker.
     Leaked { label: String, hits: Vec<LeakHit> },
 }
 
-/// Aggregated leak stats for one marker category.
 #[derive(Default)]
 struct CatAgg {
     files: usize,
@@ -1475,7 +1290,6 @@ struct CatAgg {
 }
 
 impl CatAgg {
-    /// Fold one document's hits of category `cat` into the aggregate.
     fn record(&mut self, cat: LeakCat, hits: &[LeakHit], sample: (&str, usize)) {
         let (label, top) = sample;
         let n = hits.iter().filter(|h| h.cat == cat).count();
@@ -1492,15 +1306,12 @@ impl CatAgg {
     }
 }
 
-/// Render one document and scan its visible text for leaked markers.
 fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     let label = item.label;
     let decoded = match decode_auto(&item.bytes) {
         Ok(t) => t.into_owned(),
         Err(_) => return DocRenderOutcome::DecodeSkipped,
     };
-    // Render only the literary body — the standard header legend
-    // documents the notation glyphs verbatim and would swamp the signal.
     let text = aozora_body(&decoded);
     let document = match panic::catch_unwind(AssertUnwindSafe(|| aozora::parse(text))) {
         Ok(Ok(document)) => document,
@@ -1526,9 +1337,6 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     }
 }
 
-// ── Render-correctness invariants (I-A tag balance, I-C class membership) ──
-
-/// A structural render defect found on one document's HTML.
 #[derive(Clone)]
 struct CorrHit {
     cat: CorrCat,
@@ -1537,15 +1345,11 @@ struct CorrHit {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CorrCat {
-    /// I-A: tags do not balance (mismatched close or unclosed at EOF).
     Unbalanced,
-    /// I-B: a `<ruby>` has an empty base (reading annotates nothing).
     BadRuby,
-    /// I-C: an emitted `aozora-*` class is not in `AOZORA_CLASSES`.
     UndeclaredClass,
 }
 
-/// Per-document render-correctness outcome (mirrors [`DocRenderOutcome`]).
 enum DocCorrOutcome {
     Clean,
     DecodeSkipped,
@@ -1554,8 +1358,6 @@ enum DocCorrOutcome {
     Defective { label: String, hits: Vec<CorrHit> },
 }
 
-/// Collapse a trailing `-<digits>` run to its stem (matches the renderer's
-/// `classes::collect_classes`), so `aozora-indent-3` checks as `aozora-indent`.
 fn class_stem(c: &str) -> &str {
     match c.rfind('-') {
         Some(i) if i + 1 < c.len() && c[i + 1..].bytes().all(|b| b.is_ascii_digit()) => &c[..i],
@@ -1563,8 +1365,6 @@ fn class_stem(c: &str) -> &str {
     }
 }
 
-/// The tag name of `<name …>` / `</name>` — bytes after `<`(`/`) up to the
-/// first delimiter.
 fn tag_name(tag: &str) -> &str {
     let s = tag.trim_start_matches('<').trim_start_matches('/');
     let end = s
@@ -1573,7 +1373,6 @@ fn tag_name(tag: &str) -> &str {
     &s[..end]
 }
 
-/// The `aozora-*` class tokens declared in one opening tag's `class="…"`.
 fn classes_of(tag: &str) -> Vec<&str> {
     let Some(p) = tag.find("class=\"") else {
         return Vec::new();
@@ -1586,15 +1385,10 @@ fn classes_of(tag: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Scan rendered `html` for I-A (tag balance) and I-C (undeclared class) in one
-/// linear pass. Raw `<` only ever starts a tag (the renderer entity-escapes all
-/// text and attribute values), so tag boundaries are unambiguous. Reports at
-/// most one imbalance per document (tracking stops after the first anomaly).
 fn scan_correctness(html: &str) -> Vec<CorrHit> {
     let mut hits = Vec::new();
     let mut stack: Vec<&str> = Vec::new();
     let mut broken = false;
-    // I-B: `Some(seen_content)` while scanning a `<ruby>` base (before its <rt>).
     let mut ruby_base: Option<bool> = None;
     let bytes = html.as_bytes();
     let n = bytes.len();
@@ -1602,7 +1396,7 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
     while i < n {
         if bytes[i] != b'<' {
             if ruby_base == Some(false) && !bytes[i].is_ascii_whitespace() {
-                ruby_base = Some(true); // non-whitespace text = non-empty base
+                ruby_base = Some(true);
             }
             i += 1;
             continue;
@@ -1627,8 +1421,6 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
             continue;
         }
         let name = tag_name(tag);
-        // I-B: the ruby base spans `<ruby>` up to its first `<rt>`/`<rp>`; an
-        // intervening non-whitespace text run or nested element makes it non-empty.
         match name {
             "ruby" => ruby_base = Some(false),
             "rt" | "rp" => {
@@ -1666,7 +1458,6 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
     hits
 }
 
-/// Render one document's literary body and scan for structural render defects.
 fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
     let label = item.label;
     let decoded = match decode_auto(&item.bytes) {
@@ -1690,7 +1481,6 @@ fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
     }
 }
 
-/// Fold one document's correctness hits of category `cat` into `agg`.
 fn record_corr(agg: &mut CatAgg, cat: CorrCat, hits: &[CorrHit], sample: (&str, usize)) {
     let (label, top) = sample;
     let n = hits.iter().filter(|h| h.cat == cat).count();
@@ -1769,6 +1559,10 @@ fn tally_render_correctness(
     )
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn render_correctness_gate(root: Option<&Path>) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     eprintln!(
@@ -1900,6 +1694,10 @@ fn tally_render_leaks(
     )
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     eprintln!(
@@ -1976,12 +1774,6 @@ fn render_leak_gate(root: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-/// Scan rendered HTML for notation control markers surviving into the
-/// visible text. Two legitimate sources of `《…》` are excluded
-/// structurally: empty ruby `《》` (a `《》：ルビ` legend / `empty_ruby`
-/// fixture), and the literal delimiters an `≪…≫` angle-quote emits inside
-/// an `aozora-angle-quote` span (stripped, nesting-aware, by
-/// [`strip_to_visible_text`]).
 fn visible_leak_markers(html: &str) -> Vec<LeakHit> {
     let visible = strip_to_visible_text(html);
     let text = html_unescape_min(&visible);
@@ -1989,10 +1781,8 @@ fn visible_leak_markers(html: &str) -> Vec<LeakHit> {
     let mut hits = Vec::new();
     for idx in 0..chars.len() {
         let cat = match chars[idx] {
-            // Non-empty ruby-open: `《` not immediately closed by `》`.
             '《' if chars.get(idx + 1) != Some(&'》') => Some(LeakCat::Ruby),
             '｜' => Some(LeakCat::Bar),
-            // Annotation open `［＃` (incl. gaiji `※［＃`).
             '［' if chars.get(idx + 1) == Some(&'＃') => Some(LeakCat::Directive),
             _ => None,
         };
@@ -2038,20 +1828,12 @@ fn unaccounted_leak_markers(
         .collect()
 }
 
-/// Collect the visible text of `html`: drop everything inside `<…>` tags,
-/// and drop the entire content of spans that do not display —
-/// `aozora-angle-quote` (whose `《…》` delimiters are legitimate output)
-/// and any element carrying the `hidden` attribute (a resolved directive
-/// preserves its raw `［＃…］` inside `<span class="aozora-directive"
-/// hidden>`, which the reader never sees). Span nesting is tracked so a
-/// gaiji/ruby span nested inside a suppressed span is suppressed with it.
 fn strip_to_visible_text(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let n = html.len();
     let bytes = html.as_bytes();
     let mut i = 0;
     let mut span_depth: i32 = 0;
-    // `Some(d)`: suppressing text until span depth returns to `d`.
     let mut suppress_target: Option<i32> = None;
     while i < n {
         if bytes[i] == b'<' {
@@ -2085,11 +1867,6 @@ fn strip_to_visible_text(html: &str) -> String {
     out
 }
 
-/// Strip the standard Aozora boilerplate so the audit sees only the
-/// literary body: the header legend block (everything up to and including
-/// the 2nd delimiter line — a run of ≥10 `-`), which literally documents
-/// `《》 ｜ ［＃］` and would otherwise register as leaks, and the
-/// bibliographic footer from the first `底本：` line onward.
 fn aozora_body(src: &str) -> String {
     let lines: Vec<&str> = src.lines().collect();
     let is_delim = |l: &str| {
@@ -2115,7 +1892,6 @@ fn aozora_body(src: &str) -> String {
     lines[start..end].join("\n")
 }
 
-/// `<span>` or `<span …>` opening tag (not `</span>`, not `<sub>`/`<sup>`).
 fn is_span_open(tag: &str) -> bool {
     let Some(rest) = tag.strip_prefix("<span") else {
         return false;
@@ -2123,8 +1899,6 @@ fn is_span_open(tag: &str) -> bool {
     matches!(rest.as_bytes().first(), Some(b' ' | b'>' | b'/'))
 }
 
-/// Undo the five entities `aozora-render`'s escaper emits (`&amp;` last so
-/// `&amp;lt;` → `&lt;`, not `<`).
 fn html_unescape_min(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -2133,7 +1907,6 @@ fn html_unescape_min(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// A short visible-text window around a leak, for triage.
 fn snippet_around(chars: &[char], idx: usize) -> String {
     let start = idx.saturating_sub(SNIPPET_PREFIX_CHARS);
     let end = (idx + SNIPPET_SUFFIX_CHARS).min(chars.len());
@@ -2150,10 +1923,6 @@ fn resolve_corpus(root: Option<&Path>) -> Result<FilesystemCorpus, String> {
     FilesystemCorpus::new(path).map_err(|e| format!("invalid corpus root: {e:?}"))
 }
 
-/// Decode and parse one document, accumulating its audit stats. The
-/// parse and AST walk are wrapped in `catch_unwind` so a single
-/// pathological document is recorded as `panicked: true` rather than
-/// aborting the whole sweep.
 fn audit_one(item: CorpusItem) -> FileStat {
     let label = item.label;
     let text = match decode_auto(&item.bytes) {
@@ -2184,9 +1953,6 @@ fn audit_one(item: CorpusItem) -> FileStat {
     }
 }
 
-/// Walk the owned AST and tally everything we report. Payload text is
-/// resolved through the output's store; the returned `FileStat` owns its
-/// strings.
 fn analyze(text: &str) -> Result<FileStat, aozora::ParseError> {
     let doc = aozora::parse(text)?;
     let snapshot = doc.snapshot();
@@ -2233,10 +1999,6 @@ fn analyze(text: &str) -> Result<FileStat, aozora::ParseError> {
     Ok(s)
 }
 
-/// 1-based source line of a sanitized-source byte offset. Offsets are in
-/// sanitized-source coordinates, which equal raw-source coordinates for
-/// the typical document (no BOM, LF-only, no `〔…〕` accent spans); the
-/// `example` pointer is approximate when sanitization shifted bytes.
 #[cfg(test)]
 fn line_of(text: &str, byte_off: u32) -> u32 {
     let off = (byte_off as usize).min(text.len());
@@ -2248,35 +2010,28 @@ fn is_digit_char(c: char) -> bool {
     c.is_ascii_digit() || ('０'..='９').contains(&c)
 }
 
-/// Classify a 外字 mencode reference into one of [`GAIJI_FORM_LABELS`].
 fn gaiji_bucket(mencode: Option<&str>) -> usize {
     let Some(s) = mencode else {
         return GAIJI_FORM_ABSENT;
-    }; // absent
+    };
     if s.contains("U+") {
-        return 2; // unicode
+        return 2;
     }
     if s.contains("水準") {
-        return 0; // jisLevel
+        return 0;
     }
-    // Take the leading token before any separator, then inspect its
-    // dash structure: N-N-N is a men-ku-ten triple, N-N is a page-line
-    // reference, anything else is a free-form / named description.
     let head = s.split(['、', ',', ' ']).next().unwrap_or(s).trim();
     let parts: Vec<&str> = head.split('-').collect();
     let numeric = parts
         .iter()
         .all(|p| !p.is_empty() && p.chars().all(is_digit_char));
     match (parts.len(), numeric) {
-        (JIS_ADDRESS_PARTS, true) => 1,    // jisTriple
-        (2, true) => GAIJI_FORM_PAGE_LINE, // pageLine
-        _ => GAIJI_FORM_NAMED,             // named
+        (JIS_ADDRESS_PARTS, true) => 1,
+        (2, true) => GAIJI_FORM_PAGE_LINE,
+        _ => GAIJI_FORM_NAMED,
     }
 }
 
-/// Collapse a directive body to its family shape: quoted operands
-/// (`「…」`) become `「」` and digit runs become `N`, so
-/// `「猫」は太字` and `「犬」は太字` both fold to `「」は太字`.
 fn normalize_shape(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut in_quote = false;
@@ -2293,7 +2048,7 @@ fn normalize_shape(raw: &str) -> String {
                 in_quote = false;
                 prev_digit = false;
             }
-            _ if in_quote => {} // drop the quoted operand's content
+            _ if in_quote => {}
             c if is_digit_char(c) => {
                 if !prev_digit {
                     out.push('N');
@@ -2330,7 +2085,6 @@ fn merge_unknown_rows(unknown_map: HashMap<String, (u64, String)>) -> UnknownRow
     let unknown_total: u64 = unknown_map.values().map(|(c, _)| *c).sum();
     let unknown_distinct = unknown_map.len();
 
-    // Fold the distinct bodies into family shapes.
     let mut shape_map: HashMap<String, (u64, usize)> = HashMap::new();
     for (body, (count, _)) in &unknown_map {
         let entry = shape_map.entry(normalize_shape(body)).or_insert((0, 0));
@@ -2426,7 +2180,6 @@ fn merge(
     let mut gaiji_total = 0u64;
     let mut gaiji_unresolved = 0u64;
     let mut diag_map: HashMap<&'static str, u64> = HashMap::new();
-    // body → (count, smallest-example).
     let mut unknown_map: HashMap<String, (u64, String)> = HashMap::new();
 
     let mut tally = AuditTally::default();
@@ -2509,6 +2262,10 @@ fn merge(
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn print_human_summary(r: &AuditReport, top: usize) {
     eprintln!();
     eprintln!("=== corpus audit ===");
@@ -2580,7 +2337,6 @@ fn print_human_summary(r: &AuditReport, top: usize) {
     eprintln!("(full untruncated lists are in the JSON report)");
 }
 
-/// Truncate by `char` (never mid-codepoint) for terminal display.
 fn truncate_for_display(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_owned();
@@ -2590,19 +2346,6 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
     out
 }
 
-// ================= WS-1: stratified golden-works selection (#414) =================
-//
-// The `fixtures/works/` golden set byte-compares the parser's own `to_html()`
-// over whole real works, catching drift on the notation *combinations* real
-// documents exhibit that single-construct fixtures miss. `select-works` grows
-// that set reproducibly: it fingerprints every corpus work by the notation
-// families it exercises, then runs a deterministic greedy weighted set-cover —
-// rare families (e.g. `lineGothic`) weighted highest — over the works not already
-// vendored, excluding Unknown-dominated, unclean, and >500 KiB works. The value
-// of a new golden is the family *combination* it forces through `to_html()`, so
-// coverage (not proportional sampling) is the objective.
-
-/// Family universe derived from the three wire authorities.
 const FAM_NODE: usize = NodeKind::ALL.len();
 const FAM_ANN: usize = ANN_KIND_LABELS.len();
 const FAM_GAIJI: usize = GAIJI_FORM_LABELS.len();
@@ -2618,12 +2361,10 @@ fn family_name(id: usize) -> &'static str {
     }
 }
 
-/// Reverse of [`family_name`]: the family id a name denotes, or `None`.
 fn family_id_by_name(name: &str) -> Option<usize> {
     (0..FAM_TOTAL).find(|&id| family_name(id) == name)
 }
 
-/// The family ids a document exercises (count > 0), ascending.
 fn family_ids(stat: &FileStat) -> Vec<usize> {
     let mut ids = Vec::new();
     for (i, &c) in stat.node_kinds.iter().enumerate() {
@@ -2644,19 +2385,13 @@ fn family_ids(stat: &FileStat) -> Vec<usize> {
     ids
 }
 
-/// The notation-hygiene catalogue bucket a raw `［＃…］` Unknown body falls into.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Bucket {
-    /// Tier1 catalogue normalization resolves it — a zero-FP near-miss.
     Tier1,
-    /// Tier1 declines but Tier2 catalogue normalization reduces it (render-only).
     Tier2,
-    /// Neither catalogue matches — the discovery residue.
     Residue,
 }
 
-/// Strip the `［＃…］` frame exactly as the serializer's `emit_annotation` does
-/// (the single authority), then classify the trimmed body.
 fn classify_body(raw: &str) -> Bucket {
     let body = raw
         .strip_prefix("［＃")
@@ -2665,8 +2400,6 @@ fn classify_body(raw: &str) -> Bucket {
         .trim();
     match Catalogue::normalization(body) {
         Some(CatalogueMatch::Canonical) => Bucket::Tier1,
-        // Degraded — and any future recognized tier, since CatalogueMatch is
-        // #[non_exhaustive] — is a known but non-Core directive.
         Some(_) => Bucket::Tier2,
         None => Bucket::Residue,
     }
@@ -2676,10 +2409,7 @@ fn classify_body(raw: &str) -> Bucket {
 struct ResidueRow {
     shape: String,
     count: u64,
-    /// The raw body of this shape's highest-count member — the concrete text a
-    /// human vets (the shape elides `「…」` / digit operands).
     sample: String,
-    /// First-seen `corpus-relative-path:line` of the sample.
     example: String,
 }
 
@@ -2690,16 +2420,11 @@ struct ClassifyReport {
     tier1_occurrences: u64,
     tier2_occurrences: u64,
     residue_occurrences: u64,
-    /// `(tier1 + tier2) / unknown_total` — the share the catalogues already cover.
     resolved_ratio: f64,
     residue_distinct_shapes: usize,
     residue_shapes: Vec<ResidueRow>,
 }
 
-/// Bucket a set of raw Unknown bodies against the catalogues into a
-/// [`ClassifyReport`] — the pure, corpus-free core of `classify-unknown`.
-/// `bodies` is expected sorted by count descending, so each residue shape's
-/// first-seen member is its highest-count sample.
 fn classify_report(
     bodies: &[UnknownRow],
     files_analyzed: usize,
@@ -2744,7 +2469,11 @@ fn classify_report(
     })
 }
 
-/// `corpus classify-unknown`: bucket the Unknown residue against the catalogues.
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Result<(), String> {
     let audit = run_audit(root, None)?;
     let report = classify_report(
@@ -2786,8 +2515,6 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
     Ok(())
 }
 
-/// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
-/// pure set-difference behind `family-coverage`.
 fn missing_families(covered: &HashSet<usize>) -> Vec<&'static str> {
     (0..FAM_TOTAL)
         .filter(|id| !covered.contains(id))
@@ -2795,12 +2522,14 @@ fn missing_families(covered: &HashSet<usize>) -> Vec<&'static str> {
         .collect()
 }
 
-/// Assert every notation family is exercised by committed fixtures.
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
     if !vendored.is_dir() {
         return Err(format!("not a directory: {}", vendored.display()));
     }
-    // Union coverage from the real golden works AND the crafted render fixtures.
     let (mut covered, _hw) = load_vendored(vendored)?;
     let (render_covered, _hr) = load_vendored(render)?;
     covered.extend(render_covered);
@@ -2827,8 +2556,11 @@ fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
     }
 }
 
-/// `corpus family-probe`: the notation families a single source exercises,
-/// via the exact [`analyze`] → [`family_ids`] walk `family-coverage` counts.
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
     let src = match (text, file) {
         (Some(t), _) => t.to_owned(),
@@ -2861,7 +2593,6 @@ fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-/// A deterministic ASCII slug from the trailing Aozora card-id field.
 fn slug_from_label(label: &str) -> String {
     let stem = label.rsplit('/').next().unwrap_or(label);
     card_id_from_stem(stem).map_or_else(
@@ -2891,9 +2622,6 @@ fn card_id_from_stem(stem: &str) -> Option<&str> {
         })
 }
 
-/// The corpus filename's orthography tag, informational. (`mtime` is a vacuous
-/// era proxy on a flat checkout, so we surface the 新字新仮名 / 旧字旧仮名 axis
-/// the filename carries instead.)
 fn orthography_of(label: &str) -> &'static str {
     for tag in ["新字新仮名", "旧字旧仮名", "新字旧仮名", "旧字新仮名"] {
         if label.contains(tag) {
@@ -2903,7 +2631,6 @@ fn orthography_of(label: &str) -> &'static str {
     ""
 }
 
-/// A candidate work's selection fingerprint.
 struct WorkProfile {
     label: String,
     len: usize,
@@ -2916,8 +2643,6 @@ struct WorkProfile {
     decodable: bool,
 }
 
-/// Decode, lex, and render one work into a fingerprint. Both the AST walk
-/// (families) and the render (cleanliness) are `catch_unwind`-guarded.
 fn profile_one(item: CorpusItem) -> Result<WorkProfile, String> {
     let label = item.label;
     let orthography = orthography_of(&label);
@@ -2988,7 +2713,6 @@ fn profile_one(item: CorpusItem) -> Result<WorkProfile, String> {
     })
 }
 
-/// Seed family coverage and the dedup hash-set from the already-vendored works.
 fn load_vendored(dir: &Path) -> Result<(HashSet<usize>, HashSet<[u8; 32]>), String> {
     let mut covered = HashSet::new();
     let mut hashes = HashSet::new();
@@ -3028,18 +2752,14 @@ struct WorksManifest {
 #[derive(Serialize)]
 struct WorkRow {
     path: String,
-    /// Blank on generation — a human fills a mnemonic romanisation (kanji
-    /// author/title is not deterministically romanisable).
     slug: String,
     size: usize,
     band: &'static str,
     orthography: &'static str,
     families: Vec<&'static str>,
-    /// The families this work was the first (in selection order) to contribute.
     new_families: Vec<&'static str>,
 }
 
-/// Deterministic greedy weighted set-cover selection of golden-work candidates.
 fn required_families(require_family: &[String]) -> Result<Vec<(String, usize)>, String> {
     require_family
         .iter()
@@ -3072,6 +2792,10 @@ struct WorkSelection<'a> {
 }
 
 impl<'a> WorkSelection<'a> {
+    #[expect(
+        clippy::print_stderr,
+        reason = "the command reports results and diagnostics to developers"
+    )]
     fn require(
         &mut self,
         candidates: &[&'a WorkProfile],
@@ -3151,14 +2875,12 @@ impl<'a> WorkSelection<'a> {
                     .map(|&f| weights[f])
                     .sum();
                 let key = if gain > 0.0 {
-                    // (phase=1, weighted gain per byte, weighted gain)
                     (
                         1i64,
                         selection_score(gain / float_count(c.len)? * COVERAGE_PER_BYTE_SCALE)?,
                         selection_score(gain * COVERAGE_GAIN_SCALE)?,
                     )
                 } else {
-                    // Redundancy guard: skip a work whose family-set ⊆ one already self.chosen.
                     if self
                         .selected_sets
                         .iter()
@@ -3166,7 +2888,6 @@ impl<'a> WorkSelection<'a> {
                     {
                         continue;
                     }
-                    // (phase=0, distinct families PER BYTE → small diverse works win)
                     (
                         0i64,
                         selection_score(
@@ -3228,7 +2949,7 @@ fn eligible_profiles<'a>(
         .filter(|p| {
             p.decodable
                 && p.clean
-                && p.band < 2 // exclude Large / Pathological (byte budget)
+                && p.band < 2
                 && p.unknown_ratio < max_unknown_ratio
                 && !p.families.is_empty()
                 && !vendored_hashes.contains(p.content_hash.as_bytes())
@@ -3236,6 +2957,10 @@ fn eligible_profiles<'a>(
         .collect()
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn select_works(
     root: Option<&Path>,
     out: &Path,
@@ -3249,7 +2974,6 @@ fn select_works(
         require_family,
     } = options;
     validate_unknown_ratio(max_unknown_ratio)?;
-    // Resolve --require-family names up front — a typo fails before the walk.
     let required = required_families(require_family)?;
 
     let corpus = resolve_corpus(root)?;
@@ -3270,13 +2994,6 @@ fn select_works(
     let weights = family_weights(&profiles)?;
     let candidates = eligible_profiles(&profiles, &vendored_hashes, max_unknown_ratio);
 
-    // Greedy under a hard byte budget. Coverage phase (gain > 0): rank by
-    // weighted coverage PER BYTE, so a small work covering a rare family beats a
-    // large one covering the same — this front-loads cheap rare-family coverage
-    // and keeps the golden set lean. Diversity phase (gain == 0, families
-    // saturated): keep adding combination-diverse works (family-set not a subset
-    // of one already chosen), smallest first. Integer keys → deterministic ties;
-    // candidates are label-sorted so equal keys break label-ascending.
     let mut selection = WorkSelection {
         covered: seed_covered,
         selected_sets: Vec::new(),
@@ -3367,8 +3084,10 @@ struct WorkRowIn {
     slug: String,
 }
 
-/// Vendor the slugged works from a selection manifest into `dest/<slug>/source.txt`
-/// (decoded, CRLF→LF). Skips rows with a blank slug; never writes `expected.html`.
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn vendor_works(root: Option<&Path>, manifest: &Path, dest: &Path) -> Result<(), String> {
     let corpus = resolve_corpus(root)?;
     let raw = fs::read_to_string(manifest)
@@ -3694,8 +3413,6 @@ mod tests {
         assert!(error.contains("source.txt"), "{error}");
     }
 
-    // ---- scan_correctness (I-A / I-B / I-C) ---------------------------
-
     #[test]
     fn scan_correctness_flags_each_defect_class() {
         let count = |html: &str, cat: CorrCat| {
@@ -3704,8 +3421,6 @@ mod tests {
                 .filter(|h| h.cat == cat)
                 .count()
         };
-        // I-B: an empty ruby base fires; a real base (text or nested element)
-        // does not — proves the check is not vacuous (corpus reports 0).
         assert_eq!(
             count(
                 "<ruby><rp>(</rp><rt>あ</rt><rp>)</rp></ruby>",
@@ -3727,12 +3442,9 @@ mod tests {
             ),
             0,
         );
-        // I-A: unclosed div at EOF, and a stray close; a balanced doc is clean.
         assert_eq!(count("<div>x", CorrCat::Unbalanced), 1);
         assert_eq!(count("<p><span>x</p>", CorrCat::Unbalanced), 1);
         assert_eq!(count("<p>x</p>", CorrCat::Unbalanced), 0);
-        // I-C: an undeclared class fires; a real class (numeric stem collapsed)
-        // does not.
         assert_eq!(
             count(
                 r#"<span class="aozora-zzz-bogus"></span>"#,
@@ -3749,8 +3461,6 @@ mod tests {
         );
     }
 
-    // ---- band_slot ----------------------------------------------------
-
     #[test]
     fn band_slot_buckets_by_decoded_len() {
         assert_eq!(band_slot(0), 0, "empty → <50KB");
@@ -3762,8 +3472,6 @@ mod tests {
         assert_eq!(band_slot(LARGE_MAX), 3, "2MB boundary → band 3");
         assert_eq!(band_slot(u32::MAX), 3, "huge → band 3");
     }
-
-    // ---- render-leak scanner ------------------------------------------
 
     fn cats(html: &str) -> (usize, usize, usize) {
         let hits = visible_leak_markers(html);
@@ -3777,7 +3485,6 @@ mod tests {
 
     #[test]
     fn leak_detects_quote_interior_ruby() {
-        // The reported bug: a ruby that leaked as literal `《…》`.
         assert_eq!(cats("<p>「駄目《だめ》」</p>"), (1, 0, 0));
     }
 
@@ -3793,14 +3500,12 @@ mod tests {
 
     #[test]
     fn leak_ignores_resolved_ruby() {
-        // A correctly-formed <ruby> emits no bare 《》.
         let html = "<p><ruby>瞳<rp>(</rp><rt>ひとみ</rt><rp>)</rp></ruby></p>";
         assert_eq!(cats(html), (0, 0, 0));
     }
 
     #[test]
     fn leak_ignores_angle_quote_delimiters() {
-        // `≪…≫` legitimately renders literal 《…》 inside an angle-quote span.
         let html = "<p><span class=\"aozora-angle-quote\">《重要》</span>な記述。</p>";
         assert_eq!(cats(html), (0, 0, 0));
     }
@@ -3822,8 +3527,6 @@ mod tests {
 
     #[test]
     fn leak_ignores_nested_span_inside_angle_quote() {
-        // A gaiji span nested inside an angle-quote must be suppressed with
-        // it (span-depth tracking), and the outer 《…》 delimiters too.
         let html = "<p><span class=\"aozora-angle-quote\">《<span class=\"aozora-gaiji\" \
                     data-codepoint=\"U+775C\">睜</span>》</span></p>";
         assert_eq!(cats(html), (0, 0, 0));
@@ -3831,14 +3534,12 @@ mod tests {
 
     #[test]
     fn leak_ignores_hidden_directive() {
-        // A resolved directive keeps its raw ［＃…］ inside a hidden span.
         let html = "<p><span class=\"aozora-directive\" hidden>［＃］</span>：入力者注</p>";
         assert_eq!(cats(html), (0, 0, 0));
     }
 
     #[test]
     fn leak_ignores_empty_ruby() {
-        // `《》` with no reading renders literally by design (empty_ruby).
         assert_eq!(cats("<p>青梅《》</p>"), (0, 0, 0));
     }
 
@@ -3883,29 +3584,22 @@ mod tests {
         assert!(!is_span_open("<sup>"));
     }
 
-    // ---- year_of ------------------------------------------------------
-
     fn at_epoch_secs(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)
     }
 
     #[test]
     fn year_of_mid_year_timestamps() {
-        // `year_of` carries ±1 day slop at year boundaries (documented), so
-        // pin it to mid-year instants where the bucketing is unambiguous.
-        // 2000-07-01 12:00:01 UTC = 962_452_801.
         assert_eq!(
             year_of(at_epoch_secs(962_452_801)).expect("source year"),
             2000,
             "mid-2000"
         );
-        // 2026-06-15 00:00:01 UTC = 1_781_481_601.
         assert_eq!(
             year_of(at_epoch_secs(1_781_481_601)).expect("source year"),
             2026,
             "mid-2026"
         );
-        // 1995-06-01 00:00:01 UTC = 802_044_001 (a typical corpus mtime era).
         assert_eq!(
             year_of(at_epoch_secs(802_044_001)).expect("source year"),
             1995,
@@ -3915,14 +3609,10 @@ mod tests {
 
     #[test]
     fn year_of_pre_epoch_does_not_panic() {
-        // `duration_since(UNIX_EPOCH)` fails for pre-epoch times → maps to 0s,
-        // landing on the 1969/1970 boundary; the contract is "doesn't panic".
         let before = UNIX_EPOCH - Duration::from_secs(100);
         let y = year_of(before).expect("source year");
         assert!((1969..=1970).contains(&y), "pre-epoch lands near 1970: {y}");
     }
-
-    // ---- bar ----------------------------------------------------------
 
     #[test]
     fn bar_empty_total_is_blank() {
@@ -3933,7 +3623,6 @@ mod tests {
     fn bar_full_and_partial() {
         assert_eq!(bar(10, 10, 8).chars().count(), 8, "full ratio fills width");
         assert_eq!(bar(0, 10, 8), "", "zero count → empty");
-        // Half of width 8, rounded.
         assert_eq!(bar(5, 10, 8).chars().count(), 4, "half ratio → half width");
     }
 
@@ -3945,8 +3634,6 @@ mod tests {
             "over-ratio is clamped to width"
         );
     }
-
-    // ---- line_of ------------------------------------------------------
 
     #[test]
     fn line_of_counts_newlines_before_offset() {
@@ -3966,8 +3653,6 @@ mod tests {
         );
     }
 
-    // ---- is_digit_char ------------------------------------------------
-
     #[test]
     fn is_digit_char_ascii_and_fullwidth() {
         assert!(is_digit_char('0'), "ascii zero");
@@ -3977,8 +3662,6 @@ mod tests {
         assert!(!is_digit_char('a'), "letter is not a digit");
         assert!(!is_digit_char('「'), "kanji bracket is not a digit");
     }
-
-    // ---- gaiji_bucket -------------------------------------------------
 
     #[test]
     fn gaiji_bucket_absent() {
@@ -4013,8 +3696,6 @@ mod tests {
 
     #[test]
     fn gaiji_bucket_takes_leading_token() {
-        // Only the head token (before a separator) drives the dash analysis;
-        // trailing prose after a separator is ignored.
         assert_eq!(
             gaiji_bucket(Some("1-15-94、参照")),
             1,
@@ -4029,16 +3710,12 @@ mod tests {
 
     #[test]
     fn gaiji_bucket_jis_level_short_circuits_dash_analysis() {
-        // The 水準 substring check precedes the dash analysis, so a triple
-        // that also carries 水準 classifies as jisLevel, not jisTriple.
         assert_eq!(
             gaiji_bucket(Some("1-15-94、第3水準")),
             0,
             "水準 substring wins over the leading triple"
         );
     }
-
-    // ---- normalize_shape ---------------------------------------------
 
     #[test]
     fn normalize_shape_folds_quoted_operands() {
@@ -4047,7 +3724,6 @@ mod tests {
             "「」は太字",
             "quoted content dropped"
         );
-        // Two distinct operands fold to the same shape.
         assert_eq!(
             normalize_shape("「猫」は太字"),
             normalize_shape("「犬」は太字")
@@ -4073,8 +3749,6 @@ mod tests {
         );
     }
 
-    // ---- kv_sorted ----------------------------------------------------
-
     #[test]
     fn kv_sorted_drops_zero_counts() {
         let kvs = kv_sorted(vec![("a".to_owned(), 0), ("b".to_owned(), 3)]);
@@ -4090,15 +3764,12 @@ mod tests {
             ("mango".to_owned(), 2),
         ]);
         let order: Vec<&str> = kvs.iter().map(|k| k.key.as_str()).collect();
-        // Highest count first; ties broken by ascending key.
         assert_eq!(
             order,
             ["apple", "mango", "zebra"],
             "count-desc then key-asc"
         );
     }
-
-    // ---- truncate_for_display -----------------------------------------
 
     #[test]
     fn truncate_for_display_keeps_short_strings() {
@@ -4116,11 +3787,8 @@ mod tests {
         assert_eq!(out.chars().count(), 3, "char count respects the limit");
     }
 
-    // ---- analyze (real parser, pure str → FileStat) -------------------
-
     #[test]
     fn analyze_counts_ruby_node_kind() {
-        // `｜青空《あおぞら》` is a base-ruby span → one Ruby node.
         let stat = analyze("｜青空《あおぞら》文庫").expect("parse");
         let ruby_idx = NodeKind::ALL
             .iter()
@@ -4147,8 +3815,6 @@ mod tests {
         assert_eq!(stat.unknown, Vec::<(String, u32)>::new());
     }
 
-    // ---- audit_one (CorpusItem → FileStat) ----------------------------
-
     #[test]
     fn audit_one_carries_label_through() {
         let item = CorpusItem::new("a/b.txt", "ただのテキスト".as_bytes().to_vec());
@@ -4160,16 +3826,11 @@ mod tests {
 
     #[test]
     fn audit_one_flags_undecodable_bytes() {
-        // Lone continuation byte: not valid UTF-8 and not valid Shift_JIS text.
         let item = CorpusItem::new("bad.txt", vec![0xFF, 0xFE, 0xFD, 0xFC]);
         let stat = audit_one(item);
-        // Either it decodes (lenient) with no error, or it flags decode_error;
-        // in both cases the label is intact and it must not panic.
         assert_eq!(stat.label, "bad.txt", "label preserved even on decode path");
         assert!(!stat.panicked, "decode failure is recorded, not a panic");
     }
-
-    // ---- merge --------------------------------------------------------
 
     fn stat_labeled(label: &str) -> FileStat {
         FileStat {
@@ -4184,10 +3845,10 @@ mod tests {
             label: "doc1".to_owned(),
             ..Default::default()
         };
-        s.node_kinds[0] = 3; // Ruby
+        s.node_kinds[0] = 3;
         s.gaiji_total = 2;
         s.gaiji_unresolved = 1;
-        s.gaiji_forms[2] = 2; // unicode
+        s.gaiji_forms[2] = 2;
         let results = vec![Ok(s), Ok(stat_labeled("doc2"))];
         let report = merge(results, "root".to_owned(), 1.5);
 
@@ -4200,7 +3861,6 @@ mod tests {
         );
         assert_eq!(report.gaiji.total, 2, "gaiji summed");
         assert_eq!(report.gaiji.unresolved, 1, "unresolved summed");
-        // Ruby is index 0 in NodeKind::ALL with camelCase "ruby".
         let ruby = report
             .node_kinds
             .iter()
@@ -4263,7 +3923,6 @@ mod tests {
             unknown: vec![(body.to_owned(), line)],
             ..Default::default()
         };
-        // Two bodies fold to the same shape "「」は太字".
         let results = vec![
             Ok(mk("zfile", "「猫」は太字", 5)),
             Ok(mk("afile", "「犬」は太字", 9)),
@@ -4282,7 +3941,6 @@ mod tests {
         assert_eq!(shape.count, 2, "shape covers both occurrences");
         assert_eq!(shape.distinct, 2, "shape spans two distinct bodies");
 
-        // Smallest-example selection is lexicographic: "afile:9" < "zfile:5".
         let cat = report
             .unknown_bodies
             .iter()
@@ -4300,12 +3958,8 @@ mod tests {
         assert!(report.unknown_shapes.is_empty(), "no shapes");
     }
 
-    // ---- print_band_row / header (smoke: must not panic) --------------
-
     #[test]
     fn print_band_row_handles_empty_and_populated_bands() {
-        // These print to stdout; we only assert they run without panicking
-        // for both the empty and populated paths, raw and zstd.
         let empty: Vec<&EntryMeta> = Vec::new();
         print_band_header(false);
         print_band_header(true);
@@ -4344,8 +3998,8 @@ mod tests {
             })
         };
         let results = vec![
-            leak("a", &[LeakCat::Ruby, LeakCat::Ruby]), // 1 file, 2 ruby occ
-            leak("b", &[LeakCat::Ruby, LeakCat::Bar]),  // ruby +1/+1, bar +1/+1
+            leak("a", &[LeakCat::Ruby, LeakCat::Ruby]),
+            leak("b", &[LeakCat::Ruby, LeakCat::Bar]),
             Ok(DocRenderOutcome::Clean),
             Ok(DocRenderOutcome::DecodeSkipped),
         ];
@@ -4376,7 +4030,6 @@ mod tests {
             "w733",
             "digits in the title are not the card id"
         );
-        // No digits in the filename → deterministic content-hash fallback.
         let a = slug_from_label("作品/中原中也/コキューの憶ひ出.txt");
         assert!(a.starts_with('w') && a.len() == 11, "hash slug: {a}");
         assert_eq!(
@@ -4524,19 +4177,15 @@ mod tests {
 
     #[test]
     fn classify_body_buckets_against_catalogues() {
-        // A Tier1 near-miss, framed as it appears in the corpus.
         assert_eq!(classify_body("［＃字下げ終わり］"), Bucket::Tier1);
-        // A Tier2 degraded (lossy) form.
         assert_eq!(
             classify_body("［＃ここから最後まで3字下げ］"),
             Bucket::Tier2
         );
-        // Genuine editorial prose — the discovery residue, matched by neither.
         assert_eq!(
             classify_body("［＃「甲」は「乙」の誤記か］"),
             Bucket::Residue
         );
-        // The frame strip + trim mirrors the serializer: a bare body classifies too.
         assert_eq!(classify_body("字下げ終わり"), Bucket::Tier1);
     }
 
@@ -4550,31 +4199,29 @@ mod tests {
                 shape: shape.to_owned(),
             }
         }
-        // Bodies sorted by count desc, as run_audit emits them.
         let bodies = vec![
             row(
                 "［＃「甲」は「乙」の誤記か］",
                 7,
                 "a:1",
                 "［＃「」は「」の誤記か］",
-            ), // residue
-            row("［＃字下げ終わり］", 5, "b:2", "［＃字下げ終わり］"), // Tier1
+            ),
+            row("［＃字下げ終わり］", 5, "b:2", "［＃字下げ終わり］"),
             row(
                 "［＃ここから最後まで3字下げ］",
                 3,
                 "c:3",
                 "［＃ここから最後までN字下げ］",
-            ), // Tier2
-            row("［＃初出時「甲」］", 2, "d:4", "［＃初出時「」］"),   // residue
+            ),
+            row("［＃初出時「甲」］", 2, "d:4", "［＃初出時「」］"),
         ];
         let r = classify_report(&bodies, 100, 17).expect("classification report");
 
         assert_eq!(r.tier1_occurrences, 5);
         assert_eq!(r.tier2_occurrences, 3);
-        assert_eq!(r.residue_occurrences, 9); // 7 + 2
+        assert_eq!(r.residue_occurrences, 9);
         assert_eq!(r.residue_distinct_shapes, 2);
         assert!((r.resolved_ratio - 8.0 / 17.0).abs() < 1e-9);
-        // Residue ranked by count descending, with the highest-count sample kept.
         assert_eq!(r.residue_shapes[0].count, 7);
         assert_eq!(r.residue_shapes[0].sample, "［＃「甲」は「乙」の誤記か］");
         assert_eq!(r.residue_shapes[1].count, 2);
@@ -4589,7 +4236,7 @@ mod tests {
         );
 
         covered.remove(&0);
-        covered.remove(&FAM_NODE); // first annotation family
+        covered.remove(&FAM_NODE);
         let missing = missing_families(&covered);
         assert_eq!(missing.len(), 2);
         assert!(missing.contains(&family_name(0)));

@@ -1,22 +1,21 @@
-//! Library-level distribution: where samples landed by loaded
-//! object (binary / libc / vdso / …).
-//!
-//! A 30-second sanity check: "is my parser actually hot, or is the
-//! trace dominated by glibc memmove?" If `libc.so.6` is the top
-//! row, `cargo bench` is measuring memcpy bandwidth, not your code.
+//! Reports the shares of samples by loaded library through [`library_distribution`].
 
 use std::collections::HashMap;
 
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
-/// Per-library sample distribution, produced by [`library_distribution`].
+const PERCENT_SCALE: f64 = 100.0;
+const PERCENT_COLUMN_WIDTH: usize = 6;
+const SAMPLES_COLUMN_WIDTH: usize = 8;
+
+/// Distribution of samples by library, produced by [`library_distribution`].
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryReport {
-    /// Total sample weight across the trace (the percentage denominator).
+    /// Total weight of samples across the trace.
     pub total_samples: u64,
-    /// One row per library, sorted by descending sample count.
+    /// Libraries sorted by descending weight of samples.
     pub rows: Vec<LibraryRow>,
 }
 
@@ -24,18 +23,20 @@ pub struct LibraryReport {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryRow {
-    /// Library name, or `(unattributed)` for samples whose leaf frame
-    /// maps to no library.
+    /// Library name, or `(unattributed)` for samples whose leaf frame maps to no library.
     pub library: String,
-    /// Leaf-frame sample weight attributed to this library.
+    /// Weight of leaf-frame samples attributed to this library.
     pub samples: u64,
     /// `samples` as a percentage of [`LibraryReport::total_samples`].
     pub pct: f64,
 }
 
-/// Attribute every leaf-frame sample to its owning library and
-/// summarise the per-library shares. Samples with no captured stack,
-/// or whose leaf frame maps to no library, fall under `(unattributed)`.
+/// Returns library shares sorted by descending weight of leaf-frame samples.
+/// Groups samples without a stack or library under `(unattributed)`.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "sample shares are rendered as approximate percentages"
+)]
 #[must_use]
 pub fn library_distribution(trace: &Trace) -> LibraryReport {
     let mut counts: HashMap<String, u64> = HashMap::new();
@@ -65,7 +66,7 @@ pub fn library_distribution(trace: &Trace) -> LibraryReport {
             pct: if total == 0 {
                 0.0
             } else {
-                (samples as f64 / total as f64) * 100.0
+                (samples as f64 / total as f64) * PERCENT_SCALE
             },
             library,
             samples,
@@ -94,12 +95,12 @@ impl TableRenderable for LibraryReport {
                 Column {
                     header: "%".into(),
                     align: Align::Right,
-                    width: 6,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "samples".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: SAMPLES_COLUMN_WIDTH,
                 },
                 Column {
                     header: "library".into(),

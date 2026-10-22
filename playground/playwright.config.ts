@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const CI_RETRIES = 2;
+const SERVER_START_TIMEOUT_MS = 180_000;
+
 const port = process.env.PLAYGROUND_PORT ?? '5173';
 const baseURL = `http://127.0.0.1:${port}/aozora/playground/`;
 
@@ -7,7 +10,7 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? CI_RETRIES : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL,
@@ -36,6 +39,6 @@ export default defineConfig({
     command: 'bun run preview:production',
     url: baseURL,
     reuseExistingServer: false,
-    timeout: 180_000,
+    timeout: SERVER_START_TIMEOUT_MS,
   },
 });

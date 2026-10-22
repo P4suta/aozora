@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use crate::Trace;
@@ -8,13 +9,11 @@ use crate::Trace;
 pub struct FoldedStack {
     /// Frame labels in root-to-leaf order, ready to join with `;`.
     pub stack: Vec<String>,
-    /// Total sample weight that landed on this exact stack.
+    /// Total weight of samples with this stack.
     pub samples: u64,
 }
 
-/// Aggregate every (thread, sample) into a folded-stack list.
-///
-/// Identical stacks are summed and sorted by sample count descending.
+/// Groups identical stacks and sorts them by descending weight of samples.
 #[must_use]
 pub fn folded_stacks(trace: &Trace) -> Vec<FoldedStack> {
     let mut grouped: HashMap<Vec<String>, u64> = HashMap::new();
@@ -35,12 +34,12 @@ pub fn folded_stacks(trace: &Trace) -> Vec<FoldedStack> {
         .into_iter()
         .map(|(stack, samples)| FoldedStack { stack, samples })
         .collect();
-    rows.sort_by_key(|r| std::cmp::Reverse(r.samples));
+    rows.sort_by_key(|r| Reverse(r.samples));
     rows
 }
 
-/// Format folded stacks for direct `flamegraph.pl` consumption:
-/// `root;parent;…;leaf <samples>\n` per line.
+/// Formats stacks as `root;parent;leaf <samples>` lines for flamegraph tools.
+/// Replaces semicolons within frame labels with colons.
 #[must_use]
 pub fn render_folded(rows: &[FoldedStack]) -> String {
     let mut out = String::new();

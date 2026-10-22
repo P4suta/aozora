@@ -1,55 +1,19 @@
-//! Per-document line-start index for `O(log lines)` byte-offset →
-//! `Position` conversion.
-//!
-//! ## Why this exists
-//!
-//! [`crate::lsp::position::byte_offset_to_position`] is `O(byte_offset)`
-//! — every call walks the source from byte 0 counting `\n`s and
-//! UTF-16 code units. For a single-shot hover that's fine, but
-//! `aozora/gaijiSpans` emits two positions per gaiji span, and there
-//! can be hundreds of spans in a 40 KB document. Naïvely, that's
-//! `N * O(40k) = O(N·doc_size)` per request.
-//!
-//! [`LineIndex`] precomputes a `Vec<u32>` of line-start byte offsets
-//! once per text version. After the index is built, a position
-//! conversion is a binary search (`O(log lines)`) plus a UTF-16
-//! walk over the *current line slice only* (typically tens of
-//! bytes). The whole handler drops from `O(N·doc_size)` to
-//! `O(N·log lines + N·avg_line_len)` — effectively linear in the
-//! number of spans with a tiny constant.
-//!
-//! ## Lifecycle
-//!
-//! Built when [`LineIndex::new`] is called against a fresh source. The
-//! `OpenDocument` rebuilds the index on every `did_change` (cheap —
-//! a single SIMD `memchr` pass over the full text). Reads are
-//! immutable so the index is shared across concurrent LSP
-//! handlers without locking.
+//! Maps source byte offsets to UTF-16 positions through [`LineIndex`].
 
 use tower_lsp::lsp_types::Position;
 
-/// Byte-offset → `Position` accelerator.
-///
-/// Internally a sorted `Vec<u32>` of line-start byte offsets:
-/// `line_starts[N]` is the byte offset of the first character on
-/// line N. Line 0 always starts at byte 0.
+const CAPACITY_BYTES_PER_LINE: usize = 64;
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct LineIndex {
-    /// Byte offset where each line begins. `line_starts[0] == 0`.
-    /// One entry per line; total length == line count.
     line_starts: Vec<u32>,
 }
 
 impl LineIndex {
-    /// Build a new index over `source`. `O(source.len())` with SIMD
-    /// `memchr` for the newline scan.
     #[must_use]
     pub(super) fn new(source: &str) -> Self {
         let bytes = source.as_bytes();
-        // Capacity heuristic: average line length ~64 bytes for
-        // prose, undershoots for code. Either way the Vec only
-        // grows a handful of times.
-        let mut line_starts = Vec::with_capacity(bytes.len() / 64 + 1);
+        let mut line_starts = Vec::with_capacity(bytes.len() / CAPACITY_BYTES_PER_LINE + 1);
         line_starts.push(0);
         for (idx, &byte) in bytes.iter().enumerate() {
             if byte == b'\n' {
@@ -60,23 +24,17 @@ impl LineIndex {
         Self { line_starts }
     }
 
-    /// Total number of lines in the indexed source. Always `>= 1`.
     #[must_use]
     #[cfg(test)]
     pub(crate) const fn line_count(&self) -> usize {
         self.line_starts.len()
     }
 
-    /// Convert `byte_offset` (clamped to `source.len()`) into an LSP
-    /// [`Position`]. `O(log lines)` on the line lookup, `O(line_len)`
-    /// on the UTF-16 column walk.
+    /// Clamps `byte_offset` to the source length before converting it to a position.
     #[must_use]
     pub(super) fn position(&self, source: &str, byte_offset: usize) -> Position {
         let byte_offset = byte_offset.min(source.len());
         let needle = u32::try_from(byte_offset).unwrap_or(u32::MAX);
-        // partition_point: returns the first index where the
-        // predicate is false → the line whose start exceeds the
-        // needle. The line containing the needle is one before that.
         let line_idx = self
             .line_starts
             .partition_point(|&start| start <= needle)
@@ -87,9 +45,7 @@ impl LineIndex {
         Position::new(u32::try_from(line_idx).unwrap_or(u32::MAX), col)
     }
 
-    /// Convert an LSP [`Position`] back into a byte offset. Returns
-    /// `None` if the line number is past EOF; UTF-16 columns past
-    /// the end of their line clamp to the line end.
+    /// Returns `None` for missing lines and clamps columns to their line's end.
     #[must_use]
     pub(super) fn byte_offset(&self, source: &str, position: Position) -> Option<usize> {
         let line_idx = position.line as usize;
@@ -203,38 +159,25 @@ mod tests {
         assert_eq!(idx.byte_offset("one\ntwo", Position::new(5, 0)), None);
     }
 
-    /// CRLF line endings: the `\r` is treated as part of the line
-    /// (line breaks are split by `\n` only), so a position past the
-    /// `\r`'s column resolves to byte position of `\n` (= `line_end`).
-    /// Pin so an editor that submits Windows-style line endings
-    /// behaves consistently.
     #[test]
     fn crlf_line_ends_keep_cr_inside_the_line() {
         let src = "abc\r\ndef";
         let idx = LineIndex::new(src);
         assert_eq!(idx.line_count(), 2);
-        // Byte 3 = '\r', byte 4 = '\n'.
         assert_eq!(idx.position(src, 3), Position::new(0, 3));
         assert_eq!(idx.position(src, 4), Position::new(0, 4));
-        // Round-trip: position (0, 4) should resolve back to byte 4.
         assert_eq!(idx.byte_offset(src, Position::new(0, 4)), Some(4));
     }
 
-    /// An `\n`-only document yields two lines: the empty line before
-    /// the newline and the empty line after. Pin so a future
-    /// "trim trailing newline" change doesn't quietly drop a line.
     #[test]
     fn lone_newline_yields_two_lines() {
         let src = "\n";
         let idx = LineIndex::new(src);
         assert_eq!(idx.line_count(), 2);
-        // Position (0, 0) → byte 0; (1, 0) → byte 1 (past the \n).
         assert_eq!(idx.byte_offset(src, Position::new(0, 0)), Some(0));
         assert_eq!(idx.byte_offset(src, Position::new(1, 0)), Some(1));
     }
 
-    /// Empty source: one line, position (0, 0) round-trips, anything
-    /// past returns None or clamps to EOF on the position side.
     #[test]
     fn empty_source_round_trips_origin_position() {
         let src = "";

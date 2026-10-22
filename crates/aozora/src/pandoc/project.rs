@@ -3,15 +3,10 @@
     reason = "projection state maintains a non-empty frame stack and infallible buffers"
 )]
 
-//! Source-driven projection from a [`Snapshot`] to a
-//! [`pandoc_ast::Pandoc`] document.
-//!
-//! Walks the source linearly, slicing it into spans by the owned
-//! `source_nodes` side-table. Plain runs flow into Pandoc inlines
-//! verbatim (with `\n\n` paragraph splits and single `\n` →
-//! `SoftBreak`). Each classified node lifts to a Pandoc inline /
-//! block construct as documented in [`crate`]. Payload text is resolved
-//! through the output's [`NodeStore`].
+//! Projects source and semantic nodes into a Pandoc document.
+
+const PANDOC_API_VERSION: [u32; 2] = [1, 23];
+const SMALL_HEADING_LEVEL: i64 = 3;
 
 use core::mem;
 
@@ -35,30 +30,18 @@ use crate::syntax::{
     MarginNoteKind, RegionFormat, RubySide, SectionKind,
 };
 
-/// Lift a parsed [`Snapshot`] to a [`pandoc_ast::Pandoc`] document.
-///
-/// See the crate-level docs for the projection rules.
+/// Project a parsed snapshot to a Pandoc document.
 #[must_use]
 pub fn to_pandoc(snapshot: &Snapshot) -> Pandoc {
     let out = snapshot.output();
-    // `source_nodes` index into the sanitize-stage buffer, not the raw
-    // user-supplied source. The owned lex output carries exactly that buffer
-    // in `sanitized`, so the slice base already matches the source-node
-    // coordinate system — no re-sanitize is needed.
     let mut converter = Converter::new(&out.sanitized, &out.source_nodes, &out.store, 0);
     converter.run();
     Pandoc {
         meta: pandoc_ast::Map::new(),
         blocks: converter.blocks,
-        // The pandoc 3.x JSON API version. `pandoc_ast` accepts 1.20 or
-        // newer, so an older reader still parses this output.
-        pandoc_api_version: vec![1, 23],
+        pandoc_api_version: PANDOC_API_VERSION.to_vec(),
     }
 }
-
-// ---------------------------------------------------------------------
-// Walker
-// ---------------------------------------------------------------------
 
 struct BlockFrame {
     blocks: Vec<Block>,
@@ -121,16 +104,12 @@ enum Frame {
 struct Converter<'src> {
     source: &'src str,
     nodes: &'src [SourceNode],
-    /// Backing store the owned nodes' `StrId` / range payloads resolve against.
     store: &'src NodeStore,
     stack: Vec<Frame>,
-    /// Cursor into `source` (byte offset).
     cursor: usize,
     pending_newlines: usize,
     nested_depth: usize,
     inline_source: bool,
-    /// Final document blocks, populated by [`Converter::run`] from
-    /// the root frame on completion.
     blocks: Vec<Block>,
 }
 
@@ -167,7 +146,6 @@ impl<'src> Converter<'src> {
 
     fn run(&mut self) {
         for entry in self.nodes {
-            // Plain run between previous cursor and this node.
             self.flush_plain(entry.source_span.start as usize);
             self.resolve_pending_newlines();
             self.dispatch_node(entry);
@@ -186,9 +164,6 @@ impl<'src> Converter<'src> {
         self.blocks = root.blocks;
     }
 
-    /// Push the slice of plain text between `cursor` and `end` into
-    /// the current paragraph. `\n\n` boundaries close the paragraph
-    /// and open a fresh one; single `\n` becomes a `SoftBreak`.
     fn flush_plain(&mut self, end: usize) {
         if end <= self.cursor {
             return;
@@ -464,10 +439,6 @@ impl<'src> Converter<'src> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Per-variant inline / block builders
-// ---------------------------------------------------------------------
-
 fn class_attr(class: &str) -> Attr {
     (
         String::new(),
@@ -484,8 +455,6 @@ fn class_attr_kv(class: &str, kvs: Vec<(String, String)>) -> Attr {
     )
 }
 
-/// Resolve a [`ContentRange`] payload field (ruby base/reading, forward
-/// target, …) to its Pandoc inlines.
 fn content_range_to_inlines(
     range: ContentRange,
     store: &NodeStore,
@@ -498,8 +467,6 @@ fn content_range_to_inlines(
     buf
 }
 
-/// Resolve a bare [`Content`] payload field (warichu upper/lower,
-/// sashie caption) to its Pandoc inlines.
 fn content_to_inlines(content: Content, store: &NodeStore, nested_depth: usize) -> Vec<Inline> {
     let mut buf = Vec::new();
     push_content_inlines(content, store, nested_depth, &mut buf);
@@ -639,19 +606,6 @@ fn side_note_inline(s: MarginNote, store: &NodeStore, nested_depth: usize) -> In
     )
 }
 
-/// Project a forward-reference emphasis node to its Pandoc inline.
-///
-/// Each `ForwardAttr` maps to the closest native Pandoc construct — 太字 →
-/// [`Inline::Strong`], 斜体 → [`Inline::Emph`], 上付き / 下付き小文字 →
-/// [`Inline::Superscript`] / [`Inline::Subscript`] — and every attribute with
-/// no native equivalent (傍点 / 縦中横 / font size / 囲み / 小書き / accent / …)
-/// to a classed [`Inline::Span`] carrying the structured data as key/value
-/// attributes. Both cases resolve the decorated run's real text from
-/// `f.target`, so no emphasis ever discards its content.
-///
-/// The match is exhaustive (no `_` arm): a new [`ForwardAttr`] variant is
-/// compiler-flagged here rather than silently falling through to an empty or
-/// debug placeholder.
 fn format_inline(f: ForwardFormat, store: &NodeStore, nested_depth: usize) -> Inline {
     let target = format_target_inlines(f, store, nested_depth);
     match f.attr {
@@ -659,8 +613,6 @@ fn format_inline(f: ForwardFormat, store: &NodeStore, nested_depth: usize) -> In
         ForwardAttr::Italic => Inline::Emph(target),
         ForwardAttr::SuperScript => Inline::Superscript(target),
         ForwardAttr::SubScript => Inline::Subscript(target),
-        // ゴシック体 is a typeface, not a weight; Pandoc has no native gothic, so
-        // it stays a classed span distinct from 太字's `Strong`.
         ForwardAttr::Gothic => Inline::Span(class_attr("gothic"), target),
         ForwardAttr::Bouten { kind, position } => Inline::Span(
             class_attr_kv(
@@ -698,8 +650,6 @@ fn format_inline(f: ForwardFormat, store: &NodeStore, nested_depth: usize) -> In
         ),
         ForwardAttr::Horizontal => Inline::Span(class_attr("horizontal"), target),
         ForwardAttr::Caption => Inline::Span(class_attr("caption"), target),
-        // 文字サイズ carries a signed magnitude: the class names the direction
-        // (larger / smaller) and the `steps` kv the stage count.
         ForwardAttr::FontSize(shift) => Inline::Span(
             class_attr_kv(
                 font_size_class(shift),
@@ -805,8 +755,6 @@ fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     }
 }
 
-/// `aozora-font-larger` / `aozora-font-smaller` — the class body for a relative
-/// [`FontShift`], keyed on its sign (the magnitude rides a `steps` kv).
 fn font_size_class(shift: FontShift) -> &'static str {
     if shift.larger() {
         "font-larger"
@@ -881,7 +829,6 @@ fn gaiji_inline(g: Gaiji, store: &NodeStore) -> Inline {
     Inline::Span(class_attr_kv("gaiji", kvs), inner)
 }
 
-/// Project a single-line layout directive.
 fn line_inline(lf: LineFormat) -> Inline {
     let attr = match lf {
         LineFormat::Indent { amount, end_offset } => {
@@ -1006,8 +953,6 @@ fn angle_quote_inline(d: AngleQuote, store: &NodeStore, nested_depth: usize) -> 
 
 fn heading_hint_inline(h: HeadingHint, store: &NodeStore) -> Inline {
     let target = store.resolve_str(h.target).to_owned();
-    // A self-contained (no-referent) hint shows its quoted target as the heading
-    // text; a referent-present hint stays an empty marker.
     let content = if h.self_contained {
         vec![Inline::Str(target.clone())]
     } else {
@@ -1042,10 +987,8 @@ fn aozora_heading_block(h: Heading, store: &NodeStore, nested_depth: usize) -> B
     let level: i64 = match h.kind {
         HeadingKind::Large => 1,
         HeadingKind::Medium => 2,
-        HeadingKind::Small => 3,
+        HeadingKind::Small => SMALL_HEADING_LEVEL,
     };
-    // `kind` (level) is always carried; `style` only for a non-standard
-    // style, so a standard heading's projection is unchanged.
     let mut kv = vec![("kind".to_owned(), heading_kind_slug(h.kind).to_owned())];
     if let Some(style) = heading_style_slug(h.style) {
         kv.push(("style".to_owned(), style.to_owned()));
@@ -1065,8 +1008,6 @@ fn heading_kind_slug(k: HeadingKind) -> &'static str {
     }
 }
 
-/// Style modifier slug, or `None` for the standard style (which adds no
-/// `style` attribute, keeping a standard heading's projection unchanged).
 fn heading_style_slug(s: HeadingStyle) -> Option<&'static str> {
     match s {
         HeadingStyle::SameLine => Some("same-line"),
@@ -1091,8 +1032,6 @@ fn sashie_block(s: Illustration, store: &NodeStore, nested_depth: usize) -> Bloc
 }
 
 fn sashie_inline(s: Illustration, store: &NodeStore, nested_depth: usize) -> Inline {
-    // The general form's leading description is the alt; otherwise the
-    // keyword 挿絵 form's trailing 「caption」 is the next-best alt text.
     let alt = s.description.map_or_else(
         || {
             s.caption
@@ -1297,10 +1236,6 @@ fn font_size_container_attr(shift: FontShift) -> Attr {
     )
 }
 
-// ---------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1336,7 +1271,6 @@ mod tests {
         }
     }
 
-    /// Plain text round-trips into a single Pandoc Para of `Inline::Str`.
     #[test]
     fn plain_text_becomes_para() {
         let doc = Document::new("Hello, world.");
@@ -1351,7 +1285,6 @@ mod tests {
         }
     }
 
-    /// `\n\n` splits into two Para blocks; single `\n` yields `SoftBreak`.
     #[test]
     fn double_newline_splits_paragraphs() {
         let doc = Document::new("One\nstill one.\n\nTwo.");
@@ -1519,8 +1452,6 @@ mod tests {
         assert_eq!(second, &[Inline::Str("second".to_owned())]);
     }
 
-    /// Ruby with explicit delimiter projects to a Span.aozora-ruby
-    /// carrying base / reading sub-spans.
     #[test]
     fn ruby_projects_to_span() {
         let doc = Document::new("｜青梅《おうめ》");
@@ -1544,8 +1475,6 @@ mod tests {
         assert_eq!(ruby.len(), 2, "ruby span has base + reading children");
     }
 
-    /// Page break closes the in-flight paragraph and emits an
-    /// `HorizontalRule` block.
     #[test]
     fn page_break_emits_horizontal_rule() {
         let doc = Document::new("before\n［＃改ページ］\nafter");
@@ -1560,7 +1489,6 @@ mod tests {
         );
     }
 
-    /// Container open / close wraps inner blocks in a Pandoc Div.
     #[test]
     fn indent_container_wraps_in_div() {
         let doc = Document::new(
@@ -1581,23 +1509,15 @@ mod tests {
         assert!(has_indent_div, "no indent Div: {:?}", pandoc.blocks);
     }
 
-    // -----------------------------------------------------------------
-    // Test helpers
-    // -----------------------------------------------------------------
-
-    /// Project `src` through the full pipeline and return the doc blocks.
     fn project(src: &str) -> Vec<Block> {
         let doc = Document::new(src);
         to_pandoc(&doc.snapshot()).blocks
     }
 
-    /// Whether any class in `attr` ends with `suffix` (the `aozora-`
-    /// prefix is constant; matching the tail keeps assertions stable).
     fn has_class(attr: &Attr, suffix: &str) -> bool {
         attr.1.iter().any(|c| c == &format!("aozora-{suffix}"))
     }
 
-    /// Look up a key in an `Attr`'s key/value list.
     fn kv<'a>(attr: &'a Attr, key: &str) -> Option<&'a str> {
         attr.2
             .iter()
@@ -1605,9 +1525,6 @@ mod tests {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Find the first inline `Span` (recursively) whose class list carries
-    /// `aozora-{suffix}`. Walks into nested inlines so a span buried in a
-    /// `Para` is found.
     fn find_span<'a>(blocks: &'a [Block], suffix: &str) -> Option<(&'a Attr, &'a [Inline])> {
         fn walk_inlines<'a>(
             inlines: &'a [Inline],
@@ -1646,9 +1563,6 @@ mod tests {
         walk_blocks(blocks, suffix)
     }
 
-    /// Find the first inline (recursively, into nested spans) satisfying
-    /// `pred`. Walks `Para` / `Header` / `Div` blocks and every inline's
-    /// children so a construct buried in a styled span is still found.
     fn find_inline(blocks: &[Block], pred: impl Fn(&Inline) -> bool + Copy) -> Option<&Inline> {
         fn walk_inlines(
             inlines: &[Inline],
@@ -1693,18 +1607,12 @@ mod tests {
         walk_blocks(blocks, pred)
     }
 
-    /// Find the first top-level `Div` whose class list carries
-    /// `aozora-{suffix}`.
     fn find_div<'a>(blocks: &'a [Block], suffix: &str) -> Option<(&'a Attr, &'a [Block])> {
         blocks.iter().find_map(|b| match b {
             Block::Div(attr, inner) if has_class(attr, suffix) => Some((attr, inner.as_slice())),
             _ => None,
         })
     }
-
-    // -----------------------------------------------------------------
-    // Inline nodes (source-driven)
-    // -----------------------------------------------------------------
 
     #[test]
     fn implicit_ruby_projects_base_and_reading() {
@@ -1887,10 +1795,6 @@ mod tests {
 
     #[test]
     fn tate_chu_yoko_projects_to_tcy_span() {
-        // The directive sits immediately after ３３, so the literal folds into
-        // the node (`Reclaimed`) and the tcy span is the sole copy. (The
-        // non-adjacent `明治３３年［＃…］` form splices a `Detached` decoration —
-        // covered by `non_adjacent_forward_styles_referent_once`.)
         let blocks = project("明治３３［＃「３３」は縦中横］年に。\n");
         let (_, inner) = find_span(&blocks, "tate-chu-yoko").expect("tcy span");
         assert_eq!(
@@ -1902,10 +1806,6 @@ mod tests {
 
     #[test]
     fn non_adjacent_forward_styles_referent_once() {
-        // #333: the non-adjacent referent 青空 is styled in place (a `Detached`
-        // decoration projected as a bouten span), while the bracket stays
-        // `Referenced` and projects nothing. 青空 appears exactly once — the
-        // styling is added, the #231/#228 no-double-projection invariant holds.
         let blocks = project("青空の下を歩く［＃「青空」に傍点］");
         let (_, inner) = find_span(&blocks, "bouten").expect("styled referent span");
         assert_eq!(
@@ -2209,10 +2109,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Forward-reference emphasis projection (WS-5)
-    // -----------------------------------------------------------------
-
     #[test]
     fn emphasis_bold_projects_to_strong() {
         let blocks = project("甲［＃「甲」は太字］\n");
@@ -2289,9 +2185,6 @@ mod tests {
         );
     }
 
-    /// The whole point of WS-5: a document mixing bold / italic / font-size /
-    /// superscript projects to the native Pandoc constructs carrying the real
-    /// text, and no `ForwardFormat` Debug dump survives anywhere in the JSON.
     #[test]
     fn mixed_emphasis_projection_carries_text_and_drops_debug() {
         let blocks = project(
@@ -2317,16 +2210,8 @@ mod tests {
         );
     }
 
-    /// Compile-time exhaustiveness guard. Every [`ForwardAttr`] and [`Segment`]
-    /// variant must be matched with no `_` fall-through, so adding a variant
-    /// breaks this test's build — forcing a deliberate projection rather than a
-    /// silent empty `Str` / debug span. The runtime assertion then pins that the
-    /// live [`format_inline`] never emits an empty-class placeholder for any
-    /// forward attribute.
     #[test]
     fn forward_attr_and_segment_projection_is_exhaustive() {
-        // Naming the discriminants with no wildcard is the guard; the body is
-        // irrelevant.
         fn cover_forward_attr(a: ForwardAttr) {
             match a {
                 ForwardAttr::Bold
@@ -2392,8 +2277,6 @@ mod tests {
                 payload: ForwardPayload::None,
             };
             let inline = format_inline(f, &store, 0);
-            // Every attribute resolves its target text; none returns an
-            // empty-class placeholder span.
             let json = serde_json::to_string(&inline).expect("serialise inline");
             assert!(
                 json.contains('X'),
@@ -2611,10 +2494,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Block-leaf nodes
-    // -----------------------------------------------------------------
-
     #[test]
     fn section_break_emits_classed_div() {
         let blocks = project("前章。\n［＃改丁］\n次章。\n");
@@ -2800,10 +2679,6 @@ mod tests {
         })
     }
 
-    // -----------------------------------------------------------------
-    // Container attr arms
-    // -----------------------------------------------------------------
-
     #[test]
     fn indent_container_carries_amount() {
         let blocks =
@@ -2858,10 +2733,6 @@ mod tests {
         assert_eq!(kv(attr, "offset"), Some("3"), "align-end offset");
     }
 
-    // Post-S5, a *text-only* bouten range folds to an inline forward span (see
-    // `bouten_carries_kind_and_position`), so the `container-bouten` div path is
-    // reached only by a range whose run is non-foldable. Embedded ruby keeps the
-    // range a container while leaving the open marker's variant / position intact.
     #[test]
     fn bouten_range_container_carries_variant() {
         let blocks = project("本文［＃傍点］甲《こう》［＃傍点終わり］。");
@@ -3083,13 +2954,8 @@ mod tests {
         assert!(has_nested, "inner indent div nested in outer: {outer:?}");
     }
 
-    // -----------------------------------------------------------------
-    // Defensive stack handling
-    // -----------------------------------------------------------------
-
     #[test]
     fn unclosed_container_is_popped_at_eof() {
-        // No matching close — `run` must still wrap the body in a Div.
         let blocks = project("［＃ここから2字下げ］\n本文。\n");
         assert!(
             find_div(&blocks, "container-indent").is_some(),
@@ -3099,7 +2965,6 @@ mod tests {
 
     #[test]
     fn unmatched_close_does_not_panic_and_keeps_body() {
-        // A close with no matching open must not pop the root frame.
         let blocks = project("本文。\n［＃ここで字下げ終わり］\n");
         assert!(
             blocks.iter().any(|b| matches!(b, Block::Para(_))),
@@ -3128,11 +2993,6 @@ mod tests {
         );
         assert!(pandoc.meta.is_empty(), "no meta emitted");
     }
-
-    // -----------------------------------------------------------------
-    // Direct builder unit tests (forms not reachable as inline leaves
-    // through the source pipeline, but live projection helpers)
-    // -----------------------------------------------------------------
 
     #[test]
     fn line_inline_indent_carries_amount() {
@@ -3177,8 +3037,6 @@ mod tests {
     fn bouten_position_slug_covers_left_and_unknown() {
         assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
         assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
-        // The `Both` arm is distinct from the `_ => "unknown"` fallthrough:
-        // deleting it must not collapse 両側 into `unknown`.
         assert_eq!(bouten_position_slug(BoutenPosition::Both), "both");
     }
 
@@ -3231,7 +3089,6 @@ mod tests {
 
     #[test]
     fn small_heading_block_builder_is_level_3() {
-        // Build the owned heading payload directly via a store.
         let mut store = NodeStore::new();
         let text_id = store.intern("見出し");
         let text = store.push_contents(&[Content::Plain(text_id)]);
@@ -3259,10 +3116,6 @@ mod tests {
         }
     }
 
-    /// A container close emits its `Div` mid-stream, so content that follows
-    /// the close is a *sibling* block at the enclosing level — not swallowed
-    /// into the container. A no-op `close_container` would keep the frame open
-    /// until EOF, folding the trailing content inside the Div.
     #[test]
     fn close_container_emits_div_before_trailing_content() {
         let blocks = project("A\n\n［＃ここから2字下げ］\nB\n［＃ここで字下げ終わり］\n\nC\n");
@@ -3283,10 +3136,6 @@ mod tests {
         );
     }
 
-    /// `push_content_inlines` dispatches a `Content::Segments` run element by
-    /// element: `Text` → `Str`, `Gaiji` → gaiji span, `Directive` → annotation
-    /// span. Deleting the `Segments` arm drops the whole run; deleting any
-    /// segment arm swaps that element for an empty placeholder `Str`.
     #[test]
     fn push_content_inlines_dispatches_each_segment_kind() {
         use crate::syntax::ast::GaijiCanonicalOwned;
@@ -3342,8 +3191,6 @@ mod tests {
         }
     }
 
-    /// A `container-bouten` range with the `両側` (both-side) position emits a
-    /// `position=both` kv. Deleting the `Both` arm drops the kv entirely.
     #[test]
     fn container_attr_bouten_both_position_kv() {
         let attr = container_attr(RegionFormat::Bouten {
@@ -3362,9 +3209,6 @@ mod tests {
         );
     }
 
-    /// Co-applied indent styles (#78) join into a space-separated `modifiers`
-    /// kv; a style-free indent emits none. Pins both sides of the
-    /// `if !modifiers.is_empty()` guard.
     #[test]
     fn container_attr_indent_modifiers_kv() {
         let styled = container_attr(RegionFormat::Indent(IndentBlock {

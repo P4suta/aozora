@@ -64,6 +64,10 @@ fn render(value: &serde_json::Value) -> String {
     s
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn dump() -> Result<(), String> {
     let root = workspace_root()?;
     if let Some(parent) = root.join(SCHEMA_FILES[0].0).parent() {
@@ -80,6 +84,10 @@ fn dump() -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let mut drift = Vec::new();

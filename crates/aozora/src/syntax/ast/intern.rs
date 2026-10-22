@@ -4,152 +4,66 @@
     reason = "interning validates pool bounds and collision invariants"
 )]
 
-//! Owned, lifetime-free string interner.
-//!
-//! Owns all interned bytes in a single `String` and hands back a [`StrId`]
-//! index. It offers two observable contracts:
-//!
-//! - **Dedup**: byte-equal `intern` calls return the same handle.
-//! - **[`InternStats`]**: the full counter set the corpus-sweep dedup-ratio
-//!   report reads (`calls`, `cache_hits`, `table_hits`, `allocs`,
-//!   `long_bypass`, `resizes`, `probe_steps`). The probe table is a real
-//!   open-addressing algorithm, so the hash-health counters carry real
-//!   signal here, not zero placeholders.
-//!
-//! ## Backing
-//!
-//! Open addressing with linear probing over a `Vec<Option<StrId>>` probe
-//! table. Each slot stores a [`StrId`], resolved against `buf` + `spans` to
-//! compare bytes on a probe. A `fx_hash` mix, power-of-two capacity, 7/8
-//! load-factor resize, 1-slot inline cache, and 64-byte table bypass round
-//! out the design.
-//!
-//! The *handle contract* (dedup + resolve) is the invariant.
+//! Interns syntax tree strings and records allocation statistics.
 
 use core::mem;
 
-/// FxHash-style mix constant. The same constant rustc internally uses for
-/// `FxHasher`; chosen for fast diffusion on short inputs.
 const FX_PRIME: u64 = 0x517c_c1b7_2722_0a95;
+const FX_ROTATE_BITS: u32 = 5;
+const LOAD_FACTOR_NUMERATOR: usize = 7;
+const LOAD_FACTOR_DENOMINATOR: usize = 8;
 
-/// `wrapping_mul`-and-xor mix loop. Fast on short inputs (the dominant case for
-/// Aozora ruby readings); avoids the per-call state setup cost of std
-/// `SipHash`. Single-authority hash mix shared by the owned interner and any
-/// other open-addressing table over the same byte streams.
 #[inline]
 pub(crate) fn fx_hash(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0;
     for &b in bytes {
-        h = h.rotate_left(5) ^ u64::from(b);
+        h = h.rotate_left(FX_ROTATE_BITS) ^ u64::from(b);
         h = h.wrapping_mul(FX_PRIME);
     }
     h
 }
 
-/// Diagnostic counters surfaced by an interner's `stats`.
-///
-/// Lifetime-free `Copy` counter set the corpus-sweep dedup-ratio report reads
-/// (`calls`, `cache_hits`, `table_hits`, `allocs`, `long_bypass`, `resizes`,
-/// `probe_steps`).
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct InternStats {
-    /// Total `intern` calls (every entry into the API).
     pub(crate) calls: u64,
-    /// Calls served from the inline cache.
     pub(crate) cache_hits: u64,
-    /// Calls that landed on an existing table entry (no allocation).
     pub(crate) table_hits: u64,
-    /// Calls that allocated a new entry.
     pub(crate) allocs: u64,
-    /// Calls that bypassed the table because the string exceeded
-    /// `INTERN_LENGTH_LIMIT` — counted as an alloc as well.
     pub(crate) long_bypass: u64,
-    /// Total resize events the table performed.
     pub(crate) resizes: u64,
-    /// Total probe steps walked across all `intern` calls. Divided by
-    /// `calls - cache_hits` gives the average probe length, the canonical
-    /// hash-table health metric.
     pub(crate) probe_steps: u64,
 }
 
-/// Byte length beyond which the interner bypasses its probe table: long
-/// strings allocate a fresh [`StrId`] without a table entry (no dedup).
-/// They almost never repeat in practice and hashing them costs more than the
-/// alloc a dedup would save.
 const INTERN_LENGTH_LIMIT: usize = 64;
 
-/// Initial probe-table capacity, allocated lazily on the first short intern.
-/// Power of two so probe-index is `hash & mask`.
 const INITIAL_CAPACITY: usize = 256;
 
-/// Opaque handle to text owned by a [`crate::Snapshot`].
-///
-/// `Hash`/`Ord` are derived so a `StrId` can key the owned node store's
-/// auxiliary maps and sort deterministically; both are zero-cost on a `u32`.
+/// Index into one string interner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct StrId(pub(crate) u32);
 
-/// Owned, lifetime-free string interner.
-///
-/// Deduplicates byte-equal strings and returns a stable [`StrId`], owning
-/// every unique string's bytes in a single `String` (`buf`) plus a
-/// `(start, len)` span per id (`spans`). Dedup is served by an
-/// open-addressing probe table (`table`).
-///
-/// Derives `Clone` (the owned output may be cached/cloned by the #237
-/// incremental cache). It does **not** derive `Copy` (owns heap storage) nor
-/// `PartialEq`/`Eq`: the reused `stats: InternStats` field does not implement
-/// `PartialEq`, so deriving it here would not compile, and structural
-/// equality of an interner is not a meaningful operation. `Default` is the
-/// trivially-empty interner (empty probe table; the first short intern sizes
-/// it to `INITIAL_CAPACITY`).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StrInterner {
-    /// Every unique string's bytes, concatenated in intern order.
     buf: String,
-    /// `(start, len)` byte span into `buf` for each id; `spans[id.0 as usize]`
-    /// locates `StrId(id)`. Indexed by stable id, not by probe position.
     spans: Vec<(u32, u32)>,
-    /// Open-addressing probe table: `None` = empty slot, `Some(id)` = the
-    /// [`StrId`] whose bytes hash to this slot. A probe resolves the
-    /// candidate id against `buf` + `spans` to compare bytes. Empty until the
-    /// first short intern lazily sizes it to `INITIAL_CAPACITY`.
     table: Vec<Option<StrId>>,
-    /// `capacity - 1`; `capacity` is a power of two (or `0` before the table
-    /// is first sized). Makes the slot index a single `hash & mask`.
     mask: usize,
-    /// Number of occupied probe-table slots. Counts table-resident (short)
-    /// strings only; long strings bypass the table, so this can be below
-    /// `spans.len()`. Drives the load-factor resize.
     occupied: usize,
-    /// Inline cache of the last interned id, short-circuiting so long
-    /// identical runs count as `cache_hits`.
     last: Option<StrId>,
-    /// Diagnostic counters feeding the dedup-ratio reporting.
     pub(crate) stats: InternStats,
 }
 
 impl StrInterner {
-    /// Empty interner.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Intern `s`, returning a stable [`StrId`]. Byte-equal calls return the
-    /// same id (dedup) and update the `InternStats` accounting.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the interner's backing buffer would exceed `u32::MAX` bytes,
-    /// a single interned string exceeds `u32::MAX` bytes, or the unique-string
-    /// count exceeds `u32::MAX` — none reachable for any realistic document.
+    /// Strings beyond `INTERN_LENGTH_LIMIT` may receive separate IDs.
     pub(crate) fn intern(&mut self, s: &str) -> StrId {
         self.stats.calls += 1;
 
-        // Inline cache: identical consecutive interns short-circuit on a
-        // single resolve-and-compare.
         if let Some(id) = self.last
             && self.resolve(id) == s
         {
@@ -159,9 +73,6 @@ impl StrInterner {
 
         let bytes = s.as_bytes();
 
-        // Length-threshold bypass — long strings skip the probe table (no
-        // dedup). They still allocate a `StrId` so payloads can reference
-        // them.
         if bytes.len() > INTERN_LENGTH_LIMIT {
             self.stats.long_bypass += 1;
             self.stats.allocs += 1;
@@ -170,9 +81,6 @@ impl StrInterner {
             return id;
         }
 
-        // Lazily size the table on the first short intern, then keep the load
-        // factor under 7/8 (power-of-two table makes this a multiply + compare,
-        // no division).
         if self.table.is_empty() {
             self.table = vec![None; INITIAL_CAPACITY];
             self.mask = INITIAL_CAPACITY
@@ -180,8 +88,8 @@ impl StrInterner {
                 .expect("initial interner capacity is nonzero");
         } else if self
             .occupied
-            .saturating_mul(8)
-            .cmp(&self.table.len().saturating_mul(7))
+            .saturating_mul(LOAD_FACTOR_DENOMINATOR)
+            .cmp(&self.table.len().saturating_mul(LOAD_FACTOR_NUMERATOR))
             .is_ge()
         {
             self.grow();
@@ -219,9 +127,6 @@ impl StrInterner {
         panic!("interner probe table has no empty slot");
     }
 
-    /// Append `s`'s bytes to `buf`, record its span, and mint a fresh
-    /// [`StrId`]. Does not touch the probe table — callers (the fresh-slot and
-    /// long-bypass paths) own that bookkeeping.
     fn alloc(&mut self, s: &str) -> StrId {
         let start =
             u32::try_from(self.buf.len()).expect("owned interner buffer exceeds u32 byte range");
@@ -235,8 +140,6 @@ impl StrInterner {
         id
     }
 
-    /// Doubles probe-table capacity and rebuilds it via fresh probing.
-    /// `buf` / `spans` are untouched, so live [`StrId`]s stay valid.
     fn grow(&mut self) {
         let new_cap = self.table.len().saturating_mul(2);
         let new_mask = new_cap
@@ -268,43 +171,29 @@ impl StrInterner {
         self.stats.resizes += 1;
     }
 
-    /// Resolve a [`StrId`] back to its interned bytes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `id` was not produced by this interner.
     #[must_use]
     pub(crate) fn resolve(&self, id: StrId) -> &str {
         let (start, len) = self.spans[id.0 as usize];
         &self.buf[start as usize..start as usize + len as usize]
     }
 
-    /// Number of distinct strings held — the size of the dense [`StrId`] space
-    /// (`StrId(0)..StrId(len)`). Counts every interned string, short and long,
-    /// including table-bypassed long strings, which the owned tree must still
-    /// address by id.
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.spans.len()
     }
 
-    /// Whether the interner holds no strings.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.spans.is_empty()
     }
 
-    /// Current probe-table capacity (`0` before the first short intern).
     #[cfg(test)]
     #[must_use]
     pub(crate) fn capacity(&self) -> usize {
         self.table.len()
     }
 
-    /// Average probe length per non-cache-hit lookup. Returns `0.0` when no
-    /// probed lookups have occurred. Meaningful because the probe table is a
-    /// real open-addressing algorithm, so `probe_steps` carries real signal.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn avg_probe_length(&self) -> f64 {
@@ -326,32 +215,24 @@ impl StrInterner {
 mod tests {
     use super::*;
 
-    /// Exact-value float comparison for the (small, exactly-representable)
-    /// `avg_probe_length` results — avoids `clippy::float_cmp` while still
-    /// distinguishing 0.0 / 1.0 from a mutant's NaN or wrong constant.
     fn approx(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-12
     }
 
-    // UNIT TEST 2 (interner cluster).
     #[test]
     fn intern_dedups_and_resolves_round_trip() {
         let mut i = StrInterner::new();
 
-        // Same content -> same id.
         let a1 = i.intern("あ");
         let a2 = i.intern("あ");
         assert_eq!(a1, a2, "byte-equal intern must return the same id");
 
-        // Resolve round-trips bytes exactly.
         assert_eq!(i.resolve(a1), "あ", "resolve must round-trip the bytes");
 
-        // Distinct content -> distinct ids.
         let b = i.intern("い");
         assert_ne!(a1, b, "distinct content must yield distinct ids");
         assert_eq!(i.resolve(b), "い", "resolve must round-trip the bytes");
 
-        // One unique string per distinct content.
         assert_eq!(i.len(), 2, "two distinct strings interned");
     }
 
@@ -373,8 +254,6 @@ mod tests {
 
     #[test]
     fn distinct_interleaved_content_probes_the_table() {
-        // Interleave two distinct readings so the inline cache never serves
-        // them — every reuse must come from the probe table.
         let mut i = StrInterner::new();
         let a = i.intern("青");
         let b = i.intern("空");
@@ -408,23 +287,16 @@ mod tests {
     #[test]
     fn long_strings_bypass_table_without_table_dedup() {
         let mut i = StrInterner::new();
-        let long = "x".repeat(128); // beyond INTERN_LENGTH_LIMIT (64)
+        let long = "x".repeat(128);
 
-        // First long call bypasses the table; the second identical call hits
-        // the inline cache (which compares full content), so they share an id.
         let s1 = i.intern(&long);
         let s2 = i.intern(&long);
         assert_eq!(s1, s2, "consecutive identical long interns share via cache");
         assert_eq!(i.stats.long_bypass, 1, "only the first long call bypasses");
         assert_eq!(i.stats.cache_hits, 1, "second long call hits the cache");
         assert_eq!(i.resolve(s1), long, "bypassed long string resolves exactly");
-        // Long strings consume no probe-table slot.
         assert_eq!(i.capacity(), 0, "no short intern yet — table unsized");
 
-        // A different long string re-primes the cache, so a later identical
-        // long string can no longer short-circuit — and, with no table dedup,
-        // re-allocates a *distinct* id whose bytes are still identical
-        // (output-invariant despite the duplicate allocation).
         let other = "y".repeat(128);
         let _ = i.intern(&other);
         let s3 = i.intern(&long);
@@ -443,8 +315,6 @@ mod tests {
     #[test]
     fn many_unique_strings_trigger_resize() {
         let mut i = StrInterner::new();
-        // 256-slot initial table; resize at 7/8 load. Insert 300 unique
-        // strings — capacity must grow past the initial 256.
         for k in 0..300 {
             let s = format!("unique-string-{k}");
             i.intern(&s);
@@ -492,7 +362,6 @@ mod tests {
     #[test]
     fn average_probe_length_stays_low_at_typical_load() {
         let mut i = StrInterner::new();
-        // 100 unique short strings in a 256-slot table (39% load).
         for k in 0..100 {
             let s = format!("k{k}");
             i.intern(&s);
@@ -506,14 +375,11 @@ mod tests {
 
     #[test]
     fn length_limit_boundary_is_inclusive_of_the_table() {
-        // A string of *exactly* `INTERN_LENGTH_LIMIT` (64) bytes stays in the
-        // probe table (deduped); only strings strictly longer bypass. Pins the
-        // `>` boundary against a `>=` off-by-one.
         let mut i = StrInterner::new();
         let at_limit = "a".repeat(64);
         let breaker = "b".repeat(4);
         let id1 = i.intern(&at_limit);
-        let _ = i.intern(&breaker); // defeat the inline cache
+        let _ = i.intern(&breaker);
         let id2 = i.intern(&at_limit);
         assert_eq!(id1, id2, "a 64-byte string is table-deduped, not bypassed");
         assert_eq!(i.stats.long_bypass, 0, "64 bytes is within the table limit");
@@ -522,7 +388,6 @@ mod tests {
     #[test]
     fn stats_count_long_bypass_allocations_and_probe_steps() {
         let mut i = StrInterner::new();
-        // A long string bypasses the table but still counts as an allocation.
         let long = "x".repeat(100);
         i.intern(&long);
         assert_eq!(i.stats.long_bypass, 1);
@@ -530,7 +395,6 @@ mod tests {
             i.stats.allocs, 1,
             "a bypassed long string is still an alloc"
         );
-        // A short string walks the probe table, so probe_steps accrues.
         i.intern("短");
         assert!(
             i.stats.probe_steps >= 1,
@@ -547,17 +411,12 @@ mod tests {
 
     #[test]
     fn avg_probe_length_is_defined_pointwise() {
-        // Empty interner: no probed lookups → 0.0 by contract (the `probed == 0`
-        // guard; without it this would divide 0/0 = NaN).
         let empty = StrInterner::new();
         assert!(
             approx(empty.avg_probe_length(), 0.0),
             "no probed lookups → 0.0, got {}",
             empty.avg_probe_length()
         );
-        // One short intern: exactly one probe step over one probed lookup → 1.0.
-        // This pins the true division (a `%` mutant would give 1 % 1 = 0.0) and
-        // the `-> 0.0` / `-> 1.0` / `-> -1.0` stubs jointly with the empty case.
         let mut one = StrInterner::new();
         one.intern("a");
         assert!(
@@ -569,11 +428,6 @@ mod tests {
 
     #[test]
     fn dedup_survives_a_resize() {
-        // The probe table must rebuild with the *same* probe direction it looks
-        // up with; otherwise a collision-displaced entry becomes unfindable and
-        // re-interning it silently allocates a duplicate. Insert enough unique
-        // strings to force a resize, then re-intern every one (reversed, to
-        // defeat the inline cache) and require the original ids back.
         let mut i = StrInterner::new();
         let strings: Vec<String> = (0..300).map(|k| format!("entry-{k}")).collect();
         let ids: Vec<StrId> = strings.iter().map(|s| i.intern(s)).collect();

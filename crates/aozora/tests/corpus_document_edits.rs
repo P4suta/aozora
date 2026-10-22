@@ -6,6 +6,10 @@ use aozora::{Snapshot, TextEdit, decode_auto};
 use aozora_corpus::{CorpusItem, FilesystemCorpus, par_load_decoded};
 
 #[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "the corpus test reports skip reasons and mismatched documents"
+)]
 fn edited_documents_match_cold_parses() {
     let Some(corpus) = configured_corpus() else {
         assert!(
@@ -60,6 +64,10 @@ fn edit_outcome(item: CorpusItem, filter: Option<&str>) -> Option<(String, Vec<&
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "edit comparison requires successful parses and valid generated insertions"
+)]
 fn compare_edits(source: &str, verbose: bool) -> Vec<&'static str> {
     let first = insertion_offset(source, source.len() / 3);
     let second = insertion_offset(source, source.len() * 2 / 3);
@@ -145,6 +153,10 @@ fn mismatch(found: &mut Vec<&'static str>, differs: bool, projection: &'static s
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    reason = "verbose corpus failures report both diagnostic lists"
+)]
 fn diagnostics_match(actual: &Snapshot, cold: &Snapshot, verbose: bool) -> bool {
     let rows = |snapshot: &Snapshot| {
         snapshot

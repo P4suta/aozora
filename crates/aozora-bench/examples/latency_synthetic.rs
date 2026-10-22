@@ -1,15 +1,4 @@
-//! Corpus-free small-document parse + render latency percentiles.
-//!
-//! The quick latency probe that pairs with the criterion throughput
-//! benches: it times `aozora::parse().expect("source fits parser span limit").snapshot().to_html()` on a synthetic
-//! buffer and prints p50/p90/p99/max in integer microseconds. Mirrors
-//! afm's `examples/latency_hist.rs` so both repos expose the same
-//! corpus-free `just latency` shape; the deep per-phase, corpus-driven
-//! distribution lives in `examples/latency_histogram.rs`.
-//!
-//! ```text
-//! just latency
-//! ```
+//! Reports parse and render latency percentiles for synthetic source.
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -19,6 +8,11 @@ use aozora_bench::build_synthetic_aozora;
 const WARMUP: usize = 200;
 const ITERS: usize = 4000;
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn main() {
     let source = build_synthetic_aozora(4 * 1024);
 

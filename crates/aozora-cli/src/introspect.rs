@@ -1,23 +1,4 @@
-//! `aozora spec {kinds,schema,slugs}` / `aozora explain` — shell-level
-//! introspection of the parser's typed contracts.
-//!
-//! No parsing happens here — the goal is to make "what tags can the
-//! JSON format produce?" / "what is the JSON envelope shape?" /
-//! "what does `bouten` mean?" answerable without reading source.
-//!
-//! - `aozora spec kinds` walks every `pub const ALL: [Self; N]` on the
-//!   spec / syntax enums and tabulates them.
-//! - `aozora spec schema` pretty-prints the generated JSON Schema for
-//!   the configuration file or a document JSON envelope. Document
-//!   schemas are delegated to `aozora::json::schema_*` behind the
-//!   `schema` Cargo feature.
-//! - `aozora spec slugs` prints the static ［＃…］ slug catalogue as the
-//!   shared `aozora::json` envelope (delegated to `aozora::json::slugs`).
-//! - `aozora explain <kind>` prints the embedded prose page for that
-//!   `NodeKind` — this crate's `src/node-docs/<kind>.md`, embedded via
-//!   `include_str!`.
-//!
-//! Output goes to stdout; non-zero exit only on argument errors.
+//! Prints parser contracts and explanations through [`run_kinds`], [`run_schema`], [`run_slugs`], and [`run_explain`].
 
 use std::io::{self, IsTerminal, Write};
 use std::mem;
@@ -37,48 +18,37 @@ use aozora::{
     json::{self, schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
 };
 
-/// `aozora spec schema <which>` subcommand argument.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum SchemaKind {
-    /// `.aozora.toml` configuration shape.
+    /// .aozora.toml configuration shape.
     Config,
-    /// `JsonEnvelope<Diagnostic>` — `diagnostics` output shape.
+    /// Output shape for `diagnostics`: `JsonEnvelope<Diagnostic>`.
     Diagnostics,
-    /// `JsonEnvelope<Node>` — `nodes` output shape.
+    /// Output shape for `nodes`: `JsonEnvelope<Node>`.
     Nodes,
-    /// `JsonEnvelope<Pair>` — `pairs` output shape.
+    /// Output shape for `pairs`: `JsonEnvelope<Pair>`.
     Pairs,
-    /// `JsonEnvelope<ContainerPair>` — `container_pairs` output shape.
+    /// Output shape for `container_pairs`: `JsonEnvelope<ContainerPair>`.
     ContainerPairs,
 }
 
-/// Output format for `aozora spec kinds`: the human tables or the machine
-/// a versioned `{"schemaVersion":…,"data":{…}}` envelope, auto-selected by default on the
-/// same rule as `check`'s diagnostics — tables when stdout is a terminal, the
-/// JSON envelope when it is piped. `check`'s richer `DiagFormat` (with `short`)
-/// is diagnostic-specific and does not apply here.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub(crate) enum OutputFormat {
-    /// Human tables on a terminal, machine (`json`) when piped. The default.
+    /// Use human tables on a terminal or JSON when piped.
+    /// This is the default.
     #[default]
     Auto,
-    /// `comfy-table` tables, one per enum.
+    /// Show one `comfy-table` table per enum.
     Human,
-    /// The versioned `{"schemaVersion":…,"data":{nodeKinds,pairKinds,…}}` envelope —
-    /// the agent / scripting view.
+    /// Emit the versioned `{"schemaVersion":…,"data":{nodeKinds,pairKinds,…}}` envelope for scripts and agents.
     Json,
 }
 
 impl OutputFormat {
-    /// Collapse `Auto` to a concrete view based on whether stdout is a TTY.
     fn resolved(self) -> Self {
         self.resolve(io::stdout().is_terminal())
     }
 
-    /// Pure decision seam for [`resolved`](Self::resolved): `Auto` becomes
-    /// `Human` on a terminal and `Json` otherwise; concrete formats pass
-    /// through unchanged. Mirrors [`crate::diagnostics_render::DiagFormat`]'s
-    /// auto rule (that one keys on stderr; `kinds` writes to stdout).
     fn resolve(self, is_terminal: bool) -> Self {
         match self {
             Self::Auto if is_terminal => Self::Human,
@@ -88,12 +58,11 @@ impl OutputFormat {
     }
 }
 
-/// `aozora spec kinds` arguments. The table set is one fixed shape; `--format`
-/// selects the human tables or the JSON envelope (`auto` by default).
+/// List parser kinds as human tables or JSON.
 #[derive(Debug, Args)]
 pub(crate) struct KindsArgs {
-    /// Output format: `auto` (the default — tables on a terminal, `json` when
-    /// piped), `human` (tables), or `json`.
+    /// Choose `auto`, `human` tables, or `json`.
+    /// Defaults to `auto`, which uses tables on a terminal and JSON when piped.
     #[arg(long, value_enum, default_value_t = OutputFormat::Auto)]
     format: OutputFormat,
 }
@@ -108,10 +77,10 @@ pub(crate) struct KindsArgs {
 
 An unrecognised target suggests the nearest known one (\"did you mean …?\").")]
 pub(crate) struct ExplainArgs {
-    /// A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run
-    /// `aozora spec kinds` for the list), a notation concept (e.g. `tcy`,
-    /// `傍点`), or a diagnostic code (e.g. `aozora::lex::unclosed_bracket`,
-    /// or the short `unclosed_bracket`).
+    /// Choose a `NodeKind` tag, notation concept, or diagnostic code.
+    /// Use `camelCase` tags such as `ruby` or `angleQuote`, listed by `aozora spec kinds`.
+    /// Concept examples include `tcy` and `傍点`.
+    /// Diagnostic codes accept full names such as `aozora::lex::unclosed_bracket` or short names such as `unclosed_bracket`.
     #[arg(value_name = "TARGET")]
     pub(crate) kind: String,
 }
@@ -124,9 +93,6 @@ pub(crate) struct SchemaArgs {
     pub(crate) which: SchemaKind,
 }
 
-/// One introspection table: a human title + blurb, a camelCase JSON key,
-/// and the `(wire tag, summary)` rows. Both the `human` and `json` renderers
-/// consume the same set so the two never drift.
 struct KindTable {
     title: &'static str,
     json_key: &'static str,
@@ -134,8 +100,6 @@ struct KindTable {
     rows: Vec<(&'static str, &'static str)>,
 }
 
-/// The six introspection tables, in display order. Single source of truth
-/// for `aozora spec kinds` (both `--format human` and `--format json`).
 fn kind_tables() -> Vec<KindTable> {
     vec![
         KindTable {
@@ -186,13 +150,10 @@ fn kind_tables() -> Vec<KindTable> {
     ]
 }
 
-/// Render the unified introspection tables to stdout, as human tables or a
-/// JSON envelope per `--format`.
 pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     let tables = kind_tables();
     let mut stdout = output::stdout();
     match args.format.resolved() {
-        // `resolved()` never returns `Auto`, but match exhaustively.
         OutputFormat::Human | OutputFormat::Auto => {
             for t in &tables {
                 write_table(&mut stdout, t.title, t.blurb, t.rows.iter().copied())?;
@@ -203,7 +164,6 @@ pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Emit the common wire envelope as compact JSON.
 fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
     let mut data = serde_json::Map::new();
     for t in tables {
@@ -219,7 +179,6 @@ fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
     writeln!(out, "{line}").context("write kinds JSON to stdout")
 }
 
-/// Pretty-print the requested generated schema as JSON.
 pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     let value = match args.which {
         SchemaKind::Config => serde_json::to_value(schemars::schema_for!(ConfigFile))
@@ -236,20 +195,13 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Print the static ［＃…］ slug catalogue as the shared `aozora::json`
-/// envelope. Reads no document input; byte-identical to every binding's
-/// `slugs_json()` output.
 pub(crate) fn run_slugs() -> Result<ExitCode> {
     let mut stdout = output::stdout();
     writeln!(stdout, "{}", json::slugs()).context("write slugs to stdout")?;
     Ok(ExitCode::SUCCESS)
 }
 
-/// Print the explainer for `args.kind`. Resolves a `NodeKind` handbook page,
-/// a notation concept, or a diagnostic code (see [`resolve_explain`]). On an
-/// unrecognised target it exits non-zero with a localized message that offers
-/// the nearest known target ("did you mean …?") plus a hint pointing back at
-/// `aozora spec kinds`.
+/// Prints an explanation or reports an unknown target with a localized suggestion.
 pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Result<ExitCode> {
     match resolve_explain(&args.kind, lang) {
         Some(text) => {
@@ -261,25 +213,13 @@ pub(crate) fn run_explain(args: &ExplainArgs, lang: &LanguageIdentifier) -> Resu
     }
 }
 
-/// Resolve `target` to its explainer prose, in the deterministic precedence
-/// `NodeKind tag > concept > diagnostic code`.
-///
-/// The three layers do not collide: node-page and concept keys are disjoint by
-/// construction, and diagnostic codes always carry `_` and/or `::` (which the
-/// node-page / concept keys never do), so a full or short code only ever
-/// reaches the last layer. The order is a guarantee, not a coincidence — a key
-/// that is both a node-page tag and a concept always renders the node page.
+/// Resolves node tags before concept aliases and diagnostic codes.
 fn resolve_explain(target: &str, lang: &LanguageIdentifier) -> Option<String> {
     explain_kind(target)
         .or_else(|| explain_concept(target, lang))
         .or_else(|| explain_diagnostic(target, lang))
 }
 
-/// The localized "unknown explain target" error, with a "did you mean `Y`?"
-/// tail when a near neighbour exists ([`nearest_target`]) and a hint pointing
-/// at `aozora spec kinds`. Human-only: the suggestion and prose respect `lang`,
-/// while the exit code (the machine axis) is unchanged — this string is what
-/// `run_explain` bails with.
 fn unknown_target_message(target: &str, lang: &LanguageIdentifier) -> String {
     let mut args = FluentArgs::new();
     args.set("target", target.to_owned());
@@ -294,8 +234,6 @@ fn unknown_target_message(target: &str, lang: &LanguageIdentifier) -> String {
     msg.push_str(&i18n::t(lang, "explain-unknown-hint"));
     msg
 }
-
-// ---- table layout ---------------------------------------------------
 
 fn write_table<I>(out: &mut dyn Write, title: &str, blurb: &str, rows: I) -> Result<()>
 where
@@ -313,13 +251,6 @@ where
     writeln!(out, "{table}\n").context("write table")?;
     Ok(())
 }
-
-// ---- per-variant prose ---------------------------------------------
-//
-// Short, single-line summaries used by `aozora spec kinds` rows. The full
-// multi-paragraph prose for each `NodeKind` lives in this crate under
-// `src/node-docs/<kind>.md` and is surfaced verbatim by
-// `aozora explain <kind>` via `include_str!`.
 
 fn describe_node(k: NodeKind) -> &'static str {
     match k {
@@ -381,8 +312,6 @@ fn describe_source(s: DiagnosticSource) -> &'static str {
 }
 
 fn describe_internal(c: InternalCheckCode) -> &'static str {
-    // Stable namespaced codes — keep prose terse. The handbook
-    // chapter `arch/error-recovery.md` carries the full reasoning.
     match c {
         InternalCheckCode::ResidualAnnotationMarker => "［＃ digraph survived classification",
         InternalCheckCode::UnregisteredSentinel => "PUA sentinel without registry entry",
@@ -394,18 +323,6 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
     }
 }
 
-/// Embedded prose pages for `aozora explain <tag>`, keyed by the
-/// `NodeKind::as_json_tag` wire tag — the same string `aozora spec kinds`
-/// prints and every driver crate emits. Bodies are `include_str!`d from
-/// this crate's `src/node-docs/`.
-///
-/// The key must be the wire tag and nothing else. Three entries used to
-/// be keyed by their filename instead (`tateChuYoko`, `sashie`,
-/// `annotation`), so `aozora spec kinds` advertised `combineUpright` /
-/// `illustration` / `directive` and `aozora explain` rejected all three
-/// — while the pages sat right here, reachable only under names the CLI
-/// never printed. `every_advertised_tag_explains` pins the
-/// round-trip now.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("node-docs/ruby.md")),
     ("bouten", include_str!("node-docs/bouten.md")),
@@ -428,13 +345,7 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The prose page for a wire tag, falling back to the one-line summary
-/// `aozora spec kinds` prints for kinds that have no page.
-///
-/// Without the fallback the two commands contradict each other: `explain`
-/// rejects `center` and tells the reader to run `spec kinds`, which lists
-/// `center` with a summary. Seven kinds are in that position. A tag the
-/// tool advertises must explain to something.
+/// Falls back to the kind summary when no embedded page exists.
 fn explain_kind(tag: &str) -> Option<String> {
     const NOTATION_SPEC_URL: &str = "https://p4suta.github.io/aozora-notation-spec/";
     if let Some((_, body)) = NODE_PAGES.iter().find(|(t, _)| *t == tag) {
@@ -449,16 +360,7 @@ fn explain_kind(tag: &str) -> Option<String> {
     ))
 }
 
-/// Explain a diagnostic code: `aozora explain aozora::lex::unclosed_bracket`
-/// (or the short `unclosed_bracket`). Prints the same code / severity / URL
-/// that `aozora check` attaches to the diagnostic — the machine axis, sourced
-/// from [`aozora::Diagnostic::explain`] so the two never diverge. The localized
-/// title / body prose and the section labels (repro / fixed / see) are pulled
-/// from the `i18n` catalog by code + `lang`; the repro / fixed example
-/// pair is the language-neutral Aozora notation carried by `info`.
 fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
-    // Accept the full `aozora::lex::<token>` / `aozora::lint::<token>` code or
-    // the bare trailing token; expand the short form against both namespaces.
     let info = if arg.contains("::") {
         Diagnostic::explain(arg)?
     } else {
@@ -496,23 +398,6 @@ fn explain_diagnostic(arg: &str, lang: &LanguageIdentifier) -> Option<String> {
     Some(out)
 }
 
-// ---- notation concepts ---------------------------------------------
-//
-// Concept / notation-family keys the reader is likely to type but that are
-// not a one-to-one `NodeKind` page: abbreviations (`tcy`) and Japanese
-// names (`傍点`, `ルビ`, …). Each key routes to a concept slug whose
-// localized title / body prose lives in the `i18n` catalog as
-// `concept-<slug>-{title,body}` (en / ja / zh).
-//
-// No key here may be a `NodeKind` wire tag. `resolve_explain` tries node
-// pages first, so such an entry is unreachable — and worse, it hides the
-// node page when that page is keyed by anything else. `combineUpright` sat here
-// and did exactly that: the page was registered as `tateChuYoko`, so the
-// tag `aozora spec kinds` prints resolved to this short concept blurb
-// instead of the node page. `concepts_never_shadow_a_node_page` pins it.
-
-/// `(typed key, concept slug)`. Several keys may share one slug (aliases). The
-/// slug names the `concept-<slug>-{title,body}` localization catalog keys.
 const CONCEPTS: &[(&str, &str)] = &[
     ("tcy", "tcy"),
     ("縦中横", "tcy"),
@@ -525,9 +410,6 @@ const CONCEPTS: &[(&str, &str)] = &[
     ("kanbun", "kaeriten"),
 ];
 
-/// Explain a notation concept: `aozora explain tcy` / `aozora explain 傍点`.
-/// Renders the localized concept title + body from the `i18n` catalog. `None` when
-/// `key` names no concept.
 fn explain_concept(key: &str, lang: &LanguageIdentifier) -> Option<String> {
     let slug = CONCEPTS.iter().find(|(k, _)| *k == key).map(|(_, s)| *s)?;
     let title = i18n::t(lang, &format!("concept-{slug}-title"));
@@ -535,14 +417,6 @@ fn explain_concept(key: &str, lang: &LanguageIdentifier) -> Option<String> {
     Some(format!("{title}\n\n{body}"))
 }
 
-// ---- "did you mean" suggestion -------------------------------------
-
-/// Every target `resolve_explain` accepts, in a fixed order: node-page tags,
-/// concept keys, then each diagnostic code in both its full (`aozora::lex::…`)
-/// and short (trailing token) form. This is exactly the suggestion pool, so a
-/// "did you mean `Y`?" hint always names something `explain` can actually
-/// resolve — the fixed order also makes the nearest-neighbour tie-break
-/// deterministic.
 fn known_targets() -> Vec<&'static str> {
     let mut targets: Vec<&'static str> = Vec::new();
     targets.extend(NODE_PAGES.iter().map(|(tag, _)| *tag));
@@ -556,12 +430,7 @@ fn known_targets() -> Vec<&'static str> {
     targets
 }
 
-/// The nearest known [`known_targets`] entry to `target` by Levenshtein
-/// distance, or `None` when even the closest is too far to be a plausible
-/// typo. The cutoff is rustc's `find_best_match_for_name` rule —
-/// `max(len, 3) / 3` — so short garbage like `bogus` yields no suggestion
-/// while a one- or two-character slip is caught. Ties resolve to the earliest
-/// entry in [`known_targets`]'s fixed order.
+/// Returns the nearest plausible target, preferring earlier entries on ties.
 fn nearest_target(target: &str) -> Option<&'static str> {
     const TYPO_DISTANCE_DIVISOR: usize = 3;
     let threshold = target.chars().count().max(TYPO_DISTANCE_DIVISOR) / TYPO_DISTANCE_DIVISOR;
@@ -576,14 +445,9 @@ fn nearest_target(target: &str) -> Option<&'static str> {
         .map(|(_, candidate)| candidate)
 }
 
-/// The Levenshtein edit distance (insert / delete / substitute, unit cost)
-/// between `a` and `b`, over Unicode scalar values so Japanese concept keys
-/// compare per character rather than per UTF-8 byte. A hand-rolled two-row DP
-/// — no dependency for one small function on the cold error path.
+/// Measures edit distance in Unicode scalar values.
 fn levenshtein(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
-    // `prev[j]` = distance between the processed prefix of `a` and `b[..j]`.
-    // Row 0 is the cost of deleting each prefix of `b` (all inserts).
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut curr: Vec<usize> = vec![0; b.len() + 1];
     for (i, ca) in a.chars().enumerate() {
@@ -601,8 +465,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
 mod tests {
     use super::*;
 
-    // `resolve` is the pure TTY-decision seam behind `kinds --format auto`. On
-    // a terminal `Auto` renders `Human` (tables); piped, it renders `Json`.
     #[test]
     fn output_format_resolve_auto_on_terminal_is_human() {
         assert!(matches!(
@@ -741,13 +603,6 @@ mod tests {
         }
     }
 
-    /// `NodeKind` is `#[non_exhaustive]`, so `describe_node`'s `_` arm is
-    /// mandatory from this crate and the compiler can never flag a missing
-    /// variant. `BodyEnd` / `ForcedBreak` / `Emphasis` fell through it for
-    /// as long as they existed, and `aozora spec kinds` printed the
-    /// apology to users as those variants' summary. Only a walk of `ALL`
-    /// catches that — which is why `describe_pair` has had this test and
-    /// `describe_node` only had one asserting the variants it remembered.
     #[test]
     fn describe_node_covers_every_variant_without_fallback() {
         let fallback =
@@ -757,11 +612,6 @@ mod tests {
         }
     }
 
-    /// Every `NODE_PAGES` key must be the wire tag `aozora spec kinds`
-    /// prints — the name `explain`'s own error tells the reader to look up.
-    /// Three pages were keyed by their filename instead, so the tags
-    /// `combineUpright` / `illustration` / `directive` were rejected while
-    /// their pages sat in the binary.
     #[test]
     fn node_pages_are_keyed_by_wire_tag() {
         let tags: Vec<&str> = NodeKind::ALL.iter().map(|k| k.as_json_tag()).collect();
@@ -790,11 +640,6 @@ mod tests {
         }
     }
 
-    /// The round-trip the CLI promises: `explain`'s error says to run
-    /// `spec kinds`, so every tag that command advertises must explain to
-    /// something. Nine of twenty-five did not — and `explain` answered
-    /// seven of those by telling the reader to consult the very list they
-    /// came from.
     #[test]
     fn every_advertised_tag_explains() {
         for k in NodeKind::ALL {
@@ -807,9 +652,6 @@ mod tests {
         }
     }
 
-    /// `resolve_explain` tries node pages before concepts, so a concept
-    /// keyed on a wire tag is dead — and hides the node page whenever that
-    /// page is keyed by anything else. `combineUpright` was both at once.
     #[test]
     fn concepts_never_shadow_a_node_page() {
         let tags: Vec<&str> = NodeKind::ALL.iter().map(|k| k.as_json_tag()).collect();
@@ -896,32 +738,24 @@ mod tests {
         }
     }
 
-    // ---- edit-distance seam --------------------------------------------
-
     #[test]
     fn levenshtein_base_cases() {
         assert_eq!(levenshtein("", ""), 0);
         assert_eq!(levenshtein("ruby", "ruby"), 0);
-        // One insert, one delete, one substitute.
         assert_eq!(levenshtein("ruby", "rubyx"), 1);
         assert_eq!(levenshtein("rubyx", "ruby"), 1);
         assert_eq!(levenshtein("ruby", "rubi"), 1);
-        // Distance from the empty string is the other's length.
         assert_eq!(levenshtein("", "gaiji"), 5);
         assert_eq!(levenshtein("gaiji", ""), 5);
     }
 
     #[test]
     fn levenshtein_transposition_costs_two_edits() {
-        // A swapped pair is two unit edits under plain Levenshtein — the value
-        // the `unclsoed_bracket` typo relies on staying under threshold.
         assert_eq!(levenshtein("unclsoed_bracket", "unclosed_bracket"), 2);
     }
 
     #[test]
     fn levenshtein_counts_unicode_scalars_not_bytes() {
-        // Japanese concept keys must compare per character; `傍点` is 6 UTF-8
-        // bytes but two scalars, so a one-character change is distance 1.
         assert_eq!(levenshtein("傍点", "傍点"), 0);
         assert_eq!(levenshtein("傍点", "傍線"), 1);
         assert_eq!(levenshtein("縦中横", "縦横"), 1);
@@ -929,8 +763,6 @@ mod tests {
 
     #[test]
     fn nearest_target_suggests_close_typos() {
-        // A one/two-edit slip resolves to the intended target across all three
-        // pools: node-page tag, diagnostic code (short + full), and concept.
         assert_eq!(nearest_target("rubi"), Some("ruby"));
         assert_eq!(nearest_target("unclsoed_bracket"), Some("unclosed_bracket"));
         assert_eq!(nearest_target("tcyy"), Some("tcy"));
@@ -942,29 +774,17 @@ mod tests {
 
     #[test]
     fn nearest_target_tie_resolves_to_earliest_pool_entry() {
-        // `ル字` sits at edit distance 1 from exactly two known targets — the
-        // concept keys `ルビ` and `外字` (each a one-substitution slip) — and no
-        // closer, so it is a genuine two-way tie at the global minimum, inside
-        // the length-scaled threshold. The pool visits `ルビ` before `外字`, and
-        // the tie-break keeps the *earliest* entry: a strict `<` update never
-        // displaces an equal-distance incumbent. (Flip it to `<=` and `外字`
-        // would win instead.)
         assert_eq!(nearest_target("ル字"), Some("ルビ"));
     }
 
     #[test]
     fn nearest_target_declines_when_nothing_is_close() {
-        // `bogus` is far from every known target — no misleading suggestion.
         assert_eq!(nearest_target("bogus"), None);
-        // The cutoff is length-scaled: a single stray char on a short word is
-        // still too far to guess at.
         assert_eq!(nearest_target("zzzz"), None);
     }
 
     #[test]
     fn known_targets_are_all_actually_resolvable() {
-        // The suggestion pool must never name a target `explain` cannot resolve
-        // — every entry resolves through one of the three layers.
         let en = lang_en();
         for target in known_targets() {
             assert!(
@@ -974,24 +794,18 @@ mod tests {
         }
     }
 
-    // ---- resolution order: NodeKind tag > concept > diagnostic code ----
-
     fn lang_en() -> LanguageIdentifier {
         "en".parse().expect("`en` parses")
     }
 
     #[test]
     fn resolve_explain_prefers_node_page_over_concept() {
-        // `ruby` is both a handbook page and the `ルビ` concept's family; the
-        // node page wins, so the output is the handbook chapter, not the blurb.
         let text = resolve_explain("ruby", &lang_en()).expect("ruby resolves");
         assert!(text.contains("NodeKind::Ruby"), "node page: {text:?}");
     }
 
     #[test]
     fn resolve_explain_serves_concepts_that_lack_a_node_page() {
-        // A concept-only key (Japanese alias / abbreviation) resolves to the
-        // localized concept prose, distinct from any node page.
         let en = lang_en();
         let ruby_concept = resolve_explain("ルビ", &en).expect("ルビ resolves");
         assert!(
@@ -1010,7 +824,6 @@ mod tests {
     #[test]
     fn resolve_explain_falls_through_to_diagnostic_codes() {
         let en = lang_en();
-        // Full and short code forms both land on the diagnostic layer.
         for target in ["aozora::lex::unclosed_bracket", "unclosed_bracket"] {
             let text = resolve_explain(target, &en).expect("code resolves");
             assert!(
@@ -1027,8 +840,6 @@ mod tests {
 
     #[test]
     fn unknown_target_message_offers_suggestion_and_keeps_kinds_hint() {
-        // A near-miss carries the localized "did you mean" tail *and* the
-        // `aozora spec kinds` pointer the CLI's error-hint test pins.
         let msg = unknown_target_message("rubi", &lang_en());
         assert!(msg.contains("rubi"), "echoes the bad target: {msg:?}");
         assert!(msg.contains("ruby"), "suggests the near neighbour: {msg:?}");

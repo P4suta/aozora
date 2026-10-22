@@ -1,4 +1,4 @@
-// biome-ignore-all lint/security/noDangerouslySetInnerHtml: Renderer-owned HTML is mounted only at the gallery preview trust boundary.
+// biome-ignore-all lint/security/noDangerouslySetInnerHtml: the gallery preview mounts renderer HTML at its trust boundary.
 import '@react-spectrum/s2/page.css';
 
 import { loadPreferences } from '@aozora/playground-ui/storage';

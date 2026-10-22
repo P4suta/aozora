@@ -111,13 +111,10 @@ rc_mutex = "warn"
 lossy_float_literal = "warn"
 suspicious_xor_used_as_pow = "warn"
 
-# Repeating module names keeps public types clear when imported on their own.
+# Workspace lint exceptions follow docs/adr/repository-lint-exceptions.md.
 module_name_repetitions = "allow"
-# Transitive dependencies cannot always share a single version.
 multiple_crate_versions = "allow"
-# Public functions become const only when their API commits to const evaluation.
 missing_const_for_fn = "allow"
-# Explicit crate visibility makes internal API boundaries clear inside private modules.
 redundant_pub_crate = "allow"
 # Boxing parser payloads would add allocation and indirection to the lexer hot path (ADR-0036).
 large_enum_variant = "allow"
@@ -125,12 +122,10 @@ large_enum_variant = "allow"
 [workspace.dependencies]
 aozora = { version = "0.5.0", path = "crates/aozora" }
 tree-sitter-aozora = { version = "0.5.0", path = "crates/tree-sitter-aozora" }
-# Unpublished crates have no registry versions that consumers can resolve.
 aozora-trace = { path = "crates/aozora-trace" }
 
 bumpalo = { version = "3.20", features = ["collections"] }
 
-# Hot-stack payloads lack the meaningful Default implementation that tinyvec requires.
 smallvec = "1.15"
 
 memchr = "2.8"
@@ -141,7 +136,6 @@ aozora-proptest = { path = "crates/aozora-proptest" }
 
 thiserror = "2.0.18"
 anyhow = "1.0"
-# Library and WASM consumers do not need the CLI's graphical diagnostic renderer dependencies.
 miette = { version = "7.6.0" }
 regex = "1.12"
 
@@ -152,7 +146,6 @@ toml = "1.1"
 flate2 = "1.1"
 
 addr2line = { version = "0.27.1", default-features = false }
-# Direct object access is needed for build-id verification alongside addr2line.
 object = { version = "0.40", default-features = false, features = ["read"] }
 
 encoding_rs = "0.8.35"
@@ -171,30 +164,24 @@ tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "syn
 dashmap = "6"
 parking_lot = "0.12"
 arc-swap = "1.7"
-# Disabling CR and Unicode line breaks matches LineIndex, as checked by doc_line_view_rope_matches_line_index.
 ropey = { version = "1.6", default-features = false, features = [
   "simd",
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-# Percentile metrics need constant-memory storage.
 hdrhistogram = { version = "=7.5.4", default-features = false }
 
 pandoc_ast = "0.8"
 
-# East Asian wide labels would be misaligned by byte-based terminal table padding.
 comfy-table = { version = "7.2", default-features = false }
 
-# Physical-core sizing avoids bandwidth contention between SMT siblings during corpus loading.
 num_cpus = "1.16"
 num-traits = "0.2.19"
 
-# Corpus sweeps need dictionary compression and frame-level random access.
 zstd = "0.13"
 
 blake3 = "1.5"
 
-# Cold-cache benchmarks need to evict corpus pages without requiring sudo.
 rustix = { version = "1.1", features = ["fs"] }
 
 tempfile = "3.27"
@@ -203,24 +190,18 @@ rayon = "1.12"
 
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
 clap_complete = "4.5"
-# Nushell completion generation is not provided by clap_complete's built-in shells.
 clap_complete_nushell = "4.5"
 clap_mangen = "0.3"
 notify = "8.2"
 rustyline = "18.0"
 
-# Upstream tui-textarea's ratatui pin conflicts with rustyline's unicode-width requirement (ADR-0017).
-# Crossterm-only features exclude the unused termwiz backend and its WTFPL dependency from the lockfile.
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
 
 fluent-bundle = "0.16"
-# fluent-syntax must match fluent-bundle's AST types because they are not re-exported.
 fluent-syntax = "0.12"
-# The langid macro expands to unsafe code, which the workspace forbids.
 unic-langid = "0.9"
-# fluent-langneg 0.14 uses ICU4X identifiers that cannot be shared with fluent-bundle's unic-langid types.
 fluent-langneg = "0.13"
 
 insta = { version = "1.47", features = ["yaml", "json", "filters"] }
@@ -231,7 +212,6 @@ pretty_assertions = "1.4.1"
 mutants = "0.0.4"
 
 [profile.release]
-# Thin LTO regressed corpus-sweep wall time by over 30% after lexer phase extraction.
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
@@ -251,9 +231,7 @@ debug = 1
 
 [profile.dev]
 split-debuginfo = "unpacked"
-# Line tables retain backtraces without the link-time memory cost of debugger locals.
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
-# Optimized dependencies speed proc macros and tests while workspace crates retain incremental builds.
 opt-level = 2

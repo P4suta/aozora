@@ -1,23 +1,3 @@
-# release-plz — Rust-native version automation + crates.io publishing.
-#
-# Conventional Commits land on main → the `release-plz-pr` job keeps ONE
-# "Release PR" open (bumps [workspace.package].version + the root CHANGELOG.md).
-# A maintainer adds the `release: approved` label (ci.yml's `release-gate`
-# enforces it) and squash-merges the PR by hand (no-automerge-on-release-pr.yml
-# blocks auto-merge). That merge to main then makes the `release-plz-release`
-# job publish every public crate to crates.io — in release-plz's own dependency
-# order, via crates.io OIDC trusted publishing (no registry token) — and cut a
-# single `vX.Y.Z` tag. The tag fires release.yml (binaries + GitHub Release) and
-# the tag-driven PyPI / npm / extism publishers.
-#
-# That last hop is why release-plz runs as a GitHub App rather than on the
-# default token: GitHub suppresses workflow triggers from a ref pushed with
-# GITHUB_TOKEN, so a tag pushed that way would fire nothing downstream. A
-# short-lived installation token is minted at runtime from
-# RELEASE_PLZ_APP_CLIENT_ID + RELEASE_PLZ_APP_PRIVATE_KEY. See
-# docs/contrib/releasing-secrets.md.
-#
-# Action pinning: third-party actions are pinned to a full commit SHA (the `# vX.Y.Z` trailer is the human-readable tag); Renovate bumps them weekly.
 
 name: release-plz
 
@@ -31,9 +11,6 @@ on:
         required: true
         type: string
 
-# Key the push-driven Release-PR flow by ref and the workflow_dispatch-driven
-# publish by its exact commit, so they land in different groups and a routine
-# push can never evict a queued publish; never cancel one already in flight.
 concurrency:
   group: release-plz-${{ github.event_name == 'workflow_dispatch' && inputs.commit || github.ref }}
   cancel-in-progress: false
@@ -58,22 +35,16 @@ jobs:
             exit 1
           fi
 
-  # Open / update the single Release PR (version bump + CHANGELOG.md).
   release-plz-pr:
     needs: release-freeze
     if: needs.release-freeze.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The App secrets live on the release-plz environment (more scoped than
-    # repository secrets — unreadable from a push on any other branch). This
-    # job must declare the environment to read them; its main-only branch
-    # policy admits the push/dispatch-on-main that triggers this workflow, and
-    # it has no required reviewers so opening the Release PR stays unattended.
     environment: release-plz
     permissions:
       id-token: write
-      contents: write # push the release-plz-<branch> branch
-      pull-requests: write # open / maintain the Release PR
+      contents: write
+      pull-requests: write
     steps:
       - name: Fetch automation credentials
         id: doppler_automation_0
@@ -108,9 +79,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # release-plz pushes with the App token (GITHUB_TOKEN env below), not
-          # the checkout-persisted credential — keep the default token out of
-          # the remote so the bump push carries the App identity.
           persist-credentials: false
 
       - name: Install Rust
@@ -118,9 +86,6 @@ jobs:
         with:
           toolchain: "1.99.1"
 
-      # release-plz shells out to the cargo-semver-checks binary for the
-      # `semver_check = true` gate (the same check `just semver` runs); without
-      # it release-plz only warns and skips.
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
         with:
@@ -133,27 +98,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # After the Release PR merges: publish to crates.io + cut the single v* tag.
   release-plz-release:
     needs: release-freeze
-    # release-fan-in (or a manual rearm) dispatches this after release-ready has
-    # succeeded for the commit; it never runs on the release-commit push itself,
-    # so it stays workflow_dispatch-only (release-plz-pr owns the push path).
     if: needs.release-freeze.result == 'success' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 480
     env:
       QUALIFIED_SHA: ${{ inputs.commit }}
-    # The App key lives in this environment's secrets. Configure it with a
-    # deployment-branch policy of `main` only (a workflow on any other branch
-    # cannot read the credential) and NO required reviewers: the human gate is
-    # merging the Release PR, so a second approval here would only stall the
-    # unattended publish.
     environment: release-plz
     permissions:
-      actions: read # verify release-ready on this exact commit
-      contents: write # create the v* tag
-      id-token: write # steady-state crates.io OIDC after the bootstrap release
+      actions: read
+      contents: write
+      id-token: write
     steps:
       - name: Fetch automation credentials
         id: doppler_automation_0
@@ -188,18 +144,9 @@ jobs:
         with:
           ref: ${{ env.QUALIFIED_SHA }}
           fetch-depth: 0
-          # Fetch tags so the rearm guard below can check whether v<version>
-          # is already released.
           fetch-tags: true
           persist-credentials: false
 
-      # `ref: <sha>` above leaves a detached HEAD; `release-plz release` resolves
-      # the current branch via `git rev-parse --abbrev-ref --symbolic-full-name
-      # @{upstream}` and aborts ("cannot determine current branch") without one.
-      # Put HEAD on a local `main` whose upstream is origin/main. Branch config
-      # alone is not enough — @{upstream} needs the remote-tracking ref present —
-      # so create it at HEAD (no network; QUALIFIED_SHA is the release tip). The
-      # rearm-decision step below still asserts HEAD == QUALIFIED_SHA.
       - name: Attach HEAD to a tracking branch for release-plz
         shell: bash
         run: |
@@ -216,12 +163,6 @@ jobs:
       - id: detect
         uses: ./.github/actions/detect-release-commit
 
-      # The version-standstill accept/reject rule (a rearm dispatch need not
-      # bump the version, but must not re-publish an already-tagged one) is
-      # `xtask release rearm-decision` — pure, unit-tested Rust rather than
-      # inline bash whose workflow_dispatch branch never ran. It validates the
-      # SHA/HEAD, reads QUALIFIED_SHA / GITHUB_EVENT_NAME / VERSION_CHANGED from
-      # the environment, and writes `release=<bool>` to $GITHUB_OUTPUT.
       - name: Detect release commit
         id: release-commit
         shell: bash

@@ -1,4 +1,4 @@
-"""Shift_JIS decoding — the path real 青空文庫 archive files take."""
+"""Checks decoding of ``Shift_JIS`` source bytes."""
 
 import aozora
 
@@ -15,7 +15,6 @@ def test_from_sjis_round_trip():
 
 
 def test_from_sjis_also_accepts_utf8():
-    # decode_auto sniffs UTF-8 first, so already-decoded mirrors work too.
     text = "青空"
     doc = aozora.Document.from_bytes(text.encode("utf-8"))
     assert doc.source == text

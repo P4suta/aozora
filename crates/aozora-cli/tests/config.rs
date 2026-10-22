@@ -11,6 +11,10 @@ const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 
 const ONE_PUA: &[u8] = b"a\xee\x80\x81b";
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and capture failures must fail with context"
+)]
 fn run_in(dir: &Path, args: &[&str], envs: &[(&str, &str)], stdin: &[u8]) -> (Option<i32>, String) {
     let empty_xdg = TempDir::new().expect("empty xdg tempdir");
     let mut cmd = Command::new(BIN);
@@ -39,16 +43,28 @@ fn run_in(dir: &Path, args: &[&str], envs: &[(&str, &str)], stdin: &[u8]) -> (Op
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test configuration writes must succeed before the command runs"
+)]
 fn write_config(dir: &Path, body: &str) {
     fs::write(dir.join(".aozora.toml"), body).expect("write .aozora.toml");
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test configuration writes must succeed before the command runs"
+)]
 fn write_global_config(xdg: &Path, body: &str) {
     let dir = xdg.join("aozora");
     fs::create_dir_all(&dir).expect("create xdg aozora dir");
     fs::write(dir.join("config.toml"), body).expect("write global config.toml");
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "test configuration paths must be valid UTF-8"
+)]
 fn xdg_env(xdg: &TempDir) -> (&'static str, String) {
     (
         "XDG_CONFIG_HOME",

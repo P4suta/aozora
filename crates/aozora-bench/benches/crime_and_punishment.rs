@@ -1,9 +1,5 @@
-//! Single-document criterion benchmark using `罪と罰` (米川正夫訳).
-//!
-//! The corpus root is read from the `AOZORA_CORPUS_ROOT` environment
-//! variable; the bench skips with a notice if the file is missing,
-//! so a fresh checkout without a corpus continues to compile + run
-//! the rest of the bench suite.
+//! Benchmarks parsing of Crime and Punishment from the configured corpus.
+//! Skips with a notice when the corpus file is missing.
 
 use std::env;
 use std::fs;
@@ -21,6 +17,11 @@ fn locate_crime_and_punishment() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::expect_used,
+    reason = "benchmark commands report measurements and stop on invalid benchmark inputs"
+)]
 fn bench_crime_and_punishment(c: &mut Criterion) {
     let Some(path) = locate_crime_and_punishment() else {
         eprintln!(

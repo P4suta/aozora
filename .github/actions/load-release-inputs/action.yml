@@ -1,13 +1,3 @@
-# Composite action: load the pinned conformance inputs into the job env.
-#
-# `.github/release-inputs.env` is the single source of truth for the corpora,
-# specification, and real-work lab repositories + revisions that release gates pin to.
-# This action reads it and exports the required keys into `$GITHUB_ENV`, so every
-# consumer references `${{ env.AOZORA_* }}` (including in a later `with:`)
-# instead of hard-coding its own copy of the SHA. One source, no duplicate to
-# drift, so no cross-file coherence check is needed.
-#
-# Fails closed unless each key occurs once and names an immutable input.
 
 name: load-release-inputs
 description: Export every pinned release-input repository and SHA from .github/release-inputs.env into the job environment.

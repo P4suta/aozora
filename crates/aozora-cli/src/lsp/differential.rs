@@ -1,11 +1,4 @@
-//! Differential property tests: the LSP `textDocument/formatting`
-//! handler ([`format_edits`]) and the formatter behind `aozora fmt`
-//! ([`aozora::fmt::format_source`]) are documented to produce a
-//! **byte-identical** canonical form. An editor's "Format Document" must
-//! therefore never disagree with `aozora fmt --write`. The [`super::guardian`]
-//! suite pins this on a fixed corpus; here we hold it across a broad,
-//! aozora-notation-biased input space so a regression in *either* path surfaces
-//! regardless of which one drifts.
+//! Compares language-server formatting with [`aozora::fmt::format_source`].
 
 use aozora::fmt::format_source;
 use proptest::collection::vec as proptest_vec;
@@ -14,12 +7,8 @@ use proptest::sample::select;
 
 use super::formatting::format_edits;
 
-/// A string biased toward real aozora content, widened well past the
-/// position/edit strategy in `property_invariants.rs`: explicit and
-/// implicit ruby, double ruby, tortoise-bracket accents, bouten slugs,
-/// gaiji with a JIS mencode, mixed/oddball line endings, a PUA sentinel,
-/// and a BOM. Concatenating random fragments produces both canonical and
-/// non-canonical documents, so both arms of `format_edits` are exercised.
+const TEXT_FRAGMENT_COUNT_LIMIT: usize = 14;
+
 fn aozora_text_strategy() -> impl Strategy<Value = String> {
     let fragments: Vec<&'static str> = vec![
         "",
@@ -32,27 +21,24 @@ fn aozora_text_strategy() -> impl Strategy<Value = String> {
         "\r",
         "あ",
         "本文",
-        "日本《にほん》",     // implicit ruby (non-canonical → gets a ｜)
-        "｜青空《あおぞら》", // explicit ruby (canonical)
-        "《《重要》》",       // double ruby
-        "〔Crevez chiens〕",  // tortoise-bracket accent decomposition
+        "日本《にほん》",
+        "｜青空《あおぞら》",
+        "《《重要》》",
+        "〔Crevez chiens〕",
         "「鉤括弧」",
-        "※［＃「弓＋鳥」、第3水準1-2-3］", // gaiji with mencode
+        "※［＃「弓＋鳥」、第3水準1-2-3］",
         "［＃改ページ］",
-        "［＃ぼうてん］", // non-canonical slug
+        "［＃ぼうてん］",
         "彼［＃「彼」に傍点］",
-        "😀",       // surrogate pair
-        "\u{E001}", // PUA sentinel collision
-        "\u{feff}", // BOM
+        "😀",
+        "\u{E001}",
+        "\u{feff}",
     ];
-    proptest_vec(select(fragments), 0usize..14usize).prop_map(|frags| frags.concat())
+    proptest_vec(select(fragments), 0usize..TEXT_FRAGMENT_COUNT_LIMIT)
+        .prop_map(|frags| frags.concat())
 }
 
 proptest! {
-    /// The LSP `formatting` handler and the `aozora fmt` formatter must agree
-    /// on the canonical form for every input: zero edits when already
-    /// canonical, otherwise a single full-document replace whose `new_text` is
-    /// exactly the formatter's output.
     #[test]
     fn lsp_format_edits_agree_with_aozora_fmt(text in aozora_text_strategy()) {
         let canonical = format_source(&text);
@@ -72,10 +58,6 @@ proptest! {
         }
     }
 
-    /// Canonicalisation is a fixed point: the canonical form formats to
-    /// itself, so the LSP returns zero edits for it. This is the
-    /// idempotency contract every consumer (formatter, LSP, CI gate)
-    /// relies on, held across the whole input space.
     #[test]
     fn canonical_form_is_a_format_edits_fixed_point(text in aozora_text_strategy()) {
         let canonical = format_source(&text);

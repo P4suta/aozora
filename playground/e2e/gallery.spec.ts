@@ -1,6 +1,11 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
+const ENGINE_READY_TIMEOUT_MS = 30_000;
+const MOBILE_VIEWPORT = { width: 320, height: 720 };
+const EXPECTED_GALLERY_FAMILY_COUNT = 7;
+const MAX_SCREENSHOT_DIFF_PIXEL_RATIO = 0.01;
+
 const clientErrors = new WeakMap<Page, string[]>();
 
 test.beforeEach(async ({ page }) => {
@@ -21,7 +26,7 @@ async function ready(page: Page): Promise<void> {
   await expect(
     page.locator('[data-family="ruby"] .gallery-h ruby'),
   ).toBeVisible({
-    timeout: 30_000,
+    timeout: ENGINE_READY_TIMEOUT_MS,
   });
 }
 
@@ -85,10 +90,6 @@ test.describe('notation gallery', () => {
   }) => {
     await ready(page);
     const { h, v } = columns(page, 'kaeriten', '.aozora-kaeriten');
-    // A super-aligned kaeriten mark collapses to a zero-area box in vertical
-    // writing mode, so assert it is ATTACHED (in the DOM) rather than visible;
-    // the computed vertical-align — the actual stylesheet assertion — holds
-    // regardless. The horizontal column keeps the stricter visibility check.
     await expect(h).toBeVisible();
     await expect(v).toBeAttached();
     expect(await h.evaluate((el) => getComputedStyle(el).verticalAlign)).toBe(
@@ -132,10 +133,6 @@ test.describe('notation gallery', () => {
     }
   });
 
-  // The canonical sheet must set the writing mode per column so both previews
-  // exercise it: the horizontal container stays `horizontal-tb`, the vertical
-  // one becomes `vertical-rl`. Checked on every family's `.html-preview`
-  // container to prove the scope hooks apply uniformly.
   test('columns use horizontal-tb and vertical-rl writing modes', async ({
     page,
   }) => {
@@ -165,9 +162,15 @@ test.describe('notation gallery', () => {
     page,
   }) => {
     await ready(page);
-    await expect(page.locator('[data-family]')).toHaveCount(7);
-    await expect(page.locator('.gallery-h .html-preview')).toHaveCount(7);
-    await expect(page.locator('.gallery-v .html-preview')).toHaveCount(7);
+    await expect(page.locator('[data-family]')).toHaveCount(
+      EXPECTED_GALLERY_FAMILY_COUNT,
+    );
+    await expect(page.locator('.gallery-h .html-preview')).toHaveCount(
+      EXPECTED_GALLERY_FAMILY_COUNT,
+    );
+    await expect(page.locator('.gallery-v .html-preview')).toHaveCount(
+      EXPECTED_GALLERY_FAMILY_COUNT,
+    );
     expect(
       (await page.locator('.html-preview').allTextContents()).join(''),
     ).not.toContain('［＃');
@@ -206,7 +209,7 @@ test.describe('notation gallery', () => {
   test('320px viewport uses one column without page overflow', async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 320, height: 720 });
+    await page.setViewportSize(MOBILE_VIEWPORT);
     await ready(page);
     const columns = await page
       .locator('[data-family="ruby"] .gallery-columns')
@@ -225,7 +228,7 @@ test.describe('notation gallery', () => {
     await expect(page).toHaveScreenshot('gallery-default.png', {
       animations: 'disabled',
       fullPage: true,
-      maxDiffPixelRatio: 0.01,
+      maxDiffPixelRatio: MAX_SCREENSHOT_DIFF_PIXEL_RATIO,
     });
   });
 });

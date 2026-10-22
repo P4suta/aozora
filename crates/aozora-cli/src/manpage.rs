@@ -9,7 +9,7 @@ use crate::output;
 /// `aozora man [COMMAND]` arguments.
 #[derive(Debug, clap::Args)]
 pub(crate) struct ManArgs {
-    /// Subcommand to render the page for; omit for the top-level page.
+    /// Choose the subcommand's page, or omit for the root command.
     command: Option<String>,
 }
 

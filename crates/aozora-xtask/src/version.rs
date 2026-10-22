@@ -1,22 +1,4 @@
-//! `xtask version --channel <dev|nightly|stable> [--date YYYYMMDD]` — print the
-//! canonical channel-aware version string. This is the single source of the
-//! *format*: `nightly.yml` / `release.yml` export the result as
-//! `AOZORA_BUILD_VERSION` so the `aozora-buildstamp` build.rs stamps it verbatim.
-//!
-//! ```text
-//!   dev     → 1.2.3-dev+g<sha>
-//!   nightly → 1.2.3-nightly.<date>+g<sha>
-//!   stable  → 1.2.3                          (clean; the release tag itself)
-//! ```
-//!
-//! The base `X.Y.Z` triple is the workspace version: xtask is a workspace member
-//! with `version.workspace = true`, so `CARGO_PKG_VERSION` is authoritative — no
-//! manifest parsing needed (unlike find-my-files, whose xtask is a separate
-//! workspace and must read `engine/Cargo.toml`). The git sha is resolved at call
-//! time; when `.git`/`git` is absent the metadata is simply omitted.
-//!
-//! Release *bumping* is NOT here — release-plz owns the version/tag/CHANGELOG.
-//! This subcommand only formats a build identity for the dev/nightly/stable lanes.
+//! Formats build versions for development, nightly, and stable channels.
 
 use std::process::Command;
 
@@ -24,11 +6,10 @@ use clap::{Args, ValueEnum};
 
 #[derive(Args)]
 pub(crate) struct VersionArgs {
-    /// Release channel: `dev` (local checkout), `nightly` (scheduled main
-    /// build), or `stable` (a tagged release).
+    /// Release channel.
     #[arg(long, value_enum)]
     channel: Channel,
-    /// Build date `YYYYMMDD` — required for `--channel nightly`.
+    /// Build date as `YYYYMMDD`, required for `--channel nightly`.
     #[arg(long)]
     date: Option<String>,
 }
@@ -40,6 +21,10 @@ pub(crate) enum Channel {
     Stable,
 }
 
+#[expect(
+    clippy::print_stdout,
+    reason = "the command reports results and diagnostics to developers"
+)]
 pub(crate) fn dispatch(args: &VersionArgs) -> Result<(), String> {
     let base = env!("CARGO_PKG_VERSION");
     let sha = git_short_sha();
@@ -50,7 +35,6 @@ pub(crate) fn dispatch(args: &VersionArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// Pure formatter — unit-tested without touching git or the filesystem.
 fn compute(
     base: &str,
     channel: Channel,
@@ -62,8 +46,9 @@ fn compute(
         Channel::Stable => base.to_owned(),
         Channel::Dev => format!("{base}-dev{meta}"),
         Channel::Nightly => {
+            const BUILD_DATE_DIGITS: usize = 8;
             let date = date.ok_or("--date YYYYMMDD is required for the nightly channel")?;
-            if date.len() != 8 || !date.bytes().all(|b| b.is_ascii_digit()) {
+            if date.len() != BUILD_DATE_DIGITS || !date.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(format!("--date must be 8 digits (YYYYMMDD), got '{date}'"));
             }
             format!("{base}-nightly.{date}{meta}")

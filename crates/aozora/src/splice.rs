@@ -129,7 +129,7 @@ pub(crate) fn classify_node_ref(node: NodeRef) -> (RegionRole, SpliceSafety) {
 
 const INTERSTITIAL: (RegionRole, SpliceSafety) = (RegionRole::Interstitial, SpliceSafety::Direct);
 
-// Accepting a self-contained reparse would skip the upstream rewrite required by a target change (ADR-0019).
+// ADR-0019 ties a target change to its upstream literal.
 fn reparsed_in_family(node: NodeRef, kind: CoupledKind) -> bool {
     let leaf = match node {
         NodeRef::Inline(n) | NodeRef::BlockLeaf(n) => Some(n),
@@ -369,7 +369,7 @@ impl Snapshot {
         ))
     }
 
-    // Scoped reparsing preserves minimal edits without making each verification scale with document size (ADR-0019).
+    // ADR-0019 scopes reparsing to keep verification independent of document size.
     fn splice_split(
         &self,
         region: Region,

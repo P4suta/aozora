@@ -1,12 +1,8 @@
-# Defaults: everything is text, normalised to LF in the repo.
 * text=auto eol=lf
 
-# Aozora Bunko Shift_JIS fixtures. Must stay byte-for-byte identical to
-# what Aozora ships; any eol conversion or whitespace trimming corrupts them.
 spec/aozora/fixtures/**/*.txt  binary
 spec/aozora/fixtures/**/*.zip  binary
 
-# License / notice text files must stay LF even on Windows checkouts.
 LICENSE-*                      text eol=lf
 NOTICE                         text eol=lf
 

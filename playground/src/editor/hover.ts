@@ -7,9 +7,12 @@ import {
   utf16ToByte,
 } from './parserState';
 
+const CODEPOINT_RADIX = 16;
+const MIN_CODEPOINT_HEX_DIGITS = 4;
+
 function formatCodepoint(cp: number | undefined): string {
   if (cp === undefined) return '';
-  return `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
+  return `U+${cp.toString(CODEPOINT_RADIX).toUpperCase().padStart(MIN_CODEPOINT_HEX_DIGITS, '0')}`;
 }
 
 function escapeHtml(s: string): string {
@@ -21,11 +24,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * Hover tooltip for `※［＃...］` gaiji references.
- *
- * Delegates the actual resolution to the parsed WASM document.
- */
+/** Show a hover tooltip for `※［＃...］` gaiji references. */
 export const aozoraHover = hoverTooltip((view, pos): Tooltip | null => {
   const ps: ParserState = view.state.field(parserStateField);
   if (!ps.doc) return null;

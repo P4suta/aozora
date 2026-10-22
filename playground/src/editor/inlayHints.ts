@@ -8,6 +8,9 @@ import {
 } from '@codemirror/view';
 import { byteToUtf16, type ParserState, parserStateField } from './parserState';
 
+const CODEPOINT_RADIX = 16;
+const MIN_CODEPOINT_HEX_DIGITS = 4;
+
 class GaijiInlayWidget extends WidgetType {
   constructor(
     readonly resolved: string,
@@ -23,7 +26,7 @@ class GaijiInlayWidget extends WidgetType {
     span.textContent = `→${this.resolved}`;
     const cpHex =
       this.codepoint !== null
-        ? `U+${this.codepoint.toString(16).toUpperCase().padStart(4, '0')}`
+        ? `U+${this.codepoint.toString(CODEPOINT_RADIX).toUpperCase().padStart(MIN_CODEPOINT_HEX_DIGITS, '0')}`
         : '';
     span.title = cpHex ? `${this.description} (${cpHex})` : this.description;
     return span;
@@ -47,9 +50,6 @@ function buildInlays(view: EditorView): DecorationSet {
   const entries = ps.gaijiResolutions;
   if (entries.length === 0) return Decoration.none;
   const docLen = view.state.doc.length;
-  // Use a sparse array we can sort, since gaiji entries from the
-  // WASM scan come in source order but Decoration.set wants the
-  // ranges already ordered by `from`.
   const items: { pos: number; widget: GaijiInlayWidget }[] = [];
   for (const r of entries) {
     if (!r.resolved) continue;

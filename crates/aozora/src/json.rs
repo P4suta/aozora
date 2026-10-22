@@ -1,25 +1,6 @@
-//! Driver-shared wire format for serialising `aozora` parser output.
-//!
-//! Three driver crates (`aozora-ffi`, `aozora-wasm`, `aozora-py`) all
-//! need to project the owned-AST parser output to a stable byte stream.
-//! This module is the **single authority** for that projection — each
-//! driver calls into here and is guaranteed bit-identical output
-//! across language boundaries.
-//!
-//! # Schema envelope
-//!
-//! Every JSON envelope carries [`SCHEMA_VERSION`] and a `data` array.
-//! [`SCHEMA_VERSION`] is bumped on any breaking change to the
-//! serialised shape (variant additions, field renames, envelope
-//! changes). Clients that read the wire format SHOULD branch on the
-//! version to decide their handling — one schema makes no guarantees of
-//! forward-compatibility with later schemas.
-//!
-//! # Stability vs. `non_exhaustive`
-//!
-//! The wire format projects stable [`crate::Diagnostic`] and
-//! [`crate::NodeView`] values. Breaking shape changes require a
-//! [`SCHEMA_VERSION`] bump.
+//! Serializes parser projections as versioned JSON envelopes.
+//! Each envelope contains `schemaVersion` and a `data` array.
+//! Check [`SCHEMA_VERSION`] before interpreting an envelope.
 
 use serde::Serialize;
 
@@ -27,44 +8,28 @@ use crate::encoding::gaiji;
 use crate::spec::SLUGS;
 use crate::{DiagnosticSource, Severity, Snapshot};
 
-/// Wire-format schema version. Bumped on any breaking change to the
-/// serialised shape (variant additions, field renames, envelope
-/// changes).
-///
-/// Schema 3 uses original-source spans for every endpoint, including
-/// paired containers.
+/// Current JSON wire-format version.
 pub const SCHEMA_VERSION: u32 = 3;
 
-/// Project a slice of [`crate::Diagnostic`] into a `{ schemaVersion, data }`
-/// JSON envelope. Every entry has the shape
-/// `{ kind, span: { start, end }, codepoint? }`.
-///
-/// Empty input has an empty `data` array.
+/// Serialize diagnostics as [`Diagnostic`] entries in a versioned envelope.
 #[must_use]
 pub fn diagnostics(diagnostics: &[crate::Diagnostic]) -> String {
     serialize_envelope(&diagnostic_entries(diagnostics))
 }
 
-/// The structured `Diagnostic` records that back `diagnostics()` —
-/// prefer this to re-parsing the JSON when a caller needs the values
-/// directly (e.g. a Wasm binding building JS objects).
+/// Return the records serialized by [`diagnostics`].
 #[must_use]
 pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> {
     diagnostics.iter().map(Diagnostic::from).collect()
 }
 
-/// Project an [`Snapshot`]'s source-keyed node side-table into a
-/// `{ schemaVersion, data }` JSON envelope.
-///
-/// Every entry has the shape `{ kind, span: { start, end } }`,
-/// source-coordinate, sorted by `span.start`.
+/// Serialize snapshot nodes in source order as [`Node`] entries.
 #[must_use]
 pub fn nodes(snapshot: &Snapshot) -> String {
     serialize_envelope(&node_entries(snapshot))
 }
 
-/// The structured `Node` records that back `nodes()` — prefer this to
-/// re-parsing the JSON when a caller needs the values directly.
+/// Return the records serialized by [`nodes`].
 #[must_use]
 pub fn node_entries(snapshot: &Snapshot) -> Vec<Node> {
     snapshot
@@ -77,24 +42,15 @@ pub fn node_entries(snapshot: &Snapshot) -> Vec<Node> {
         .collect()
 }
 
-/// Project an [`Snapshot`]'s pair table into a
-/// `{ schemaVersion, data }` JSON envelope. Every entry has the shape
-/// `{ kind, open: { start, end }, close: { start, end } }`.
+/// Serialize matched delimiters as [`Pair`] entries.
 ///
-/// One entry per matched open/close pair; unmatched closes and
-/// unclosed opens are excluded (they have no partner span and would
-/// only confuse editor surfaces). Useful for LSP requests like
-/// `textDocument/linkedEditingRange` and
-/// `textDocument/documentHighlight`.
-///
-/// An empty parse has an empty `data` array.
+/// Excludes unmatched delimiters.
 #[must_use]
 pub fn pairs(snapshot: &Snapshot) -> String {
     serialize_envelope(&pair_entries(snapshot))
 }
 
-/// The structured `Pair` records that back `pairs()` — prefer this to
-/// re-parsing the JSON when a caller needs the values directly.
+/// Return the records serialized by [`pairs`].
 #[must_use]
 pub fn pair_entries(snapshot: &Snapshot) -> Vec<Pair> {
     snapshot
@@ -108,22 +64,13 @@ pub fn pair_entries(snapshot: &Snapshot) -> Vec<Pair> {
         .collect()
 }
 
-/// Project an [`Snapshot`]'s container open/close pair table into a
-/// `{ schemaVersion, data }` JSON envelope.
-///
-/// Each entry has the shape
-/// `{ kind, open: { start, end }, close: { start, end } }` in source
-/// byte coordinates.
-///
-/// An empty parse has an empty `data` array.
+/// Serialize matched container delimiters as [`ContainerPair`] entries.
 #[must_use]
 pub fn container_pairs(snapshot: &Snapshot) -> String {
     serialize_envelope(&container_pair_entries(snapshot))
 }
 
-/// The structured `ContainerPair` records that back
-/// `container_pairs()` — prefer this to re-parsing the JSON when a caller
-/// needs the values directly.
+/// Return the records serialized by [`container_pairs`].
 #[must_use]
 pub fn container_pair_entries(snapshot: &Snapshot) -> Vec<ContainerPair> {
     snapshot
@@ -137,23 +84,13 @@ pub fn container_pair_entries(snapshot: &Snapshot) -> Vec<ContainerPair> {
         .collect()
 }
 
-/// Project the canonical [`crate::Catalogue`] into a
-/// `{ schemaVersion, data }` JSON envelope.
-///
-/// Each entry has the shape `{ canonical, family, accepts_param, doc,
-/// partner }`: `family` is the camelCase form of the
-/// [`crate::CatalogueFamily`] variant, `partner` is `null` for non-paired
-/// families. A static catalogue, independent of any parse — it powers
-/// editor completion menus for `［＃…］` annotations without
-/// re-implementing the table per driver (`aozora-wasm` / `aozora-py`
-/// both call this).
+/// Serialize the notation catalogue as [`Slug`] entries.
 #[must_use]
 pub fn slugs() -> String {
     serialize_envelope(&slug_entries())
 }
 
-/// The structured `Slug` records that back `slugs()` — prefer this to
-/// re-parsing the JSON when a caller needs the catalogue directly.
+/// Return the records serialized by [`slugs`].
 #[must_use]
 pub fn slug_entries() -> Vec<Slug> {
     SLUGS
@@ -168,27 +105,13 @@ pub fn slug_entries() -> Vec<Slug> {
         .collect()
 }
 
-/// Project resolved `※［＃…］` gaiji references from a [`Snapshot`] into a
-/// `{ schemaVersion, data }` JSON envelope.
-///
-/// Each entry is
-/// `{ span: { start, end }, description, mencode, codepoint, resolved }`
-/// in source-byte coordinates; `mencode` / `codepoint` / `resolved` are
-/// `null` when absent or unresolved.
-///
-/// Powers inlay-hint UIs (`→GLYPH` after each reference) and batch gaiji
-/// audits. The core scan and resolver are authoritative; this is only their
-/// wire projection.
-///
-/// Empty and gaiji-free sources have an empty `data` array.
+/// Serialize snapshot gaiji references as [`GaijiResolution`] entries.
 #[must_use]
 pub fn gaiji(snapshot: &Snapshot) -> String {
     serialize_envelope(&gaiji_entries(snapshot))
 }
 
-/// The structured `GaijiResolution` records that back `gaiji()` —
-/// prefer this to re-parsing the JSON when a caller needs the values
-/// directly.
+/// Return the records serialized by [`gaiji`].
 #[must_use]
 pub fn gaiji_entries(snapshot: &Snapshot) -> Vec<GaijiResolution> {
     snapshot
@@ -199,7 +122,7 @@ pub fn gaiji_entries(snapshot: &Snapshot) -> Vec<GaijiResolution> {
         .collect()
 }
 
-/// Resolve one gaiji at a source byte offset as a typed wire record.
+/// Return a gaiji wire record at a source byte offset, or `None` if none covers it.
 #[must_use]
 pub fn gaiji_entry_at(snapshot: &Snapshot, byte_offset: usize) -> Option<GaijiResolution> {
     snapshot
@@ -208,10 +131,6 @@ pub fn gaiji_entry_at(snapshot: &Snapshot, byte_offset: usize) -> Option<GaijiRe
         .map(Into::into)
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Internal: envelope + wire structs
-// ────────────────────────────────────────────────────────────────────
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Envelope<'a, T> {
@@ -219,16 +138,7 @@ struct Envelope<'a, T> {
     data: &'a [T],
 }
 
-// ────────────────────────────────────────────────────────────────────
-// JSON Schema introspection
-// ────────────────────────────────────────────────────────────────────
-
-/// JSON Schema (draft 2020-12) describing the
-/// [`diagnostics`] envelope output.
-///
-/// Schema-feature only. Used by `xtask schema dump` to commit the
-/// schema artefact under `crates/aozora-conformance/json/`, and by the
-/// `aozora spec schema` CLI subcommand for ad-hoc introspection.
+/// JSON Schema draft 2020-12 for the [`diagnostics`] envelope.
 #[cfg(feature = "schema")]
 #[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]
@@ -300,9 +210,9 @@ pub fn schema_slugs() -> serde_json::Value {
     )
 }
 
-/// Wrap the per-entry schema in the canonical
-/// `{schemaVersion, data: […]}` envelope. The envelope shape is
-/// shared by wire functions; only the inner item schema varies.
+#[cfg(feature = "schema")]
+const JSON_SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
+
 #[cfg(feature = "schema")]
 #[expect(
     clippy::expect_used,
@@ -313,22 +223,13 @@ fn envelope_schema(
     description: &str,
     item_schema: schemars::Schema,
 ) -> serde_json::Value {
-    // `schema_for!(ItemWire)` returns a self-contained document: its
-    // shared sub-types (e.g. `Span`) live under a root `$defs` and
-    // are referenced as `#/$defs/…`. Embedding it verbatim as `items`
-    // would bury that `$defs` under `properties/data/items`, leaving the
-    // `#/$defs/…` refs — which resolve against the *document* root —
-    // dangling, so strict resolvers (quicktype, and any other consumer
-    // of the published schema) reject it. Hoist the item schema's
-    // `$defs` to the envelope root and drop its redundant per-item
-    // `$schema` dialect marker so the refs resolve against the root.
     let mut item = item_schema.to_value();
     let defs = item.as_object_mut().and_then(|obj| {
         obj.remove("$schema");
         obj.remove("$defs")
     });
     let mut root = serde_json::json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$schema": JSON_SCHEMA_DIALECT,
         "title": title,
         "description": description,
         "type": "object",
@@ -397,21 +298,10 @@ pub struct Diagnostic {
 
 impl From<&crate::Diagnostic> for Diagnostic {
     fn from(d: &crate::Diagnostic) -> Self {
-        // Pull the codepoint payload off the variants that carry one.
-        // The accessors collapse the Internal/Source distinction for
-        // severity/source/code; the codepoint is the only payload that
-        // survives variant-by-variant.
         let codepoint = match d {
             crate::Diagnostic::SourceContainsPua { codepoint, .. } => Some(u32::from(*codepoint)),
             _ => None,
         };
-        // Strip the `aozora::lex::` / `aozora::internal` prefix so the
-        // wire `kind` stays terse — this matches the prior wire layout
-        // where the tag was the trailing token (e.g. "source_contains_pua",
-        // "unclosed_bracket"). Internal codes get the same trailing-token
-        // treatment so the wire `kind` is uniform across the user-facing
-        // and internal axes; consumers that need the full namespaced ID
-        // can still rely on `Diagnostic::code()`.
         let kind = d.code().rsplit("::").next().unwrap_or("unknown");
         Self {
             kind,
@@ -533,8 +423,6 @@ mod tests {
         assert!(json.contains(&schema_marker()));
         assert!(json.contains(r#""canonical":"#));
         assert!(json.contains(r#""family":"#));
-        // Guard against the silent `_ => "unknown"` degrade: every
-        // shipped slug must map to an explicit camelCase family.
         assert!(
             !json.contains(r#""family":"unknown""#),
             "shipped catalogue leaked an unknown family: {json}"
@@ -646,9 +534,6 @@ mod tests {
 
     #[test]
     fn container_pair_entries_projects_indent_open_close_offsets() {
-        // `［＃ここから…字下げ］ … ［＃ここで字下げ終わり］` is a paired
-        // indent container — `container_pair_entries` must project it, not
-        // return an empty vec.
         let doc = Document::new("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n");
         let tree = doc.snapshot();
         let entries = container_pair_entries(&tree);
@@ -668,9 +553,6 @@ mod tests {
     #[cfg(feature = "schema")]
     #[test]
     fn schema_fns_return_titled_envelope_not_null() {
-        // Each `schema_*` fn must return its concrete JSON-Schema envelope
-        // (a Default::default() → `Value::Null` degrade would drop the
-        // title, the `schemaVersion` const, and the `data` array shape).
         let cases = [
             ("AozoraDiagnosticsEnvelope", schema_diagnostics()),
             ("AozoraNodesEnvelope", schema_nodes()),
@@ -703,9 +585,6 @@ mod tests {
     #[cfg(feature = "schema")]
     #[test]
     fn envelope_schema_wraps_item_in_versioned_envelope() {
-        // `envelope_schema` builds the shared `{schemaVersion, data:[…]}`
-        // wrapper; a Default::default() → `Value::Null` degrade would drop
-        // the passed title/description and the whole envelope structure.
         let value = envelope_schema(
             "CustomTitle",
             "Custom description.",
@@ -735,11 +614,6 @@ mod tests {
     #[test]
     fn container_kind_wire_tags_via_as_json_tag() {
         use crate::syntax::{BoutenKind, BoutenPosition, RegionFormat};
-        // `RegionFormat::as_json_tag` is the single authority on the
-        // container-pairs wire tag (no `_ => "unknown"` fallback —
-        // exhaustiveness is enforced in the syntax layer). The scope-specific
-        // `boutenRange` / `combineUprightRange` strings are preserved verbatim
-        // so a schema bump stays deliberate.
         assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");
         assert_eq!(RegionFormat::Bold { padded: true }.as_json_tag(), "bold");
         assert_eq!(

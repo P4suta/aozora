@@ -3,36 +3,11 @@
     reason = "the fallback symbol regex is a valid static pattern"
 )]
 
-//! Symbolicator — DWARF resolution via [`addr2line::Loader`].
-//!
-//! The samply gecko trace stores raw addresses (file-offset relative
-//! to the loaded library). To get function names we open the binary
-//! with `addr2line::Loader`, which mmaps the ELF + parses DWARF in
-//! a single zero-copy pass.
-//!
-//! Demangling is done by `addr2line` itself (Rust + C++ symbols).
-//!
-//! ## Architecture
-//!
-//! - [`Symbolicator`] owns one `Loader` per binary path the user
-//!   registers via [`Symbolicator::add_binary`].
-//! - [`Symbolicator::resolve_into`] walks every frame in every
-//!   thread of a [`Trace`], looks up its address in the appropriate
-//!   loader, and writes the demangled function name into
-//!   `Thread.resolved`.
-//! - Resolved names are also recorded into the supplied
-//!   [`crate::SymbolCache`] for the next run.
-//!
-//! ## Inlining
-//!
-//! `Loader::find_frames` returns an iterator of inline frames at a
-//! single address. We currently take the *outermost* function name
-//! (matches `addr2line -f` default). An "include inlines" mode
-//! could be added by joining names with ` -> `; left out until a
-//! profile shows we need it.
+//! Resolves trace addresses through [`Symbolicator`] using debug information and dynamic symbols.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -41,56 +16,24 @@ use object::{Object as _, ObjectKind, ObjectSymbol as _};
 
 use crate::{SymbolCache, Trace};
 
-/// Symbolicator state — one [`Loader`] per registered binary.
+/// Symbol resolution state for registered binaries.
 #[derive(Default)]
 pub struct Symbolicator {
-    /// Map: library `name` (matching `Library.name` in the trace)
-    /// → opened DWARF context.
     loaders: HashMap<String, Loader>,
-    /// Track which paths we registered, for diagnostic prints.
     paths: HashMap<String, PathBuf>,
-    /// Build-id (gnu .note.gnu.build-id) per registered library —
-    /// used to validate against the trace's recorded `debug_id`.
     build_ids: HashMap<String, String>,
-    /// Dynamic symbol table per registered library, sorted by start
-    /// address. Used as the *fallback* when DWARF resolution returns
-    /// `None` — picks up `memcpy` / `malloc` / etc. in stripped
-    /// system libraries (libc.so.6 doesn't ship DWARF debuginfo on
-    /// most distros without the libc6-dbg package).
     dyn_symbols: HashMap<String, DynSymbolTable>,
 }
 
-/// Sorted (`start_address`, `end_address`, `demangled_name`) triples
-/// extracted from an ELF's `.dynsym` table. Lookup is binary-search
-/// over `start` then range-check.
 #[derive(Debug, Default)]
 struct DynSymbolTable {
     entries: Vec<(u64, u64, String)>,
 }
 
-/// Maximum distance (bytes) for the fuzzy fallback to attribute an
-/// unresolved address to the nearest preceding symbol. 256 KiB
-/// covers libc's malloc-area gap (the internal allocator code lives
-/// in a contiguous block after `__default_morecore` with no
-/// `.dynsym` entries pointing into it). Bigger than the largest
-/// reasonable single function body but small enough that we don't
-/// label random gaps as `+ huge_offset`.
 const DYNSYM_FUZZY_GAP_LIMIT: u64 = 256 * 1024;
+const BUILD_ID_COMPARE_HEX_DIGITS: usize = 40;
 
 impl DynSymbolTable {
-    /// Resolve `address` to a function name.
-    ///
-    /// Two-tier:
-    /// 1. **Exact range match** — `address ∈ [start, end)` for a
-    ///    symbol with a non-zero size. This is what addr2line gives
-    ///    you for fully-DWARF'd binaries; here it covers symbols
-    ///    whose ELF size is known.
-    /// 2. **Fuzzy nearest-preceding** — for libc-style stripped
-    ///    libraries where IFUNC stubs and internal hidden helpers
-    ///    leave most code-bytes outside any `.dynsym` range, fall
-    ///    back to the nearest preceding symbol + offset, capped at
-    ///    [`DYNSYM_FUZZY_GAP_LIMIT`]. Returns names like
-    ///    `__libc_malloc+0x582` instead of bare `0xac098`.
     fn lookup(&self, address: u64) -> Option<String> {
         if self.entries.is_empty() {
             return None;
@@ -105,19 +48,14 @@ impl DynSymbolTable {
         if address >= *start && address < *end {
             return Some(name.clone());
         }
-        // Fuzzy fallback: address is past `end` (or `end == start`,
-        // which happens for IFUNC stubs with size 0).
         let gap = address - *start;
         (gap <= DYNSYM_FUZZY_GAP_LIMIT).then(|| format!("{name}+0x{gap:x}"))
     }
 }
 
-impl std::fmt::Debug for Symbolicator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Symbolicator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Symbolicator")
-            // `loaders` is intentionally summarised as a count —
-            // `addr2line::Loader` doesn't implement Debug and a
-            // verbose dump would just print the same paths again.
             .field("loader_count", &self.loaders.len())
             .field("registered_libs", &self.paths)
             .field("build_ids", &self.build_ids)
@@ -136,8 +74,7 @@ impl std::fmt::Debug for Symbolicator {
 /// Symbolication failures from [`Symbolicator`].
 #[derive(Debug, thiserror::Error)]
 pub enum SymbolError {
-    /// `addr2line` could not open the binary (missing file, not an
-    /// ELF, unreadable DWARF). Raised by [`Symbolicator::add_binary`].
+    /// Loading the binary or its symbols failed.
     #[error("addr2line loader for {path}: {message}")]
     Loader {
         /// Path to the binary that failed to open.
@@ -145,11 +82,7 @@ pub enum SymbolError {
         /// `addr2line`'s error rendered as a string.
         message: String,
     },
-    /// The registered binary's build-id disagrees with the one the
-    /// trace recorded for the same library — the binary was rebuilt
-    /// after recording, so its addresses no longer match and
-    /// symbolication would yield wrong names. Raised by
-    /// [`Symbolicator::verify_against`].
+    /// The registered binary and recorded library have different build identifiers.
     #[error(
         "build-id mismatch for `{lib_name}`: trace expects `{trace}`, binary at {binary} is `{found}` — \
          the binary was rebuilt after the trace was recorded; symbolication would return wrong names. \
@@ -158,7 +91,7 @@ pub enum SymbolError {
     BuildIdMismatch {
         /// Library whose build-id failed to match.
         lib_name: String,
-        /// Build-id (or debug-id) the trace recorded.
+        /// Build identifier or debug identifier from the trace.
         trace: String,
         /// Build-id read from the registered binary on disk.
         found: String,
@@ -168,21 +101,17 @@ pub enum SymbolError {
 }
 
 impl Symbolicator {
-    /// Empty symbolicator. Register binaries with [`Self::add_binary`].
+    /// Empty symbolicator.
+    /// Register binaries with [`Self::add_binary`].
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a binary that will resolve addresses for all libs
-    /// matching `lib_name`. Typically called once per non-system
-    /// library; pre-built ELFs of `libc.so.6` etc. are usually not
-    /// resolvable and are silently left as raw addresses.
+    /// Registers a binary to resolve addresses for libraries matching `lib_name`.
     ///
-    /// Also reads the binary's gnu-build-id (`.note.gnu.build-id`)
-    /// so [`Self::verify_against`] can detect a stale binary →
-    /// trace mismatch (PROFILING.md pitfall #5: rebuilding the
-    /// binary after recording silently shifts addresses).
+    /// # Errors
+    /// Returns an error if `addr2line` fails to load the binary.
     pub fn add_binary(&mut self, lib_name: &str, binary_path: &Path) -> Result<(), SymbolError> {
         let loader = Loader::new(binary_path).map_err(|e| SymbolError::Loader {
             path: binary_path.to_path_buf(),
@@ -198,11 +127,11 @@ impl Symbolicator {
         Ok(())
     }
 
-    /// Verify every registered binary's build-id matches the trace's
-    /// recorded `code_id` (or Breakpad `debug_id` as fallback) for the same
-    /// library. Returns `Ok(())` if every match is good (or the
-    /// trace had no identifier to compare against),
-    /// [`SymbolError::BuildIdMismatch`] otherwise.
+    /// Compares registered build identifiers with the trace's `code_id`, falling back to `debug_id`.
+    /// Skips libraries without comparable identifiers.
+    ///
+    /// # Errors
+    /// Returns [`SymbolError::BuildIdMismatch`] if a registered identity differs from the trace.
     pub fn verify_against(&self, trace: &Trace) -> Result<(), SymbolError> {
         for lib in &trace.libs {
             let Some(found) = self.build_ids.get(&lib.name) else {
@@ -220,10 +149,10 @@ impl Symbolicator {
             if trace_norm.is_empty() || found_norm.is_empty() {
                 continue;
             }
-            // Compare the first 40 hex chars (full sha-1 length the
-            // gnu-build-id uses by default). Truncated forms still
-            // match if the prefix agrees.
-            let n = trace_norm.len().min(found_norm.len()).min(40);
+            let n = trace_norm
+                .len()
+                .min(found_norm.len())
+                .min(BUILD_ID_COMPARE_HEX_DIGITS);
             if !trace_norm[..n].eq_ignore_ascii_case(&found_norm[..n]) {
                 let path = self.paths.get(&lib.name).cloned().unwrap_or_default();
                 return Err(SymbolError::BuildIdMismatch {
@@ -237,11 +166,8 @@ impl Symbolicator {
         Ok(())
     }
 
-    /// Auto-register every library in `trace` whose `path` exists on
-    /// disk. Convenience for "I just want to symbolicate this trace,
-    /// figure it out yourself." Returns the count of registered
-    /// libraries. Unreadable libraries are silently skipped — that's
-    /// the whole point of the auto-discovery convenience.
+    /// Registers readable libraries from the trace and returns the number registered.
+    /// Skips missing or unreadable binaries.
     pub fn add_libs_from(&mut self, trace: &Trace) -> usize {
         let mut count = 0;
         for lib in &trace.libs {
@@ -253,11 +179,11 @@ impl Symbolicator {
         count
     }
 
-    /// Register a binary using *only* the dynamic-symbol table —
-    /// no DWARF expected. Convenient for stripped system libraries
-    /// (`libc.so.6`, `ld-linux-x86-64.so.2`, …) that ship `.dynsym`
-    /// but no debuginfo. Returns the number of dynamic symbols
-    /// loaded.
+    /// Registers a binary for resolution through its dynamic-symbol table.
+    /// Returns the number of dynamic symbols loaded.
+    ///
+    /// # Errors
+    /// Returns an error if reading or parsing the binary fails.
     pub fn add_binary_dynamic_only(
         &mut self,
         lib_name: &str,
@@ -274,17 +200,11 @@ impl Symbolicator {
         Ok(count)
     }
 
-    /// Walk every unresolved frame in `trace` and resolve via the
-    /// appropriate loader, then via the dynamic-symbol fallback for
-    /// libraries that have no DWARF (system libs). Returns
-    /// `(resolved, attempted)` counts. Records each new name into
-    /// `cache`.
+    /// Resolves frames using debug information or dynamic symbols and records new names in `cache`.
+    /// Returns `(resolved, attempted)` counts.
     pub fn resolve_into(&self, trace: &mut Trace, cache: &mut SymbolCache) -> (usize, usize) {
         let mut resolved = 0;
         let mut attempted = 0;
-        // Build a per-thread "library_idx → (loader?, dyn_table?,
-        // name, binary identity)" lookup once. Either source is optional —
-        // a library may have only DWARF, only dynsym, or both.
         for thread_idx in 0..trace.threads.len() {
             type LibBindings<'a> = Option<(
                 Option<&'a Loader>,
@@ -343,16 +263,12 @@ impl Symbolicator {
 }
 
 fn resolve_one(loader: &Loader, address: u64) -> Option<String> {
-    // `find_frames` yields inline frames — take the outermost.
     let mut frames = loader.find_frames(address).ok()?;
     let outer = frames.next().ok().flatten()?;
     let func = outer.function?;
-    func.demangle().ok().map(std::borrow::Cow::into_owned)
+    func.demangle().ok().map(Cow::into_owned)
 }
 
-/// Read the gnu build-id from `.note.gnu.build-id` in the ELF.
-/// Returns lowercase hex, no leading 0x. Empty on any failure
-/// (build-id is optional in ELFs).
 fn read_build_id(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     let obj = object::File::parse(&bytes[..]).ok()?;
@@ -362,25 +278,11 @@ fn read_build_id(path: &Path) -> Option<String> {
     let bytes = obj.build_id().ok().flatten()?;
     let mut hex = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        // write! into a String never fails; the result is asserted
-        // away (rather than `let _ =`'d) to satisfy the
-        // `let_underscore_must_use` workspace lint.
         write!(&mut hex, "{b:02x}").expect("String write_fmt is infallible");
     }
     Some(hex)
 }
 
-/// Read the ELF dynamic-symbol table (`.dynsym`) and return a
-/// sorted (`start`, `end`, `demangled_name`) triple table for
-/// fallback address → name resolution when DWARF is unavailable.
-///
-/// `.dynsym` is present on every dynamically-linked ELF, even when
-/// the binary is `strip`'d — it's required by the runtime linker
-/// for symbol relocation. So `libc.so.6` (typically stripped)
-/// yields ~2300 exported symbols including `memcpy` / `memmove` /
-/// `malloc` / etc., which is what shows up hot in our traces.
-///
-/// Returns `None` only if the file isn't a readable ELF.
 fn read_dynamic_symbols(path: &Path) -> Option<DynSymbolTable> {
     let bytes = fs::read(path).ok()?;
     let obj = object::File::parse(&bytes[..]).ok()?;
@@ -393,9 +295,7 @@ fn read_dynamic_symbols(path: &Path) -> Option<DynSymbolTable> {
         let Some((address, end)) = dynamic_symbol_range(sym.address(), sym.size()) else {
             continue;
         };
-        // Best-effort Rust demangle (no-op for C names like `malloc`).
-        let demangled =
-            addr2line::demangle_auto(std::borrow::Cow::Borrowed(name), None).into_owned();
+        let demangled = addr2line::demangle_auto(Cow::Borrowed(name), None).into_owned();
         entries.push((address, end, demangled));
     }
     entries.sort_by_key(|(start, _, _)| *start);
@@ -409,8 +309,6 @@ fn dynamic_symbol_range(address: u64, size: u64) -> Option<(u64, u64)> {
     address.checked_add(size.max(1)).map(|end| (address, end))
 }
 
-/// Strip dashes and lowercase. Breakpad and GNU forms differ in
-/// case + dash placement; this normalisation makes them comparable.
 fn normalise_id(id: &str) -> String {
     id.chars()
         .filter(char::is_ascii_hexdigit)
@@ -440,7 +338,6 @@ mod tests {
 
     #[test]
     fn dynsym_exact_range_match() {
-        // address inside [start, end) ⇒ bare symbol name.
         let t = table(&[(0x100, 0x200, "foo"), (0x200, 0x300, "bar")]);
         assert_eq!(t.lookup(0x150).as_deref(), Some("foo"), "in foo's range");
         assert_eq!(t.lookup(0x200).as_deref(), Some("bar"), "start of bar");
@@ -457,7 +354,6 @@ mod tests {
 
     #[test]
     fn dynsym_fuzzy_nearest_preceding_within_gap() {
-        // Zero-size symbol (end == start, IFUNC stub style) ⇒ fuzzy.
         let t = table(&[(0x1000, 0x1000, "stub")]);
         assert_eq!(
             t.lookup(0x1010).as_deref(),
@@ -474,7 +370,6 @@ mod tests {
             t.lookup(far).is_none(),
             "address past the fuzzy gap limit is unresolved"
         );
-        // Exactly at the limit still resolves.
         let edge = 0x1000 + DYNSYM_FUZZY_GAP_LIMIT;
         assert!(t.lookup(edge).is_some(), "at the gap limit ⇒ resolved");
     }
@@ -524,7 +419,6 @@ mod tests {
     #[test]
     fn verify_against_skips_unregistered_and_idless_libs() {
         let sym = Symbolicator::new();
-        // No binaries registered ⇒ nothing to compare ⇒ Ok.
         let t = trace_with_lib("bin", "deadbeef", "");
         assert!(
             sym.verify_against(&t).is_ok(),
@@ -535,7 +429,6 @@ mod tests {
     #[test]
     fn verify_against_matches_and_mismatches_build_id() {
         let mut sym = Symbolicator::new();
-        // Inject a known build-id without touching disk.
         sym.build_ids
             .insert("bin".to_owned(), "deadbeefcafe".to_owned());
 

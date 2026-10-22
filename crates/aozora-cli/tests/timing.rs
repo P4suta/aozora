@@ -7,6 +7,10 @@ use aozora::json::SCHEMA_VERSION;
 
 mod common;
 
+#[expect(
+    clippy::expect_used,
+    reason = "test process setup and capture failures must fail with context"
+)]
 fn run(args: &[&str], stdin: &[u8]) -> (String, String) {
     let mut child = common::hermetic_command()
         .args(args)

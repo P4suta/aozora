@@ -5,8 +5,16 @@ import macros from 'unplugin-parcel-macros';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
-// frame-ancestors is response-header-only; including it in a meta policy would
-// claim clickjacking protection that GitHub Pages cannot actually enforce.
+const SERVER_HOST = '0.0.0.0';
+const SERVER_PORT = 5173;
+const COVERAGE_THRESHOLDS = {
+  statements: 85,
+  branches: 75,
+  functions: 90,
+  lines: 85,
+};
+
+// ADR-0055 omits `frame-ancestors` because browsers ignore it in a meta policy.
 const PROD_CSP = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
@@ -148,14 +156,14 @@ export default defineConfig(({ command, isPreview, mode }) => ({
     ],
   },
   server: {
-    host: '0.0.0.0',
-    port: 5173,
+    host: SERVER_HOST,
+    port: SERVER_PORT,
     strictPort: true,
     fs: { allow: ['..'] },
   },
   preview: {
-    host: '0.0.0.0',
-    port: 5173,
+    host: SERVER_HOST,
+    port: SERVER_PORT,
     strictPort: true,
   },
   build: {
@@ -179,8 +187,7 @@ export default defineConfig(({ command, isPreview, mode }) => ({
             return 's2-styles';
           }
           if (
-            // Rolldown can hoist ActionMenu's Menu subtree into the main
-            // artifact; isolate its narrow root to preserve ADR-0055's gate.
+            // ADR-0055 keeps the menu subtree out of the main artifact's preload path.
             id.endsWith(
               '/node_modules/react-aria-components/dist/private/Menu.mjs',
             )
@@ -239,12 +246,7 @@ export default defineConfig(({ command, isPreview, mode }) => ({
         '**/playground-ui/src/share.ts',
         '**/playground-ui/src/storage.ts',
       ],
-      thresholds: {
-        statements: 85,
-        branches: 75,
-        functions: 90,
-        lines: 85,
-      },
+      thresholds: COVERAGE_THRESHOLDS,
     },
   },
 }));

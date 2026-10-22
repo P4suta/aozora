@@ -17,6 +17,10 @@ const LARGE_BYTES: usize = 1024 * 1024;
 const EDIT_ITERATIONS: usize = 8;
 const SNAPSHOT_CLONES: usize = 1000;
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn parse(src: &str) -> usize {
     measured(|| {
         black_box(
@@ -29,6 +33,10 @@ fn parse(src: &str) -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn parse_then_html(src: &str) -> usize {
     measured(|| {
         black_box(
@@ -55,6 +63,10 @@ fn full_edit_source() -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn full_multiple_edit_source() -> usize {
     let mut source = build_synthetic_aozora(EDIT_BYTES);
     measured(|| {
@@ -70,6 +82,10 @@ fn full_multiple_edit_source() -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn single_edit() -> usize {
     let source = build_synthetic_aozora(EDIT_BYTES);
     let at = edit_offset(&source);
@@ -84,6 +100,10 @@ fn single_edit() -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn multiple_edits() -> usize {
     let source = build_synthetic_aozora(EDIT_BYTES);
     let mut document = aozora::parse(source).expect("source fits parser span limit");
@@ -102,6 +122,10 @@ fn multiple_edits() -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn clone_snapshot() -> usize {
     let source = build_synthetic_aozora(EDIT_BYTES);
     let snapshot = aozora::parse(source)
@@ -116,6 +140,10 @@ fn clone_snapshot() -> usize {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "benchmark inputs must meet parser and numeric preconditions"
+)]
 fn parse_unmeasured(src: &str) -> usize {
     black_box(
         aozora::parse(black_box(src))
@@ -160,6 +188,11 @@ fn run(case: &str) -> Option<usize> {
     }
 }
 
+#[expect(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "benchmark commands report measurements and failures"
+)]
 fn main() -> ExitCode {
     let Some(case) = env::args().nth(1) else {
         eprintln!("usage: perf_gate <case>");

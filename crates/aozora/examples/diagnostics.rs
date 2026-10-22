@@ -1,5 +1,10 @@
 //! Print diagnostics and partial HTML for malformed input.
 
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "fixed example inputs must parse successfully and the example demonstrates stdout output"
+)]
 fn main() {
     let source = "正しい段落。\n［＃ここから2字下げ";
     let doc = aozora::parse(source).expect("source fits parser span limit");

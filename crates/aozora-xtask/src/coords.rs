@@ -1,19 +1,4 @@
-//! Coordinate-literal gate: a comment may not cite source by line number.
-//!
-//! A line number in a comment is a fact with a shelf life — the next edit
-//! above it makes it wrong, and nothing re-reads it. #553 shipped a table
-//! whose comment named a wire key the code did not use; the coordinate form
-//! of the same rot is a test header pointing at a function ~300 lines from
-//! where it actually sits. Reference a symbol instead: the compiler moves it,
-//! and a grep still finds it.
-//!
-//! Sound over complete. Two forms are rejected: a `file:line` (`file.rs:N`)
-//! and a bare parenthesised line cite (`(line N)`, `(lines N, M)`). It scans
-//! the `//` comment text only — string, raw-string and char literals are
-//! stepped over, so a coordinate inside `"…"` is never read as a comment —
-//! and it skips a `(line N, col M)` LSP position, which is document data, not
-//! a pointer into the tree. A coordinate in a block comment is out of scope;
-//! the forms that rot in practice are `//` and `//!`.
+//! Rejects source coordinates in line comments through `lint coordinates`.
 
 use std::fs;
 
@@ -21,20 +6,15 @@ use regex::Regex;
 
 use crate::scan::{tracked_rs_files, workspace_root};
 
-/// A `file:line` coordinate: a filename with a code/config extension, or a
-/// bare `Justfile`, joined by `:` to a line number. Shapes without the
-/// `.<ext>:` / `Justfile:` prefix — times (`12:30`), versions (`1.23`),
-/// codepoints (`U+3099`) — cannot match.
 const FILE_LINE: &str =
     r"(?:[A-Za-z0-9_-]+\.(?:rs|md|toml|js|jsx|ts|tsx|json|yml|yaml|sh|go|py|c|h)|Justfile):[0-9]+";
 
-/// A bare parenthesised source-line cite: `(line N)`, `(lines N, M)`,
-/// `(line N, == -> !=)`. A digit must follow `line`/`lines`, so prose like
-/// `(line up the columns)` cannot match; the `, col` LSP-position form is
-/// filtered out in [`coordinate`].
 const BARE_LINE: &str = r"\(lines?\s+[0-9][^)]*\)";
 
-/// `xtask lint coordinates` — no comment may cite a source line.
+#[expect(
+    clippy::print_stderr,
+    reason = "the command reports results and diagnostics to developers"
+)]
 pub(crate) fn check() -> Result<(), String> {
     let root = workspace_root()?;
     let file_line = Regex::new(FILE_LINE).map_err(|e| format!("compile pattern: {e}"))?;
@@ -72,9 +52,6 @@ pub(crate) fn check() -> Result<(), String> {
     Ok(())
 }
 
-/// The first source coordinate a comment cites, or `None`. A `file:line`
-/// wins; otherwise a bare `(line N)` cite — except a `(line N, col M)` LSP
-/// position, which is document data rather than a pointer into the tree.
 fn coordinate(comment: &str, file_line: &Regex, bare_line: &Regex) -> Option<String> {
     if let Some(m) = file_line.find(comment) {
         return Some(m.as_str().to_owned());
@@ -85,9 +62,6 @@ fn coordinate(comment: &str, file_line: &Regex, bare_line: &Regex) -> Option<Str
         .map(|m| m.as_str().to_owned())
 }
 
-/// The `//` line-comment text of a source line, or `None` when it has none.
-/// String, raw-string and char literals are walked over, so neither a `//`
-/// inside `"http://…"` nor a coordinate inside a string is read as a comment.
 fn line_comment(line: &str) -> Option<&str> {
     let b = line.as_bytes();
     let mut i = 0;
@@ -110,8 +84,6 @@ fn line_comment(line: &str) -> Option<&str> {
     None
 }
 
-/// Advance past a `"…"` string literal (`b[start]` is the opening quote),
-/// honouring `\` escapes. An unterminated literal runs to end-of-line.
 fn skip_string(b: &[u8], start: usize) -> usize {
     let mut i = start + 1;
     while i < b.len() {
@@ -124,9 +96,6 @@ fn skip_string(b: &[u8], start: usize) -> usize {
     i
 }
 
-/// The `#` count of a raw-string opener at `b[start]` (`r"…"`, `r#"…"#`, and
-/// the byte-string `br…` forms), or `None` when `r` is an ordinary
-/// identifier or a raw identifier (`r#type`).
 fn raw_string_start(b: &[u8], start: usize) -> Option<usize> {
     let mut j = start + 1;
     while b.get(j) == Some(&b'#') {
@@ -135,8 +104,6 @@ fn raw_string_start(b: &[u8], start: usize) -> Option<usize> {
     (b.get(j) == Some(&b'"')).then_some(j - start - 1)
 }
 
-/// Advance past a raw string opened at `b[start]` with `hashes` hashes,
-/// whose terminator is `"` followed by that many `#`.
 fn skip_raw_string(b: &[u8], start: usize, hashes: usize) -> usize {
     let mut i = start + 1 + hashes + 1;
     while i < b.len() {
@@ -156,10 +123,6 @@ fn skip_raw_string(b: &[u8], start: usize, hashes: usize) -> usize {
     i
 }
 
-/// Advance past a char literal (`'x'`, `'\n'`, `'\''`) at `b[start]`, or past
-/// just the tick of a lifetime (`'a`, `'static`). A char literal is the only
-/// form that can hide a `"`, so reading a lifetime as one would only cost
-/// a skipped tick — never a false string.
 fn skip_char_or_lifetime(b: &[u8], start: usize) -> usize {
     if b.get(start + 1) == Some(&b'\\') {
         let mut i = start + 2;
@@ -169,7 +132,8 @@ fn skip_char_or_lifetime(b: &[u8], start: usize) -> usize {
         return i + 1;
     }
     if b.get(start + 2) == Some(&b'\'') {
-        return start + 3;
+        const CHAR_LITERAL_BYTES: usize = 3;
+        return start + CHAR_LITERAL_BYTES;
     }
     start + 1
 }
@@ -254,8 +218,6 @@ mod tests {
         assert!(!hits("    // line up the columns before emitting the row"));
     }
 
-    /// Self-check mirroring `docs.rs` / `lint.rs`: the live tree cites no
-    /// source line in any comment.
     #[test]
     fn the_repo_cites_no_source_coordinates() {
         check().expect("no comment in the tree cites a source coordinate");

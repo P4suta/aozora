@@ -5,7 +5,6 @@ set -euo pipefail
 remote="${1:-origin}"
 zero_sha="0000000000000000000000000000000000000000"
 
-# Lefthook does not forward Git's pre-push stdin by default, so derive the range from refs.
 branch="$(git rev-parse --abbrev-ref HEAD)"
 local_sha="$(git rev-parse HEAD)"
 

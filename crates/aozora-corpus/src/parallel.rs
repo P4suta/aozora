@@ -22,8 +22,7 @@ fn physical_core_pool() -> Option<&'static ThreadPool> {
 
 /// Run `f` on the physical-core load pool.
 ///
-/// `f` runs synchronously; the function returns when `f` returns.
-/// If the dedicated pool cannot be constructed, `f` is invoked directly on the calling thread.
+/// Waits for `f` to return and falls back to the calling thread if pool construction fails.
 pub fn with_load_pool<R, F>(f: F) -> R
 where
     F: FnOnce() -> R + Send,
@@ -37,12 +36,12 @@ where
 
 /// Read corpus files and apply `per_item` on the shared load pool.
 ///
-/// Output follows filesystem order; sort by label for deterministic output.
-/// If the pool cannot be constructed, processing runs serially on the calling thread.
+/// Output follows filesystem order.
+/// Processing falls back to the calling thread if pool construction fails.
 ///
 /// # Errors
 ///
-/// Traversal and per-file I/O failures are returned as inline error entries.
+/// Returns traversal and file I/O failures as inline error entries.
 pub fn par_load_decoded<F, T>(corpus: &FilesystemCorpus, per_item: F) -> Vec<Result<T, CorpusError>>
 where
     F: Fn(CorpusItem) -> T + Sync + Send,

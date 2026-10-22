@@ -13,9 +13,6 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Dev-only: consumed as a `[dev-dependencies]` entry (path-only) by the
-# aozora property tests. Never a runtime dependency of a published crate, so it
-# stays off crates.io — which also lets its workspace dep be declared path-only.
 publish = false
 
 [lints]

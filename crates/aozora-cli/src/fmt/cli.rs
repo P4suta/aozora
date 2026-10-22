@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use aozora::{DirectiveNormalization, SerializeOptions};
 use clap::{Args, ValueEnum};
 
-/// The formatter's argument surface, flattened into the `aozora fmt` subcommand.
+/// Format files, directories, or stdin.
 #[derive(Args, Debug)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -15,48 +15,50 @@ pub(crate) struct FmtArgs {
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
 
-    /// Verify inputs are already formatted; exit 1 if any would change.
+    /// Verify that inputs have canonical formatting.
+    /// Exit 1 if any input would change.
     #[arg(long, conflicts_with_all = ["write", "list"])]
     check: bool,
 
-    /// Rewrite files in place (no-op when already canonical).
+    /// Rewrite files in place, leaving canonical files unchanged.
     #[arg(long, short = 'w', conflicts_with_all = ["check", "diff", "json"])]
     write: bool,
 
     /// Print a unified diff for every file that would change.
-    /// Implies --check.
+    /// Implies `--check`.
     #[arg(long, conflicts_with_all = ["write", "list", "json"])]
     diff: bool,
 
-    /// List only the paths that would change (gofmt -l).
-    /// Combine with -w.
+    /// List paths that would change, as `gofmt -l` does.
+    /// Combine with `-w` to rewrite them.
     #[arg(long, short = 'l', conflicts_with_all = ["check", "diff", "json"])]
     list: bool,
 
-    /// Emit the --check result as machine-readable JSON.
-    /// Implies --check.
+    /// Emit the `--check` result as JSON.
+    /// Implies `--check`.
     #[arg(long, conflicts_with_all = ["write", "list", "diff"])]
     json: bool,
 
-    /// Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the fixes flagged by the `aozora::lint::non_canonical_directive` warnings.
-    /// Opt-in: without it every directive round-trips its raw bytes verbatim.
-    /// Idempotent, so it composes with every mode.
+    /// Rewrite directive near-misses to the canonical spellings suggested by `aozora::lint::non_canonical_directive`.
+    /// For example, replace `［＃字下げ終わり］` with `［＃ここで字下げ終わり］`.
+    /// Without this flag, preserve each directive's original bytes.
+    /// The transform is idempotent and supports every mode.
     #[arg(long)]
     fix: bool,
 }
 
-/// When to emit ANSI colour in terminal output (diffs, diagnostics, …).
+/// Controls terminal color for diffs and diagnostics.
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ColorChoice {
-    /// Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`).
+    /// Use color when stdout is a terminal, honoring `NO_COLOR`, `CLICOLOR`, and `CLICOLOR_FORCE`.
     #[default]
     Auto,
-    /// Always colour, even when piped.
+    /// Always use color, even when piped.
     Always,
-    /// Never colour.
+    /// Never use color.
     Never,
 }
 

@@ -6,6 +6,10 @@ use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use proptest::prelude::*;
 
+#[expect(
+    clippy::expect_used,
+    reason = "projection properties require parsing and JSON serialization to succeed"
+)]
 fn project_to_json(source: &str) -> serde_json::Value {
     let doc = aozora::parse(source.to_owned()).expect("source fits parser span limit");
     let snapshot = doc.snapshot();

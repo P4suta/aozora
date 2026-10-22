@@ -46,20 +46,17 @@ extern "C" {
 /// Get a pointer to the last element in the array.
 #define array_back(self) array_get(self, (self)->size - 1)
 
-/// Clear the array, setting its size to zero. Note that this does not free any
-/// memory allocated for the array's contents.
+/// Sets the array size to zero without releasing its storage.
 #define array_clear(self) ((self)->size = 0)
 
-/// Reserve `new_capacity` elements of space in the array. If `new_capacity` is
-/// less than the array's current capacity, this function has no effect.
+/// Reserves space for at least `new_capacity` elements without shrinking existing storage.
 #define array_reserve(self, new_capacity)        \
   ((self)->contents = _array__reserve(           \
     (void *)(self)->contents, &(self)->capacity, \
     array_elem_size(self), new_capacity)         \
   )
 
-/// Free any memory allocated for this array. Note that this does not free any
-/// memory allocated for the array's contents.
+/// Releases the array's storage without freeing allocations owned by its elements.
 #define array_delete(self)                           \
   do {                                               \
     if ((self)->contents) ts_free((self)->contents); \
@@ -79,7 +76,7 @@ extern "C" {
   } while(0)
 
 /// Increase the array's size by `count` elements.
-/// New elements are zero-initialized.
+/// Initializes new elements to zero.
 #define array_grow_by(self, count)                                               \
   do {                                                                           \
     if ((count) == 0) break;                                                     \
@@ -95,17 +92,15 @@ extern "C" {
 #define array_push_all(self, other) \
   array_extend((self), (other)->size, (other)->contents)
 
-/// Append `count` elements to the end of the array, reading their values from the
-/// `contents` pointer.
+/// Append `count` elements to the end of the array, reading their values from the `contents` pointer.
 #define array_extend(self, count, other_contents)                 \
   (self)->contents = _array__splice(                              \
     (void*)(self)->contents, &(self)->size, &(self)->capacity,    \
     array_elem_size(self), (self)->size, 0, count, other_contents \
   )
 
-/// Remove `old_count` elements from the array starting at the given `index`. At
-/// the same index, insert `new_count` new elements, reading their values from the
-/// `new_contents` pointer.
+/// Remove `old_count` elements from the array starting at the given `index`.
+/// At the same index, insert `new_count` new elements, reading their values from the `new_contents` pointer.
 #define array_splice(self, _index, old_count, new_count, new_contents) \
   (self)->contents = _array__splice(                                   \
     (void *)(self)->contents, &(self)->size, &(self)->capacity,        \
@@ -126,14 +121,14 @@ extern "C" {
 /// Pop the last element off the array, returning the element by value.
 #define array_pop(self) ((self)->contents[--(self)->size])
 
-/// Assign the contents of one array to another, reallocating if necessary.
+/// Copies another array's contents, growing storage when needed.
 #define array_assign(self, other)                                   \
   (self)->contents = _array__assign(                                \
     (void *)(self)->contents, &(self)->size, &(self)->capacity,     \
     (const void *)(other)->contents, (other)->size, array_elem_size(self) \
   )
 
-/// Swap one array with another
+/// Swaps the contents and capacities of two arrays.
 #define array_swap(self, other)                                     \
   do {                                                              \
     void *_array_swap_tmp = (void *)(self)->contents;               \
@@ -143,29 +138,20 @@ extern "C" {
                  &(other)->size, &(other)->capacity);               \
   } while (0)
 
-/// Get the size of the array contents
+/// Returns the size of one array element in bytes.
 #define array_elem_size(self) (sizeof *(self)->contents)
 
-/// Search a sorted array for a given `needle` value, using the given `compare`
-/// callback to determine the order.
-///
-/// If an existing element is found to be equal to `needle`, then the `index`
-/// out-parameter is set to the existing value's index, and the `exists`
-/// out-parameter is set to true. Otherwise, `index` is set to an index where
-/// `needle` should be inserted in order to preserve the sorting, and `exists`
-/// is set to false.
+/// Searches a sorted array using `compare`, writing a matching index and `true` to `exists` on a match.
+/// Otherwise writes the insertion index and `false` to `exists`.
 #define array_search_sorted_with(self, compare, needle, _index, _exists) \
   _array__search_sorted(self, 0, compare, , needle, _index, _exists)
 
-/// Search a sorted array for a given `needle` value, using integer comparisons
-/// of a given struct field (specified with a leading dot) to determine the order.
-///
-/// See also `array_search_sorted_with`.
+/// Searches a sorted array by an integer field written with a leading dot.
+/// Writes the matching or insertion index and whether a match exists.
 #define array_search_sorted_by(self, field, needle, _index, _exists) \
   _array__search_sorted(self, 0, _compare_int, field, needle, _index, _exists)
 
-/// Insert a given `value` into a sorted array, using the given `compare`
-/// callback to determine the order.
+/// Inserts `value` into a sorted array using `compare` unless an equal value exists.
 #define array_insert_sorted_with(self, compare, value) \
   do { \
     unsigned _index, _exists; \
@@ -173,10 +159,7 @@ extern "C" {
     if (!_exists) array_insert(self, _index, value); \
   } while (0)
 
-/// Insert a given `value` into a sorted array, using integer comparisons of
-/// a given struct field (specified with a leading dot) to determine the order.
-///
-/// See also `array_search_sorted_by`.
+/// Inserts `value` into a sorted array by an integer field unless an equal value exists.
 #define array_insert_sorted_by(self, field, value) \
   do { \
     unsigned _index, _exists; \
@@ -184,16 +167,8 @@ extern "C" {
     if (!_exists) array_insert(self, _index, value); \
   } while (0)
 
-// Private
+// SAFETY: field pointers avoid aliasing whole array structs with different element types.
 
-// Pointers to individual `Array` fields (rather than the entire `Array` itself)
-// are passed to the various `_array__*` functions below to address strict aliasing
-// violations that arises when the _entire_ `Array` struct is passed as `Array(void)*`.
-//
-// The `Array` type itself was not altered as a solution in order to avoid breakage
-// with existing consumers (in particular, parsers with external scanners).
-
-/// This is not what you're looking for, see `array_erase`.
 static inline void _array__erase(void* self_contents, uint32_t *size,
                                 size_t element_size, uint32_t index) {
   assert(index < *size);
@@ -203,7 +178,6 @@ static inline void _array__erase(void* self_contents, uint32_t *size,
   (*size)--;
 }
 
-/// This is not what you're looking for, see `array_reserve`.
 static inline void *_array__reserve(void *contents, uint32_t *capacity,
                                   size_t element_size, uint32_t new_capacity) {
   void *new_contents = contents;
@@ -218,7 +192,6 @@ static inline void *_array__reserve(void *contents, uint32_t *capacity,
   return new_contents;
 }
 
-/// This is not what you're looking for, see `array_assign`.
 static inline void *_array__assign(void* self_contents, uint32_t *self_size, uint32_t *self_capacity,
                                  const void *other_contents, uint32_t other_size, size_t element_size) {
   void *new_contents = _array__reserve(self_contents, self_capacity, element_size, other_size);
@@ -227,7 +200,6 @@ static inline void *_array__assign(void* self_contents, uint32_t *self_size, uin
   return new_contents;
 }
 
-/// This is not what you're looking for, see `array_swap`.
 static inline void _array__swap(uint32_t *self_size, uint32_t *self_capacity,
                                uint32_t *other_size, uint32_t *other_capacity) {
   uint32_t tmp_size = *self_size;
@@ -238,7 +210,6 @@ static inline void _array__swap(uint32_t *self_size, uint32_t *self_capacity,
   *other_capacity = tmp_capacity;
 }
 
-/// This is not what you're looking for, see `array_push` or `array_grow_by`.
 static inline void *_array__grow(void *contents, uint32_t size, uint32_t *capacity,
                                uint32_t count, size_t element_size) {
   void *new_contents = contents;
@@ -252,7 +223,6 @@ static inline void *_array__grow(void *contents, uint32_t size, uint32_t *capaci
   return new_contents;
 }
 
-/// This is not what you're looking for, see `array_splice`.
 static inline void *_array__splice(void *self_contents, uint32_t *size, uint32_t *capacity,
                                  size_t element_size,
                                  uint32_t index, uint32_t old_count,
@@ -292,8 +262,6 @@ static inline void *_array__splice(void *self_contents, uint32_t *size, uint32_t
   return new_contents;
 }
 
-/// A binary search routine, based on Rust's `std::slice::binary_search_by`.
-/// This is not what you're looking for, see `array_search_sorted_with` or `array_search_sorted_by`.
 #define _array__search_sorted(self, start, compare, suffix, needle, _index, _exists) \
   do { \
     *(_index) = start; \
@@ -313,8 +281,6 @@ static inline void *_array__splice(void *self_contents, uint32_t *size, uint32_t
     else if (comparison < 0) *(_index) += 1; \
   } while (0)
 
-/// Helper macro for the `_sorted_by` routines below. This takes the left (existing)
-/// parameter by reference in order to work with the generic sorting function above.
 #define _compare_int(a, b) ((int)*(a) - (int)(b))
 
 #ifdef _MSC_VER
@@ -327,4 +293,4 @@ static inline void *_array__splice(void *self_contents, uint32_t *size, uint32_t
 }
 #endif
 
-#endif  // TREE_SITTER_ARRAY_H_
+#endif

@@ -1,24 +1,4 @@
-//! Compile-time gaiji table generator.
-//!
-//! Reads the four TSV data files in `data/`, runs `phf_codegen`
-//! to build the perfect hashes, and writes the result to
-//! `$OUT_DIR/aozora_gaiji_table.rs`. The library `include!()`s that
-//! file from `gaiji.rs`.
-//!
-//! ## Why `phf_codegen` instead of `phf::phf_map!`
-//!
-//! The macro form makes rustc do the perfect-hash construction at
-//! macro-expansion time. For the 4 329-entry single-char map +
-//! 8 883-entry description map (combined ~13 k entries) this costs
-//! ~30–60 seconds of `cargo check` on cold caches and a noticeable
-//! pause on every `rust-analyzer` reload. `phf_codegen` runs the
-//! same algorithm at build-time inside `build.rs`; Cargo caches the
-//! emitted file and only re-runs it when the input TSVs change, so
-//! repeat-build cost drops to "include the cached `.rs`".
-//!
-//! The generated source uses `phf::Map<&'static str, ...>` —
-//! identical runtime types to the macro path, so the lookup hot
-//! path is unchanged.
+//! Generates gaiji lookup tables from the bundled data files.
 
 use std::collections::HashSet;
 use std::error::Error;
@@ -59,16 +39,12 @@ fn main() -> BuildResult<()> {
     let dict = parse_description_tsv(&dict_tsv)?;
     let mut description = parse_description_tsv(&special_tsv)?;
 
-    // Hand-curated specials win on conflict — same precedence as
-    // the previous `xtask gaiji-gen` path.
     let seen: HashSet<String> = description.iter().map(|e| e.description.clone()).collect();
     for entry in dict {
         if !seen.contains(&entry.description) {
             description.push(entry);
         }
     }
-    // Stable order across builds for diff readability if the file
-    // is ever inspected by a human.
     description.sort_by(|a, b| a.description.cmp(&b.description));
 
     let plane1_count = single.iter().filter(|e| e.plane == PLANE_ONE).count();
@@ -304,12 +280,6 @@ fn parse_description_tsv(path: &Path) -> BuildResult<Vec<DescriptionEntry>> {
     Ok(out)
 }
 
-/// Compose the standard roman numeral for `n` using the U+2160
-/// (uppercase, `base` = `0x2160`) / U+2170 (lowercase, `0x2170`)
-/// single-letter block atoms (I=+0, V=+4, X=+9, L=+12, C=+13, D=+14,
-/// M=+15). Returns the empty string for `n == 0`. Emits the
-/// `ROMAN_NUMERAL_*` tables consumed by `gaiji::roman_numeral_glyph`
-/// for #326's bare `※［＃ローマ数字N］`.
 fn roman_numeral(mut n: u32, base: u32) -> BuildResult<String> {
     const TABLE: &[(u32, &[u32])] = &[
         (1000, &[15]),

@@ -21,8 +21,6 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-# Developer audits use the same stable document, catalogue, encoding, render,
-# and wire surfaces as external consumers.
 aozora = { workspace = true, features = [
   "schema",
   "json",
@@ -46,9 +44,5 @@ tree-sitter-aozora = { workspace = true }
 walkdir = { workspace = true }
 zstd = { workspace = true }
 
-# `posix_fadvise(POSIX_FADV_DONTNEED)` for `corpus uncache` is Linux-only
-# (rustix's `fs` module is configured out on Windows and macOS lacks
-# `Advice::DontNeed`), so the dependency is scoped to Linux targets — the
-# workspace still compiles on the macOS/Windows cross-os lane.
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }

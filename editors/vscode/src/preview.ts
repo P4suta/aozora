@@ -209,17 +209,10 @@ function wrapHtml(body: string, mode: WritingMode): string {
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <!-- Strict CSP, defense-in-depth over the renderer's escaping: no
-       scripts of any origin, no remote/data anything except inline
-       styles (the <style> block below) and data: images. Combined with
-       enableScripts:false this makes injected markup inert even if the
-       LSP fragment ever carried an unescaped tag. -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'" />
   <title>Aozora Preview</title>
   <style>
-    /* Follow the editor theme instead of a hardcoded page colour; the
-       prose font / colour / line-height come from .aozora-notation. */
     body {
       max-width: 42em;
       margin: 1.5em auto;

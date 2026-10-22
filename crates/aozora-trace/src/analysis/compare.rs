@@ -1,31 +1,25 @@
-//! Diff two traces (before vs after).
-//!
-//! Aggregates leaf-frame samples on both, normalises to per-trace
-//! percentages (raw counts depend on trace duration / sample rate),
-//! then surfaces:
-//!
-//! - **shifted**: function present in both, percentage moved
-//! - **appeared**: present in `after` but not `before`
-//! - **disappeared**: present in `before` but not `after`
-//!
-//! Sorted by absolute percentage delta, descending. Drives the
-//! "what did my optimisation actually change?" question.
+//! Compares the shares of leaf-frame samples between traces through [`compare`].
 
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::analysis::hot::hot_leaves;
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
+const CANDIDATE_MULTIPLIER: usize = 4;
+const PERCENT_COLUMN_WIDTH: usize = 8;
+const STATUS_COLUMN_WIDTH: usize = 12;
+
 /// Result of diffing two traces, produced by [`compare`].
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComparisonReport {
-    /// Total samples in the `before` trace (for context in the header).
+    /// Total weight of samples in the `before` trace.
     pub before_total: u64,
-    /// Total samples in the `after` trace.
+    /// Total weight of samples in the `after` trace.
     pub after_total: u64,
-    /// Per-function diff rows, sorted by descending absolute |Δ%|.
+    /// Functions sorted by descending absolute change in percentage points.
     pub rows: Vec<ComparisonRow>,
 }
 
@@ -33,13 +27,14 @@ pub struct ComparisonReport {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComparisonRow {
-    /// Function (leaf-frame) label.
+    /// Leaf-frame function label.
     pub label: String,
-    /// Its leaf-frame share of the `before` trace, in percent.
+    /// Percentage of leaf-frame samples in the `before` trace.
     pub before_pct: f64,
-    /// Its leaf-frame share of the `after` trace, in percent.
+    /// Percentage of leaf-frame samples in the `after` trace.
     pub after_pct: f64,
-    /// `after_pct - before_pct`. Positive means the function got hotter.
+    /// `after_pct - before_pct`.
+    /// Positive means the function got hotter.
     pub delta_pct: f64,
     /// Whether the function shifted, appeared, or disappeared.
     pub status: ChangeStatus,
@@ -49,25 +44,21 @@ pub struct ComparisonRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeStatus {
-    /// Present in both traces; its percentage moved (possibly by zero).
+    /// Present in both traces.
     Shifted,
-    /// Present in `after` but not `before` (newly hot).
+    /// Present only in `after`.
     Appeared,
-    /// Present in `before` but not `after` (no longer sampled).
+    /// Present only in `before`.
     Disappeared,
 }
 
-/// Compare two traces. `top` rows by absolute |Δ%| (per-side
-/// limit, pre-merge: we ask each side for `top * 4` so we have
-/// enough union coverage).
+/// Returns at most `top` functions sorted by absolute change in the shares of leaf-frame samples.
+/// Candidates come from each trace's hottest functions, capped at four times `top`.
 #[must_use]
 pub fn compare(before: &Trace, after: &Trace, top: usize) -> ComparisonReport {
-    let bsize = top.saturating_mul(4).max(top);
+    let bsize = top.saturating_mul(CANDIDATE_MULTIPLIER).max(top);
     let b = hot_leaves(before, bsize);
     let a = hot_leaves(after, bsize);
-    // For comparison purposes the leaf-mode `self_pct` IS the
-    // canonical "where the CPU was" percentage (incl_pct equals
-    // self_pct in leaf mode).
     let bmap: HashMap<&str, f64> = b
         .rows
         .iter()
@@ -106,7 +97,7 @@ pub fn compare(before: &Trace, after: &Trace, top: usize) -> ComparisonReport {
         b.delta_pct
             .abs()
             .partial_cmp(&a.delta_pct.abs())
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .unwrap_or(Ordering::Equal)
     });
     rows.truncate(top);
 
@@ -129,22 +120,22 @@ impl TableRenderable for ComparisonReport {
                 Column {
                     header: "before %".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "after %".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "Δ".into(),
                     align: Align::Right,
-                    width: 8,
+                    width: PERCENT_COLUMN_WIDTH,
                 },
                 Column {
                     header: "status".into(),
                     align: Align::Left,
-                    width: 12,
+                    width: STATUS_COLUMN_WIDTH,
                 },
                 Column {
                     header: "function".into(),
@@ -185,9 +176,6 @@ mod tests {
     use super::{ChangeStatus, compare};
     use crate::Trace;
 
-    /// Build a single-thread trace whose leaves are `(name, weight)`
-    /// pairs, each its own root stack. Keeps the `ChangeStatus` arms
-    /// assertable in-crate (the enum is not re-exported).
     fn leaves(samples: &[(&str, u64)]) -> Trace {
         let strings: Vec<Value> = samples.iter().map(|(n, _)| json!(n)).collect();
         let func_name: Vec<Value> = (0..samples.len()).map(|i| json!(i)).collect();
@@ -215,8 +203,6 @@ mod tests {
 
     #[test]
     fn status_variants_are_assigned_correctly() {
-        // f: both sides → Shifted; g: before-only → Disappeared;
-        // h: after-only → Appeared.
         let before = leaves(&[("f", 8), ("g", 2)]);
         let after = leaves(&[("f", 2), ("h", 8)]);
         let report = compare(&before, &after, 10);

@@ -14,7 +14,7 @@ pub struct Span {
 }
 
 impl Span {
-    /// Construct a half-open span from byte offsets.
+    /// Construct a half-open span without validating order or character boundaries.
     #[must_use]
     pub const fn new(start: u32, end: u32) -> Self {
         Self { start, end }
@@ -24,7 +24,8 @@ impl Span {
     ///
     /// # Panics
     ///
-    /// Panics in debug builds if `end < start`; release builds wrap.
+    /// Panics on `end < start` if the build enables overflow checks.
+    /// Otherwise, the length wraps as unsigned subtraction.
     #[must_use]
     pub const fn len(self) -> u32 {
         self.end - self.start
@@ -40,7 +41,7 @@ impl Span {
     ///
     /// # Panics
     ///
-    /// Panics if the span is out of bounds or its endpoints are not UTF-8 boundaries.
+    /// Panics for out-of-bounds endpoints or endpoints within a UTF-8 codepoint.
     #[must_use]
     pub fn slice(self, source: &str) -> &str {
         let start = self.start as usize;

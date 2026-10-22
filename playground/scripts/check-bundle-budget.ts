@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { extname, join, relative, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
+const BYTES_PER_KIB = 1024;
+
 const root = resolve('dist');
 const limits = {
   '.css': 40 * 1024,
@@ -46,7 +48,7 @@ for (const file of files) {
 const failures: string[] = [];
 for (const [extension, limit] of Object.entries(limits)) {
   const total = totals.get(extension) ?? 0;
-  const formatted = `${(total / 1024).toFixed(1)} KiB / ${(limit / 1024).toFixed(0)} KiB`;
+  const formatted = `${(total / BYTES_PER_KIB).toFixed(1)} KiB / ${(limit / BYTES_PER_KIB).toFixed(0)} KiB`;
   if (total > limit) failures.push(`${extension}: ${formatted}`);
   else process.stdout.write(`${extension}: ${formatted}\n`);
 }
@@ -56,7 +58,7 @@ for (const [prefix, limit] of Object.entries(artifactLimits)) {
     failures.push(`${prefix}: artifact missing`);
     continue;
   }
-  const formatted = `${(total / 1024).toFixed(1)} KiB / ${(limit / 1024).toFixed(0)} KiB`;
+  const formatted = `${(total / BYTES_PER_KIB).toFixed(1)} KiB / ${(limit / BYTES_PER_KIB).toFixed(0)} KiB`;
   if (total > limit) failures.push(`${prefix}: ${formatted}`);
   else process.stdout.write(`${prefix}: ${formatted}\n`);
 }
@@ -76,9 +78,6 @@ for (const file of files) {
   }
 }
 
-// The initial Spectrum shell paints before the independent editor and engine
-// chunks. Neither entry may move authoring code or WASM onto that critical
-// preload path.
 for (const page of ['index.html', 'gallery.html']) {
   const html = await readFile(join(root, page), 'utf8');
   const deferredChunks = [

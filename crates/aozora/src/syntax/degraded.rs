@@ -1,4 +1,4 @@
-// ADR-0026 confines lossy reductions to rendering so formatting cannot erase source meaning.
+// ADR-0026 confines lossy reductions to temporary rendering to preserve source meaning.
 
 use std::borrow::Cow;
 
@@ -6,7 +6,7 @@ use crate::syntax::lint::is_digit_run;
 
 #[must_use]
 pub(crate) fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
-    // EOF closes the reduced indent visually, but persisting it would leave an unclosed block (ADR-0026).
+    // ADR-0026 keeps this end-of-document closure out of persistent source to avoid an unclosed block.
     if let Some(n) = body
         .strip_prefix("ここから最後まで")
         .and_then(|r| r.strip_suffix("字下げ"))
@@ -15,7 +15,7 @@ pub(crate) fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
         return Some(Cow::Owned(format!("ここから{n}字下げ")));
     }
 
-    // Gap from the bottom margin and lift from the bottom describe the same placement (ADR-0026).
+    // ADR-0026 equates the bottom-margin gap with the lift from that margin.
     for tail in ["字アキ", "字あき"] {
         if let Some(n) = body
             .strip_prefix("地付き、地より")
@@ -34,7 +34,7 @@ pub(crate) fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
         return Some(Cow::Owned(format!("地から{n}字上げ")));
     }
 
-    // This reduction drops an unquantified head indent, so it is render-only (ADR-0026).
+    // ADR-0026 confines this reduction to rendering because it drops an indent without a specified width.
     for prefix in ["下げて、地より", "下げて地より"] {
         for tail in ["字あきで", "字アキで"] {
             if let Some(n) = body.strip_prefix(prefix).and_then(|r| r.strip_suffix(tail))
@@ -45,7 +45,7 @@ pub(crate) fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
         }
     }
 
-    // ADR-0027 preserves the small-script axis in source, so dropping it is an opt-in approximation.
+    // ADR-0027 preserves small-script information in source, so only temporary rendering may omit it.
     for tail in ["は縦中横、行右小書き", "は縦中横、行左小書き"] {
         if let Some(head) = body.strip_suffix(tail)
             && head.starts_with('「')
