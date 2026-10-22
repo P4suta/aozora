@@ -1,20 +1,3 @@
-// build.rs runs once per Cargo invocation (when inputs change) and
-// emits a Rust source fragment to OUT_DIR. The pedantic clippy
-// lints the workspace applies to library code surface a lot of
-// noise here that doesn't affect downstream builds — relax them
-// at the file level.
-#![allow(
-    clippy::too_many_lines,
-    clippy::redundant_clone,
-    clippy::format_collect,
-    clippy::missing_assert_message,
-    clippy::absolute_paths,
-    clippy::items_after_statements,
-    clippy::expect_used,
-    clippy::panic,
-    reason = "build.rs is dev-tooling code that emits source to OUT_DIR; \
-              malformed generator inputs must stop the build"
-)]
 //! Compile-time gaiji table generator.
 //!
 //! Reads the four TSV data files in `data/`, runs `phf_codegen`
@@ -37,17 +20,27 @@
 //! identical runtime types to the macro path, so the lookup hot
 //! path is unchanged.
 
-use std::env;
-use std::fs;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::error::Error;
+use std::fmt::Write as _;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::{env, fs};
 
-const INFALLIBLE: &str = "BufWriter::write_all over Vec<u8> is infallible";
+type BuildResult<T> = Result<T, Box<dyn Error>>;
+const HEX_RADIX: u32 = 16;
+const PLANE_ONE: u8 = 1;
+const PLANE_TWO: u8 = 2;
+const LEVEL_THREE: u8 = 3;
+const LEVEL_FOUR: u8 = 4;
+const ROMAN_MAX: u32 = 99;
+const ROMAN_UPPER_BASE: u32 = 0x2160;
+const ROMAN_LOWER_BASE: u32 = 0x2170;
 
-fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+fn main() -> BuildResult<()> {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let data_dir = manifest_dir.join("data");
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let out_path = out_dir.join("aozora_gaiji_table.rs");
 
     let single_tsv = data_dir.join("jisx0213-2004.tsv");
@@ -55,22 +48,20 @@ fn main() {
     let dict_tsv = data_dir.join("aozora-gaiji-chuki.tsv");
     let special_tsv = data_dir.join("aozora-gaiji-special.tsv");
 
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed={}", single_tsv.display());
-    println!("cargo:rerun-if-changed={}", combo_tsv.display());
-    println!("cargo:rerun-if-changed={}", dict_tsv.display());
-    println!("cargo:rerun-if-changed={}", special_tsv.display());
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "cargo:rerun-if-changed=build.rs")?;
+    for path in [&single_tsv, &combo_tsv, &dict_tsv, &special_tsv] {
+        writeln!(stdout, "cargo:rerun-if-changed={}", path.display())?;
+    }
 
-    let single = parse_single_tsv(&single_tsv);
-    let combo = parse_combo_tsv(&combo_tsv);
-    let dict = parse_description_tsv(&dict_tsv);
-    let special = parse_description_tsv(&special_tsv);
+    let single = parse_single_tsv(&single_tsv)?;
+    let combo = parse_combo_tsv(&combo_tsv)?;
+    let dict = parse_description_tsv(&dict_tsv)?;
+    let mut description = parse_description_tsv(&special_tsv)?;
 
     // Hand-curated specials win on conflict — same precedence as
     // the previous `xtask gaiji-gen` path.
-    let mut description: Vec<DescriptionEntry> = special.clone();
-    let seen: std::collections::HashSet<String> =
-        description.iter().map(|e| e.description.clone()).collect();
+    let seen: HashSet<String> = description.iter().map(|e| e.description.clone()).collect();
     for entry in dict {
         if !seen.contains(&entry.description) {
             description.push(entry);
@@ -80,12 +71,12 @@ fn main() {
     // is ever inspected by a human.
     description.sort_by(|a, b| a.description.cmp(&b.description));
 
-    let plane1_count = single.iter().filter(|e| e.plane == 1).count();
-    let plane2_count = single.iter().filter(|e| e.plane == 2).count();
+    let plane1_count = single.iter().filter(|e| e.plane == PLANE_ONE).count();
+    let plane2_count = single.iter().filter(|e| e.plane == PLANE_TWO).count();
     let combo_count = combo.len();
     let description_count = description.len();
 
-    let file = fs::File::create(&out_path).expect("create OUT_DIR/aozora_gaiji_table.rs");
+    let file = fs::File::create(&out_path)?;
     let mut out = BufWriter::new(file);
 
     writeln!(
@@ -94,10 +85,36 @@ fn main() {
          DO NOT EDIT BY HAND.\n\
          // Source TSVs in `crates/aozora/data/`; rerun by \
          touching any of them.\n",
-    )
-    .expect(INFALLIBLE);
+    )?;
+    write_single_table(&mut out, &single)?;
+    write_combo_table(&mut out, &combo)?;
+    write_description_table(&mut out, &description)?;
+    write_roman_tables(&mut out)?;
+    for (name, count) in [
+        ("JISX0213_PLANE1_COUNT", plane1_count),
+        ("JISX0213_PLANE2_COUNT", plane2_count),
+        ("JISX0213_COMBO_COUNT", combo_count),
+        ("DESCRIPTION_COUNT", description_count),
+    ] {
+        writeln!(
+            out,
+            "#[cfg_attr(not(test), expect(dead_code, reason = \"pinned for table-size tests\"))]\n\
+             pub(crate) const {name}: usize = {count};",
+        )?;
+    }
+    writeln!(out)?;
+    writeln!(
+        out,
+        "// Summary: 第3水準={plane1_count}, 第4水準={plane2_count}, \
+         combo={combo_count}, description={description_count}, \
+         total={total}.",
+        total = plane1_count + plane2_count + combo_count + description_count,
+    )?;
+    out.flush()?;
+    Ok(())
+}
 
-    // ---- single-char map ----
+fn write_single_table(out: &mut impl Write, single: &[SingleEntry]) -> BuildResult<()> {
     let mut single_builder = phf_codegen::Map::<&str>::new();
     let single_keys: Vec<String> = single
         .iter()
@@ -114,27 +131,26 @@ fn main() {
         out,
         "pub(crate) static JISX0213_MENCODE_TO_CHAR: phf::Map<&'static str, char> = {};",
         single_builder.build(),
-    )
-    .expect(INFALLIBLE);
-    writeln!(out).expect(INFALLIBLE);
+    )?;
+    writeln!(out)?;
+    Ok(())
+}
 
-    // ---- combo (multi-codepoint) map ----
+fn write_combo_table(out: &mut impl Write, combo: &[ComboEntry]) -> BuildResult<()> {
     let mut combo_builder = phf_codegen::Map::<&str>::new();
     let combo_keys: Vec<String> = combo
         .iter()
         .map(|e| mencode(e.plane, e.row, e.cell))
         .collect();
-    let combo_values: Vec<String> = combo
-        .iter()
-        .map(|e| {
-            let body: String = e
-                .codepoints
-                .iter()
-                .map(|cp| format!("\\u{{{cp:04X}}}"))
-                .collect();
-            format!("\"{body}\"")
-        })
-        .collect();
+    let mut combo_values = Vec::new();
+    for entry in combo {
+        let mut body = String::from("\"");
+        for cp in &entry.codepoints {
+            write!(body, "\\u{{{cp:04X}}}")?;
+        }
+        body.push('"');
+        combo_values.push(body);
+    }
     for (k, v) in combo_keys.iter().zip(combo_values.iter()) {
         combo_builder.entry(k.as_str(), v.as_str());
     }
@@ -142,15 +158,15 @@ fn main() {
         out,
         "pub(crate) static JISX0213_MENCODE_TO_STR: phf::Map<&'static str, &'static str> = {};",
         combo_builder.build(),
-    )
-    .expect(INFALLIBLE);
-    writeln!(out).expect(INFALLIBLE);
+    )?;
+    writeln!(out)?;
+    Ok(())
+}
 
-    // ---- description map ----
-    // phf_codegen takes `&str` keys; the descriptions live in
-    // `description[*].description` so we can borrow directly.
-    // `phf_codegen` source-prints the keys with `Debug`, which
-    // already escapes embedded `"` / `\` correctly.
+fn write_description_table(
+    out: &mut impl Write,
+    description: &[DescriptionEntry],
+) -> BuildResult<()> {
     let mut description_builder = phf_codegen::Map::<&str>::new();
     let description_values: Vec<String> = description
         .iter()
@@ -163,60 +179,32 @@ fn main() {
         out,
         "pub(crate) static DESCRIPTION_TO_CHAR: phf::Map<&'static str, char> = {};",
         description_builder.build(),
-    )
-    .expect(INFALLIBLE);
-    writeln!(out).expect(INFALLIBLE);
+    )?;
+    writeln!(out)?;
+    Ok(())
+}
 
-    // ---- roman numeral tables (#326) ----
-    // Bare `※［＃ローマ数字N］` glyph references have no men-ku-ten cell for
-    // N≥13 (the corpus pairs them with a page-line ref, not a JIS code), so
-    // they are composed from the U+2160 / U+2170 single-letter blocks.
-    const ROMAN_MAX: u32 = 99;
+fn write_roman_tables(out: &mut impl Write) -> BuildResult<()> {
     for (name, base) in [
-        ("ROMAN_NUMERAL_UPPER", 0x2160u32),
-        ("ROMAN_NUMERAL_LOWER", 0x2170u32),
+        ("ROMAN_NUMERAL_UPPER", ROMAN_UPPER_BASE),
+        ("ROMAN_NUMERAL_LOWER", ROMAN_LOWER_BASE),
     ] {
-        let body: String = (0..=ROMAN_MAX)
-            .map(|n| {
-                let escaped: String = roman_numeral(n, base)
-                    .chars()
-                    .map(|c| format!("\\u{{{:04X}}}", c as u32))
-                    .collect();
-                format!("    \"{escaped}\",\n")
-            })
-            .collect();
+        let mut body = String::new();
+        for n in 0..=ROMAN_MAX {
+            body.push_str("    \"");
+            for c in roman_numeral(n, base)?.chars() {
+                write!(body, "\\u{{{:04X}}}", u32::from(c))?;
+            }
+            body.push_str("\",\n");
+        }
         writeln!(
             out,
-            "#[allow(dead_code, reason = \"indexed by gaiji::roman_numeral_glyph\")]\n\
-             pub(crate) static {name}: [&str; {len}] = [\n{body}];",
+            "pub(crate) static {name}: [&str; {len}] = [\n{body}];",
             len = ROMAN_MAX + 1,
-        )
-        .expect(INFALLIBLE);
-        writeln!(out).expect(INFALLIBLE);
+        )?;
+        writeln!(out)?;
     }
-
-    // ---- count constants (used by tests) ----
-    writeln!(
-        out,
-        "#[allow(dead_code, reason = \"pinned for table-size tests\")]\n\
-         pub(crate) const JISX0213_PLANE1_COUNT: usize = {plane1_count};\n\
-         #[allow(dead_code, reason = \"pinned for table-size tests\")]\n\
-         pub(crate) const JISX0213_PLANE2_COUNT: usize = {plane2_count};\n\
-         #[allow(dead_code, reason = \"pinned for table-size tests\")]\n\
-         pub(crate) const JISX0213_COMBO_COUNT: usize = {combo_count};\n\
-         #[allow(dead_code, reason = \"pinned for table-size tests\")]\n\
-         pub(crate) const DESCRIPTION_COUNT: usize = {description_count};",
-    )
-    .expect(INFALLIBLE);
-    writeln!(out).expect(INFALLIBLE);
-    writeln!(
-        out,
-        "// Summary: 第3水準={plane1_count}, 第4水準={plane2_count}, \
-         combo={combo_count}, description={description_count}, \
-         total={total}.",
-        total = plane1_count + plane2_count + combo_count + description_count,
-    )
-    .expect(INFALLIBLE);
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -240,9 +228,8 @@ struct DescriptionEntry {
     codepoint: u32,
 }
 
-fn parse_single_tsv(path: &std::path::Path) -> Vec<SingleEntry> {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+fn parse_single_tsv(path: &Path) -> BuildResult<Vec<SingleEntry>> {
+    let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
     for (lineno, line) in text.lines().enumerate() {
         let trimmed = line.trim();
@@ -250,30 +237,26 @@ fn parse_single_tsv(path: &std::path::Path) -> Vec<SingleEntry> {
             continue;
         }
         let cols: Vec<&str> = trimmed.split('\t').collect();
-        assert!(
-            cols.len() == 4,
-            "{}:{} expected 4 cols, got {}",
-            path.display(),
-            lineno + 1,
-            cols.len(),
-        );
-        let plane: u8 = cols[0].parse().expect("plane");
-        let row: u8 = cols[1].parse().expect("row");
-        let cell: u8 = cols[2].parse().expect("cell");
-        let codepoint = u32::from_str_radix(cols[3], 16).expect("codepoint hex");
+        let [plane, row, cell, codepoint] = cols.as_slice() else {
+            return Err(format!(
+                "{}:{} expected plane, row, cell, codepoint",
+                path.display(),
+                lineno + 1
+            )
+            .into());
+        };
         out.push(SingleEntry {
-            plane,
-            row,
-            cell,
-            codepoint,
+            plane: plane.parse()?,
+            row: row.parse()?,
+            cell: cell.parse()?,
+            codepoint: u32::from_str_radix(codepoint, HEX_RADIX)?,
         });
     }
-    out
+    Ok(out)
 }
 
-fn parse_combo_tsv(path: &std::path::Path) -> Vec<ComboEntry> {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+fn parse_combo_tsv(path: &Path) -> BuildResult<Vec<ComboEntry>> {
+    let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
@@ -281,27 +264,27 @@ fn parse_combo_tsv(path: &std::path::Path) -> Vec<ComboEntry> {
             continue;
         }
         let cols: Vec<&str> = trimmed.split('\t').collect();
-        assert_eq!(cols.len(), 4);
-        let plane: u8 = cols[0].parse().expect("plane");
-        let row: u8 = cols[1].parse().expect("row");
-        let cell: u8 = cols[2].parse().expect("cell");
-        let codepoints: Vec<u32> = cols[3]
+        let [plane, row, cell, codepoints] = cols.as_slice() else {
+            return Err(
+                format!("{}: expected plane, row, cell, codepoints", path.display()).into(),
+            );
+        };
+        let codepoints = codepoints
             .split(',')
-            .map(|hex| u32::from_str_radix(hex, 16).expect("codepoint hex"))
-            .collect();
+            .map(|hex| u32::from_str_radix(hex, HEX_RADIX))
+            .collect::<Result<_, _>>()?;
         out.push(ComboEntry {
-            plane,
-            row,
-            cell,
+            plane: plane.parse()?,
+            row: row.parse()?,
+            cell: cell.parse()?,
             codepoints,
         });
     }
-    out
+    Ok(out)
 }
 
-fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
-    let text =
-        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+fn parse_description_tsv(path: &Path) -> BuildResult<Vec<DescriptionEntry>> {
+    let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim_end();
@@ -309,14 +292,16 @@ fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
             continue;
         }
         let cols: Vec<&str> = trimmed.split('\t').collect();
-        assert_eq!(cols.len(), 2);
-        let codepoint = u32::from_str_radix(cols[1], 16).expect("codepoint hex");
+        let [description, codepoint] = cols.as_slice() else {
+            return Err(format!("{}: expected description, codepoint", path.display()).into());
+        };
+        let codepoint = u32::from_str_radix(codepoint, HEX_RADIX)?;
         out.push(DescriptionEntry {
-            description: cols[0].to_owned(),
+            description: (*description).to_owned(),
             codepoint,
         });
     }
-    out
+    Ok(out)
 }
 
 /// Compose the standard roman numeral for `n` using the U+2160
@@ -325,7 +310,7 @@ fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
 /// M=+15). Returns the empty string for `n == 0`. Emits the
 /// `ROMAN_NUMERAL_*` tables consumed by `gaiji::roman_numeral_glyph`
 /// for #326's bare `※［＃ローマ数字N］`.
-fn roman_numeral(mut n: u32, base: u32) -> String {
+fn roman_numeral(mut n: u32, base: u32) -> BuildResult<String> {
     const TABLE: &[(u32, &[u32])] = &[
         (1000, &[15]),
         (900, &[13, 15]),
@@ -345,15 +330,19 @@ fn roman_numeral(mut n: u32, base: u32) -> String {
     for &(value, offsets) in TABLE {
         while n >= value {
             for &offset in offsets {
-                s.push(char::from_u32(base + offset).expect("U+216x/217x is a valid scalar"));
+                s.push(char::from_u32(base + offset).ok_or("invalid roman numeral scalar")?);
             }
             n -= value;
         }
     }
-    s
+    Ok(s)
 }
 
 fn mencode(plane: u8, row: u8, cell: u8) -> String {
-    let level = if plane == 1 { 3 } else { 4 };
+    let level = if plane == PLANE_ONE {
+        LEVEL_THREE
+    } else {
+        LEVEL_FOUR
+    };
     format!("第{level}水準{plane}-{row}-{cell}")
 }

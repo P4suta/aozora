@@ -26,30 +26,25 @@
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example render_hot_path -p aozora-bench
 //! ```
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::missing_panics_doc,
-    clippy::missing_errors_doc,
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::env;
-use std::process;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 const NS_PER_S: f64 = 1_000_000_000.0;
 
-fn main() {
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
+
+fn run() -> Result<(), ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        process::exit(2);
+        return Err(ExitCode::from(2));
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
@@ -94,14 +89,23 @@ fn main() {
             "render_hot_path: refusing a partial-corpus measurement after {} I/O error(s)",
             banded.io_errors
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
 
     let measure_start = Instant::now();
     let report = measure_all(&banded, repeat);
     let measure_secs = measure_start.elapsed().as_secs_f64();
 
-    print_report(&report, &banded, measure_secs, load_secs, repeat);
+    print_report(
+        &report,
+        &banded,
+        ReportTiming {
+            measure_secs,
+            load_secs,
+            repeat,
+        },
+    );
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -134,7 +138,11 @@ impl BandReport {
         if sorted.is_empty() {
             return 0;
         }
-        let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+        let idx = ((report_number(sorted.len()) - 1.0) * p)
+            .round()
+            .to_string()
+            .parse::<usize>()
+            .expect("quantile index fits usize");
         sorted[idx.min(sorted.len() - 1)]
     }
 }
@@ -160,7 +168,8 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             let out = aozora::parse(text.as_str())
                 .expect("source fits parser span limit")
                 .snapshot();
-            parse_ns.push(t.elapsed().as_nanos() as u64);
+            parse_ns
+                .push(u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64"));
 
             // Render `repeat` times, keep the median ns.
             let mut samples: Vec<u64> = Vec::with_capacity(repeat);
@@ -168,7 +177,9 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             for _ in 0..repeat {
                 let t = Instant::now();
                 let html = out.to_html();
-                samples.push(t.elapsed().as_nanos() as u64);
+                samples.push(
+                    u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64"),
+                );
                 last_html_len = html.len() as u64;
                 drop(html);
             }
@@ -189,13 +200,19 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
     report
 }
 
-fn print_report(
-    report: &AllReport,
-    banded: &SizeBandedCorpus,
+#[derive(Clone, Copy)]
+struct ReportTiming {
     measure_secs: f64,
     load_secs: f64,
     repeat: usize,
-) {
+}
+
+fn print_report(report: &AllReport, banded: &SizeBandedCorpus, timing: ReportTiming) {
+    let ReportTiming {
+        measure_secs,
+        load_secs,
+        repeat,
+    } = timing;
     println!("=== render_hot_path ===");
     println!();
     println!(
@@ -243,12 +260,12 @@ fn print_report(
         let mb_per_s = if render_ns == 0 {
             0.0
         } else {
-            (in_bytes as f64) * NS_PER_S / (render_ns as f64) / (1024.0 * 1024.0)
+            (report_number(in_bytes)) * NS_PER_S / (report_number(render_ns)) / (1024.0 * 1024.0)
         };
         let ns_per_byte = if in_bytes == 0 {
             0.0
         } else {
-            (render_ns as f64) / (in_bytes as f64)
+            (report_number(render_ns)) / (report_number(in_bytes))
         };
 
         println!(
@@ -257,14 +274,18 @@ fn print_report(
             docs,
             in_bytes,
             mb_per_s,
-            p50 as f64 / 1_000.0,
-            p90 as f64 / 1_000.0,
-            p99 as f64 / 1_000.0,
-            max_ns as f64 / 1_000_000.0,
+            report_number(p50) / 1_000.0,
+            report_number(p90) / 1_000.0,
+            report_number(p99) / 1_000.0,
+            report_number(max_ns) / 1_000_000.0,
             ns_per_byte,
         );
     }
 
+    print_cost_share(report);
+}
+
+fn print_cost_share(report: &AllReport) {
     println!();
     println!("Render output / input ratio + render-vs-parse cost share:");
     println!(
@@ -282,10 +303,10 @@ fn print_report(
         let out_in = if in_bytes == 0 {
             0.0
         } else {
-            (html_bytes as f64) / (in_bytes as f64)
+            (report_number(html_bytes)) / (report_number(in_bytes))
         };
-        let parse_ms = (r.total_parse_ns() as f64) / 1_000_000.0;
-        let render_ms = (r.total_render_ns() as f64) / 1_000_000.0;
+        let parse_ms = (report_number(r.total_parse_ns())) / 1_000_000.0;
+        let render_ms = (report_number(r.total_render_ns())) / 1_000_000.0;
         let render_per_parse = if parse_ms > 0.0 {
             render_ms / parse_ms
         } else {

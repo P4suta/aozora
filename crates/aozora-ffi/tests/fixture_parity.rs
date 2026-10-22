@@ -17,11 +17,6 @@
 //! (or `to_html()` bytes) with no trailing newline, so the comparison is
 //! byte-exact against the golden file.
 
-#![allow(
-    unsafe_code,
-    reason = "exercising the crate's C ABI requires the same unsafe extern-C calls a real embedder makes"
-)]
-
 use core::ffi::c_int;
 use core::ptr;
 
@@ -45,6 +40,10 @@ fn load() -> Vec<RenderFixture> {
 /// Parse `source` through the C ABI, invoke `accessor`, and return its
 /// bytes as a `String` — mirroring the exact call/free dance an embedder
 /// performs. Asserts every status code is `Ok`.
+#[expect(
+    unsafe_code,
+    reason = "exercises the C ABI call and free contract against golden fixtures"
+)]
 fn render(source: &str, accessor: Accessor) -> String {
     // SAFETY: the argument slice is a live `&str`; `out_doc` points to a
     // stack slot we own; on success we free the handle and its byte

@@ -38,11 +38,6 @@
 //! VS Code's filter accepts the typed prefix verbatim — same trick
 //! [`crate::lsp::completion`] and [`crate::lsp::half_width_emmet`] use.
 
-#![allow(
-    clippy::literal_string_with_formatting_args,
-    reason = "snippet placeholders like `${1:base}` are shipped to the editor, not Rust format args"
-)]
-
 use crate::i18n::{self as i18n, LanguageIdentifier};
 use aozora::{Catalogue, CatalogueFamily as SlugFamily};
 use tower_lsp::lsp_types::{
@@ -57,6 +52,14 @@ const HASH: char = '#';
 const PIPE_FW: char = '｜';
 const OPEN_DOUBLE_ANGLE: char = '《';
 const KOME: char = '※';
+const EMPTY_WRAP: &str = "［＃${0}］";
+const RUBY_LABEL: &str = "${base}《${reading}》";
+const RUBY_BODY: &str = "${1:base}《${2:reading}》";
+const READING_LABEL: &str = "${reading}》";
+const READING_BODY: &str = "${1:reading}》";
+const GAIJI_LABEL: &str = "［＃「${desc}」、${men}］";
+const GAIJI_BODY: &str = "［＃「${1:description}」、${2:mencode}］${0}";
+const RUBY_LOOKAHEAD_CHARS: usize = 32;
 
 /// Compute every snippet completion item for the position. Returns
 /// an empty vec when none of the trigger chars sits immediately
@@ -123,7 +126,7 @@ fn hash_wrap_completions(
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range,
-            new_text: "［＃${0}］".to_owned(),
+            new_text: EMPTY_WRAP.to_owned(),
         })),
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         preselect: Some(true),
@@ -197,7 +200,7 @@ fn pipe_ruby_completion(
     }
     let pos = byte_offset_to_position(source, cursor);
     vec![CompletionItem {
-        label: "${base}《${reading}》".to_owned(),
+        label: RUBY_LABEL.to_owned(),
         filter_text: Some("｜".to_owned()),
         sort_text: Some("00".to_owned()),
         detail: Some(i18n::t(lang, "lsp-snippet-ruby-detail")),
@@ -208,7 +211,7 @@ fn pipe_ruby_completion(
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range: Range::new(pos, pos),
-            new_text: "${1:base}《${2:reading}》".to_owned(),
+            new_text: RUBY_BODY.to_owned(),
         })),
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         preselect: Some(true),
@@ -234,7 +237,7 @@ fn open_angle_reading_completion(
     }
     let pos = byte_offset_to_position(source, cursor);
     vec![CompletionItem {
-        label: "${reading}》".to_owned(),
+        label: READING_LABEL.to_owned(),
         filter_text: Some("《".to_owned()),
         sort_text: Some("00".to_owned()),
         detail: Some(i18n::t(lang, "lsp-snippet-reading-detail")),
@@ -245,7 +248,7 @@ fn open_angle_reading_completion(
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range: Range::new(pos, pos),
-            new_text: "${1:reading}》".to_owned(),
+            new_text: READING_BODY.to_owned(),
         })),
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         preselect: Some(true),
@@ -271,7 +274,7 @@ fn kome_gaiji_completion(
     }
     let pos = byte_offset_to_position(source, cursor);
     vec![CompletionItem {
-        label: "［＃「${desc}」、${men}］".to_owned(),
+        label: GAIJI_LABEL.to_owned(),
         filter_text: Some("※".to_owned()),
         sort_text: Some("00".to_owned()),
         detail: Some(i18n::t(lang, "lsp-snippet-gaiji-detail")),
@@ -282,7 +285,7 @@ fn kome_gaiji_completion(
         kind: Some(CompletionItemKind::SNIPPET),
         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             range: Range::new(pos, pos),
-            new_text: "［＃「${1:description}」、${2:mencode}］${0}".to_owned(),
+            new_text: GAIJI_BODY.to_owned(),
         })),
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         preselect: Some(true),
@@ -325,7 +328,7 @@ fn char_before(source: &str, byte_end: usize) -> Option<char> {
 fn has_ruby_struct_ahead(source: &str, cursor: usize) -> bool {
     source[cursor..]
         .chars()
-        .take(32)
+        .take(RUBY_LOOKAHEAD_CHARS)
         .take_while(|&c| c != '\n')
         .any(|c| c == '《' || c == '》')
 }
@@ -333,6 +336,10 @@ fn has_ruby_struct_ahead(source: &str, cursor: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXPECTED_RUBY_SNIPPET: &str = "${1:base}《${2:reading}》";
+    const EXPECTED_READING_SNIPPET: &str = "${1:reading}》";
+    const EXPECTED_GAIJI_SNIPPET: &str = "［＃「${1:description}」、${2:mencode}］${0}";
 
     fn pos_at(source: &str, byte: usize) -> Position {
         byte_offset_to_position(source, byte)
@@ -407,7 +414,7 @@ mod tests {
         let CompletionTextEdit::Edit(edit) = item.text_edit.as_ref().unwrap() else {
             panic!("expected Edit")
         };
-        assert_eq!(edit.new_text, "${1:base}《${2:reading}》");
+        assert_eq!(edit.new_text, EXPECTED_RUBY_SNIPPET);
         assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
     }
 
@@ -430,7 +437,7 @@ mod tests {
         let CompletionTextEdit::Edit(edit) = item.text_edit.as_ref().unwrap() else {
             panic!("expected Edit")
         };
-        assert_eq!(edit.new_text, "${1:reading}》");
+        assert_eq!(edit.new_text, EXPECTED_READING_SNIPPET);
     }
 
     #[test]
@@ -450,10 +457,7 @@ mod tests {
         let CompletionTextEdit::Edit(edit) = item.text_edit.as_ref().unwrap() else {
             panic!("expected Edit")
         };
-        assert_eq!(
-            edit.new_text,
-            "［＃「${1:description}」、${2:mencode}］${0}"
-        );
+        assert_eq!(edit.new_text, EXPECTED_GAIJI_SNIPPET);
     }
 
     #[test]
@@ -582,7 +586,7 @@ mod tests {
         let CompletionTextEdit::Edit(edit) = items[0].text_edit.as_ref().unwrap() else {
             panic!("expected Edit")
         };
-        assert_eq!(edit.new_text, "${1:reading}》");
+        assert_eq!(edit.new_text, EXPECTED_READING_SNIPPET);
     }
 
     #[test]
@@ -598,10 +602,7 @@ mod tests {
         let CompletionTextEdit::Edit(edit) = items[0].text_edit.as_ref().unwrap() else {
             panic!("expected Edit")
         };
-        assert_eq!(
-            edit.new_text,
-            "［＃「${1:description}」、${2:mencode}］${0}"
-        );
+        assert_eq!(edit.new_text, EXPECTED_GAIJI_SNIPPET);
     }
 
     #[test]

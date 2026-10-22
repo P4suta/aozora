@@ -31,14 +31,9 @@
 //! Exit codes: `0` pass (or no corpus → skip), `1` over budget, `2` usage /
 //! parity error.
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::too_many_lines,
-    clippy::disallowed_methods,
-    reason = "profiling-gate tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -46,7 +41,7 @@ use std::fs;
 use std::hint::black_box;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::ExitCode;
 
 use aozora::{TextEdit, decode_auto};
 use aozora_bench::build_synthetic_aozora;
@@ -131,41 +126,41 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args, Strin
     })
 }
 
-fn parse_args() -> Args {
-    parse_args_from(env::args().skip(1)).unwrap_or_else(|error| {
+fn parse_args() -> Result<Args, ExitCode> {
+    parse_args_from(env::args().skip(1)).map_err(|error| {
         eprintln!("alloc_gate: {error}");
-        process::exit(2);
+        ExitCode::from(2)
     })
 }
 
 /// Resolve the corpus: `--root` wins, else `AOZORA_CORPUS_ROOT`, else skip
 /// cleanly (exit 0) so the gate is a no-op on corpus-less hosts, exactly like
 /// `audit-gate`.
-fn resolve_corpus(root: Option<&Path>) -> Box<dyn CorpusSource> {
+fn resolve_corpus(root: Option<&Path>) -> Result<Option<Box<dyn CorpusSource>>, ExitCode> {
     if let Some(root) = root {
         return match open_corpus(root.to_path_buf()) {
-            Ok(c) => Box::new(c),
+            Ok(c) => Ok(Some(Box::new(c))),
             Err(e) => {
                 eprintln!("alloc_gate: --root {} not usable: {e}", root.display());
-                process::exit(2);
+                return Err(ExitCode::from(2));
             }
         };
     }
     if let Some(root) = env::var_os(ENV_CORPUS_ROOT) {
         let root = PathBuf::from(root);
         return match open_corpus(root.clone()) {
-            Ok(c) => Box::new(c),
+            Ok(c) => Ok(Some(Box::new(c))),
             Err(e) => {
                 eprintln!(
                     "alloc_gate: {ENV_CORPUS_ROOT} {} not usable: {e}",
                     root.display()
                 );
-                process::exit(2);
+                return Err(ExitCode::from(2));
             }
         };
     }
     println!("alloc_gate: AOZORA_CORPUS_ROOT not set — skipped (no corpus).");
-    process::exit(0);
+    Ok(None)
 }
 
 fn open_corpus(root: PathBuf) -> Result<FilesystemCorpus, CorpusError> {
@@ -196,7 +191,7 @@ impl Totals {
         if self.files == 0 {
             0.0
         } else {
-            self.alloc_blocks as f64 / self.files as f64
+            report_number(self.alloc_blocks) / report_number(self.files)
         }
     }
 
@@ -204,22 +199,47 @@ impl Totals {
         if self.source_bytes == 0 {
             0.0
         } else {
-            self.alloc_bytes as f64 / self.source_bytes as f64
+            report_number(self.alloc_bytes) / report_number(self.source_bytes)
         }
     }
 }
 
-fn main() {
-    let args = parse_args();
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
 
-    let corpus = resolve_corpus(args.root.as_deref());
+fn run() -> Result<(), ExitCode> {
+    let args = parse_args()?;
+
+    let Some(corpus) = resolve_corpus(args.root.as_deref())? else {
+        return Ok(());
+    };
 
     // Testing mode lets `HeapStats::get` read live cumulative counters.
     let _profiler = Profiler::builder().testing().build();
 
+    let totals = collect_allocations(corpus.as_ref(), args.limit);
+
+    if totals.io_errors != 0 {
+        eprintln!(
+            "alloc_gate: refusing a partial-corpus result after {} I/O error(s)",
+            totals.io_errors
+        );
+        return Err(ExitCode::from(2));
+    }
+
+    if totals.files == 0 {
+        eprintln!("alloc_gate: corpus yielded 0 decodable documents.");
+        return Err(ExitCode::FAILURE);
+    }
+
+    report_allocations(&args, &totals)
+}
+
+fn collect_allocations(corpus: &dyn CorpusSource, limit: Option<usize>) -> Totals {
     let mut totals = Totals::default();
     for item in corpus.iter() {
-        if let Some(limit) = args.limit
+        if let Some(limit) = limit
             && totals.files >= limit as u64
         {
             break;
@@ -254,19 +274,10 @@ fn main() {
         ));
     }
 
-    if totals.io_errors != 0 {
-        eprintln!(
-            "alloc_gate: refusing a partial-corpus result after {} I/O error(s)",
-            totals.io_errors
-        );
-        process::exit(2);
-    }
+    totals
+}
 
-    if totals.files == 0 {
-        eprintln!("alloc_gate: corpus yielded 0 decodable documents.");
-        process::exit(1);
-    }
-
+fn report_allocations(args: &Args, totals: &Totals) -> Result<(), ExitCode> {
     let blocks_per_file = totals.blocks_per_file();
     let bytes_per_source_byte = totals.bytes_per_source_byte();
     let contract = allocation_contract();
@@ -285,19 +296,19 @@ fn main() {
 
     if args.update {
         write_baseline(
-            &args,
-            &totals,
+            args,
+            totals,
             (blocks_per_file, bytes_per_source_byte),
             &contract,
-        );
+        )?;
         println!(
             "alloc_gate: baseline written to {}",
             args.baseline.display()
         );
-        return;
+        return Ok(());
     }
 
-    let baseline = read_baseline(&args.baseline);
+    let baseline = read_baseline(&args.baseline)?;
     let tol = baseline
         .tolerance
         .filter(|t| t.is_finite() && *t >= 0.0)
@@ -340,12 +351,13 @@ fn main() {
              and attach a `just throughput` run showing wall-clock is within budget.",
             tol * 100.0
         );
-        process::exit(1);
+        return Err(ExitCode::FAILURE);
     }
     println!(
         "alloc_gate: PASS (within +{:.1}% of baseline).",
         tol * 100.0
     );
+    Ok(())
 }
 
 fn allocation_contract() -> Contract {
@@ -459,8 +471,8 @@ fn check_ratio_metric(name: &str, current: Ratio, baseline: RatioBaseline, toler
         return true;
     }
 
-    let current_ratio = current.numerator as f64 / current.denominator as f64;
-    let baseline_ratio = baseline_numerator as f64 / baseline_denominator as f64;
+    let current_ratio = report_number(current.numerator) / report_number(current.denominator);
+    let baseline_ratio = report_number(baseline_numerator) / report_number(baseline_denominator);
     let allowed = baseline_ratio * (1.0 + tolerance);
     let over = if tolerance == 0.0 {
         u128::from(current.numerator) * u128::from(baseline_denominator)
@@ -502,16 +514,16 @@ struct Baseline {
     contract: Value,
 }
 
-fn read_baseline(path: &Path) -> Baseline {
+fn read_baseline(path: &Path) -> Result<Baseline, ExitCode> {
     let Ok(text) = fs::read_to_string(path) else {
         eprintln!("alloc_gate: cannot read baseline {}", path.display());
-        process::exit(2);
+        return Err(ExitCode::from(2));
     };
     let Ok(v) = from_str::<Value>(&text) else {
         eprintln!("alloc_gate: baseline {} is not valid JSON", path.display());
-        process::exit(2);
+        return Err(ExitCode::from(2));
     };
-    baseline_from_value(&v)
+    Ok(baseline_from_value(&v))
 }
 
 fn baseline_from_value(v: &Value) -> Baseline {
@@ -535,7 +547,12 @@ fn baseline_from_value(v: &Value) -> Baseline {
     }
 }
 
-fn write_baseline(args: &Args, totals: &Totals, ratios: (f64, f64), contract: &Contract) {
+fn write_baseline(
+    args: &Args,
+    totals: &Totals,
+    ratios: (f64, f64),
+    contract: &Contract,
+) -> Result<(), ExitCode> {
     let json = baseline_value(args.tolerance, totals, ratios, contract);
     let text = to_string_pretty(&json).expect("json serialize is infallible");
     if let Err(e) = replace_file(&args.baseline, format!("{text}\n").as_bytes()) {
@@ -543,8 +560,9 @@ fn write_baseline(args: &Args, totals: &Totals, ratios: (f64, f64), contract: &C
             "alloc_gate: cannot write baseline {}: {e}",
             args.baseline.display()
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
+    Ok(())
 }
 
 fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {

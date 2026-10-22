@@ -1,17 +1,13 @@
 //! Wall-clock comparison of full parsing and the public editable-document API.
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::disallowed_methods,
-    reason = "profiling tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::borrow::Cow;
 use std::env;
 use std::hint::black_box;
-use std::process;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora::decode_auto;
@@ -39,11 +35,19 @@ fn band_of(len: u64) -> usize {
         .unwrap_or(0)
 }
 
-fn main() {
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
+
+fn run() -> Result<(), ExitCode> {
     let minimum = configured_ratio("AOZORA_INCREMENTAL_MIN_SPEEDUP");
     let maximum_slowdown = configured_ratio("AOZORA_INCREMENTAL_MAX_SLOWDOWN");
-    let docs = load_documents(minimum);
-    measure(&docs, minimum, maximum_slowdown);
+    let docs = load_documents(minimum)?;
+    if docs.is_empty() {
+        return Ok(());
+    }
+    measure(&docs, minimum, maximum_slowdown)?;
+    Ok(())
 }
 
 fn configured_ratio(name: &str) -> Option<f64> {
@@ -60,10 +64,14 @@ fn parse_ratio(value: &str) -> Result<f64, ()> {
         .ok_or(())
 }
 
-fn load_documents(minimum: Option<f64>) -> Vec<String> {
+fn load_documents(minimum: Option<f64>) -> Result<Vec<String>, ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("incremental_speedup: AOZORA_CORPUS_ROOT is not set.");
-        process::exit(i32::from(minimum.is_some()));
+        return if minimum.is_some() {
+            Err(ExitCode::FAILURE)
+        } else {
+            Ok(Vec::new())
+        };
     };
 
     let mut docs = Vec::new();
@@ -83,19 +91,27 @@ fn load_documents(minimum: Option<f64>) -> Vec<String> {
         eprintln!(
             "incremental_speedup: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
     if decode_errors != 0 {
         eprintln!("incremental_speedup: skipped {decode_errors} undecodable document(s)");
     }
     if docs.is_empty() {
         eprintln!("incremental_speedup: corpus yielded 0 usable documents.");
-        process::exit(i32::from(minimum.is_some()));
+        return if minimum.is_some() {
+            Err(ExitCode::FAILURE)
+        } else {
+            Ok(Vec::new())
+        };
     }
-    docs
+    Ok(docs)
 }
 
-fn measure(docs: &[String], minimum: Option<f64>, maximum_slowdown: Option<f64>) {
+fn measure(
+    docs: &[String],
+    minimum: Option<f64>,
+    maximum_slowdown: Option<f64>,
+) -> Result<(), ExitCode> {
     let mut bands = [Band::default(); BANDS.len()];
     for source in docs {
         let mut at = source.len() / 2;
@@ -167,8 +183,9 @@ fn measure(docs: &[String], minimum: Option<f64>, maximum_slowdown: Option<f64>)
     failed |= minimum.is_some_and(|minimum| speedup(large) < minimum);
     if failed {
         eprintln!("incremental_speedup: performance contract failed.");
-        process::exit(1);
+        return Err(ExitCode::FAILURE);
     }
+    Ok(())
 }
 
 fn add_band(total: &mut Band, band: Band) {
@@ -178,8 +195,8 @@ fn add_band(total: &mut Band, band: Band) {
 }
 
 fn print_row(name: &str, band: Band) {
-    let full_us = band.full_ns as f64 / band.docs as f64 / 1000.0;
-    let edit_us = band.edit_ns as f64 / band.docs as f64 / 1000.0;
+    let full_us = report_number(band.full_ns) / report_number(band.docs) / 1000.0;
+    let edit_us = report_number(band.edit_ns) / report_number(band.docs) / 1000.0;
     let speedup = speedup(band);
     println!(
         "{name:<18} {:>7} {full_us:>10.1} {edit_us:>10.1} {speedup:>8.2}x",
@@ -191,7 +208,7 @@ fn speedup(band: Band) -> f64 {
     if band.edit_ns == 0 {
         return 0.0;
     }
-    band.full_ns as f64 / band.edit_ns as f64
+    report_number(band.full_ns) / report_number(band.edit_ns)
 }
 
 #[cfg(test)]

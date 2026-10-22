@@ -4,6 +4,7 @@ use std::{env, hint::black_box, process::ExitCode};
 
 use aozora::TextEdit;
 use aozora_bench::{build_pathological_aozora, build_synthetic_aozora};
+#[cfg(target_os = "linux")]
 use iai_callgrind::client_requests::callgrind::toggle_collect;
 
 const TOSA: &str = include_str!("../../aozora-conformance/fixtures/works/terada-tosa/source.txt");
@@ -14,6 +15,7 @@ const PATHOLOGICAL_BYTES: usize = 64 * 1024;
 const EDIT_BYTES: usize = 256 * 1024;
 const LARGE_BYTES: usize = 1024 * 1024;
 const EDIT_ITERATIONS: usize = 8;
+const SNAPSHOT_CLONES: usize = 1000;
 
 fn parse(src: &str) -> usize {
     measured(|| {
@@ -107,7 +109,7 @@ fn clone_snapshot() -> usize {
         .snapshot();
     measured(|| {
         let mut total = 0;
-        for _ in 0..1000 {
+        for _ in 0..SNAPSHOT_CLONES {
             total += black_box(snapshot.clone()).source().len();
         }
         total
@@ -125,8 +127,10 @@ fn parse_unmeasured(src: &str) -> usize {
 }
 
 fn measured<T>(operation: impl FnOnce() -> T) -> T {
+    #[cfg(target_os = "linux")]
     toggle_collect();
     let result = operation();
+    #[cfg(target_os = "linux")]
     toggle_collect();
     result
 }

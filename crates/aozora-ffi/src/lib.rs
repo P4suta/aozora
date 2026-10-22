@@ -55,11 +55,6 @@
 //!   ABI the process is already being torn down. Treat a non-zero
 //!   status as the only supported error channel.
 
-#![allow(
-    unsafe_code,
-    reason = "C ABI surface inherently requires unsafe blocks (extern \"C\", raw pointers)"
-)]
-
 use core::ffi::c_int;
 use core::slice;
 
@@ -135,6 +130,10 @@ pub struct AozoraBytes {
 ///
 /// - `out_version` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_version(out_version: *mut AozoraBytes) -> c_int {
     if out_version.is_null() {
         return AozoraStatus::NullInput as c_int;
@@ -147,6 +146,10 @@ pub unsafe extern "C" fn aozora_version(out_version: *mut AozoraBytes) -> c_int 
 
 /// Return the structured wire schema version implemented by this library.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub extern "C" fn aozora_schema_version() -> u32 {
     AOZORA_SCHEMA_VERSION
 }
@@ -172,6 +175,10 @@ pub extern "C" fn aozora_schema_version() -> u32 {
 /// - The caller must eventually call [`aozora_document_free`] on the
 ///   returned handle.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_new(
     src_ptr: *const u8,
     src_len: usize,
@@ -223,6 +230,10 @@ pub unsafe extern "C" fn aozora_document_new(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_html` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_to_html(
     doc: *const AozoraDocument,
     out_html: *mut AozoraBytes,
@@ -256,6 +267,10 @@ pub unsafe extern "C" fn aozora_document_to_html(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_diagnostics_json(
     doc: *const AozoraDocument,
     out_json: *mut AozoraBytes,
@@ -291,6 +306,10 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_text` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_diagnostics_text(
     doc: *const AozoraDocument,
     out_text: *mut AozoraBytes,
@@ -330,6 +349,10 @@ pub unsafe extern "C" fn aozora_document_diagnostics_text(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_nodes_json(
     doc: *const AozoraDocument,
     out_json: *mut AozoraBytes,
@@ -371,6 +394,10 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_pairs_json(
     doc: *const AozoraDocument,
     out_json: *mut AozoraBytes,
@@ -406,6 +433,10 @@ pub unsafe extern "C" fn aozora_document_pairs_json(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_source` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_to_source(
     doc: *const AozoraDocument,
     out_source: *mut AozoraBytes,
@@ -446,6 +477,10 @@ pub unsafe extern "C" fn aozora_document_to_source(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_container_pairs_json(
     doc: *const AozoraDocument,
     out_json: *mut AozoraBytes,
@@ -485,6 +520,10 @@ pub unsafe extern "C" fn aozora_document_container_pairs_json(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_gaiji_json(
     doc: *const AozoraDocument,
     out_json: *mut AozoraBytes,
@@ -518,6 +557,10 @@ pub unsafe extern "C" fn aozora_document_gaiji_json(
 ///   [`aozora_document_new`] and not yet freed.
 /// - `out_len` must point to a writable `usize` slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_source_byte_len(
     doc: *const AozoraDocument,
     out_len: *mut usize,
@@ -551,6 +594,10 @@ pub unsafe extern "C" fn aozora_document_source_byte_len(
 ///
 /// - `out_json` must point to a writable [`AozoraBytes`] slot.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_slugs_json(out_json: *mut AozoraBytes) -> c_int {
     if out_json.is_null() {
         return AozoraStatus::NullInput as c_int;
@@ -570,6 +617,10 @@ pub unsafe extern "C" fn aozora_slugs_json(out_json: *mut AozoraBytes) -> c_int 
 ///   returned by [`aozora_document_new`] that has not already been
 ///   freed. Double-free is undefined behaviour.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_document_free(doc: *mut AozoraDocument) {
     if !doc.is_null() {
         // SAFETY: caller guarantees doc is a valid handle from
@@ -586,6 +637,10 @@ pub unsafe extern "C" fn aozora_document_free(doc: *mut AozoraDocument) {
 ///   `aozora_*` functions in this crate. Reusing or aliasing the
 ///   inner pointer after this call is undefined behaviour.
 #[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "the C ABI requires exported symbols and raw pointer access"
+)]
 pub unsafe extern "C" fn aozora_bytes_free(bytes: AozoraBytes) {
     if !bytes.ptr.is_null() {
         // SAFETY: bytes was produced by `into_owned_bytes`, which
@@ -620,6 +675,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn version_and_schema_are_available_through_the_abi() {
         let mut version = AozoraBytes {
             ptr: core::ptr::null_mut(),
@@ -639,6 +698,10 @@ mod tests {
     /// End-to-end smoke: parse, render to HTML, free. Exercises the
     /// happy path of every public entry point.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn end_to_end_roundtrip_through_c_abi() {
         let src = b"Hello, world.";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -678,6 +741,10 @@ mod tests {
 
     /// Smoke: nodes JSON for plain input is the empty envelope.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn nodes_json_is_empty_envelope_for_plain_input() {
         let src = b"plain";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -702,6 +769,10 @@ mod tests {
 
     /// Smoke: ruby span emits a `kind:"ruby"` entry in nodes JSON.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn nodes_json_emits_ruby_kind_for_ruby_input() {
         let src = "｜青梅《おうめ》".as_bytes();
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -723,6 +794,10 @@ mod tests {
 
     /// Smoke: ruby pair emits a `kind:"ruby"` entry in pairs JSON.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn pairs_json_emits_ruby_pair_for_ruby_input() {
         let src = "｜青梅《おうめ》".as_bytes();
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -747,6 +822,10 @@ mod tests {
     /// Smoke: `to_source` round-trips ruby back to canonical Aozora
     /// source through the C ABI.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn to_source_round_trips_ruby_input() {
         let src = "｜青梅《おうめ》";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -774,6 +853,10 @@ mod tests {
     /// Smoke: container-pairs JSON is the empty envelope for inline-only
     /// input and shares the wire authority.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn container_pairs_json_matches_wire_authority() {
         let src = "plain";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -801,6 +884,10 @@ mod tests {
     /// Smoke: gaiji JSON resolves a `※［＃…］` reference and shares the
     /// wire authority.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn gaiji_json_matches_wire_authority() {
         let src = "※［＃「魚＋更」、第4水準2-93-32］";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -824,6 +911,10 @@ mod tests {
 
     /// Smoke: source byte length reports the owned UTF-8 buffer length.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn source_byte_len_reports_utf8_length() {
         let src = "｜青梅《おうめ》";
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -839,6 +930,10 @@ mod tests {
     /// Smoke: the document-independent slug catalogue matches the wire
     /// authority.
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn slugs_json_matches_wire_authority() {
         let mut out = AozoraBytes {
             ptr: core::ptr::null_mut(),
@@ -854,6 +949,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn null_input_returns_null_input_status() {
         let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
         let status = unsafe { aozora_document_new(core::ptr::null(), 0, &mut doc) };
@@ -862,6 +961,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn invalid_utf8_returns_invalid_utf8_status() {
         let bad = [0xFFu8, 0xFE, 0xFD];
         let mut doc = core::ptr::NonNull::<AozoraDocument>::dangling().as_ptr();
@@ -879,6 +982,10 @@ mod tests {
     /// 4 GiB.
     #[test]
     #[cfg(target_pointer_width = "64")]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn oversize_length_returns_source_too_large_status() {
         // Non-null but never dereferenced (guard returns first).
         let dangling = core::ptr::NonNull::<u8>::dangling().as_ptr().cast_const();
@@ -890,6 +997,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn diagnostics_emit_for_pua_collision() {
         let src = "abc\u{E001}def".as_bytes();
         let mut doc: *mut AozoraDocument = core::ptr::null_mut();
@@ -910,6 +1021,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        unsafe_code,
+        reason = "exercises the C ABI ownership and pointer contract"
+    )]
     fn freeing_null_handle_is_safe_noop() {
         unsafe { aozora_document_free(core::ptr::null_mut()) };
     }

@@ -1,10 +1,5 @@
 //! Long-lived JSONL adapter for the exact Extism plugin artifact.
 
-#![allow(
-    clippy::print_stdout,
-    reason = "the worker owns the JSONL stdout transport"
-)]
-
 use std::env;
 use std::fs;
 use std::io;

@@ -10,16 +10,12 @@
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput -p aozora-bench
 //! ```
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::disallowed_methods,
-    reason = "profiling tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::hint::black_box;
-use std::process;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora::decode_auto;
@@ -38,10 +34,14 @@ fn band_of(len: u64) -> usize {
         .unwrap_or(0)
 }
 
-fn main() {
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
+
+fn run() -> Result<(), ExitCode> {
     let Some(corpus) = aozora_corpus::from_env() else {
         println!("throughput: AOZORA_CORPUS_ROOT not set — nothing to measure.");
-        process::exit(0);
+        return Ok(());
     };
 
     // Decode everything up front so the timed loops measure only the parse.
@@ -57,10 +57,10 @@ fn main() {
             Err(_) => io_errors += 1,
         }
     }
-    report_load_errors(io_errors, decode_errors);
+    report_load_errors(io_errors, decode_errors)?;
     if docs.is_empty() {
         println!("throughput: corpus yielded 0 decodable documents.");
-        process::exit(0);
+        return Ok(());
     }
     eprintln!("throughput: {} docs decoded, measuring…", docs.len());
 
@@ -100,24 +100,26 @@ fn main() {
         let throughput = mbps(bytes, parse_ns);
         println!("{name:<20} {count:>7} {throughput:>12.1}");
     }
+    Ok(())
 }
 
-fn report_load_errors(io_errors: usize, decode_errors: usize) {
+fn report_load_errors(io_errors: usize, decode_errors: usize) -> Result<(), ExitCode> {
     if io_errors != 0 {
         eprintln!(
             "throughput: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
     if decode_errors != 0 {
         eprintln!("throughput: skipped {decode_errors} undecodable document(s)");
     }
+    Ok(())
 }
 
 fn mbps(bytes: u64, nanos: u128) -> f64 {
     if nanos == 0 {
         return 0.0;
     }
-    let secs = nanos as f64 / 1e9;
-    (bytes as f64 / (1024.0 * 1024.0)) / secs
+    let secs = report_number(nanos) / 1e9;
+    (report_number(bytes) / (1024.0 * 1024.0)) / secs
 }
