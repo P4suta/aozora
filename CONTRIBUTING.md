@@ -17,8 +17,9 @@ menu and `just ci` is the pre-push gate.
    needs to relax it declares a `reason = "…"` carve-out and keeps
    `unsafe_op_in_unsafe_fn` denied, so every block still justifies
    itself. Compiler lints hold the line.
-3. **No silent warning suppressions.** A bare `allow(...)` is rejected.
-   Fix the cause, or carve it out with a `reason`.
+3. **Fix the code a lint names.**
+   Use a narrow item-level `#[expect(lint, reason = "…")]` only where a macro, an ABI, or generated code forces an exception.
+   New outer `#[allow]` attributes are rejected; do not add inner crate-wide or file-wide suppression.
 4. **A failing test lands first, then the fix.** `just coverage` gates on
    region coverage; the property, corpus, and mutation layers are what
    actually judge whether the tests assert anything.

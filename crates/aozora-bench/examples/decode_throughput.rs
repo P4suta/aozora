@@ -22,21 +22,13 @@
 //! consume per second". The scale column is `par MB/s ÷ seq MB/s`,
 //! the per-band parallel-efficiency check.
 
-#![allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::missing_panics_doc,
-    clippy::missing_errors_doc,
-    clippy::too_many_lines,
-    clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
-)]
+mod support;
+
+use support::report_number;
 
 use std::env;
 use std::path::PathBuf;
-use std::process;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use aozora::decode_sjis;
@@ -52,14 +44,18 @@ fn parallel_mode() -> bool {
     )
 }
 
-fn main() {
+fn main() -> ExitCode {
+    run().err().unwrap_or(ExitCode::SUCCESS)
+}
+
+fn run() -> Result<(), ExitCode> {
     let Some(root) = env::var_os("AOZORA_CORPUS_ROOT") else {
         eprintln!("AOZORA_CORPUS_ROOT not set; nothing to profile.");
-        process::exit(2);
+        return Err(ExitCode::from(2));
     };
     let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
         eprintln!("AOZORA_CORPUS_ROOT is not a readable directory.");
-        process::exit(2);
+        return Err(ExitCode::from(2));
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
@@ -93,14 +89,14 @@ fn main() {
     eprintln!(
         "decode_throughput: loaded {} items ({:.1} MB sjis) in {:.2}s — timer starts now",
         items.len(),
-        items.iter().map(|it| it.bytes.len()).sum::<usize>() as f64 / 1_048_576.0,
+        report_number(items.iter().map(|it| it.bytes.len()).sum::<usize>()) / 1_048_576.0,
         load_secs,
     );
     if io_errors != 0 {
         eprintln!(
             "decode_throughput: refusing a partial-corpus measurement after {io_errors} I/O error(s)"
         );
-        process::exit(2);
+        return Err(ExitCode::from(2));
     }
 
     let bands = bucket_for_decode(&items);
@@ -117,6 +113,7 @@ fn main() {
     }
     println!("  {}", "─".repeat(106));
     print_row("ALL", &agg);
+    Ok(())
 }
 
 #[derive(Default, Clone)]
@@ -187,12 +184,16 @@ fn measure_band(items: &[CorpusItem], indices: &[usize], parallel: bool) -> Band
         match decode_sjis(&items[i].bytes) {
             Ok(text) => {
                 utf8_bytes += text.len() as u64;
-                latencies_ns.push(t.elapsed().as_nanos() as u64);
+                latencies_ns.push(
+                    u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64"),
+                );
             }
-            Err(_) => latencies_ns.push(t.elapsed().as_nanos() as u64),
+            Err(_) => latencies_ns
+                .push(u64::try_from(t.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64")),
         }
     }
-    let seq_decode_ns = seq_start.elapsed().as_nanos() as u64;
+    let seq_decode_ns =
+        u64::try_from(seq_start.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64");
 
     // Parallel pass (optional) — fans the same work across rayon. We
     // discard per-doc latencies for the parallel pass because the
@@ -205,7 +206,7 @@ fn measure_band(items: &[CorpusItem], indices: &[usize], parallel: bool) -> Band
             // that populated `latencies_ns` above.
             drop(decode_sjis(&items[i].bytes));
         });
-        par_start.elapsed().as_nanos() as u64
+        u64::try_from(par_start.elapsed().as_nanos()).expect("elapsed nanoseconds fit u64")
     } else {
         0
     };
@@ -254,9 +255,9 @@ fn print_header(parallel: bool) {
 }
 
 fn print_row(label: &str, s: &BandStats) {
-    let sjis_mb = s.sjis_bytes as f64 / 1_048_576.0;
-    let utf8_mb = s.utf8_bytes as f64 / 1_048_576.0;
-    let seq_secs = s.seq_decode_ns as f64 / NS_PER_S;
+    let sjis_mb = report_number(s.sjis_bytes) / 1_048_576.0;
+    let utf8_mb = report_number(s.utf8_bytes) / 1_048_576.0;
+    let seq_secs = report_number(s.seq_decode_ns) / NS_PER_S;
     let seq_mbs = sjis_mb / seq_secs.max(f64::EPSILON);
 
     let mut sorted = s.latencies_ns.clone();
@@ -265,13 +266,17 @@ fn print_row(label: &str, s: &BandStats) {
         if sorted.is_empty() {
             0.0
         } else {
-            let idx = ((sorted.len() as f64 - 1.0) * q).round() as usize;
-            sorted[idx.min(sorted.len() - 1)] as f64 / 1_000.0
+            let idx = ((report_number(sorted.len()) - 1.0) * q)
+                .round()
+                .to_string()
+                .parse::<usize>()
+                .expect("quantile index fits usize");
+            report_number(sorted[idx.min(sorted.len() - 1)]) / 1_000.0
         }
     };
 
     if s.par_decode_ns > 0 {
-        let par_secs = s.par_decode_ns as f64 / NS_PER_S;
+        let par_secs = report_number(s.par_decode_ns) / NS_PER_S;
         let par_mbs = sjis_mb / par_secs.max(f64::EPSILON);
         let scale = par_mbs / seq_mbs.max(f64::EPSILON);
         println!(

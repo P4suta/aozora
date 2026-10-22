@@ -90,6 +90,7 @@ print_stderr = "warn"
 
 str_to_string = "warn"
 absolute_paths = "warn"
+allow_attributes = "deny"
 allow_attributes_without_reason = "warn"
 empty_structs_with_brackets = "warn"
 if_then_some_else_none = "warn"

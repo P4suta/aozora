@@ -28,6 +28,9 @@ non_ascii_idents = "deny"
 missing_debug_implementations = "warn"
 missing_copy_implementations = "warn"
 
+[lints.clippy]
+allow_attributes = "deny"
+
 [dependencies]
 # Drivers consume the wire format via `aozora::json::*`; serde +
 # serde_json transitive-only via the `wire` feature.

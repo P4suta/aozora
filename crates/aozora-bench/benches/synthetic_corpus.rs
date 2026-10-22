@@ -5,8 +5,6 @@
 //! buffers (16 KiB) to large novels (3 MiB) so the criterion plot
 //! shows the parse curve over realistic input sizes.
 
-#![allow(clippy::missing_panics_doc, reason = "bench code, not library")]
-
 use std::hint::black_box;
 
 use aozora_bench::build_synthetic_aozora;
