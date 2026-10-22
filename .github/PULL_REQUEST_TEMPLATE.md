@@ -17,10 +17,6 @@
 - [ ] Added or updated tests that exercise the change.
 - [ ] Commit messages follow Conventional Commits (the `commit-msg`
       hook enforces this).
-- [ ] If this adds a new 青空文庫 notation: followed the TDD flow in
-      [`CONTRIBUTING.md`](../CONTRIBUTING.md) (spec fixture → AST
-      variant → lexer test (red) → lexer impl (green) → renderer →
-      serializer → cross-layer invariants).
 
 ## Related
 

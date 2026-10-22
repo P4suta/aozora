@@ -1,9 +1,4 @@
 {
-  // Kept consistent with .devcontainer/devcontainer.json. The Dev
-  // Container is where rust-analyzer actually runs: the cargo target dir
-  // lives in a named volume outside the bind mount, so a host-only RA
-  // sees no build artifacts — use "Reopen in Container" for the full
-  // experience. These editor-agnostic keys are harmless on the host too.
   "editor.formatOnSave": true,
   "editor.tabSize": 4,
   "files.eol": "\n",
@@ -18,8 +13,7 @@
   // Keep the file tree and search focused on tracked sources; these are
   // the generated / cache paths from .gitignore.
   "files.exclude": {
-    "**/target": true,
-    "**/.sccache": true
+    "**/target": true
   },
   "search.exclude": {
     "**/target": true,

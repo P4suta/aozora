@@ -13,7 +13,10 @@ Moving branches and package-registry “latest” versions are not release input
 
 ## Release graph
 
-The existing artifact jobs build npm/WASM, crate, CLI, C ABI, Extism, Python, and Go outputs. `cargo xtask real-work bundle` combines those exact artifacts into one Linux, macOS, or Windows bundle. The pinned lab then runs four shards on each OS and compares all seven result projections byte-for-byte. Linux additionally builds the no-script static site and compares every work in Chromium, Firefox, and WebKit at both widths.
+The existing artifact jobs build npm/WASM, crate, CLI, C ABI, Extism, Python, and Go outputs.
+`cargo run -p aozora-xtask -q -- real-work bundle` combines those exact artifacts into one Linux, macOS, or Windows bundle.
+The pinned lab then runs four shards on each OS and compares all seven result projections byte-for-byte.
+Linux additionally builds the no-script static site and compares every work in Chromium, Firefox, and WebKit at both widths.
 
 The final `release-ready` fan-in requires the reusable real-work gate to succeed. A crash, timeout, missing worker, mixed version, schema mismatch, output difference, new diagnostic, unapproved visual difference, or missing baseline therefore prevents the downstream publishing dispatches.
 
