@@ -1,29 +1,3 @@
-# Publish the playground + rustdoc to GitHub Pages.
-#
-# docs.rs renders the API for each released version. This site carries
-# what docs.rs cannot: the playground, and a rustdoc build of the
-# development tip — ahead of whatever the latest crates.io release
-# renders.
-#
-# Layout produced:
-#   https://p4suta.github.io/aozora/                ← redirect to the playground
-#   https://p4suta.github.io/aozora/api/            ← rustdoc landing redirect
-#   https://p4suta.github.io/aozora/api/aozora/     ← cargo doc landing for the top-level facade
-#   https://p4suta.github.io/aozora/playground/     ← interactive Aozora notation playground
-#
-# The handbook used to be the site root. It is gone: the notation lives
-# in the specification (p4suta.github.io/aozora-notation-spec), the API
-# in docs.rs, the CLI in `aozora --help`, and the runbooks in docs/.
-#
-# Docs builds use the locked native toolchain.
-#
-# On a release commit the playground is NOT rebuilt here: release-fan-in
-# dispatches this workflow with `commit=<qualified sha>` once release-ready
-# has published the qualified bundle, and the release build below deploys that
-# bundle's playground verbatim. The push that lands the release commit stands
-# aside (mode `skip`) so it never races the dispatched run on the `pages`
-# concurrency group.
-
 name: docs
 
 on:
@@ -40,8 +14,6 @@ permissions:
   contents: read
   actions: read
 
-# Only one deploy in flight at a time; queue the rest so we never
-# partially overwrite the Pages bucket.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -65,13 +37,7 @@ jobs:
           VERSION_CHANGED: ${{ steps.detect.outputs.version-changed }}
         run: |
           set -euo pipefail
-          # release — the release-fan-in-dispatched build of a qualified
-          #           release commit; deploys the qualified playground bundle.
-          # skip    — the push that lands a release commit; the dispatched
-          #           `release` run owns the Pages deploy, so this run stands
-          #           aside to avoid racing it on the `pages` group.
-          # dev     — an ordinary push or a manual dispatch: build and deploy
-          #           the development tip.
+          # The dispatched release run owns deployment of the qualified playground (ADR-0051).
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$COMMIT" ]]; then
             mode=release
           elif [[ "$GITHUB_EVENT_NAME" == push && "$VERSION_CHANGED" == true ]]; then
@@ -109,11 +75,7 @@ jobs:
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: "-D warnings"
-        # `--jobs 1` serialises rustdoc: `cargo doc --workspace` otherwise
-        # races concurrent rustdoc processes on the shared target/doc
-        # output (static.files/, trait.impl/, search index), which fails
-        # intermittently while documenting the umbrella `aozora` crate's
-        # re-export pages. Matches the `just doc` recipe's fix.
+        # Serial rustdoc avoids races in shared output for facade re-exports.
         run: cargo doc --workspace --no-deps --all-features --jobs 1
 
       - name: Build playground
@@ -142,7 +104,6 @@ jobs:
           else
             cp -r playground/dist/. site/playground/
           fi
-          # /api/ landing redirects to the top-level facade crate's docs.
           cat > site/api/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
@@ -151,10 +112,7 @@ jobs:
           <link rel="canonical" href="./aozora/index.html">
           <p>Redirecting to <a href="./aozora/index.html">aozora API reference</a>.</p>
           HTML
-          # The handbook used to be the site root. Without something here
-          # the root 404s, and every published crate's `homepage` points at
-          # it — so send visitors to the playground, the one thing on this
-          # site you cannot get from docs.rs or the specification.
+          # Crate homepage URLs land here, so direct visitors to the playground.
           cat > site/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
@@ -163,9 +121,7 @@ jobs:
           <link rel="canonical" href="./playground/">
           <p>Redirecting to the <a href="./playground/">aozora playground</a>.</p>
           HTML
-          # GitHub Pages otherwise runs Jekyll and hides paths like
-          # `_sources`. Needed by rustdoc's static.files/ — not a handbook
-          # leftover.
+          # Disable Jekyll's exclusion of paths beginning with underscores.
           touch site/.nojekyll
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0

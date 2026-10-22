@@ -93,18 +93,12 @@ jobs:
           set -euo pipefail
           wheel="$(find dist -maxdepth 1 -name '*.whl' -type f -print -quit)"
           test -n "$wheel"
-          # Capture first: `unzip -p | awk … exit` SIGPIPEs unzip under pipefail
-          # (awk exits on the first Version line) — the DEV-105 class.
+          # Capture metadata before selecting a line to avoid unzip SIGPIPE under pipefail.
           wheel_metadata="$(unzip -p "$wheel" '*/METADATA')"
           version="$(awk -F': ' '$1 == "Version" { print $2; exit }' <<<"$wheel_metadata")"
           test -n "$version"
           if metadata="$(curl -fsS "https://pypi.org/pypi/aozora/${version}/json" 2>/dev/null)"; then
-            # The release exists on PyPI. Every already-published file is
-            # immutable — verify our local copy matches byte-for-byte — but a
-            # PARTIAL prior upload (some of the four files missing) must remain
-            # completable: publish whenever any local file is not yet present so
-            # `skip-existing` on the upload can fill only the gaps. Failing closed
-            # here would strand a half-finished upload with no recovery path.
+            # PyPI uploads are immutable, but retries must complete partially published releases.
             publish=false
             for package in dist/*; do
               test -f "$package"
@@ -127,6 +121,4 @@ jobs:
         if: steps.registry.outputs.publish == 'true'
         with:
           packages-dir: dist
-          # Complete a partial prior upload without erroring on the files that
-          # already landed (the guard above proved they match our digests).
           skip-existing: true
