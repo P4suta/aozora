@@ -1,53 +1,18 @@
-# Scheduled fuzz soak (G3).
-#
-# The nightly cargo-fuzz harnesses (see the Justfile's fuzz recipes) run a
-# 5-minute soak per target in `release-ready`, while `tests/fuzz_regressions.rs`
-# replays every promoted crash in `just test` on every push. This workflow is
-# the continuous complement: an unattended weekly soak against the tip of main,
-# so accumulated corpus coverage also exercises changes between release-ready
-# runs.
-#
-#   rust-fuzz book (cargo-fuzz):  https://rust-fuzz.github.io/book/cargo-fuzz.html
-#   cargo-fuzz:                   https://github.com/rust-fuzz/cargo-fuzz
-#   libFuzzer options:            https://llvm.org/docs/LibFuzzer.html#options
-#   OSS-Fuzz (continuous model):  https://google.github.io/oss-fuzz/
-#   OpenSSF Scorecard "Fuzzing":  https://github.com/ossf/scorecard/blob/main/docs/checks.md#fuzzing
-#
-# Each target soaks for 600 s in its own matrix job
-# (`fail-fast: false`, so one target's crash never masks the others). The
-# soak uses the same pinned nightly and target as the `just fuzz-deep` recipe.
-# musl-static `cargo-fuzz` binary defaults `--target` to its own musl triple,
-# for which the nightly image ships no std and with which ASan is
-# incompatible, so the gnu triple must be pinned explicitly or every
-# sanitized build fails before a single iteration.
-#
-# The libFuzzer corpus for each target is persisted across runs with
-# `actions/cache` (accumulating-key pattern), so the weekly soak keeps
-# building coverage instead of restarting cold. A crash uploads the
-# offending input as an artifact and opens (or updates, deduped by target)
-# a `fuzz-crash` tracking issue, then fails that matrix job so the crash is
-# a visible red — a fuzz crash is a genuine defect, unlike link-audit's
-# non-blocking external-host probe.
-#
-# A weekly nightly-toolchain soak is not a per-push gate; the non-skippable
-# release proof lives in `release-ready`.
-#
-# Action SHAs are pinned to match the other workflows; Renovate bumps them.
+# Exercise parser changes between release qualifications (ADR-0042).
 name: fuzz
 
 on:
   schedule:
-    - cron: "29 4 * * 4"  # weekly, Thursday 04:29 UTC (offset from codeql/scorecard/link-audit/cross-os)
+    - cron: "29 4 * * 4"
   workflow_dispatch:
 
-# A newer soak supersedes an in-flight one on the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  issues: write  # open / update the fuzz-crash tracking issue
+  issues: write
 
 jobs:
   soak:
@@ -55,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
-      # Soak every target every run — one crashing must not mask the rest.
       fail-fast: false
       matrix:
         include:
@@ -77,11 +41,6 @@ jobs:
         with:
           key: fuzz-${{ matrix.crate }}-${{ matrix.target }}
 
-      # Persist the per-target libFuzzer corpus across runs. The unique
-      # run-id key always writes a fresh entry; the prefix restore-key
-      # loads the most recent prior corpus, so coverage accumulates week
-      # over week instead of every soak starting cold (the OSS-Fuzz /
-      # rust-fuzz corpus-persistence pattern).
       - name: Restore fuzz corpus
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -90,11 +49,6 @@ jobs:
           restore-keys: |
             fuzz-corpus-${{ matrix.crate }}-${{ matrix.target }}-
 
-      # Same command body as the `just fuzz-deep` recipe (PR #459) with
-      # a 600-second CI soak; the gnu
-      # `--target` is pinned explicitly (see the header note). Capture the
-      # exit code rather than letting `-e` abort so the crash can be
-      # reported before the job goes red.
       - name: Fuzz soak (600 s)
         id: fuzz
         env:
@@ -115,9 +69,6 @@ jobs:
             echo "::notice::${CRATE}/${TARGET} soaked 600 s with no crash"
           fi
 
-      # Upload the offending input(s) so the crash reproduces off-runner:
-      #   gh run download <run> -n fuzz-crash-<crate>-<target>
-      #   just fuzz-triage <crate> <target>   # then fuzz-promote to pin it
       - name: Upload crash artifacts
         if: steps.fuzz.outputs.crashed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
@@ -127,8 +78,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # Open, or update-in-place (deduped per target), a tracking issue.
-      # Follows the link-audit.yml issue-management pattern.
       - name: Open / update crash tracking issue
         if: steps.fuzz.outputs.crashed == 'true'
         env:
@@ -141,12 +90,9 @@ jobs:
           LABEL="fuzz-crash"
           TITLE="Fuzz crash: ${CRATE}/${TARGET}"
 
-          # Idempotent label (issues:write covers labels).
           gh label create "$LABEL" -c B60205 \
             -d "A cargo-fuzz target crashed in the scheduled fuzz soak" 2>/dev/null || true
 
-          # Dedup on the exact per-target title, so a recurring crash on the
-          # same target updates its one issue instead of piling up.
           existing=$(gh issue list --label "$LABEL" --state open --json number,title \
             --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
 
@@ -155,19 +101,19 @@ jobs:
             echo
             echo "Workflow run: ${RUN_URL}"
             echo
-            echo "The offending input is attached to that run as the"
-            echo "\`fuzz-crash-${CRATE}-${TARGET}\` artifact. To reproduce and pin it:"
+            echo "The offending input is attached to that run as the \`fuzz-crash-${CRATE}-${TARGET}\` artifact."
+            echo
+            echo "Download and replay the crash, then fix the bug and promote the artifact by filename:"
             echo
             echo '```sh'
             echo "gh run download <run-id> -n fuzz-crash-${CRATE}-${TARGET} \\"
-            echo "  -D crates/${CRATE}/fuzz/artifacts/${TARGET}"
-            echo "just fuzz-triage ${CRATE} ${TARGET}   # read the panic block"
-            echo "# fix the bug (or over-strict assertion), then:"
-            echo "just fuzz-promote ${CRATE} ${TARGET} <crash-file>"
+            echo "  -D crates/aozora/fuzz/${CRATE}/artifacts/${TARGET}"
+            echo "just fuzz-triage ${CRATE} ${TARGET}"
+            echo "# After fixing the bug, promote the artifact by filename."
+            echo "just fuzz-promote ${CRATE} ${TARGET} <artifact-filename>"
             echo '```'
             echo
-            echo "Promoting the artifact adds it to \`tests/fuzz_regressions.rs\`,"
-            echo "which replays on every \`just test\` — no nightly required."
+            echo "Promotion moves the input into \`crates/aozora/tests/fuzz_regressions/${CRATE}/${TARGET}/\`."
           } > issue-body.md
 
           if [ -n "$existing" ]; then
@@ -180,9 +126,6 @@ jobs:
             echo "Opened a new tracking issue"
           fi
 
-      # A fuzz crash is a real defect — surface it as a red job (after the
-      # artifact + issue are recorded above), unlike link-audit's advisory
-      # external-host probe.
       - name: Fail on crash
         if: steps.fuzz.outputs.crashed == 'true'
         run: |

@@ -1,5 +1,5 @@
 {
-  "name": "release-tags-immutable",
+  "name": "release tags",
   "target": "tag",
   "enforcement": "active",
   "conditions": {

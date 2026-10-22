@@ -29,8 +29,7 @@ semver_check = true
 # Do not refresh third-party dependencies inside the Release PR; that is Renovate's job.
 # release-plz still rewrites Cargo.lock for the version bump.
 dependencies_update = false
-# Default branch prefix; spelled out because require-signed-commits.json's App
-# bypass and the no-automerge-on-release-pr.yml guard both key on it.
+# no-automerge-on-release-pr.yml identifies Release PRs by this prefix.
 pr_branch_prefix = "release-plz-"
 # Consumed by ci.yml's `release-gate`: a maintainer must add `release: approved`.
 pr_labels = ["autorelease: pending"]
