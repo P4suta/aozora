@@ -18,6 +18,9 @@ The browser package and its system image must also agree about browser revisions
 
 Run the web job in the official Playwright image whose version matches the locked playground dependency.
 Pin the image by digest and keep the repository's locked mise tools inside that environment.
+Install the locked Zig toolchain before Rust tools that need a native compiler.
+Use its C compiler, archiver, and linker for the web job's native GNU target.
+Supply the native C flags explicitly while bootstrapping Rust tools so `cc-rs` doesn't add an incompatible LLVM target triple.
 Install the existing Noto and Takao font packages and their font dependencies from fixed Ubuntu archives.
 Verify every archive against the committed checksum manifest on both cache hits and downloads before installation.
 Key the archive cache by that manifest.

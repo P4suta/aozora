@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+compiler=$(mise --cd "$(dirname "$0")/.." which zig)
+exec "${compiler}" cc -target x86_64-linux-gnu "$@"

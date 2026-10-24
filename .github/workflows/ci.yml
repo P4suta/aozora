@@ -59,15 +59,28 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.62.0-noble@sha256:baed2032d533817f3dbe6425de795788430ba345e819a1201337009ba17c9d07
+    env:
+      CC_x86_64_unknown_linux_gnu: ${{ github.workspace }}/scripts/web-cc
+      AR_x86_64_unknown_linux_gnu: ${{ github.workspace }}/scripts/web-ar
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/web-cc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install native C toolchain
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: zig
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just bun node cargo:wasm-pack npm:binaryen
+        env:
+          CRATE_CC_NO_DEFAULTS: "1"
+          CFLAGS_x86_64_unknown_linux_gnu: -O3 -ffunction-sections -fdata-sections -fPIC -m64
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-web

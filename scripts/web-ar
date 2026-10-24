@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+archiver=$(mise --cd "$(dirname "$0")/.." which zig)
+exec "${archiver}" ar "$@"
