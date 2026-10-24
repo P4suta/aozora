@@ -85,10 +85,11 @@ Release credentials follow published standards, not a homegrown scheme:
   short-lived token at publish time; the OIDC-less marketplace tokens
   (`VSCE_PAT`, `OVSX_PAT`) live as GitHub *Environment* secrets, not
   repository secrets.
-- **Approval-gated publishing.** Every credential-bearing job runs in the
-  `release` GitHub Environment with required-reviewer approval and a
-  deployment branch/tag restriction, so nothing ships — and no secret or
-  OIDC token is reachable — without a human in the loop.
+- **Approval-gated publishing.** Publishing and signing jobs use the `release` GitHub environment.
+  Release proposals, crates.io release orchestration, and automation credential verification use `release-plz`.
+  Both environments require approval by `P4suta` and prevent administrator bypass.
+  The `release` environment permits `main` and tags matching `v*` or `vscode-v*`.
+  The `release-plz` environment permits only `main`.
 - **Build provenance.** Release artefacts carry Sigstore-backed SLSA
   Build L2 provenance, verifiable with `gh attestation verify <artefact>
   --repo P4suta/aozora`.
