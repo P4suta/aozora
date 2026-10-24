@@ -14,6 +14,7 @@ mod conformance;
 mod coords;
 mod corpus;
 mod deps;
+mod developer;
 mod grammar;
 mod msrv;
 mod perf;
@@ -60,6 +61,8 @@ enum Cmd {
     Trace(TraceArgs),
     /// Manage the local weekly dependency-check timer.
     Deps(DepsArgs),
+    /// Set up portable developer commands and inspect local prerequisites.
+    Developer(developer::DeveloperArgs),
     /// Build and inspect corpus archives.
     Corpus(CorpusArgs),
     /// Report GitHub Actions run timings.
@@ -346,6 +349,7 @@ fn main() {
         },
         Cmd::Trace(args) => trace::dispatch(args),
         Cmd::Deps(args) => deps::dispatch(&args),
+        Cmd::Developer(args) => developer::dispatch(args),
         Cmd::Corpus(args) => corpus::dispatch(&args),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::Schema(args) => schema::dispatch(&args),

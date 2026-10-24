@@ -38,6 +38,7 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 tar = "0.4"
 tempfile = { workspace = true }
+time = { version = "0.3.53", features = ["formatting", "parsing"] }
 toml = { workspace = true }
 tree-sitter = "0.26"
 tree-sitter-aozora = { workspace = true }
