@@ -154,6 +154,7 @@ jobs:
         run: |
           cargo kani setup
           just developer-proofs
+          just fuzz-proofs
       - name: Generated and external specification gates
         env:
           AOZORA_SPEC_REPO: ${{ github.workspace }}/.spec
@@ -279,7 +280,9 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
+          install_args: rust@1.99.1 rust@nightly-2026-07-15 just cargo:cargo-fuzz
+      - name: Check native fuzz reporting controls
+        run: cargo test --locked -p aozora-xtask --bin xtask fuzz::tests::native_engine_contract -- --ignored --exact
       - run: just ci-fuzz
       - run: just fuzz-all-deep
       - name: Reject retained fuzz failures

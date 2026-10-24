@@ -240,6 +240,10 @@ new-adr TITLE *ARGS:
 developer-proofs:
     cargo run -p aozora-xtask -q -- developer prove
 
+[doc("Prove the fuzz result classification and reject unsupported crash reports.")]
+fuzz-proofs:
+    cargo run -p aozora-xtask -q -- fuzz prove
+
 [doc("Run parser, tree-sitter, and real-work conformance gates.")]
 conformance:
     bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter && cargo test -p aozora-conformance --test works_gate && cargo run -p aozora-xtask -q -- corpus family-coverage'
@@ -470,44 +474,10 @@ fuzz-all-deep:
     just fuzz-deep render catalogue_normalization
     just fuzz-deep encoding decode_sjis
 
-[doc("Replay fuzz artifacts and report panic context and remaining crashes.")]
+[doc("Replay fuzz artifacts and refuse incomplete or failing inputs.")]
+[positional-arguments]
 fuzz-triage CRATE TARGET:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    crate="{{ CRATE }}"
-    target="{{ TARGET }}"
-    art_dir="crates/aozora/fuzz/${crate}/artifacts/${target}"
-    if [[ ! -d "$art_dir" ]]; then
-        echo "fuzz-triage: no artifacts for ${crate} / ${target}"
-        exit 0
-    fi
-    failed=0
-    for art in $(find "$art_dir" -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) | sort); do
-        rel="${art#crates/aozora/fuzz/${crate}/}"
-        echo "==> ${art}"
-        out=$(bash -c "cd crates/aozora/fuzz/${crate} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . --target {{ _fuzz_target }} ${target} ${rel} 2>&1" || true)
-        panic_block=$(awk '
-            /^thread .* panicked at/ { capturing = 1 }
-            capturing {
-                if (/^stack backtrace:/ || /^=================/) exit
-                print
-            }
-        ' <<<"$out")
-        if [[ -n "$panic_block" ]]; then
-            printf "%s\n" "$panic_block"
-        else
-            tail -5 <<<"$out"
-        fi
-        if grep -q "exit status: 77" <<<"$out"; then
-            failed=$((failed + 1))
-        fi
-        echo
-    done
-    if (( failed > 0 )); then
-        echo "fuzz-triage: ${failed} artifact(s) still crash" >&2
-        exit "${failed}"
-    fi
-    echo "fuzz-triage: every artifact replays cleanly"
+    cargo run --locked -p aozora-xtask -q -- fuzz triage "$@"
 
 [doc("Move a fuzz artifact into the permanent regression corpus.")]
 fuzz-promote CRATE TARGET ARTIFACT:
