@@ -57,28 +57,61 @@ jobs:
   web:
     needs: qualify
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.0-noble@sha256:baed2032d533817f3dbe6425de795788430ba345e819a1201337009ba17c9d07
+    env:
+      CC_x86_64_unknown_linux_gnu: ${{ github.workspace }}/scripts/web-cc
+      AR_x86_64_unknown_linux_gnu: ${{ github.workspace }}/scripts/web-ar
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: ${{ github.workspace }}/scripts/web-cc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install native C toolchain
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.7.13
+          cache: true
+          install_args: zig
+      - name: Align browser home ownership
+        run: chown "$(id -u):$(id -g)" "${HOME}"
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just bun node cargo:wasm-pack npm:binaryen
+        env:
+          CRATE_CC_NO_DEFAULTS: "1"
+          CFLAGS_x86_64_unknown_linux_gnu: -O3 -ffunction-sections -fdata-sections -fPIC -m64
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ci-web
       - name: Install web dependencies
         working-directory: playground
         run: bun install --frozen-lockfile
-      - name: Install Playwright system dependencies
-        working-directory: playground
-        run: bun run playwright install --with-deps chromium firefox webkit
+      - name: Restore pinned screenshot fonts
+        id: font-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cache/web-fonts
+          key: web-fonts-noble-${{ hashFiles('tools/web-fonts.sha256') }}
+      - name: Download pinned screenshot fonts
+        if: steps.font-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .cache/web-fonts
+          curl --fail --location --retry 2 --remote-name-all --output-dir .cache/web-fonts \
+            https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-noto/fonts-noto-core_20201225-2_all.deb \
+            https://archive.ubuntu.com/ubuntu/pool/main/f/fonts-noto/fonts-noto-mono_20201225-2_all.deb \
+            https://archive.ubuntu.com/ubuntu/pool/universe/f/fonts-takao/fonts-takao-gothic_00303.01-3ubuntu1_all.deb \
+            https://archive.ubuntu.com/ubuntu/pool/universe/f/fonts-takao/fonts-takao-pgothic_00303.01-3ubuntu1_all.deb
       - name: Install deterministic screenshot fonts
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends fonts-noto-core fonts-takao-gothic
+          (cd .cache/web-fonts && sha256sum --check ../../tools/web-fonts.sha256)
+          dpkg --install \
+            .cache/web-fonts/fonts-noto-core_20201225-2_all.deb \
+            .cache/web-fonts/fonts-noto-mono_20201225-2_all.deb \
+            .cache/web-fonts/fonts-takao-gothic_00303.01-3ubuntu1_all.deb \
+            .cache/web-fonts/fonts-takao-pgothic_00303.01-3ubuntu1_all.deb
       - run: just ci-web
       - name: Upload web test reports
         if: always()
