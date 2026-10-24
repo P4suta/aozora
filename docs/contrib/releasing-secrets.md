@@ -1,97 +1,84 @@
-# Release secrets & Trusted Publishing
+# Release secrets and trusted publishing
 
-The operational runbook for the release credentials. Almost none of this
-is visible in the tree: it is GitHub-server-side and registry-side state,
-so this page is its only record.
+Use this runbook to configure and verify release credentials in GitHub and package registries.
 
-The goal: **no long-lived publish token sits in the repository.** Package
-registries use OIDC Trusted Publishing after any first-publish bootstrap.
-Editor marketplaces are not part of the standard package release and need no
-credentials until a maintainer explicitly opts into that channel.
+Keep long-lived publish tokens out of repository secrets.
+Package registries use OIDC Trusted Publishing after any first-publication bootstrap.
+Editor marketplaces need credentials only after a maintainer opts into the optional channel.
 
-Why it is shaped this way is in
-[ADR-0020](../adr/0020-release-secret-hardening-trusted-publishing.md)
-and [ADR-0038](../adr/0038-release-plz-owns-versioning-and-crates-io-publishing.md)
-— the latter covers crates.io and the two environments. This page is the
-how.
+[ADR-0020](../adr/0020-release-secret-hardening-trusted-publishing.md) records the credential design.
+[ADR-0038](../adr/0038-release-plz-owns-versioning-and-crates-io-publishing.md) covers crates.io and the two environments.
 
-Everything below follows each platform's official guidance; the
-[references](#references) are the primary sources.
+The [references](#references) identify each platform's official guidance.
 
 ## Security model
 
-Two environments, deliberately different:
+Both environments require owner approval and prohibit administrator bypass:
 
 | | reviewer | branches / tags | why |
 | --- | --- | --- | --- |
-| `release` | required | `main`, `v*` | you approve each package publisher and draft assembly |
-| `release-plz` | **none** | `main` | the gate is the Release-PR merge; a second approval would only stall an unattended publish |
+| `release` | `P4suta` | `main`, `v*`, `vscode-v*` | approve package publishers and draft assembly |
+| `release-plz` | `P4suta` | `main` | approve release proposals, crates.io orchestration, and automation credential verification |
 
-A job cannot reach environment secrets **or** the OIDC token until the
-protection rules pass, because GitHub does not send it to a runner before
-then. An OIDC token minted under an environment carries
-`…:environment:<name>` in its `sub` claim, which is what the registry's
-publisher rule matches.
+A job can't reach environment secrets or request its OIDC token before the protection rules pass.
+GitHub waits for those rules before sending the job to a runner.
+An environment-bound OIDC token carries `…:environment:<name>` in its `sub` claim, matching the registry's publisher rule.
 
-What stops a stray **Run workflow** click depends on the publisher:
+Manual dispatches keep the following publication checks:
 
-- Every channel publisher requires an exact `release-ready` commit on manual
-  dispatch and defaults `dry_run` to true. A dispatch downloads and verifies
-  that commit's retained artifacts; it never rebuilds release bytes.
-- `release-plz.yml` requires the exact qualified Release-PR merge commit on
-  manual dispatch. It checks that commit changes the workspace version, waits
-  for its successful `release-ready` run, and compares the retained crate
-  artifacts with a local reproduction before publishing. See
-  [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md).
-- While `.github/RELEASE_FROZEN.md` exists, release-plz fails before either
-  credential-bearing job starts. Manually disabling the workflow in GitHub
-  Actions provides an independent server-side freeze.
+- Each channel publisher requires an exact `release-ready` commit and defaults `dry_run` to true.
+  A dispatch downloads and verifies the commit's retained artifacts without rebuilding release bytes.
+- `release-plz.yml` requires the exact qualified Release-PR merge commit.
+  It checks the workspace version change, waits for successful `release-ready` evidence, and compares retained crate artifacts with a local reproduction before publishing.
+  [ADR-0042](../adr/0042-release-ready-is-the-publish-authority.md) records the publication boundary.
+- While `.github/RELEASE_FROZEN.md` exists, release-plz fails before either credential-bearing job starts.
+  Turning off the workflow in GitHub Actions provides an independent server-side freeze.
 
 ## One-time setup
 
-> A workflow naming an environment that does not exist yet **auto-creates
-> it without protection rules** on the first run. Create the environments
-> before the first gated run, not after.
+Create protected environments before the first gated run.
+A workflow that names an absent environment creates it without protection rules.
 
 ### 1. The `release` environment
 
 ```sh
 uid=$(gh api user --jq .id)
 gh api -X PUT repos/P4suta/aozora/environments/release --input - <<EOF
-{"wait_timer":0,
+{"wait_timer":0,"can_admins_bypass":false,
  "reviewers":[{"type":"User","id":$uid}],
  "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 EOF
 
 gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='main'      -f type=branch
 gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='v*'        -f type=tag
+gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-policies -f name='vscode-v*' -f type=tag
 ```
 
-### 2. The `release-plz` environment + GitHub App
+### 2. The `release-plz` environment and GitHub App
 
 ```sh
+uid=$(gh api user --jq .id)
 gh api -X PUT repos/P4suta/aozora/environments/release-plz --input - <<EOF
-{"wait_timer":0,
+{"wait_timer":0,"can_admins_bypass":false,
+ "reviewers":[{"type":"User","id":$uid}],
  "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 EOF
 gh api -X POST repos/P4suta/aozora/environments/release-plz/deployment-branch-policies -f name='main' -f type=branch
 ```
 
-release-plz must push the `v*` tag as a **GitHub App** — a tag pushed by
-the default `GITHUB_TOKEN` does not trigger the downstream workflows.
-Create an App (org or personal) with repository permissions **Contents:
-R/W** + **Pull requests: R/W** and no webhook, install it on
-`P4suta/aozora`, generate a private key, and note **both** the Client ID
-and the numeric App ID — they are used in different places.
+release-plz must push the `v*` tag as a GitHub App because tags pushed with `GITHUB_TOKEN` don't trigger downstream workflows.
+Create a GitHub App with repository permissions **Contents: R/W** and **Pull requests: R/W**, without a webhook.
+Install it on `P4suta/aozora`, generate a private key, and keep both the Client ID and numeric App ID.
+The identifiers serve different operations.
 
-```sh
-gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the Client ID (Iv23…)
-gh secret set RELEASE_PLZ_APP_PRIVATE_KEY --env release-plz # the .pem contents
-```
+The workflow fetches `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_PRIVATE_KEY` from Doppler project `aozora`, configuration `automation`.
+Repository variable `DOPPLER_AUTOMATION_IDENTITY_ID` selects the OIDC identity.
+`verify-doppler.yml` checks read-only repository access and rejection of unrelated credentials through the protected `release-plz` environment.
 
 The active `main` ruleset requires signed commits on the default branch and has no bypass actors.
 Release PRs are squash-merged into GitHub web-flow-signed commits.
-The `required` check gates merges; `release-ready` qualifies the exact commit for publication.
+The `required` check gates merges.
+`release-ready` qualifies the exact commit for publication.
 The active `release tags` ruleset makes existing `v*` tags immutable and has no bypass actors.
 See [Repository rulesets](../../.github/rulesets/README.md) to compare or re-apply the committed definitions.
 
@@ -99,83 +86,66 @@ An optional tag-creation restriction can limit `v*` creation to the release-plz 
 Apply that separate rule only after watching release-plz cut a `v*` tag successfully.
 Applying it earlier can leave a misconfigured App unable to create a tag.
 
-### 3. crates.io
+### 3. Crate publication
 
-Steady state is tokenless OIDC from the `release-plz` environment.
-release-plz performs the OIDC exchange itself, so there is no
-`CARGO_REGISTRY_TOKEN` and `crates-io-auth-action` is not used.
+Normal publication uses tokenless OIDC from the `release-plz` environment.
+release-plz performs the exchange without `CARGO_REGISTRY_TOKEN` or `crates-io-auth-action`.
 
-Getting there costs one token, once, because of two crates.io facts:
+First publication requires a temporary token because of two crates.io constraints:
 
-- **Trusted publishing cannot create a crate.** The first publish of a new
-  crate needs a token.
-  [RFC 3691](https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html)
-  lists crate creation only as a future possibility; PyPI's pending
-  publisher has no crates.io equivalent.
-- **A publisher is bound to an exact workflow filename + environment**,
-  because that is what the `sub` claim is matched against.
+- **Trusted publishing can't create a crate.**
+  The first publication of a new crate needs a token.
+  [RFC 3691](https://rust-lang.github.io/rfcs/3691-trusted-publishing-cratesio.html) lists crate creation as a future possibility.
+  crates.io has no equivalent to PyPI's pending publisher.
+- **A publisher binds an exact workflow filename and environment.**
+  The registry matches the token's `sub` claim to the configured publisher.
 
 Bootstrap for the first release containing a new crate:
 
-1. Before merging the Release PR, register Trusted Publishers for every crate
-   that already exists. Use owner `P4suta`, repository `aozora`, workflow
-   `release-plz.yml`, and environment `release-plz`.
-2. Create a crates.io token with publish-new and publish-update scopes. Add it
-   as the `CARGO_REGISTRY_TOKEN` secret on the `release-plz` environment.
-3. In a small bootstrap-only PR, add
-   `CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}` only to the
-   `release-plz release` action's `env:`. Merge it immediately before the
-   Release PR.
-4. Merge the Release PR. This one token-authenticated run publishes both new
-   and existing public crates in dependency order and creates the release tag.
-5. Register the newly created crate's Trusted Publisher. In a cleanup PR,
-   remove the workflow reference, then delete the environment secret and
-   revoke the token.
+1. Before merging the Release PR, register Trusted Publishers for every existing crate.
+   Use owner `P4suta`, repository `aozora`, workflow `release-plz.yml`, and environment `release-plz`.
+2. Create a crates.io token with publish-new and publish-update scopes.
+   Add it as the `CARGO_REGISTRY_TOKEN` secret on the `release-plz` environment.
+3. In a bootstrap-only PR, add `CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}` to the `release-plz release` action's `env:`.
+   Merge the bootstrap PR immediately before the Release PR.
+4. Merge the Release PR.
+   The token-authenticated run publishes new and existing public crates in dependency order and creates the release tag.
+5. Register the newly created crate's Trusted Publisher.
+   Remove the workflow reference in a cleanup PR, then delete the environment secret and revoke the token.
 
-Do **not** hand-pre-create the new crates against the previous release
-tag. They did not exist at that tag, so dependents cannot compile against
-the umbrella's published version — `cargo publish` verifies against the
-registry and fails before uploading.
+Don't publish new crates manually from the previous release tag.
+Dependents can't compile with an unpublished dependency version, and `cargo publish` checks registry dependencies before uploading.
 
-Crates carried over from the retired `publish-crates.yml` still point at the
-old workflow, and crates.io has no edit UI. Delete and re-add those publisher
-entries.
+For crates with a publisher tied to the retired `publish-crates.yml`, delete and recreate the publisher entry with the current workflow.
 
-Then enable **Trusted Publishing only** per crate, so a leaked token
-cannot publish aozora. Do this *after* a green OIDC release, never before:
-a failed OIDC publish would otherwise leave no way back in. The bootstrap
-release does not prove OIDC because the token is present; use the next normal
-release as that proof.
+Enable **Trusted Publishing only** per crate after a successful OIDC release.
+The setting prevents token-based publication, so confirm the OIDC path before removing the fallback.
+The token-authenticated bootstrap release supplies no OIDC evidence.
+Use the next normal release to verify the exchange.
 
-### 4. PyPI — tokenless from day one
+### 4. PyPI pending publisher
 
-PyPI has a **pending publisher**, so no bootstrap. Add one (Publishing →
-pending publisher) with the distribution name of `aozora`, owner
-`P4suta`, repository `aozora`, workflow `publish-pypi.yml`, environment
-`release`.
+PyPI supports a pending publisher without a bootstrap token.
+Add a pending publisher for distribution `aozora`, owner `P4suta`, repository `aozora`, workflow `publish-pypi.yml`, and environment `release`.
 
-Then publish promptly — a pending publisher does **not** reserve the name
-until first use, so register and publish back to back. The first OIDC
-upload creates the project and promotes the publisher.
+A pending publisher doesn't reserve the package name until first use.
+Register and publish in the same release window.
+The first OIDC upload creates the project and promotes the publisher.
 
-### 5. npm — existing package, configure OIDC directly
+### 5. Package trusted publisher
 
-The `aozora-wasm` package already exists, so no npm token bootstrap is needed.
-Register its trusted publisher with owner `P4suta`, repository `aozora`,
-workflow `publish-npm.yml`, and environment `release`. Trusted Publishing
-requires npm CLI ≥ 11.5.1 and Node ≥ 22.14.0; the workflow upgrades npm on the
-runner.
+The `aozora-wasm` package already exists and needs no npm token bootstrap.
+Register its trusted publisher with owner `P4suta`, repository `aozora`, workflow `publish-npm.yml`, and environment `release`.
+Trusted Publishing requires npm CLI ≥ 11.5.1 and Node ≥ 22.14.0.
+The workflow upgrades npm on the runner.
 
-Enable npm's setting that disallows token publication after the first green
-OIDC release.
+Turn off token publication in npm after the first successful OIDC release.
 
-### 6. VS Code Marketplace & Open VSX — optional, no OIDC
+### 6. Optional editor marketplaces
 
-These are disabled for package releases under
-[ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md).
-Do not create their credentials until explicitly opting into editor
-publication. No OIDC publishing exists, so any future credentials belong on
-the `release` environment behind its approval gate:
+Standard package releases omit editor marketplaces under [ADR-0049](../adr/0049-editor-marketplaces-are-opt-in-release-channels.md).
+Create marketplace credentials only after explicitly opting into editor publication.
+The channels require tokens in the protected `release` environment:
 
 ```sh
 gh secret set VSCE_PAT --env release   # Azure DevOps PAT (Marketplace)
@@ -184,8 +154,8 @@ gh secret set OVSX_PAT --env release   # Open VSX token
 
 ### 7. Keep repository-level copies absent
 
-Repository secrets are readable by any workflow run, so they silently
-defeat the environment gate. If any old copies exist:
+Repository secrets lack the environment approval boundary.
+Delete any old marketplace-token copies:
 
 ```sh
 gh secret delete VSCE_PAT
@@ -201,20 +171,19 @@ gh secret list --env release-plz      # App credentials; bootstrap token only te
 gh api repos/P4suta/aozora/environments/release/deployment-branch-policies
 ```
 
-The `Scorecard supply-chain security` workflow keeps the Token-Permissions
-and Pinned-Dependencies posture from regressing.
+The `Scorecard supply-chain security` workflow checks Token-Permissions and Pinned-Dependencies.
 
-The release itself is in [Release process](release.md). Each protected
-publisher needs approval, and publishing the completed GitHub draft is a
-separate final action.
+[Release process](release.md) describes publication.
+Each protected publisher needs approval.
+Publishing the completed GitHub draft requires a separate final action.
 
 ## References
 
-- GitHub — [security hardening](https://docs.github.com/en/actions/reference/security/secure-use),
-  [environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
-  [OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect)
-- [crates.io](https://crates.io/docs/trusted-publishing) ·
-  [release-plz](https://release-plz.dev/docs/github/quickstart) ·
-  [PyPI](https://docs.pypi.org/trusted-publishers/) ·
-  [npm](https://docs.npmjs.com/trusted-publishers/)
+- GitHub [security hardening](https://docs.github.com/en/actions/reference/security/secure-use)
+- GitHub [environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+- GitHub [OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect)
+- [crates.io](https://crates.io/docs/trusted-publishing)
+- [release-plz](https://release-plz.dev/docs/github/quickstart)
+- [PyPI](https://docs.pypi.org/trusted-publishers/)
+- [npm](https://docs.npmjs.com/trusted-publishers/)
 - [OpenSSF Scorecard](https://github.com/ossf/scorecard)
