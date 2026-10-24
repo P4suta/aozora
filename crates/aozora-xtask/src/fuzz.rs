@@ -261,6 +261,9 @@ fn soak(
         if digest(input)? != before {
             return Err("fuzz input changed during replay".into());
         }
+        if inputs(directory.path())? != retained {
+            return Err("fuzz artifact inventory changed during replay".into());
+        }
         input_hash = Some(before);
         replay
     } else {
@@ -573,6 +576,31 @@ mod tests {
             );
             assert_eq!(fs::read(input).unwrap(), b"original bytes");
         }
+    }
+
+    #[test]
+    fn replay_artifact_changes_invalidate_a_failure_report() {
+        let (_root, project) = fixture();
+        let mut calls = 0;
+        let result = soak(&project, NonZeroU32::new(1).unwrap(), &mut |command| {
+            calls += 1;
+            match calls {
+                1 => {
+                    build(&project, command);
+                    Ok(Some(0))
+                }
+                2 => {
+                    fs::write(artifacts(command).join("crash-input"), b"original").unwrap();
+                    Ok(Some(FAILURE_EXIT))
+                }
+                3 => {
+                    fs::write(artifacts(command).join("oom-input"), b"original").unwrap();
+                    Ok(Some(FAILURE_EXIT))
+                }
+                _ => panic!("unexpected replay"),
+            }
+        });
+        assert!(result.unwrap_err().contains("artifact inventory changed"));
     }
 
     #[test]
