@@ -15,9 +15,11 @@ mod coords;
 mod corpus;
 mod deps;
 mod developer;
+mod fuzz;
 mod grammar;
 mod msrv;
 mod perf;
+mod proofs;
 mod publish;
 mod ratchet;
 mod real_work;
@@ -63,6 +65,8 @@ enum Cmd {
     Deps(DepsArgs),
     /// Set up portable developer commands and inspect local prerequisites.
     Developer(developer::DeveloperArgs),
+    /// Run and replay fuzz targets without treating infrastructure failures as crashes.
+    Fuzz(fuzz::FuzzArgs),
     /// Build and inspect corpus archives.
     Corpus(CorpusArgs),
     /// Report GitHub Actions run timings.
@@ -350,6 +354,7 @@ fn main() {
         Cmd::Trace(args) => trace::dispatch(args),
         Cmd::Deps(args) => deps::dispatch(&args),
         Cmd::Developer(args) => developer::dispatch(args),
+        Cmd::Fuzz(args) => fuzz::dispatch(args),
         Cmd::Corpus(args) => corpus::dispatch(&args),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::Schema(args) => schema::dispatch(&args),

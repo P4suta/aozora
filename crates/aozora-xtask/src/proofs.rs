@@ -8,32 +8,56 @@ use std::process::{Command, Output};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
-const SOURCE: &str = "crates/aozora-xtask/src/developer/rules.rs";
-const PRODUCTION: &str =
-    "proofs::timestamps_require_a_nonfuture_check_within_the_exact_freshness_window";
-const REJECTING: [&str; 2] = [
-    "rejecting_controls::reject_a_future_timestamp_as_fresh",
-    "rejecting_controls::reject_an_extra_second_beyond_the_freshness_window",
-];
+#[derive(Clone, Copy)]
+pub(crate) struct Subject {
+    source: &'static str,
+    production: &'static str,
+    rejecting: &'static [&'static str],
+    output: &'static str,
+}
+
+pub(crate) const DEVELOPER: Subject = Subject {
+    source: "crates/aozora-xtask/src/developer/rules.rs",
+    production: "proofs::timestamps_require_a_nonfuture_check_within_the_exact_freshness_window",
+    rejecting: &[
+        "rejecting_controls::reject_a_future_timestamp_as_fresh",
+        "rejecting_controls::reject_an_extra_second_beyond_the_freshness_window",
+    ],
+    output: "target/developer-proofs",
+};
+
+pub(crate) const FUZZ: Subject = Subject {
+    source: "crates/aozora-xtask/src/fuzz/rules.rs",
+    production: "proofs::only_a_completed_run_or_a_reproduced_input_has_a_verdict",
+    rejecting: &[
+        "rejecting_controls::reject_a_startup_error_as_an_input_failure",
+        "rejecting_controls::reject_a_failure_without_a_retained_input",
+        "rejecting_controls::reject_an_input_that_replays_successfully",
+        "rejecting_controls::reject_a_replay_startup_error_as_an_input_failure",
+        "rejecting_controls::reject_an_interrupted_run_as_completed",
+        "rejecting_controls::reject_an_oom_artifact_as_a_crash",
+    ],
+    output: "target/fuzz-proofs",
+};
 const CHECKED_MIR: &str = "--edition=2024 -C overflow-checks=yes -C debug-assertions=yes -Z mir-opt-level=3 -Z mir-enable-passes=-Inline,-JumpThreading";
 const REQUIRED_COVERS: usize = 3;
 
 #[derive(Clone, Copy)]
 enum Kind {
-    Production,
-    Rejecting,
+    Production(Subject),
+    Rejecting(Subject),
 }
 
 impl Kind {
-    fn names(self) -> &'static [&'static str] {
+    fn names(self) -> Vec<&'static str> {
         match self {
-            Self::Production => &[PRODUCTION],
-            Self::Rejecting => &REJECTING,
+            Self::Production(subject) => vec![subject.production],
+            Self::Rejecting(subject) => subject.rejecting.to_vec(),
         }
     }
 
     fn rejecting(self) -> bool {
-        matches!(self, Self::Rejecting)
+        matches!(self, Self::Rejecting(_))
     }
 }
 
@@ -223,7 +247,7 @@ fn batch(kani: &Path, source: &Path, directory: &Path, kind: Kind) -> Result<(),
         "--export-json",
         report_argument,
     ];
-    for name in names {
+    for name in &names {
         arguments.extend(["--harness", name]);
     }
     arguments.extend(["--cbmc-args", "--object-bits", "12"]);
@@ -232,7 +256,7 @@ fn batch(kani: &Path, source: &Path, directory: &Path, kind: Kind) -> Result<(),
         .map_err(|error| format!("incomplete Kani report {}: {error}", report.display()))?;
     let decoded: Report =
         serde_json::from_slice(&bytes).map_err(|error| format!("decode Kani report: {error}"))?;
-    validate(&decoded, names, rejecting)?;
+    validate(&decoded, &names, rejecting)?;
     if output.status.success() == rejecting {
         return Err(format!("unexpected Kani exit status: {}", output.status));
     }
@@ -243,17 +267,17 @@ fn batch(kani: &Path, source: &Path, directory: &Path, kind: Kind) -> Result<(),
     clippy::print_stdout,
     reason = "the proof command reports its exact source identity and retained evidence"
 )]
-pub(super) fn verify(root: &Path) -> Result<(), String> {
+pub(crate) fn verify(root: &Path, subject: Subject) -> Result<(), String> {
     if !cfg!(target_os = "linux") {
-        return Err("developer proofs require the pinned Linux verifier; use the bounded Linux project runner on owner machines".into());
+        return Err("proofs require the pinned Linux verifier; use the bounded Linux project runner on owner machines".into());
     }
     let root = root
         .canonicalize()
         .map_err(|error| format!("proof root: {error}"))?;
-    let source = root.join(SOURCE);
+    let source = root.join(subject.source);
     let before = fs::read(&source).map_err(|error| format!("read proof source: {error}"))?;
     let (kani, version) = verifier(&root)?;
-    let output_root = root.join("target/developer-proofs");
+    let output_root = root.join(subject.output);
     fs::create_dir_all(&output_root).map_err(|error| format!("create proof output: {error}"))?;
     let directory = tempfile::Builder::new()
         .prefix("run-")
@@ -273,7 +297,9 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("read compiled proof inventory: {error}"))?;
     let inventory: Inventory = serde_json::from_slice(&metadata)
         .map_err(|error| format!("decode proof inventory: {error}"))?;
-    let expected: BTreeSet<_> = iter::once(PRODUCTION).chain(REJECTING).collect();
+    let expected: BTreeSet<_> = iter::once(subject.production)
+        .chain(subject.rejecting.iter().copied())
+        .collect();
     let declared: BTreeSet<_> = inventory
         .proof_harnesses
         .iter()
@@ -282,8 +308,8 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     if declared != expected || inventory.proof_harnesses.len() != expected.len() {
         return Err("the compiled proof inventory differs from the complete declared production and rejection inventory".into());
     }
-    batch(&kani, &source, &directory, Kind::Production)?;
-    batch(&kani, &source, &directory, Kind::Rejecting)?;
+    batch(&kani, &source, &directory, Kind::Production(subject))?;
+    batch(&kani, &source, &directory, Kind::Rejecting(subject))?;
     if fs::read(&source).map_err(|error| format!("recheck proof source: {error}"))? != before {
         return Err("the production source changed during verification".into());
     }
@@ -302,9 +328,9 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
         verifier_digests.insert(name.into(), format!("{:x}", Sha256::digest(bytes)).into());
     }
     let receipt = serde_json::json!({
-        "source": SOURCE, "source_sha256": digest, "kani_version": version,
+        "source": subject.source, "source_sha256": digest, "kani_version": version,
         "verifier_sha256": verifier_digests, "rustflags": CHECKED_MIR,
-        "production": PRODUCTION, "rejecting": REJECTING,
+        "production": subject.production, "rejecting": subject.rejecting,
         "harness_timeout_seconds": 60, "object_bits": 12, "completed": true
     });
     fs::write(
@@ -313,7 +339,7 @@ pub(super) fn verify(root: &Path) -> Result<(), String> {
     )
     .map_err(|error| format!("retain proof identity: {error}"))?;
     println!(
-        "Verified developer rules sha256:{digest}; retained evidence at {}",
+        "Verified rules sha256:{digest}; retained evidence at {}",
         directory.display()
     );
     Ok(())

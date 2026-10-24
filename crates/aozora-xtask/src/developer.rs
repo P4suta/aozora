@@ -8,7 +8,8 @@ use clap::{Args, Subcommand};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-mod proofs;
+use crate::proofs;
+
 mod rules;
 
 const DEPENDENCY_MARKER: &str = "target/.deps-check.timestamp";
@@ -69,7 +70,7 @@ pub(crate) fn dispatch(args: DeveloperArgs) -> Result<(), String> {
         }
         DeveloperCommand::Hooks(root) => hooks(&root.root, "install"),
         DeveloperCommand::HooksUninstall(root) => hooks(&root.root, "uninstall"),
-        DeveloperCommand::Prove(root) => proofs::verify(&root.root),
+        DeveloperCommand::Prove(root) => proofs::verify(&root.root, proofs::DEVELOPER),
     }
 }
 

@@ -10,10 +10,12 @@ concurrency:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   soak:
+    permissions:
+      contents: read
+      issues: write # Record confirmed inputs under docs/adr/fuzz-reports-require-reproducible-target-failures.md.
     name: soak (${{ matrix.crate }}/${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -29,12 +31,14 @@ jobs:
           - { crate: encoding, target: decode_sjis }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
+          install_args: rust@1.99.1 rust@nightly-2026-07-15 just cargo:cargo-fuzz
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: fuzz-${{ matrix.crate }}-${{ matrix.target }}
@@ -49,32 +53,20 @@ jobs:
 
       - name: Fuzz soak (600 s)
         id: fuzz
+        continue-on-error: true
         env:
           CRATE: ${{ matrix.crate }}
           TARGET: ${{ matrix.target }}
-        run: |
-          set +e
-          cd "crates/aozora/fuzz/${CRATE}"
-          cargo +nightly-2026-07-15 fuzz run \
-            --target x86_64-unknown-linux-gnu "${TARGET}" -- -max_total_time=600
-          code=$?
-          set -e
-          if [ "$code" -ne 0 ]; then
-            echo "crashed=true" >> "$GITHUB_OUTPUT"
-            echo "::warning title=fuzz crash::${CRATE}/${TARGET} crashed (cargo-fuzz exit ${code}) — see artifact + tracking issue"
-          else
-            echo "crashed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${CRATE}/${TARGET} soaked 600 s with no crash"
-          fi
+        run: cargo run --locked -p aozora-xtask -q -- fuzz soak "$CRATE" "$TARGET"
 
-      - name: Upload crash artifacts
-        if: steps.fuzz.outputs.crashed == 'true'
+      - name: Upload retained fuzz evidence
+        if: always() && steps.fuzz.outputs.artifact_directory != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: fuzz-crash-${{ matrix.crate }}-${{ matrix.target }}
-          path: crates/aozora/fuzz/${{ matrix.crate }}/artifacts/${{ matrix.target }}/
+          name: fuzz-${{ steps.fuzz.outputs.kind }}-${{ matrix.crate }}-${{ matrix.target }}
+          path: ${{ steps.fuzz.outputs.artifact_directory }}/
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Open / update crash tracking issue
         if: steps.fuzz.outputs.crashed == 'true'
@@ -95,7 +87,7 @@ jobs:
             --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
 
           {
-            echo "The manual fuzz soak crashed **\`${CRATE}/${TARGET}\`**."
+            echo "The manual fuzz soak retained an input that reproduces in **\`${CRATE}/${TARGET}\`**."
             echo
             echo "Workflow run: ${RUN_URL}"
             echo
@@ -124,8 +116,8 @@ jobs:
             echo "Opened a new tracking issue"
           fi
 
-      - name: Fail on crash
-        if: steps.fuzz.outputs.crashed == 'true'
+      - name: Require a completed fuzz result
+        if: always() && steps.fuzz.outcome != 'success'
         run: |
-          echo "::error title=fuzz crash::${{ matrix.crate }}/${{ matrix.target }} crashed — see the fuzz-crash tracking issue"
+          echo "::error::Fuzz verification failed or is incomplete; inspect the engine result and retained evidence."
           exit 1
