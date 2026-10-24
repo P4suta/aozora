@@ -171,6 +171,10 @@ backend = "cargo:cargo-shear"
 version = "2.13.1"
 backend = "cargo:git-cliff"
 
+[[tools."cargo:kani-verifier"]]
+version = "0.68.0"
+backend = "cargo:kani-verifier"
+
 [[tools."cargo:wasm-pack"]]
 version = "0.15.0"
 backend = "cargo:wasm-pack"

@@ -57,6 +57,7 @@ ambiguous_negative_literals = "warn"
 
 dead_code = "deny"
 missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 rust_2024_compatibility = { level = "warn", priority = -1 }
 

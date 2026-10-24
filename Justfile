@@ -1,6 +1,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set dotenv-load := false
 
+[private]
 _FUZZ_TOOLCHAIN := "nightly-2026-07-15"
 
 [doc("List available recipes.")]
@@ -9,25 +10,8 @@ default:
 
 [doc("Install the locked development tools and hooks, then run tests.")]
 setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    command -v mise >/dev/null || { echo "❌ mise not found — install it from https://mise.jdx.dev/"; exit 1; }
     scripts/check-native-prerequisites.sh
-    export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
-    mapfile -t tools < <(mise config get -f mise.toml tools \
-      | sed '/^\[\[/,$d' \
-      | sed -nE 's/^"?([^" =]+)"?[[:space:]]*=.*/\1/p')
-    tools+=(rust@1.99.1 rust@nightly-2026-07-15)
-    mise install --locked "${tools[@]}"
-    stable_toolchain=$(awk -F'"' '/^channel/ { print $2; exit }' rust-toolchain.toml)
-    rustup component add --toolchain "$stable_toolchain" clippy rustfmt rust-src llvm-tools-preview
-    rustup target add --toolchain "$stable_toolchain" wasm32-unknown-unknown wasm32-wasip1
-    rustup component add --toolchain "{{_FUZZ_TOOLCHAIN}}" rust-src miri
-    echo "▶ [1/2] Installing git hooks…"
-    just hooks
-    echo "▶ [2/2] Verifying the toolchain…"
-    just test
-    echo "✅ Setup complete. Try 'just --list'."
+    cargo run -p aozora-xtask -q -- developer setup
 
 [doc("Diagnose the native development environment without changing it.")]
 doctor:
@@ -42,11 +26,7 @@ doctor:
     command -v mise >/dev/null \
       && ok "mise installed" \
       || bad "mise not found" "install mise from https://mise.jdx.dev/"
-    mapfile -t tools < <(mise config get -f mise.toml tools \
-      | sed '/^\[\[/,$d' \
-      | sed -nE 's/^"?([^" =]+)"?[[:space:]]*=.*/\1/p')
-    tools+=(rust@1.99.1 rust@nightly-2026-07-15)
-    mise install --locked --dry-run "${tools[@]}" >/dev/null 2>&1 \
+    mise install --locked --dry-run >/dev/null 2>&1 \
       && ok "mise.lock matches mise.toml" \
       || bad "mise.lock is stale or missing" "run 'mise lock' and commit the result"
     for tool in cargo rustc just lefthook typos committed actionlint taplo bun node go quicktype wasm-opt; do
@@ -87,9 +67,9 @@ doctor:
         && ok "Rust target: $target" \
         || bad "Rust target missing: $target" "run 'just setup'"
     done
-    rustup component list --toolchain "{{_FUZZ_TOOLCHAIN}}" --installed 2>/dev/null | grep -q '^miri-' \
-      && ok "Rust component: miri ({{_FUZZ_TOOLCHAIN}})" \
-      || bad "Rust component missing: miri ({{_FUZZ_TOOLCHAIN}})" "run 'just setup'"
+    rustup component list --toolchain "{{ _FUZZ_TOOLCHAIN }}" --installed 2>/dev/null | grep -q '^miri-' \
+      && ok "Rust component: miri ({{ _FUZZ_TOOLCHAIN }})" \
+      || bad "Rust component missing: miri ({{ _FUZZ_TOOLCHAIN }})" "run 'just setup'"
     { [ -n "${AOZORA_CORPUS_ROOT:-}" ] && [ -d "${AOZORA_CORPUS_ROOT:-}" ]; } \
       && ok "AOZORA_CORPUS_ROOT set ($AOZORA_CORPUS_ROOT)" \
       || note "AOZORA_CORPUS_ROOT unset (corpus sweeps skip)" "export AOZORA_CORPUS_ROOT=\$HOME/aozora-corpus (optional)"
@@ -97,8 +77,8 @@ doctor:
     [ "${avail_kb:-0}" -ge 5242880 ] \
       && ok "disk headroom (>= 5 GB free)" \
       || note "less than ~5 GB free here" "Cargo, Bun, and browser artifacts need headroom"
-    if native_output=$(scripts/check-native-prerequisites.sh 2>&1); then
-      ok "native prerequisites: Clang/libclang and Valgrind"
+    if native_output=$(just native-prerequisites 2>&1); then
+      ok "native prerequisite policy for this host"
     else
       printf '%s\n' "$native_output"
       bad "native prerequisites unavailable" "install the packages listed above"
@@ -119,42 +99,43 @@ doctor:
 
 [doc("Check Clang, libclang, and Valgrind availability.")]
 native-prerequisites:
-    scripts/check-native-prerequisites.sh
+    cargo run -p aozora-xtask -q -- developer native-prerequisites
 
 # Bench-only dependencies are excluded to keep routine builds fast (ADR-0004).
+[private]
 _ws := "--workspace --exclude aozora-bench"
 
 [doc("Build workspace targets except the benchmark harness.")]
 build:
-    cargo build {{_ws}} --all-targets
+    cargo build {{ _ws }} --all-targets
 
 [doc("Type-check workspace targets except the benchmark harness.")]
 check:
-    cargo check {{_ws}} --all-targets
+    cargo check {{ _ws }} --all-targets
 
 [doc("Build workspace release binaries except the benchmark harness.")]
 build-release:
-    cargo build --release {{_ws}}
+    cargo build --release {{ _ws }}
 
 [doc("Run the aozora CLI with the supplied arguments.")]
 run *ARGS:
-    cargo run --package aozora-cli --quiet -- {{ARGS}}
+    cargo run --package aozora-cli --quiet -- {{ ARGS }}
 
 [doc("Run a library example by name.")]
 example NAME *ARGS:
-    cargo run -p aozora --example {{NAME}} {{ARGS}}
+    cargo run -p aozora --example {{ NAME }} {{ ARGS }}
 
 [doc("Run unit, integration, and snapshot tests with nextest.")]
 test *ARGS:
-    cargo nextest run {{_ws}} --all-targets {{ARGS}}
+    cargo nextest run {{ _ws }} --all-targets {{ ARGS }}
 
 [doc("Run the fast gate tests with a fixed property budget and no corpus binaries.")]
 test-fast:
-    env AOZORA_PROPTEST_CASES=128 PROPTEST_RNG_SEED=20261022 cargo nextest run {{_ws}} --all-targets -E 'not binary(corpus_sweep) and not binary(corpus_document_edits)'
+    env AOZORA_PROPTEST_CASES=128 PROPTEST_RNG_SEED=20261022 cargo nextest run {{ _ws }} --all-targets -E 'not binary(corpus_sweep) and not binary(corpus_document_edits)'
 
 [doc("Run tests matching a nextest filter expression.")]
 t FILTER *ARGS:
-    cargo nextest run {{_ws}} -E 'test({{FILTER}})' {{ARGS}}
+    cargo nextest run {{ _ws }} -E 'test({{ FILTER }})' {{ ARGS }}
 
 [doc("Run workspace doctests.")]
 test-doc:
@@ -166,7 +147,7 @@ test-doc-all:
 
 [doc("Refresh snapshots with all optional features enabled.")]
 snapshot-update:
-    env INSTA_UPDATE=always cargo nextest run {{_ws}} --all-features --all-targets
+    env INSTA_UPDATE=always cargo nextest run {{ _ws }} --all-features --all-targets
 
 [doc("Check rendered output against conformance goldens.")]
 render-gate:
@@ -214,15 +195,15 @@ publish-check:
 
 [doc("Build and verify local crate archives without publishing.")]
 artifact-crates *ARGS:
-    cargo run -p aozora-xtask -q -- artifacts crates {{ARGS}}
+    cargo run -p aozora-xtask -q -- artifacts crates {{ ARGS }}
 
 [doc("Verify local and remote release preconditions.")]
 rearm-preflight *ARGS:
-    cargo run -p aozora-xtask -q -- release preflight {{ARGS}}
+    cargo run -p aozora-xtask -q -- release preflight {{ ARGS }}
 
 [doc("Dispatch PyPI and npm publishing rehearsals.")]
 rearm-rehearse *ARGS:
-    cargo run -p aozora-xtask -q -- release rehearse {{ARGS}}
+    cargo run -p aozora-xtask -q -- release rehearse {{ ARGS }}
 
 [doc("Check MSRV policy and toolchain pin consistency.")]
 msrv-check:
@@ -250,18 +231,14 @@ drift-gate:
     cargo run -p aozora-xtask -q -- msrv check
     cargo run -p aozora-xtask -q -- lint coordinates
 
-[doc("Create an ADR from the template using the supplied title.")]
-new-adr TITLE:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    last=$(ls docs/adr/ | grep -oE '^[0-9]{4}' | sort -n | tail -1)
-    n=$(printf '%04d' $((10#$last + 1)))
-    slug=$(printf '%s' "{{TITLE}}" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-')
-    f="docs/adr/${n}-${slug}.md"
-    [[ -e "$f" ]] && { echo "$f already exists" >&2; exit 1; }
-    cp docs/adr/0000-template.md "$f"
-    sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
-    echo "Created $f"
+[doc("Create a proposed ADR with a descriptive filename and front-matter date.")]
+[positional-arguments]
+new-adr TITLE *ARGS:
+    cargo run -p aozora-xtask -q -- developer new-adr "$@"
+
+[doc("Prove the portable developer rules and reject their counterexamples.")]
+developer-proofs:
+    cargo run -p aozora-xtask -q -- developer prove
 
 [doc("Run parser, tree-sitter, and real-work conformance gates.")]
 conformance:
@@ -456,23 +433,24 @@ artifact-size-gate: baseline-ratchet extism-build
         cp target/dist/aozora target/release-ready-build/'
     cargo run -p aozora-xtask -q -- artifacts size-check
 
+[private]
 _fuzz_target := "x86_64-unknown-linux-gnu"
 
 [doc("Run a fuzz package with caller-supplied target and arguments.")]
 fuzz CRATE *ARGS:
-    bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . {{ARGS}}'
+    bash -c 'cd crates/aozora/fuzz/{{ CRATE }} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . {{ ARGS }}'
 
 [doc("Fuzz one target for 60 seconds.")]
 fuzz-quick CRATE TARGET:
-    bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
+    bash -c 'cd crates/aozora/fuzz/{{ CRATE }} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . --target {{ _fuzz_target }} {{ TARGET }} -- -max_total_time=60'
 
 [doc("Fuzz one target for 5 minutes.")]
 fuzz-deep CRATE TARGET:
-    bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
+    bash -c 'cd crates/aozora/fuzz/{{ CRATE }} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . --target {{ _fuzz_target }} {{ TARGET }} -- -max_total_time=300'
 
 [doc("Fuzz one target for 15 minutes.")]
 fuzz-marathon CRATE TARGET:
-    bash -c 'cd crates/aozora/fuzz/{{CRATE}} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
+    bash -c 'cd crates/aozora/fuzz/{{ CRATE }} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . --target {{ _fuzz_target }} {{ TARGET }} -- -max_total_time=900'
 
 [doc("Fuzz every registered target for 60 seconds each.")]
 fuzz-all-quick:
@@ -496,8 +474,8 @@ fuzz-all-deep:
 fuzz-triage CRATE TARGET:
     #!/usr/bin/env bash
     set -euo pipefail
-    crate="{{CRATE}}"
-    target="{{TARGET}}"
+    crate="{{ CRATE }}"
+    target="{{ TARGET }}"
     art_dir="crates/aozora/fuzz/${crate}/artifacts/${target}"
     if [[ ! -d "$art_dir" ]]; then
         echo "fuzz-triage: no artifacts for ${crate} / ${target}"
@@ -507,7 +485,7 @@ fuzz-triage CRATE TARGET:
     for art in $(find "$art_dir" -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) | sort); do
         rel="${art#crates/aozora/fuzz/${crate}/}"
         echo "==> ${art}"
-        out=$(bash -c "cd crates/aozora/fuzz/${crate} && cargo +{{_FUZZ_TOOLCHAIN}} fuzz run --fuzz-dir . --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
+        out=$(bash -c "cd crates/aozora/fuzz/${crate} && cargo +{{ _FUZZ_TOOLCHAIN }} fuzz run --fuzz-dir . --target {{ _fuzz_target }} ${target} ${rel} 2>&1" || true)
         panic_block=$(awk '
             /^thread .* panicked at/ { capturing = 1 }
             capturing {
@@ -535,14 +513,14 @@ fuzz-triage CRATE TARGET:
 fuzz-promote CRATE TARGET ARTIFACT:
     #!/usr/bin/env bash
     set -euo pipefail
-    src="crates/aozora/fuzz/{{CRATE}}/artifacts/{{TARGET}}/{{ARTIFACT}}"
-    dst_dir="crates/aozora/tests/fuzz_regressions/{{CRATE}}/{{TARGET}}"
+    src="crates/aozora/fuzz/{{ CRATE }}/artifacts/{{ TARGET }}/{{ ARTIFACT }}"
+    dst_dir="crates/aozora/tests/fuzz_regressions/{{ CRATE }}/{{ TARGET }}"
     if [[ ! -f "$src" ]]; then
         echo "fuzz-promote: artifact not found: $src" >&2
         exit 1
     fi
-    bash -c "mkdir -p '$dst_dir' && mv '$src' '$dst_dir/{{ARTIFACT}}'"
-    echo "promoted ${src} -> ${dst_dir}/{{ARTIFACT}}"
+    bash -c "mkdir -p '$dst_dir' && mv '$src' '$dst_dir/{{ ARTIFACT }}'"
+    echo "promoted ${src} -> ${dst_dir}/{{ ARTIFACT }}"
 
 [doc("Count pending crashes and pinned regressions per fuzz target.")]
 fuzz-status:
@@ -576,15 +554,15 @@ fuzz-status:
 
 [doc("Run Criterion benchmarks.")]
 bench *ARGS:
-    cargo bench --workspace {{ARGS}}
+    cargo bench --workspace {{ ARGS }}
 
 [doc("Save benchmark results as a named baseline.")]
 bench-baseline NAME="main":
-    cargo bench --workspace -- --save-baseline {{NAME}}
+    cargo bench --workspace -- --save-baseline {{ NAME }}
 
 [doc("Compare benchmark results with a named baseline.")]
 bench-compare NAME="main":
-    cargo bench --workspace -- --baseline {{NAME}}
+    cargo bench --workspace -- --baseline {{ NAME }}
 
 [doc("Profile heap allocations for synthetic parsing and rendering.")]
 dhat:
@@ -594,16 +572,18 @@ dhat:
 latency:
     cargo run --release -p aozora-bench --example latency_synthetic
 
+[private]
 _COV_FLOOR := "84"
+[private]
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
 [doc("Check workspace region coverage against the configured floor.")]
 coverage:
     sh -c 'rm -rf "${CARGO_TARGET_DIR:-target}/llvm-cov-target"'
     cargo llvm-cov nextest \
-        {{_ws}} \
-        --ignore-filename-regex '{{_COV_IGNORE}}' \
-        --fail-under-regions {{_COV_FLOOR}}
+        {{ _ws }} \
+        --ignore-filename-regex '{{ _COV_IGNORE }}' \
+        --fail-under-regions {{ _COV_FLOOR }}
 
 [doc("Run CLI and in-process LSP tests with all optional features.")]
 test-internals:
@@ -612,21 +592,21 @@ test-internals:
 [doc("Generate an HTML coverage report without enforcing a threshold.")]
 coverage-html:
     cargo llvm-cov nextest \
-        {{_ws}} \
-        --ignore-filename-regex '{{_COV_IGNORE}}' \
+        {{ _ws }} \
+        --ignore-filename-regex '{{ _COV_IGNORE }}' \
         --html --output-dir coverage/html
 
 [doc("Report branch coverage with nightly Rust.")]
 coverage-branch:
-    cargo +{{_FUZZ_TOOLCHAIN}} llvm-cov nextest \
+    cargo +{{ _FUZZ_TOOLCHAIN }} llvm-cov nextest \
         --branch \
-        {{_ws}} \
-        --ignore-filename-regex '{{_COV_IGNORE}}'
+        {{ _ws }} \
+        --ignore-filename-regex '{{ _COV_IGNORE }}'
 
 [doc("Run mutation tests with the supplied cargo-mutants arguments.")]
 mutants *ARGS:
     set -f; CARGO_TARGET_DIR=target/mutants CARGO_INCREMENTAL=1 RUSTC_WRAPPER= \
-      cargo mutants --config mutants.toml -j 1 {{ARGS}}
+      cargo mutants --config mutants.toml -j 1 {{ ARGS }}
 
 [doc("Run formatting, Clippy, spelling, and rustdoc checks.")]
 lint: fmt-check clippy typos doc
@@ -652,9 +632,9 @@ reuse:
 [doc("Lint libraries, binaries, and tests except the benchmark harness.")]
 clippy:
     # CLI lint-group flags would override workspace per-lint exceptions (ADR-0004).
-    cargo clippy {{_ws}} --lib --bins --all-features -- -D warnings
+    cargo clippy {{ _ws }} --lib --bins --all-features -- -D warnings
     # Test diagnostics follow docs/adr/repository-lint-exceptions.md.
-    cargo clippy {{_ws}} --tests --all-features -- \
+    cargo clippy {{ _ws }} --tests --all-features -- \
       -D warnings -A clippy::unwrap_used -A clippy::expect_used \
       -A clippy::panic -A clippy::print_stdout -A clippy::print_stderr
 
@@ -693,8 +673,9 @@ shear:
 semver *ARGS:
     # API baseline exclusions follow docs/adr/repository-lint-exceptions.md.
     cargo semver-checks check-release --workspace \
-        --exclude tree-sitter-aozora {{ARGS}}
+        --exclude tree-sitter-aozora {{ ARGS }}
 
+[private]
 _deps_marker := "target/.deps-check.timestamp"
 
 [doc("List outdated direct workspace dependencies without failing.")]
@@ -720,8 +701,8 @@ deps-check:
     just outdated
     just audit
     just deny
-    @date -u +%FT%TZ > {{_deps_marker}}
-    @echo "[deps-check] OK — marker written to {{_deps_marker}}"
+    @date -u +%FT%TZ > {{ _deps_marker }}
+    @echo "[deps-check] OK — marker written to {{ _deps_marker }}"
 
 [doc("Install the weekly dependency-check systemd user timer.")]
 deps-timer-install:
@@ -736,20 +717,9 @@ deps-timer-uninstall:
     cargo run --release -p aozora-xtask -- deps uninstall-timer
 
 [doc("Report dependency-check freshness and fail when older than seven days.")]
-deps-status:
-    @if [ ! -f {{_deps_marker}} ]; then \
-        echo "[deps-status] never run; run 'just deps-check'"; \
-        exit 1; \
-    fi
-    @ts="$(cat {{_deps_marker}})"; \
-    age_secs=$(( $(date -u +%s) - $(date -u -d "$ts" +%s) )); \
-    age_days=$(( age_secs / 86400 )); \
-    if [ "$age_days" -gt 7 ]; then \
-        echo "[deps-status] last check $age_days days ago ($ts) — STALE; run 'just deps-check'"; \
-        exit 1; \
-    else \
-        echo "[deps-status] last check $age_days days ago ($ts) — fresh"; \
-    fi
+[positional-arguments]
+deps-status *ARGS:
+    cargo run -p aozora-xtask -q -- developer deps-status "$@"
 
 [doc("Build a profile-guided release binary using the configured corpus.")]
 pgo:
@@ -798,7 +768,7 @@ parity-wasm:
 
 [doc("Report GitHub Actions job and step timings for completed runs.")]
 ci-profile *ARGS:
-    cargo run -q --release -p aozora-xtask -- ci profile {{ARGS}}
+    cargo run -q --release -p aozora-xtask -- ci profile {{ ARGS }}
 
 [doc("Lint GitHub Actions workflows and embedded shell commands.")]
 actionlint:
@@ -914,7 +884,7 @@ ci-fuzz:
     for crate in pipeline render encoding; do
       (
         cd "crates/aozora/fuzz/$crate"
-        cargo +{{_FUZZ_TOOLCHAIN}} fuzz build --fuzz-dir . --target {{_fuzz_target}}
+        cargo +{{ _FUZZ_TOOLCHAIN }} fuzz build --fuzz-dir . --target {{ _fuzz_target }}
       )
     done
 
@@ -934,7 +904,7 @@ ci:
 
 [doc("Start the bacon watcher with an optional job name.")]
 watch JOB="":
-    bacon {{JOB}}
+    bacon {{ JOB }}
 
 [doc("Watch files and rerun Clippy.")]
 watch-lint:
@@ -946,11 +916,12 @@ watch-test:
 
 [doc("Watch files with plain output and the selected bacon job.")]
 watch-headless JOB="check":
-    bacon --headless --job {{JOB}}
+    bacon --headless --job {{ JOB }}
 
 [doc("Install Git hooks with Lefthook.")]
-hooks:
-    lefthook install
+[positional-arguments]
+hooks *ARGS:
+    cargo run -p aozora-xtask -q -- developer hooks "$@"
 
 [doc("Build and optimize the playground WASM package.")]
 playground-wasm:
@@ -1018,51 +989,52 @@ vscode-ci: _vscode-ensure
 
 [doc("Sample-profile one document relative to the configured corpus.")]
 samply-doc DOC:
-    cargo run --release -p aozora-xtask -- samply doc {{DOC}}
+    cargo run --release -p aozora-xtask -- samply doc {{ DOC }}
 
 [doc("Sample-profile corpus parsing for the requested repeat count.")]
 samply-corpus REPEAT="5":
-    cargo run --release -p aozora-xtask -- samply corpus {{REPEAT}}
+    cargo run --release -p aozora-xtask -- samply corpus {{ REPEAT }}
 
 [doc("Sample-profile corpus HTML rendering for the requested repeat count.")]
 samply-render REPEAT="5":
-    cargo run --release -p aozora-xtask -- samply render {{REPEAT}}
+    cargo run --release -p aozora-xtask -- samply render {{ REPEAT }}
 
 [doc("Cache symbolication for a saved trace and binary.")]
 trace-cache TRACE BIN="target/release/examples/throughput_by_class":
-    cargo run --release -p aozora-xtask -- trace cache {{TRACE}} {{BIN}}
+    cargo run --release -p aozora-xtask -- trace cache {{ TRACE }} {{ BIN }}
 
 [doc("Show the hottest leaf frames in a saved trace.")]
 trace-hot TRACE TOP="25":
-    cargo run --release -p aozora-xtask -- trace hot {{TRACE}} --top {{TOP}}
+    cargo run --release -p aozora-xtask -- trace hot {{ TRACE }} --top {{ TOP }}
 
 [doc("Show the hottest frames including descendant samples.")]
 trace-hot-inclusive TRACE TOP="25":
-    cargo run --release -p aozora-xtask -- trace hot {{TRACE}} --top {{TOP}} --inclusive
+    cargo run --release -p aozora-xtask -- trace hot {{ TRACE }} --top {{ TOP }} --inclusive
 
 [doc("Show trace sample counts by library.")]
 trace-libs TRACE:
-    cargo run --release -p aozora-xtask -- trace libs {{TRACE}}
+    cargo run --release -p aozora-xtask -- trace libs {{ TRACE }}
 
 [doc("Group trace samples by parser and corpus phase.")]
 trace-rollup TRACE:
-    cargo run --release -p aozora-xtask -- trace rollup {{TRACE}}
+    cargo run --release -p aozora-xtask -- trace rollup {{ TRACE }}
 
 [doc("Show call stacks matching a regular expression.")]
 trace-stacks TRACE PATTERN LIMIT="5":
-    cargo run --release -p aozora-xtask -- trace stacks {{TRACE}} --pattern {{PATTERN}} --limit {{LIMIT}}
+    cargo run --release -p aozora-xtask -- trace stacks {{ TRACE }} --pattern {{ PATTERN }} --limit {{ LIMIT }}
 
 [doc("Compare hot frames between two saved traces.")]
 trace-compare BEFORE AFTER TOP="25":
-    cargo run --release -p aozora-xtask -- trace compare {{BEFORE}} {{AFTER}} --top {{TOP}}
+    cargo run --release -p aozora-xtask -- trace compare {{ BEFORE }} {{ AFTER }} --top {{ TOP }}
 
 [doc("Emit folded stacks for a flamegraph renderer.")]
 trace-flame TRACE:
-    cargo run --release -p aozora-xtask -- trace flame {{TRACE}}
+    cargo run --release -p aozora-xtask -- trace flame {{ TRACE }}
 
 [doc("Remove Lefthook Git hook stubs.")]
-hooks-uninstall:
-    lefthook uninstall
+[positional-arguments]
+hooks-uninstall *ARGS:
+    cargo run -p aozora-xtask -q -- developer hooks-uninstall "$@"
 
 [doc("Remove workspace build artifacts.")]
 clean:
