@@ -18,7 +18,7 @@ members = [
 exclude = ["crates/aozora-go"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 # rustyline's file_lock use sets the measured MSRV (ADR-0034).
 rust-version = "1.89.0"
@@ -120,8 +120,8 @@ redundant_pub_crate = "allow"
 large_enum_variant = "allow"
 
 [workspace.dependencies]
-aozora = { version = "0.5.0", path = "crates/aozora" }
-tree-sitter-aozora = { version = "0.5.0", path = "crates/tree-sitter-aozora" }
+aozora = { version = "0.5.1", path = "crates/aozora" }
+tree-sitter-aozora = { version = "0.5.1", path = "crates/tree-sitter-aozora" }
 aozora-trace = { path = "crates/aozora-trace" }
 
 bumpalo = { version = "3.20", features = ["collections"] }
