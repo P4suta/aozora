@@ -2,7 +2,9 @@
 set -euo pipefail
 
 case "$(uname -s)" in
-Linux) ;;
+Linux)
+	export PATH="${PATH}:/usr/sbin:/sbin"
+	;;
 Darwin)
 	printf '%s\n' 'Linux Clang/libclang and Valgrind checks do not apply on macOS.'
 	exit 0
@@ -56,7 +58,7 @@ if [[ -n ${LIBCLANG_PATH:-} ]]; then
 	if [[ ${libclang_library_ready} != true ]]; then
 		failures+=("LIBCLANG_PATH does not contain libclang")
 	fi
-elif ! ldconfig -p 2>/dev/null | grep -Eq 'libclang(-[0-9]+)?\.so'; then
+elif ! ldconfig -p 2>/dev/null | grep -E 'libclang(-[0-9]+)?\.so' >/dev/null; then
 	failures+=("libclang is not available to the dynamic linker")
 fi
 
