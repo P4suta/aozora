@@ -1,63 +1,64 @@
 # AGENTS.md
 
-Contracts an agent cannot derive from the tree. Everything else is in
-`just --list`, `aozora --help`, and the code.
+Repository-specific requirements for agents.
+Use `just --list`, `aozora --help`, and the code for commands and behavior.
 
 ## Comments
 
-Default to none — the code is the source of truth, and a comment that
-restates it is drift waiting to happen (#553 shipped a table whose comment
-named a key it did not use, and nobody was checking). Write only the *why*
-the code cannot show.
+Default to no comments.
+Write only the rationale the code can't express.
 
-Never write a coordinate (`file.rs:417`), a hand-counted total ("14 kinds"),
-or a copy of code that lives elsewhere: each rots the moment its referent
-moves. Name a symbol instead — the compiler keeps that honest — and `xtask
-lint coordinates` rejects the coordinate form.
+Never write a source coordinate, a manually counted total, or a copy of code from another location.
+Name the relevant symbol so the compiler checks the reference.
+`xtask lint coordinates` rejects source coordinates.
 
-State an invariant as a check — an `assert!`, a type, a test, a gate — never
-as prose telling the next reader to uphold it. Prose is never re-read against
-the code.
+Express an invariant through an assertion, a type, a test, or a gate.
+Prose alone doesn't enforce an invariant.
 
-So a comment earns its place only as one of: a doc `missing_docs` requires (trimmed to what a reader needs), a load-bearing *why* that is underivable (cite the ADR or the corpus measurement), or something the toolchain demands (`// SAFETY:`, a `mutants::skip` reason, an item-level `#[expect(lint, reason = …)]`).
+A comment must serve one of these purposes:
+
+- Supply documentation that `missing_docs` requires, limited to what the reader needs.
+- Explain a rationale the code can't express.
+  Cite the decision record or corpus measurement.
+- Supply `// SAFETY:`, a `mutants::skip` reason, or an item-level `#[expect(lint, reason = …)]` when the toolchain requires it.
 
 ## Running anything
 
 The locked native mise environment is canonical.
 Run `./bootstrap` on a fresh clone, then use `just`.
 CI invokes the same fixed `just ci-*` suites.
-Do not install ad-hoc tool versions around `mise.toml` and `mise.lock`.
+Don't install ad hoc tool versions outside `mise.toml` and `mise.lock`.
 `just ci` mirrors the fast pull request gate and is the pre-push gate on Linux.
 Other hosts run `just ci-repo` before pushing.
 Heavy checks run in `release-ready`, as [the gate split](docs/adr/fast-pull-request-gate-and-release-gate.md) records.
 
-Commits must be signed and Conventional.
-Do not reach for `LEFTHOOK=0` or `--no-verify`.
+Sign commits and follow Conventional Commits.
+Don't use `LEFTHOOK=0` or `--no-verify`.
 
 ## The `aozora` CLI
 
-Deterministic, stdin→stdout, stable exit codes. Output carries no
-timestamps or randomness, so diffs are clean. Every document subcommand
-takes `-` for stdin.
+The CLI reads standard input and writes deterministic output with stable exit codes.
+Output contains no timestamps or random values.
+Every document subcommand accepts `-` for standard input.
 
 | code | meaning |
 |---|---|
-| `0` | parsed; diagnostics may have printed but were tolerated |
+| `0` | Parsing succeeded, including tolerated diagnostics |
 | `1` | `--strict` and at least one diagnostic |
-| `2` | usage error — bad flag, unreadable file, decode failure |
+| `2` | Usage error, unreadable file, or decode failure |
 | `3` | an `Internal` diagnostic fired: a bug in aozora, not bad input |
 
-`aozora render FILE | head` exits `0`. A closed pipe is success, not
-failure (ADR-0029), so it never masquerades as a `1`/`2`.
+`aozora render FILE | head` exits `0`.
+A closed pipe counts as success under ADR-0029, preserving the meaning of exit codes `1` and `2`.
 
-**`--format` defaults to `human` on a TTY and `json` when piped**, so a
-piped `aozora check` already yields machine output. Pass `--format json`
-(or `short`) explicitly anyway, and **never parse the `human` render** —
-it is width- and colour-dependent, the one non-deterministic surface.
+`--format` defaults to `human` on a terminal and `json` when piped.
+Pass `--format json` or `--format short` when parsing output.
+Never parse `human` output because its layout depends on terminal width and color settings.
 
 ## Where decisions live
 
-`docs/adr/` — read the ADR governing an area before changing it. Once
-accepted, an ADR is never edited; a later one supersedes it.
+Read the governing record under `docs/adr/` before changing its subject.
+Never edit an accepted record.
+A later record supersedes an accepted record.
 
-`docs/contrib/` — MSRV policy and release runbooks.
+`docs/contrib/` contains the Rust version support policy and release runbooks.

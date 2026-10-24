@@ -2,11 +2,11 @@
 
 <!-- One or two sentences: what this PR changes and why. -->
 
-## Type of change
+## Change category
 
 - [ ] Bug fix
-- [ ] New feature (new 青空文庫 notation, CLI flag, API surface, …)
-- [ ] Refactor (no behaviour change)
+- [ ] New notation, CLI flag, or API feature
+- [ ] Refactor without a behavior change
 - [ ] Documentation
 - [ ] CI / developer tooling
 
@@ -14,8 +14,7 @@
 
 - [ ] `just ci` passes on Linux, or `just ci-repo` passes on another host.
 - [ ] Added or updated tests that exercise the change.
-- [ ] Commit messages follow Conventional Commits (the `commit-msg`
-      hook enforces this).
+- [ ] Commit messages follow Conventional Commits, as the `commit-msg` hook requires.
 
 ## Related
 
