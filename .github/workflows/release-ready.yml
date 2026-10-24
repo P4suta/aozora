@@ -125,7 +125,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.99.1 just taplo github:crate-ci/typos cargo:cargo-nextest
+            rust@1.99.1 just lefthook taplo github:crate-ci/typos cargo:cargo-nextest
             cargo:cargo-llvm-cov cargo:cargo-deny cargo:cargo-audit
             cargo:cargo-shear cargo:cargo-semver-checks cargo:kani-verifier tree-sitter
             npm:quicktype node go
@@ -306,7 +306,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@nightly-2026-07-15
+          install_args: rust@nightly-2026-07-15 just lefthook
       - run: bash scripts/sanitizers.sh ${{ matrix.mode }}
 
   cross-os:
@@ -324,7 +324,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.99.1 cargo:cargo-nextest
+          install_args: rust@1.99.1 just lefthook cargo:cargo-nextest
       - run: cargo nextest run --workspace --exclude aozora-bench --exclude aozora-extism --all-targets --all-features --no-fail-fast
       - run: cargo nextest run -p aozora-extism --all-targets --no-fail-fast
 
