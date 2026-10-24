@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "e2e": "bun run build && playwright test",
     "lighthouse": "bun scripts/run-lighthouse.ts",
+    "lighthouse:release": "lhci autorun --config .lighthouserc.release.cjs && lhci autorun --config .lighthouserc.mobile.release.cjs",
     "lint": "biome check --formatter-enabled=true --linter-enabled=true --error-on-warnings .",
     "lint:fix": "biome check --formatter-enabled=true --linter-enabled=true --write .",
     "lint:css": "stylelint --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora/assets/*.css'",

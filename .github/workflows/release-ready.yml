@@ -797,7 +797,7 @@ jobs:
           just playground-all
           cd playground
           bun x --no-install playwright test
-          bun run lighthouse
+          bun run lighthouse:release
           cd ..
           just vscode-ci
       - name: Upload failed web test reports
