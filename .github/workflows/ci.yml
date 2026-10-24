@@ -73,6 +73,8 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: zig
+      - name: Align browser home ownership
+        run: chown "$(id -u):$(id -g)" "${HOME}"
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           version: 2026.7.13
