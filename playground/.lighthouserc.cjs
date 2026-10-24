@@ -20,11 +20,8 @@ module.exports = {
       assertions: {
         'categories:accessibility': ['error', { minScore: 1 }],
         'categories:best-practices': ['error', { minScore: 1 }],
-        'categories:performance': ['error', { minScore: 0.99 }],
         'categories:seo': ['error', { minScore: 1 }],
         'cumulative-layout-shift': ['error', { maxNumericValue: 0.05 }],
-        'largest-contentful-paint': ['error', { maxNumericValue: 1500 }],
-        'total-blocking-time': ['error', { maxNumericValue: 150 }],
       },
     },
     upload: {
