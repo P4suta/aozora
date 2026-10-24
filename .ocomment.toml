@@ -31,7 +31,6 @@ keep_regex = [
   "docs/adr/[a-z0-9-]+\\.md",
   "\\bcorpus\\b",
   "\\bmeasured\\b",
-  "biome-ignore",
   "@ts-expect-error",
   "@ts-ignore",
   "@ts-nocheck",
@@ -46,7 +45,6 @@ keep_regex = [
   "type: ignore",
   "#:schema",
   "rustfmt::skip",
-  "^#\\s*(v?[0-9]+(\\.[0-9]+){0,3}|master|main)\\s*$",
 ]
 
 [style]
