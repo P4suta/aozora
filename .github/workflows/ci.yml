@@ -49,7 +49,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just lefthook cargo:cargo-nextest
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-rust
       - run: just ci-rust
@@ -83,7 +83,7 @@ jobs:
         env:
           CRATE_CC_NO_DEFAULTS: "1"
           CFLAGS_x86_64_unknown_linux_gnu: -O3 -ffunction-sections -fdata-sections -fPIC -m64
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-web
       - name: Install web dependencies
@@ -137,7 +137,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just node go npm:binaryen
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-bindings
       - run: just ci-bindings
@@ -170,7 +170,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just cargo:cargo-nextest tree-sitter npm:quicktype node go
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-rust-contracts
       - run: just ci-rust-contracts
@@ -190,7 +190,7 @@ jobs:
           install_args: >-
             rust@1.99.1 just cargo:cargo-semver-checks cargo:wasm-pack
             node npm:binaryen
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-release
       - env:
@@ -209,7 +209,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just taplo github:crate-ci/typos
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-rust-lint
       - run: just ci-rust-lint
@@ -225,7 +225,7 @@ jobs:
       - env:
           MSRV: ${{ steps.msrv.outputs.version }}
         run: rustup toolchain install "$MSRV" --profile minimal
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         with:
@@ -248,7 +248,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-wasm-test
       - run: just test-wasm
@@ -264,7 +264,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just pandoc
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: ci-pandoc
       - run: just pandoc-smoke
