@@ -190,7 +190,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-arm64
       - run: just test-aarch64
@@ -380,7 +380,7 @@ jobs:
           }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-native-${{ matrix.target }}
       - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
@@ -659,7 +659,7 @@ jobs:
         with:
           toolchain: "1.99.1"
           targets: ${{ matrix.cargo_target }}
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-vscode-${{ matrix.vsce_target }}
       - if: startsWith(matrix.vsce_target, 'alpine-')
@@ -774,7 +774,7 @@ jobs:
           install_args: >-
             rust@1.99.1 just bun node go cargo:wasm-pack npm:binaryen
             cargo:cargo-cyclonedx
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-artifacts
       - name: Install web dependencies
@@ -1123,7 +1123,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: real-work-candidate-${{ matrix.platform }}
       - name: Build distribution-specific worker hosts

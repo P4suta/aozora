@@ -25,7 +25,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: scheduled-perf
       - name: Instruction-count perf gate
