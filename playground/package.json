@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "description": "React 19 and Spectrum 2 authoring playground for Aozora notation.",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "dev": "vite",
     "build": "bun run typecheck && vite build",

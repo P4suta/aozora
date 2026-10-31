@@ -163,7 +163,7 @@ indicatif = "0.18"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
 dashmap = "6"
-parking_lot = "0.12"
+parking_lot = "0.13"
 arc-swap = "1.7"
 ropey = { version = "1.6", default-features = false, features = [
   "simd",
@@ -179,7 +179,7 @@ comfy-table = { version = "7.2", default-features = false }
 num_cpus = "1.16"
 num-traits = "0.2.19"
 
-zstd = "0.13"
+zstd = "0.14"
 
 blake3 = "1.5"
 
@@ -198,7 +198,7 @@ rustyline = "18.0"
 
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
-tui-textarea-2 = { version = "0.12", default-features = false, features = ["crossterm"] }
+tui-textarea-2 = { version = "0.13", default-features = false, features = ["crossterm"] }
 
 fluent-bundle = "0.16"
 fluent-syntax = "0.12"
