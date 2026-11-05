@@ -4,7 +4,7 @@
     "feature": "ruby",
     "level": "should",
     "spec_section": "6.1",
-    "note": "[provenance:hand-derived §6.1 + AOZORA-ANNOTATION 2026-06-17] A second ruby opener 《 inside a ruby reading ｜漢《か《ん》じ》 is ill-formed and raises nested-ruby (error, §9). Offsets from the §3 byte model; not read back from a processor. Recovery retains the explicit ｜ so malformed source round-trips byte-identically."
+    "note": "[provenance:hand-derived §6.1 + §7.6 + §9 + AOZORA-ANNOTATION 2026-06-17] A second ruby opener 《 inside ｜漢《か《ん》じ》 raises nested-ruby. Recovery serialization preserves the whole decoded input, including the explicit ｜, per the preserve-source-during-recovery ADR. ADR-0003's bare ruby rule continues to govern well-formed input. All spans use decoded UTF-8 input coordinates (§3.5)."
   },
   "source": "｜漢《か《ん》じ》",
   "expected": {

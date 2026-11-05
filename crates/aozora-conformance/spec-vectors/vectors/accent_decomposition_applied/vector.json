@@ -4,7 +4,7 @@
     "feature": "accent",
     "level": "may",
     "spec_section": "4",
-    "note": "[provenance:hand-derived §4 + AOZORA-ANNOTATION 2026-06-17] 〔…〕 wraps base letters plus combining-accent markers; preprocessing decomposes them to precomposed glyphs and emits an accent-decomposition-applied note (§4). Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §3.5 + §4.3 + AOZORA-ANNOTATION 2026-06-17] In the decoded UTF-8 source, 前 occupies bytes 0..3, 〔 occupies 3..6, ae&on occupies 6..11, and 〕 occupies 11..14. The closing delimiter spans 11..14 and the accent-decomposition-applied diagnostic spans the original 〔ae&on〕 at 3..14, before pre-processing. The serialized body uses the composed æ per Annex A."
   },
   "source": "前〔ae&on〕後",
   "expected": {

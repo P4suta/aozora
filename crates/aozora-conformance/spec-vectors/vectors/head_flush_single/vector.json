@@ -4,7 +4,7 @@
     "feature": "container",
     "level": "should",
     "spec_section": "6.6",
-    "note": "[provenance:reference-impl-aligned §6.6 + AOZORA-ANNOTATION 2026-06-17] Single-line ［＃改行天付き、折り返してM字下げ］ — the single-line 改行天付き form (rendered as the same hanging-indent block): the first line is flush to the head (天付き, amount 0) and wrapped lines indent by M. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+    "note": "[provenance:hand-derived §6.6 + §7.4 + §8 + AOZORA-ANNOTATION 2026-06-17] The single-line 改行天付き form starts at amount 0 and wraps by M characters. The reference HTML closes the hanging-indent div at the end of its governed line, so </div> follows the final paragraph and precedes the final newline. All spans use decoded UTF-8 input coordinates (§3.5)."
   },
   "source": "和歌の本文［＃改行天付き、折り返して２字下げ］続き\n",
   "expected": {
