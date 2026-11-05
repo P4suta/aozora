@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aozora-notation-spec/conformance/vector.schema.json",
   "title": "Aozora notation conformance vector",
-  "description": "One self-contained test case: a source string and the projections a conforming processor must (or should/may) produce. Byte offsets are into the SANITIZED source (the §4 pre-processing output), UTF-8.",
+  "description": "One self-contained test case: a source string and its expected projections. Every span is a half-open UTF-8 byte range in decoded input before §4 pre-processing (§3.5).",
   "type": "object",
   "additionalProperties": false,
   "required": ["name", "meta", "source", "expected"],
@@ -42,7 +42,7 @@
     },
     "source": {
       "type": "string",
-      "description": "Raw input. May contain pre-sanitize bytes (BOM, CRLF) when the case exercises §4."
+      "description": "Decoded input represented as UTF-8, before §4 pre-processing. May contain a BOM, CRLF, or accent digraphs. All reported spans use this coordinate space."
     },
     "expected": {
       "type": "object",
@@ -50,7 +50,7 @@
       "description": "Projections. A `must` vector MUST carry `html`, `serialize`, and `diagnostics`; `nodes`/`pairs`/`container_pairs` are present when the case asserts structure.",
       "properties": {
         "html": { "type": "string", "description": "Reference HTML rendering (§8). Informative unless the case's level pins it." },
-        "serialize": { "type": "string", "description": "Byte-exact round-trip serialization (§7)." },
+        "serialize": { "type": "string", "description": "Default serialization (§7.6). Canonical for well-formed notation; byte-identical to decoded source when parsing reports unclosed-bracket, mismatched-container-close, or nested-ruby. Explicit normalization operations are outside this projection." },
         "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" }, "description": "Recognised nodes in source order, each with its SOURCE-coordinate span. Container open/close appear as `containerOpen`/`containerClose` nodes." },
         "pairs": { "type": "array", "items": { "$ref": "#/$defs/pair" }, "description": "Delimiter pairs (ruby, quotes) with source spans for each side." },
         "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
@@ -60,6 +60,7 @@
   "$defs": {
     "span": {
       "type": "object",
+      "description": "Half-open [start, end) UTF-8 byte range in decoded source before pre-processing (§3.5).",
       "additionalProperties": false,
       "required": ["start", "end"],
       "properties": {
