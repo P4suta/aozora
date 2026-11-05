@@ -125,9 +125,9 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: >-
-            rust@1.99.1 just taplo github:crate-ci/typos cargo:cargo-nextest
+            rust@1.99.1 just lefthook taplo github:crate-ci/typos cargo:cargo-nextest
             cargo:cargo-llvm-cov cargo:cargo-deny cargo:cargo-audit
-            cargo:cargo-shear cargo:cargo-semver-checks tree-sitter
+            cargo:cargo-shear cargo:cargo-semver-checks cargo:kani-verifier tree-sitter
             npm:quicktype node go
       - name: Verify pinned inputs
         run: |
@@ -150,6 +150,11 @@ jobs:
           just audit
           just shear
           just semver
+      - name: Source-bound developer proofs and rejecting controls
+        run: |
+          cargo kani setup
+          just developer-proofs
+          just fuzz-proofs
       - name: Generated and external specification gates
         env:
           AOZORA_SPEC_REPO: ${{ github.workspace }}/.spec
@@ -185,7 +190,7 @@ jobs:
           version: 2026.7.13
           cache: true
           install_args: rust@1.99.1 just
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-arm64
       - run: just test-aarch64
@@ -275,7 +280,9 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@nightly-2026-07-15 just cargo:cargo-fuzz
+          install_args: rust@1.99.1 rust@nightly-2026-07-15 just cargo:cargo-fuzz
+      - name: Check native fuzz reporting controls
+        run: cargo test --locked -p aozora-xtask --bin xtask fuzz::tests::native_engine_contract -- --ignored --exact
       - run: just ci-fuzz
       - run: just fuzz-all-deep
       - name: Reject retained fuzz failures
@@ -302,7 +309,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@nightly-2026-07-15
+          install_args: rust@nightly-2026-07-15 just lefthook
       - run: bash scripts/sanitizers.sh ${{ matrix.mode }}
 
   cross-os:
@@ -320,7 +327,7 @@ jobs:
         with:
           version: 2026.7.13
           cache: true
-          install_args: rust@1.99.1 cargo:cargo-nextest
+          install_args: rust@1.99.1 just lefthook cargo:cargo-nextest
       - run: cargo nextest run --workspace --exclude aozora-bench --exclude aozora-extism --all-targets --all-features --no-fail-fast
       - run: cargo nextest run -p aozora-extism --all-targets --no-fail-fast
 
@@ -355,7 +362,7 @@ jobs:
           ref: ${{ env.AOZORA_CORPUS_SHA }}
           path: .corpus
           fetch-depth: 1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.99.1"
           targets: ${{ matrix.target }}
@@ -373,7 +380,7 @@ jobs:
           }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-native-${{ matrix.target }}
       - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
@@ -648,11 +655,11 @@ jobs:
             runner: windows-11-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.99.1"
           targets: ${{ matrix.cargo_target }}
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-vscode-${{ matrix.vsce_target }}
       - if: startsWith(matrix.vsce_target, 'alpine-')
@@ -767,7 +774,7 @@ jobs:
           install_args: >-
             rust@1.99.1 just bun node go cargo:wasm-pack npm:binaryen
             cargo:cargo-cyclonedx
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: release-ready-artifacts
       - name: Install web dependencies
@@ -993,7 +1000,7 @@ jobs:
           version="$(awk -F' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)"
           test -n "$version"
           echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.99.1"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -1116,7 +1123,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: real-work-candidate-${{ matrix.platform }}
       - name: Build distribution-specific worker hosts
@@ -1155,7 +1162,7 @@ jobs:
           path: .real-work-corpus
           fetch-depth: 1
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: "1.99.1"
       - name: Pack immutable corpus

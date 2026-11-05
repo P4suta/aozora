@@ -2,16 +2,16 @@
 set -euo pipefail
 
 if ! command -v mise >/dev/null 2>&1; then
-  cat >&2 <<'MSG'
+	cat >&2 <<'MSG'
 `mise` is required to install aozora's locked native toolchain.
 Install it, then re-run ./bootstrap:
 
   https://mise.jdx.dev/getting-started.html
 MSG
-  exit 1
+	exit 1
 fi
 
-export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-$HOME/.config}/mise/config.toml"
+export MISE_IGNORED_CONFIG_PATHS="${XDG_CONFIG_HOME:-${HOME}/.config}/mise/config.toml"
 mise trust
-mise install --locked just
-exec mise exec --no-deps --locked just -- just setup
+mise install --locked just rust
+exec mise exec --no-deps --locked just rust -- just setup

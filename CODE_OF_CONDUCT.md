@@ -1,22 +1,18 @@
-# Code of Conduct
+# Code of conduct
 
 The aozora project adopts the [**Contributor Covenant, version 2.1**](https://www.contributor-covenant.org/version/2/1/code_of_conduct/) as its code of conduct.
-Participation in this project — as a contributor, a reviewer, a maintainer, or a participant in the issue tracker — means agreeing to the expectations laid out at the link above.
+Contributors, reviewers, maintainers, and issue participants agree to follow the covenant.
 
-The authoritative text is maintained at contributor-covenant.org and is
-not reproduced here; please read it at the link above rather than relying
-on any partial summary.
+Read the authoritative text at contributor-covenant.org.
 
 ## Enforcement
 
 Reports of conduct violations should reach the maintainers privately through a **GitHub private security advisory** at <https://github.com/P4suta/aozora/security/advisories/new>.
-Although security advisories are normally the channel for vulnerability reports, they also accept private conduct reports — please mark the report title clearly as a conduct concern.
+Use a title that identifies a conduct concern when submitting a private advisory.
 
-Please **do not open public issues** for personal conduct complaints.
-Maintainers will acknowledge reports within seven days and will keep the
-reporter's identity confidential to the extent consistent with acting on
-the report.
+Don't open public issues for personal conduct complaints.
+Maintainers acknowledge reports within seven days and keep the reporter's identity confidential to the extent consistent with acting on the report.
 
 ## Scope
 
-This code of conduct applies to every aozora project space — the issue tracker, pull requests, documentation, and any ancillary channel operated on the project's behalf.
+The code of conduct applies to the aozora issue tracker, pull requests, documentation, and other channels operated on the project's behalf.
