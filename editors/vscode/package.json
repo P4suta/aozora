@@ -352,7 +352,7 @@
     "@biomejs/biome": "^2.5.6",
     "@types/node": "^26.1.2",
     "@types/vscode": "1.91.0",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.1",
     "ovsx": "^1.0.2",
     "typescript": "^7.0.2"
