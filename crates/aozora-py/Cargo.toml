@@ -20,7 +20,7 @@ workspace = true
 aozora = { workspace = true, features = ["json"] }
 
 [dependencies.pyo3]
-version = "0.29"
+version = "0.30"
 optional = true
 features = ["extension-module", "abi3-py311"]
 
