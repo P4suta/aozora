@@ -516,7 +516,7 @@ version = "130.0.0"
 backend = "npm:binaryen"
 
 [[tools."npm:quicktype"]]
-version = "23.2.6"
+version = "26.0.0"
 backend = "npm:quicktype"
 
 [[tools.pandoc]]
