@@ -360,6 +360,6 @@
   "overrides": {
     "brace-expansion": "^5.0.9",
     "fast-uri": "^3.1.5",
-    "minimatch": "^10.2.6"
+    "minimatch": "^11.0.0"
   }
 }
