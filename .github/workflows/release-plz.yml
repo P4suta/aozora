@@ -22,12 +22,13 @@ jobs:
     name: publication freeze
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read # Read the publication restriction under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/heads/main
           fetch-depth: 1
+          persist-credentials: false
       - name: Require a reviewed rearm
         run: |
           if [[ -e .github/RELEASE_FROZEN.md ]]; then
@@ -36,33 +37,23 @@ jobs:
           fi
 
   release-plz-pr:
+    name: Update release pull request
     needs: release-freeze
     if: needs.release-freeze.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release-plz
     permissions:
-      id-token: write
-      contents: write
-      pull-requests: write
+      contents: read # The App token authorizes writes under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+    env:
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     steps:
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: aozora
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
 
@@ -70,8 +61,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
 
@@ -82,7 +75,8 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        # The MSRV policy reads the action input, so zizmor's run replacement would remove the checked pin.
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: "1.99.1"
 
@@ -99,35 +93,26 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   release-plz-release:
+    name: Publish qualified release
     needs: release-freeze
     if: needs.release-freeze.result == 'success' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 480
     env:
       QUALIFIED_SHA: ${{ inputs.commit }}
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     environment: release-plz
     permissions:
-      actions: read
-      contents: write
-      id-token: write
+      actions: read # Read qualification under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+      contents: read # The App token authorizes writes under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+      id-token: write # Retain registry OIDC under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
     steps:
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: aozora
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
 
@@ -135,8 +120,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
       - name: Checkout
@@ -156,12 +143,14 @@ jobs:
           git update-ref refs/remotes/origin/main HEAD
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        # The MSRV policy reads the action input, so zizmor's run replacement would remove the checked pin.
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: "1.99.1"
 
+      # The qualified source can differ from the workflow revision selected by zizmor's self-repository syntax.
       - id: detect
-        uses: ./.github/actions/detect-release-commit
+        uses: ./.github/actions/detect-release-commit # zizmor: ignore[self-repository]
 
       - name: Detect release commit
         id: release-commit
