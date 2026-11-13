@@ -230,7 +230,7 @@ fn digest(path: &Path) -> Result<String, String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    crate::lowercase_hex(&hasher.finalize())
 }
 
 fn relative(path: &Path, root: &Path) -> Result<String, String> {
@@ -790,9 +790,31 @@ pub(crate) fn dispatch(args: &RealWorkArgs) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use std::env::current_dir;
+    use std::fs;
     use std::path::Path;
 
-    use super::{command_output_path, validate_commit};
+    use super::{command_output_path, digest, validate_commit};
+
+    #[test]
+    fn file_digests_match_sha256_vectors() -> Result<(), String> {
+        let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = directory.path().join("input");
+        let cases: [(&[u8], &str); 2] = [
+            (
+                b"",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"abc",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+        ];
+        for (bytes, expected) in cases {
+            fs::write(&path, bytes).map_err(|error| error.to_string())?;
+            assert_eq!(digest(&path)?, expected);
+        }
+        Ok(())
+    }
 
     #[test]
     fn immutable_inputs_require_full_lowercase_commits() -> Result<(), String> {

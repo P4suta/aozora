@@ -313,7 +313,7 @@ pub(crate) fn verify(root: &Path, subject: Subject) -> Result<(), String> {
     if fs::read(&source).map_err(|error| format!("recheck proof source: {error}"))? != before {
         return Err("the production source changed during verification".into());
     }
-    let digest = format!("{:x}", Sha256::digest(&before));
+    let digest = crate::lowercase_hex(&Sha256::digest(&before))?;
     let tool_directory = kani.parent().ok_or("verifier directory is unavailable")?;
     let mut verifier_digests = serde_json::Map::new();
     for name in [
@@ -325,7 +325,8 @@ pub(crate) fn verify(root: &Path, subject: Subject) -> Result<(), String> {
     ] {
         let bytes = fs::read(tool_directory.join(name))
             .map_err(|error| format!("read {name} identity: {error}"))?;
-        verifier_digests.insert(name.into(), format!("{:x}", Sha256::digest(bytes)).into());
+        let digest = crate::lowercase_hex(&Sha256::digest(bytes))?;
+        verifier_digests.insert(name.into(), digest.into());
     }
     let receipt = serde_json::json!({
         "source": subject.source, "source_sha256": digest, "kani_version": version,

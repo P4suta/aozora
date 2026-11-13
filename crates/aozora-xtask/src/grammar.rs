@@ -67,6 +67,7 @@ fn scratch_generate(grammar_crate: &Path) -> Result<ScratchDir, String> {
 
     let output = Command::new("tree-sitter")
         .arg("generate")
+        .args(["--abi", "14"])
         .current_dir(&scratch.path)
         .output()
         .map_err(|err| {

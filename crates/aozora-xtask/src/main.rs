@@ -2,6 +2,7 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
@@ -596,6 +597,14 @@ fn bench_example_path(example: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(path)
+}
+
+fn lowercase_hex(bytes: &[u8]) -> Result<String, String> {
+    let mut output = String::new();
+    for byte in bytes {
+        write!(output, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(output)
 }
 
 fn workspace_root() -> Result<PathBuf, String> {
