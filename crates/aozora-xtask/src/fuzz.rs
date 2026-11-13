@@ -184,9 +184,8 @@ fn execute(command: &mut Command) -> Result<Option<i32>, String> {
 }
 
 fn digest(path: &Path) -> Result<String, String> {
-    fs::read(path)
-        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
-        .map_err(|error| format!("hash {}: {error}", path.display()))
+    let bytes = fs::read(path).map_err(|error| format!("hash {}: {error}", path.display()))?;
+    crate::lowercase_hex(&Sha256::digest(bytes))
 }
 
 #[expect(
