@@ -19,7 +19,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
-  LIBCLANG_PATH: /usr/lib/llvm-18/lib
 
 jobs:
   qualify:
