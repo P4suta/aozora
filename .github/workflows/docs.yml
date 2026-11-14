@@ -63,7 +63,7 @@ jobs:
 
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          version: 2026.11.5
+          version: 2026.11.6
           cache: true
           install_args: rust@1.99.1 bun node cargo:wasm-pack npm:binaryen just
 
