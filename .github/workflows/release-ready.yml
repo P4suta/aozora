@@ -180,7 +180,7 @@ jobs:
   arm64:
     needs: [qualify, code-proof]
     if: needs.qualify.outputs.run == 'true' && needs.code-proof.outputs.reuse != 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
