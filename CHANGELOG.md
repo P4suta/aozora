@@ -7,6 +7,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-24
+
+
+### Added
+
+- Gate releases on rights-filtered works ([#628](https://github.com/P4suta/aozora/pull/628))
+- **playground**: Adopt shared Spectrum authoring UI ([#623](https://github.com/P4suta/aozora/pull/623))
+
+
+### Build
+
+- **deps**: Bump Rust to 1.99.1 ([#689](https://github.com/P4suta/aozora/pull/689))
+- Require item-level lint expectations ([#674](https://github.com/P4suta/aozora/pull/674))
+
+
+### Changed
+
+- Remove ordinary comments across the workspace ([#675](https://github.com/P4suta/aozora/pull/675))
+
+
+### Chore
+
+- Retire Docker development environment ([#619](https://github.com/P4suta/aozora/pull/619))
+
+
+### Documentation
+
+- Rewrite source docs one sentence per line ([#695](https://github.com/P4suta/aozora/pull/695))
+- Generate README and licenses from metadata ([#672](https://github.com/P4suta/aozora/pull/672))
+
+
+### Fixed
+
+- Report failures that the code discards ([#666](https://github.com/P4suta/aozora/pull/666))
+- Harden parser and integration boundaries ([#625](https://github.com/P4suta/aozora/pull/625))
+- **cli**: Name the aozora crate in error messages ([#665](https://github.com/P4suta/aozora/pull/665))
+
+
 ### Added
 
 - Ship the optional canonical notation stylesheet with the `aozora-wasm` npm package.
