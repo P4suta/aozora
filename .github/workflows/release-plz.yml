@@ -78,7 +78,7 @@ jobs:
         # The MSRV policy reads the action input, so zizmor's run replacement would remove the checked pin.
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # zizmor: ignore[superfluous-actions]
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
 
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
@@ -146,7 +146,7 @@ jobs:
         # The MSRV policy reads the action input, so zizmor's run replacement would remove the checked pin.
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # zizmor: ignore[superfluous-actions]
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
 
       # The qualified source can differ from the workflow revision selected by zizmor's self-repository syntax.
       - id: detect
