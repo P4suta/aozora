@@ -9,7 +9,7 @@ pub struct FontShift(pub NonZeroI8);
 impl FontShift {
     #[must_use]
     pub const fn larger(self) -> bool {
-        self.0.get().is_positive()
+        self.0.is_positive()
     }
 
     #[must_use]

@@ -163,7 +163,7 @@ indicatif = "0.18"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
 dashmap = "6"
-parking_lot = "0.13"
+parking_lot = "0.12"
 arc-swap = "1.7"
 ropey = { version = "1.6", default-features = false, features = [
   "simd",
