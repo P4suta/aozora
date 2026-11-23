@@ -364,7 +364,7 @@ jobs:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
           targets: ${{ matrix.target }}
           components: llvm-tools-preview
       - if: runner.os == 'Windows'
@@ -657,7 +657,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
           targets: ${{ matrix.cargo_target }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -1002,7 +1002,7 @@ jobs:
           echo "AOZORA_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.15"
@@ -1164,7 +1164,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: "1.99.1"
+          toolchain: "1.100.0"
       - name: Pack immutable corpus
         run: >-
           cargo run --locked -p aozora-xtask -- real-work corpus
